@@ -1,7 +1,7 @@
 ---
 name: digital-twin
 description: |
-  知识图谱优先查询规则：每次响应前先查询 Neo4j 知识图谱，获取环境上下文。
+  知识图谱优先查询规则：在每次响应前先查询 Neo4j 知识图谱，获取环境上下文。
   当用户提到项目名/服务名/API/配置/Bug/部署时自动触发。
   询问用户问题前必先查 KG，已有数据则不重复询问。
 ---
@@ -16,37 +16,40 @@ description: |
 - ❌ 禁止先看目录结构
 - ❌ 禁止先运行任何 shell 命令
 - ✅ 必须先查询 Neo4j，从图的结果决定下一步做什么
-
-## 第二规则：每次新对话执行启动探针
-
-新对话建立后，立即执行探针查询，获取环境信息。
 </EXTREMELY-IMPORTANT>
 
 ---
 
 ## 🔄 执行流程
 
-### 0. 启动探针（新建对话后立即执行）
-
-查询 Neo4j，获取：
-- 基础环境：操作系统版本、服务器规格
-- 近期事件：最近 8 条历史变更事件
-- 关键服务：Neo4j / Qdrant 等核心服务状态
-
 ### 1. 关键词匹配查询（每次用户消息后必做）
 
 从用户消息提取关键词（项目名、服务名、文件路径、API 名、Bug 描述），
-查询知识图谱中所有匹配的实体。
+查询知识图谱中所有匹配的实体，结果作为后续分析的基线上下文。
 
-### 2. 针对性查询（按需选择执行）
+```cypher
+MATCH (n)
+WHERE n.name CONTAINS $keyword OR n.title CONTAINS $keyword
+   OR n.file_path CONTAINS $keyword
+RETURN labels(n)[0] AS type, n.name, n.description, n.file_path, n.root_cause, n.fix_summary
+LIMIT 10
+```
 
-- **涉及新项目时**：查项目详情、路径及依赖
-- **涉及 Bug 修复时**：查知识库中类似根因和修复方案
-- **涉及代码实现时**：查相关方法调用链和文件位置
+### 2. 上下文感知探针（按需执行）
 
-### 3. 写入规则
+根据用户消息的上下文类型，执行对应的扩展查询：
 
-写入时使用 `dt` CLI（详见 `AGENTS.md`）：
+| 上下文 | 判断关键词 | 探针查询 |
+|--------|-----------|---------|
+| 项目/代码 | 项目名、文件路径、类名、方法名 | `MATCH (p:Project {name: $kw}) RETURN p` |
+| Bug/报错 | exception、error、bug、异常、报错 | `MATCH (k:Knowledge) WHERE k.root_cause CONTAINS $kw RETURN k` |
+| 部署/发布 | deploy、发布、上线、Jenkins | `MATCH (e:Event {type: "Deploy"}) RETURN e ORDER BY e.timestamp DESC LIMIT 5` |
+| 配置变更 | Nacos、配置、改配置、Apollo | `MATCH (e:Event {type: "ConfigChange"}) RETURN e ORDER BY e.timestamp DESC LIMIT 5` |
+| 无明确上下文 | 上述均不匹配 | 不执行扩展查询 |
+
+### 3. 回复后判断是否写入
+
+写入时使用 `dt` CLI（见 AGENTS.md 中的触发规则）：
 
 | 操作 | 命令 |
 |------|------|

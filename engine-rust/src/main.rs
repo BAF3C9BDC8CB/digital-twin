@@ -10,12 +10,15 @@ mod knowledge;
 mod remove;
 mod build;
 mod search;
+mod health;
+mod update;
+mod validate;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "dt", about = "Digital Twin CLI - knowledge graph & vector index management")]
+#[command(name = "dt", version = "3.1.0", about = "Digital Twin CLI - knowledge graph & vector index management")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -23,13 +26,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Index or re-index a project (full rebuild)
-    Index {
-        #[arg(long)]
-        path: String,
-        #[arg(long)]
-        name: String,
-    },
     /// Incremental build: scan project, hash-compare files, index changes only
     Build {
         #[arg(long)]
@@ -45,6 +41,13 @@ enum Commands {
         name: String,
         #[arg(long)]
         file: String,
+    },
+    /// Full rebuild of a project
+    Index {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        name: String,
     },
     /// Remove methods for a file or entire project from Neo4j + Qdrant
     Remove {
@@ -93,6 +96,8 @@ enum Commands {
         #[arg(long, default_value = "false")]
         json: bool,
     },
+    /// Check connectivity of all backend services
+    Health,
     /// Build Neo4j CALLS relationships
     BuildCallGraph {
         #[arg(long)]
@@ -105,7 +110,7 @@ enum Commands {
         #[arg(long)]
         name: String,
     },
-    /// Parse a single file and write to Neo4j + Qdrant
+    /// Parse a single file to JSON (no DB writes)
     Parse {
         #[arg(long)]
         file: String,
@@ -125,7 +130,7 @@ async fn main() -> Result<()> {
             build::run_build(&path, &name).await?;
         }
         Commands::Update { path, name, file } => {
-            build::run_update(&path, &name, &file).await?;
+            update::run_update(&path, &name, &file).await?;
         }
         Commands::Index { path, name } => {
             build::run_index(&path, &name).await?;
@@ -142,13 +147,16 @@ async fn main() -> Result<()> {
         Commands::Search { query, project, limit, all, json } => {
             search::run_search(&query, project.as_deref(), limit, all, json).await?;
         }
+        Commands::Health => {
+            health::run_health().await?;
+        }
         Commands::BuildCallGraph { name } => {
             neo4j::ensure_schema().await?;
             let count = neo4j::create_call_relationships(&name).await?;
             println!("[完成] 为项目 {} 创建了 {} 条 CALLS 关系", name, count);
         }
         Commands::Validate { path, name } => {
-            build::run_validate(&path, &name).await?;
+            validate::run_validate(&path, &name).await?;
         }
         Commands::Parse { file, project, root } => {
             let mut p = parser::Parser::new()?;

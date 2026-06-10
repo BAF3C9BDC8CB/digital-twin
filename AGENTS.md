@@ -89,7 +89,7 @@ dt memorize --type KnowledgeAdded \
 
 用户说 "done" / "结束" 时：
 1. 列出关键发现
-2. 写入 Conversation 节点，关联发现的实体
+2. 执行：`dt event --type Conversation --entity-id "<会话日期>" --entity-type Session --project "<项目>" --details "<关键发现摘要>"` 
 3. 回复：`📝 已将 [本次会话摘要] 记录到知识图谱`
 
 ---

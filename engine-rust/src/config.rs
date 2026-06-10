@@ -43,18 +43,27 @@ pub struct EmbedConfig {
     pub model: String,
 }
 
+fn find_config() -> Option<String> {
+    // Priority: DT_CONFIG env > ./config.yaml > ~/.config/digital-twin/config.yaml
+    if let Ok(p) = std::env::var("DT_CONFIG") {
+        if Path::new(&p).exists() { return Some(p); }
+    }
+    let candidates = [
+        "./config.yaml",
+        &format!("{}/.config/digital-twin/config.yaml", std::env::var("HOME").unwrap_or_default()),
+    ];
+    for p in &candidates {
+        if Path::new(p).exists() { return Some(p.to_string()); }
+    }
+    None
+}
+
 pub fn load() -> &'static DtConfig {
     CFG.get_or_init(|| {
-        let paths = [
-            std::env::var("DT_CONFIG").ok(),
-            Some("/data/myProject/digital-twin/config.yaml".to_string()),
-        ];
-        for p in paths.into_iter().flatten() {
-            if Path::new(&p).exists() {
-                let content = std::fs::read_to_string(&p).unwrap_or_default();
-                if let Ok(cfg) = serde_yaml::from_str::<DtConfig>(&content) {
-                    return cfg;
-                }
+        if let Some(p) = find_config() {
+            let content = std::fs::read_to_string(&p).unwrap_or_default();
+            if let Ok(cfg) = serde_yaml::from_str::<DtConfig>(&content) {
+                return cfg;
             }
         }
         DtConfig {

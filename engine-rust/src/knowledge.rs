@@ -8,7 +8,7 @@ use crate::neo4j;
 pub async fn write_knowledge(
     knowledge_type: &str,
     entity_id: &str,
-    _entity_type: Option<&str>,
+    entity_type: Option<&str>,
     project: Option<&str>,
     details: Option<&str>,
 ) -> Result<()> {
@@ -51,12 +51,16 @@ pub async fn write_knowledge(
         remaining.split_whitespace().collect::<Vec<_>>().join(" ")
     };
 
+    let entity_type_str = entity_type.unwrap_or("");
+    let entity_type_label = if entity_type_str.is_empty() { "Unknown".to_string() } else { entity_type_str.to_string() };
+
     let stmt = "\
 MERGE (k:Knowledge {id: $id})
 ON CREATE SET
     k.name = $name,
     k.title = $title,
     k.context = $context,
+    k.entity_type = $entity_type,
     k.details = $details,
     k.description = $description,
     k.project = $project,
@@ -70,6 +74,7 @@ ON CREATE SET
         "name": entity_id,
         "title": title,
         "context": knowledge_type,
+        "entity_type": entity_type_label,
         "details": final_details,
         "description": description,
         "project": project.unwrap_or(""),
