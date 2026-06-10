@@ -1,0 +1,63 @@
+#!/bin/bash
+# digital-twin hook — updated to use dt CLI
+# Usage: dt-sync [--path <path> --name <name>]
+set -e
+GREEN='\033[0;32m'; NC='\033[0m'
+log() { echo -e "${GREEN}[dt]${NC} $1"; }
+
+MINUTES=30
+FILE=""
+PROJECT=""
+ALL=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --all) ALL=true; shift ;;
+    --file) FILE="$2"; shift 2 ;;
+    --project) PROJECT="$2"; shift 2 ;;
+    --minutes) MINUTES="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -n "$FILE" ] && [ -n "$PROJECT" ]; then
+  log "Update: $PROJECT :: $FILE"
+  dt update --path "$(pwd)" --name "$PROJECT" --file "$FILE"
+  exit 0
+fi
+
+if $ALL; then
+  log "Full rebuild all projects..."
+  python3 -c "
+import json, urllib.request
+r = urllib.request.urlopen('http://localhost:7474/db/neo4j/tx/commit',
+    data=json.dumps({'statements':[{'statement':'MATCH (p:Project) RETURN p.name, p.path ORDER BY p.name'}]}).encode(),
+    headers={'Content-Type':'application/json','Authorization':'Basic bmVvNGo6bmVvNGo='})
+for row in json.loads(r.read())['results'][0]['data']:
+    print(f\"{row['row'][0]}|{row['row'][1]}\")
+" | while IFS='|' read -r pname ppath; do
+    log "  Building $pname..."
+    dt build --path "$ppath" --name "$pname"
+  done
+  exit 0
+fi
+
+# Incremental mode: detect recently modified files
+log "Scanning files modified in the last ${MINUTES} minutes..."
+python3 -c "
+import json, urllib.request
+r = urllib.request.urlopen('http://localhost:7474/db/neo4j/tx/commit',
+    data=json.dumps({'statements':[{'statement':'MATCH (p:Project) RETURN p.name, p.path'}]}).encode(),
+    headers={'Content-Type':'application/json','Authorization':'Basic bmVvNGo6bmVvNGo='})
+rows = json.loads(r.read())['results'][0]['data']
+for row in rows:
+    print(f\"{row['row'][0]}|{row['row'][1]}\")
+" | while IFS='|' read -r pname ppath; do
+  [ -z "$ppath" ] && continue
+  [ ! -d "$ppath" ] && continue
+  log "  Building $pname..."
+  dt build --path "$ppath" --name "$pname"
+done
+
+echo $(date -u +%Y-%m-%dT%H:%M:%SZ) > /var/lib/digital-twin/last-sync 2>/dev/null || true
+log "Done."
