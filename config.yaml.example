@@ -1,0 +1,28 @@
+# Digital Twin Configuration
+# Copy this to config.yaml and customize
+
+server:
+  hostname: my-server
+
+services:
+  embed_server:
+    url: http://localhost:8001
+    dim: 768
+    model: BAAI/bge-base-zh-v1.5
+  neo4j:
+    url: http://localhost:7474
+    user: neo4j
+    password: neo4j
+  qdrant:
+    url: http://localhost:6333
+
+snapshot_dir: /var/lib/digital-twin/snapshots
+
+# Optional: register projects for dt-sync
+# projects:
+#   - name: my-project
+#     path: /path/to/project
+
+# Optional: document directories to index
+# document_dirs:
+#   - /path/to/docs

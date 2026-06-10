@@ -117,23 +117,30 @@ dt --help
 
 ### 4. Configure
 
-Edit `config.yaml` to match your environment:
-
-```yaml
-services:
-  neo4j:
-    url: http://localhost:7474
-    user: neo4j
-    password: neo4j
-  qdrant:
-    url: http://localhost:6333
-  embed_server:
-    url: http://localhost:8001
-    dim: 768
-    model: BAAI/bge-base-zh-v1.5
+```bash
+cp config.yaml.example config.yaml
 ```
 
-The `dt` CLI reads `config.yaml` automatically from `/data/myProject/digital-twin/config.yaml` or the path specified in `DT_CONFIG` environment variable.
+Edit `config.yaml` to match your environment.
+
+The `dt` CLI reads `config.yaml` from the project root directory. Override with `DT_CONFIG` environment variable.
+
+### 5. Install OpenCode Skill (Optional)
+
+```bash
+# The skill tells AI agents to query the knowledge graph automatically
+mkdir -p ~/.opencode/skills/digital-twin
+cp SKILL.md ~/.opencode/skills/digital-twin/SKILL.md
+
+# Symlink AGENTS.md for AI behavior rules
+ln -sf "$(pwd)/AGENTS.md" ~/AGENTS.md
+```
+
+Or run the setup script which does all of this automatically:
+
+```bash
+bash setup.sh
+```
 
 ---
 
