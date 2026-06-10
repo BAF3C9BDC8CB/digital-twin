@@ -13,6 +13,7 @@ mod search;
 mod health;
 mod update;
 mod validate;
+mod nacos_sync;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -110,6 +111,11 @@ enum Commands {
         #[arg(long)]
         name: String,
     },
+    /// Sync Nacos configurations into the knowledge graph
+    NacosSync {
+        #[arg(long)]
+        env: String,
+    },
     /// Parse a single file to JSON (no DB writes)
     Parse {
         #[arg(long)]
@@ -146,6 +152,9 @@ async fn main() -> Result<()> {
         }
         Commands::Search { query, project, limit, all, json } => {
             search::run_search(&query, project.as_deref(), limit, all, json).await?;
+        }
+        Commands::NacosSync { env } => {
+            nacos_sync::run_sync(&env).await?;
         }
         Commands::Health => {
             health::run_health().await?;

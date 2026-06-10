@@ -55,6 +55,7 @@ dt memorize --type KnowledgeAdded \
 | 1 | 用户说"记忆/记一下/记住这个/记下来/记住" | 总是 | `dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"` |
 | 2 | 安装软件（apt/pip/npm/brew 等） | 总是 | `dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>, method: <安装方式>" --project "<项目>"` |
 | 3 | 修改 Nacos/Apollo/Consul 等外部配置 | 总是 | `dt event --type ConfigChange --entity-id "<data_id>" --entity-type NacosConfig --details "<改动摘要>" --project "<项目>"` |
+| - | 同步 Nacos 配置到知识图谱 | AI 判断必要时 | `dt nacos-sync --env test` 或 `dt nacos-sync --env prod` |
 | 4 | 做出架构/技术决策（选型、迁移、方案设计） | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>; scope: <影响范围>" --project "<项目>"` |
 | 5 | Jenkins 部署（`jenkins_build_job` MCP） | **仅生产/stable 环境** | `dt event --type Deploy --entity-id "<job_name>" --entity-type JenkinsJob --details "branch: <分支>, env: <环境>, params: <参数>" --project "<项目>"` |
 

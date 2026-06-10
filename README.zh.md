@@ -194,6 +194,19 @@ dt search "退款逻辑" --project order-center --json
 dt build-call-graph --name user-center
 ```
 
+### Nacos 配置同步
+
+```bash
+# 同步测试环境 (nacos.newoffen.net)
+dt nacos-sync --env test
+
+# 同步生产环境 (nacos.newoffen.com)
+dt nacos-sync --env prod
+
+# 同步全部
+dt nacos-sync --env all
+```
+
 ### 工具
 
 ```bash

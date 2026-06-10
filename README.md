@@ -197,6 +197,19 @@ dt search "refund logic" --project order-center --json
 dt build-call-graph --name user-center
 ```
 
+### Nacos Configuration Sync
+
+```bash
+# Sync test environment (nacos.newoffen.net)
+dt nacos-sync --env test
+
+# Sync production environment (nacos.newoffen.com)
+dt nacos-sync --env prod
+
+# Sync both
+dt nacos-sync --env all
+```
+
 ### Utility
 
 ```bash
