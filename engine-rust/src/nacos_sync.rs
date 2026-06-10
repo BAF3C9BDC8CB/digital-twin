@@ -34,6 +34,42 @@ struct ConfigItem {
 }
 
 #[derive(Deserialize)]
+struct ServiceListResp {
+    count: i64,
+    serviceList: Vec<ServiceItem>,
+}
+
+#[derive(Deserialize)]
+struct ServiceItem {
+    name: String,
+    groupName: String,
+    #[allow(dead_code)]
+    clusterCount: i64,
+    ipCount: i64,
+    healthyInstanceCount: i64,
+}
+
+#[derive(Deserialize)]
+struct InstanceListResp {
+    hosts: Vec<InstanceItem>,
+}
+
+#[derive(Deserialize)]
+struct InstanceItem {
+    ip: String,
+    port: i64,
+    #[allow(dead_code)]
+    clusterName: Option<String>,
+    healthy: bool,
+    #[allow(dead_code)]
+    weight: Option<f64>,
+    #[allow(dead_code)]
+    ephemeral: Option<bool>,
+    #[allow(dead_code)]
+    metadata: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
 struct ConfigDetailResp {
     dataId: Option<String>,
     group: Option<String>,
@@ -232,10 +268,108 @@ MERGE (ns)-[:CONTAINS]->(c)", json!({
         }
 
         println!("  {}: {} configs", ns_name, fetched);
+
+        // ── Sync services ────────────────────────────────────
+        let svc_url = format!(
+            "{}/v1/ns/catalog/services?hasIpCount=true&withInstances=false&pageNo=1&pageSize=200&serviceNameParam=&groupNameParam=&namespaceId={}",
+            base_url, ns_id
+        );
+        if let Ok(svc_resp) = client.get(&svc_url).send().await {
+            if let Ok(svc_data) = svc_resp.json::<ServiceListResp>().await {
+                let mut svc_count = 0i64;
+                for svc in &svc_data.serviceList {
+                    // MERGE NacosService node
+                    let svc_id = format!("{}:{}:{}", ns_id, svc.groupName, svc.name);
+                    neo4j::run_cypher_raw("\
+MERGE (s:NacosService {service_id: $svc_id})
+SET s.name = $name,
+    s.group_name = $group,
+    s.namespace = $ns_name,
+    s.ip_count = $ip_count,
+    s.healthy_count = $healthy,
+    s.updated_at = $ts", json!({
+                        "svc_id": svc_id,
+                        "name": svc.name,
+                        "group": svc.groupName,
+                        "ns_name": ns_name,
+                        "ip_count": svc.ipCount,
+                        "healthy": svc.healthyInstanceCount,
+                        "ts": Utc::now().to_rfc3339(),
+                    })).await?;
+
+                    // Link NacosNamespace → NacosService
+                    neo4j::run_cypher_raw("\
+MATCH (ns:NacosNamespace {namespace_id: $ns_id})
+MATCH (s:NacosService {service_id: $svc_id})
+MERGE (ns)-[:REGISTERS]->(s)", json!({
+                        "ns_id": ns_id,
+                        "svc_id": svc_id,
+                    })).await?;
+
+                    // Link to existing Project if name matches
+                    neo4j::run_cypher_raw("\
+MATCH (s:NacosService {service_id: $svc_id})
+OPTIONAL MATCH (p:Project {name: $name})
+FOREACH (_ IN CASE WHEN p IS NOT NULL THEN [1] END |
+    MERGE (p)-[:REGISTERED_IN]->(s))", json!({
+                        "svc_id": svc_id,
+                        "name": svc.name,
+                    })).await?;
+
+                    // Fetch instances
+                    let inst_url = format!(
+                        "{}/v1/ns/instance/list?serviceName={}&groupName={}&namespaceId={}",
+                        base_url, urlencode(&svc.name), urlencode(&svc.groupName), ns_id
+                    );
+                    if let Ok(inst_resp) = client.get(&inst_url).send().await {
+                        if let Ok(inst_data) = inst_resp.json::<InstanceListResp>().await {
+                            for inst in &inst_data.hosts {
+                                let inst_id = format!(
+                                    "{}:{}:{}:{}", ns_id, svc.name, inst.ip, inst.port
+                                );
+                                neo4j::run_cypher_raw("\
+MERGE (i:NacosInstance {instance_id: $inst_id})
+SET i.ip = $ip,
+    i.port = $port,
+    i.healthy = $healthy,
+    i.cluster = $cluster,
+    i.weight = $weight,
+    i.ephemeral = $ephemeral,
+    i.service_name = $svc_name,
+    i.namespace = $ns_name,
+    i.updated_at = $ts", json!({
+                                    "inst_id": inst_id,
+                                    "ip": inst.ip,
+                                    "port": inst.port,
+                                    "healthy": inst.healthy,
+                                    "cluster": inst.clusterName.as_deref().unwrap_or("DEFAULT"),
+                                    "weight": inst.weight.unwrap_or(1.0),
+                                    "ephemeral": inst.ephemeral.unwrap_or(true),
+                                    "svc_name": svc.name,
+                                    "ns_name": ns_name,
+                                    "ts": Utc::now().to_rfc3339(),
+                                })).await?;
+
+                                // Link NacosService → NacosInstance
+                                neo4j::run_cypher_raw("\
+MATCH (s:NacosService {service_id: $svc_id})
+MATCH (i:NacosInstance {instance_id: $inst_id})
+MERGE (s)-[:HAS_INSTANCE]->(i)", json!({
+                                    "svc_id": svc_id,
+                                    "inst_id": inst_id,
+                                })).await?;
+                            }
+                        }
+                    }
+                    svc_count += 1;
+                }
+                println!("  {}: {} services, {} instances", ns_name, svc_data.serviceList.len(), svc_count);
+            }
+        }
     }
 
     // 11. Write sync Event
-    let event_type = format!("NacosConfigSynced_{}", env_name);
+    let event_type = format!("NacosSynced_{}", env_name);
     let eid = {
         let mut h = Sha256::new();
         h.update(format!("{}::{}", event_type, Utc::now().to_rfc3339()).as_bytes());
@@ -246,7 +380,7 @@ MERGE (e:Event {event_id: $eid})
 ON CREATE SET
     e.type = $type,
     e.entity_id = $entity_id,
-    e.entity_type = 'NacosConfig',
+    e.entity_type = 'Nacos',
     e.project = $env,
     e.details = $details,
     e.timestamp = $ts", json!({
