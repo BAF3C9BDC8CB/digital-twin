@@ -232,7 +232,13 @@ dt build --path /proj --name myapp
 
 ## AI Integration (OpenCode)
 
-Add to `AGENTS.md` to enable autonomous KG updates:
+Copy `AGENTS.md` to your home directory (or symlink) to enable autonomous KG updates:
+
+```bash
+ln -s /path/to/digital-twin/AGENTS.md ~/AGENTS.md
+```
+
+The AI agent reads `~/AGENTS.md` at session start and follows these rules:
 
 | Trigger | Command |
 |---------|---------|
