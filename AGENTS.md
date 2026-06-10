@@ -58,9 +58,9 @@ dt memorize --type KnowledgeAdded \
 | 4 | 做出架构/技术决策（选型、迁移、方案设计） | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>; scope: <影响范围>" --project "<项目>"` |
 | 5 | Jenkins 部署（`jenkins_build_job` MCP） | **仅生产/stable 环境** | `dt event --type Deploy --entity-id "<job_name>" --entity-type JenkinsJob --details "branch: <分支>, env: <环境>, params: <参数>" --project "<项目>"` |
 
-### 不写 KG 但更新向量库
+### 不写 Event/Knowledge 但同步代码实体到 KG + 向量库
 
-以下操作不写 KG，但需要更新 Qdrant 向量库（代码搜索依赖）：
+`dt update` / `dt build` 会同步更新 **Method/Class/CALLS 节点到 Neo4j** 和 **向量到 Qdrant**，两者始终保持一致。只不写 Event/Knowledge 节点（避免高频噪声）。
 
 | 触发操作 | 条件 | 命令 |
 |---------|------|------|

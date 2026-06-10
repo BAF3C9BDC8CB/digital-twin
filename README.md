@@ -76,21 +76,19 @@ sudo apt install python3 python3-pip python3-venv
 
 **Neo4j:**
 ```bash
-# Docker
-docker run -d --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/neo4j \
-  neo4j:5
-
-# Or native install (systemd)
+# Native install (systemd)
 sudo systemctl start neo4j
+
+# Or download from https://neo4j.com/download/
 ```
 
 **Qdrant:**
 ```bash
-docker run -d --name qdrant \
-  -p 6333:6333 -p 6334:6334 \
-  qdrant/qdrant
+# Native install
+curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz
+./qdrant &
+
+# Or via package manager
 ```
 
 ### 2. Embed Server
