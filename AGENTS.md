@@ -2,6 +2,10 @@
 
 This project uses a Neo4j knowledge graph for persistent memory.
 
+## ⚠️ [新增] 必须先加载 digital-twin 技能
+
+执行任何任务前，先调用 `skill` 工具加载 **digital-twin** 技能，获取完整指令后再按流程执行。仅靠本文件不够——skill 文件中包含最新的详细工作流。
+
 ## ⚠️ 第一动作：每次工作必须先查询知识图谱
 
 执行任何任务的**第一个动作**必须是查知识图谱。不允许直接读文件或探索目录而不先查 KG。
@@ -9,17 +13,52 @@ This project uses a Neo4j knowledge graph for persistent memory.
 **执行流程：**
 1. 从用户消息提取关键词（服务名、文件路径、API、Bug、术语）
 2. 从当前环境提取关键词（项目名、工作目录、当前文件、git remote、README 中的项目名）
-3. 如果第 1+2 步有任何关键词 → 立即用 `neo4j_read_cypher` 查询 KG
+3. 如果第 1+2 步有任何关键词 → 按**三步递进策略**查询 KG
 4. 有匹配结果 → 取出作为上下文使用
 5. 无匹配 → 继续正常分析
 
+### 三步递进查询策略
+
+不是固定流程，而是建议路径。关键词明确时可直接跳 Step 3，不确定时从 Step 1 开始。
+
+**Step 1：发现基础类型目录**
+先看 KG 中有哪些大类，不查具体数据：
 ```cypher
 MATCH (n)
-WHERE n.name CONTAINS $keyword OR n.title CONTAINS $keyword
-   OR n.file_path CONTAINS $keyword
-RETURN labels(n)[0] AS type, n.name, n.description, n.file_path, n.root_cause, n.fix_summary
-LIMIT 10
+RETURN distinct labels(n)[0] AS type
+ORDER BY type
 ```
+
+**Step 2：确定范围 + 关键词，定位具体节点类型**
+根据关键词 + 排除/包含某些基础类型，找到命中的节点类型：
+```cypher
+MATCH (n)
+WHERE (
+  n.name CONTAINS $keyword OR n.service_name CONTAINS $keyword
+  OR n.data_id CONTAINS $keyword OR n.ip CONTAINS $keyword
+  OR n.description CONTAINS $keyword
+  OR ANY(lbl IN labels(n) WHERE toLower(lbl) CONTAINS toLower($keyword))
+)
+AND NONE(lbl IN labels(n) WHERE lbl IN [
+  'Method','Class','Interface','Enum','Package','Module'
+])
+RETURN labels(n)[0] AS type,
+       coalesce(n.name, n.service_name, n.data_id, n.ip) AS name
+LIMIT 20
+```
+排除的代码类型可根据需要增减。这一步不追求精确答案，只看命中什么类型。
+
+**Step 3：按节点类型精准查询**
+根据 Step 2 发现的类型，定向查询该类型的特定字段：
+```cypher
+// 示例：查询 NacosInstance 的具体 IP:Port
+MATCH (i:NacosInstance)
+WHERE i.service_name CONTAINS $keyword
+RETURN i.service_name, i.ip, i.port, i.namespace, i.healthy
+LIMIT 20
+```
+
+> 三步不是强制流程——**关键是让查询适应问题，而不是反过来。** 如果关键词已经很明确知道要查什么类型，直接 Step 3 即可。
 
 **唯一不查的情况：** 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须查。
 
