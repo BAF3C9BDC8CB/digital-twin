@@ -11,6 +11,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 |------|------|
 | 查知识图谱（任何任务的第一个动作） | [KG-QUERY.md](./KG-QUERY.md) |
 | 搜索代码逻辑、方法定位 | [CODE-SEARCH.md](./CODE-SEARCH.md) |
+| AI 操作后必须触发的写入（代码修改/部署/配置变更等） | [TRIGGER-RULES.md](./TRIGGER-RULES.md) |
 | 写入事件/知识/记忆，或结束会话 | [WRITE-EVENTS.md](./WRITE-EVENTS.md) |
 
 ---
