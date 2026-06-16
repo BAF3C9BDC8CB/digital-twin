@@ -22,10 +22,6 @@ pub struct MethodNode {
     pub calls: Vec<String>,
 }
 
-fn client() -> reqwest::Client {
-    reqwest::Client::new()
-}
-
 fn neo4j_url() -> String {
     let cfg = config::load();
     let base = cfg.services.neo4j.url.trim_end_matches('/');
@@ -45,7 +41,8 @@ pub async fn run_cypher_raw(statement: &str, params: serde_json::Value) -> Resul
             "parameters": params
         }]
     });
-    let resp = client()
+    let client = crate::client::get_client();
+    let resp = client
         .post(neo4j_url())
         .header("Content-Type", "application/json")
         .header("Authorization", auth_header())
@@ -55,7 +52,7 @@ pub async fn run_cypher_raw(statement: &str, params: serde_json::Value) -> Resul
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(anyhow!("Neo4j 请求失败 ({}): {}", status, text));
+        return Err(anyhow!("Neo4j request failed ({}): {}", status, text));
     }
     let data: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| anyhow!("JSON parse failed (status {}): {} | body: {}", status, e, &text[..200.min(text.len())]))?;
@@ -74,6 +71,18 @@ pub async fn ensure_schema() -> Result<()> {
         "CREATE INDEX IF NOT EXISTS FOR (e:Event) ON (e.type)",
         "CREATE INDEX IF NOT EXISTS FOR (e:Event) ON (e.timestamp)",
         "CREATE INDEX IF NOT EXISTS FOR (k:Knowledge) ON (k.project)",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NacosConfig) REQUIRE n.config_id IS UNIQUE",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NacosService) REQUIRE n.service_id IS UNIQUE",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NacosInstance) REQUIRE n.instance_id IS UNIQUE",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:Environment) REQUIRE n.name IS UNIQUE",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:NacosNamespace) REQUIRE n.namespace_id IS UNIQUE",
+        "CREATE CONSTRAINT IF NOT EXISTS FOR (n:KubernetesCluster) REQUIRE n.name IS UNIQUE",
+        "CREATE INDEX IF NOT EXISTS FOR (n:K8sPod) ON (n.ip)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:K8sPod) ON (n.name)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:Deployment) ON (n.name)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:K8sService) ON (n.name)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:NacosConfig) ON (n.data_id)",
+        "CREATE INDEX IF NOT EXISTS FOR (n:NacosService) ON (n.name)",
     ];
     for cypher in &constraints {
         run_cypher_raw(cypher, json!({})).await?;
@@ -157,13 +166,14 @@ DETACH DELETE m";
 }
 
 pub async fn delete_all_methods(project: &str) -> Result<()> {
-    let stmt = format!(
-        "MATCH (m:Method {{project: '{}'}}) DETACH DELETE m",
-        project.replace('\'', "\\'")
-    );
-    run_cypher_raw(&stmt, json!({})).await?;
-    let cleanup = "MATCH (c:Class) WHERE NOT (c)-[:CONTAINS]->() DELETE c";
-    run_cypher_raw(cleanup, json!({})).await?;
+    run_cypher_raw(
+        "MATCH (m:Method {project: $project}) DETACH DELETE m",
+        json!({"project": project}),
+    ).await?;
+    run_cypher_raw(
+        "MATCH (c:Class) WHERE NOT (c)-[:CONTAINS]->() DELETE c",
+        json!({}),
+    ).await?;
     Ok(())
 }
 
@@ -182,9 +192,35 @@ RETURN count(*) AS created";
     Ok(count as u64)
 }
 
+pub async fn create_call_relationships_incremental(
+    project: &str,
+    file_paths: &[String],
+) -> Result<u64> {
+    if file_paths.is_empty() {
+        return Ok(0);
+    }
+    let stmt = "\
+MATCH (caller:Method {project: $project})
+WHERE caller.file_path IN $file_paths
+UNWIND caller.calls AS called_name
+WITH caller, called_name
+WHERE size(called_name) >= 3 AND called_name <> caller.name
+MATCH (callee:Method {project: $project, name: called_name})
+WHERE callee.method_id <> caller.method_id
+MERGE (caller)-[:CALLS]->(callee)
+RETURN count(*) AS created";
+    let resp = run_cypher_raw(
+        stmt,
+        json!({"project": project, "file_paths": file_paths}),
+    ).await?;
+    let count = resp["results"][0]["data"][0]["row"][0].as_i64().unwrap_or(0);
+    Ok(count as u64)
+}
+
 pub async fn health() -> Result<()> {
     let body = json!({"statements": [{"statement": "RETURN 1", "parameters": {}}]});
-    let resp = client()
+    let client = crate::client::get_client();
+    let resp = client
         .post(neo4j_url())
         .header("Content-Type", "application/json")
         .header("Authorization", auth_header())
@@ -193,7 +229,7 @@ pub async fn health() -> Result<()> {
         .await?;
     if !resp.status().is_success() {
         let text = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Neo4j 不可用: {}", text));
+        return Err(anyhow!("Neo4j unavailable: {}", text));
     }
     Ok(())
 }

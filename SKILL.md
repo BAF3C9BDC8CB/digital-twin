@@ -13,6 +13,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 | 搜索代码逻辑、方法定位 | [CODE-SEARCH.md](./CODE-SEARCH.md) |
 | AI 操作后必须触发的写入（代码修改/部署/配置变更等） | [TRIGGER-RULES.md](./TRIGGER-RULES.md) |
 | 写入事件/知识/记忆，或结束会话 | [WRITE-EVENTS.md](./WRITE-EVENTS.md) |
+| **长任务全流程：Brainstorming → 依赖感知的计划 → 子 agent 执行 → 三层审查 → 浏览器 MCP 测试 → Mock/集成 → 验收** | [LONG-TASK-WORKFLOW.md](./LONG-TASK-WORKFLOW.md) |
 
 ---
 

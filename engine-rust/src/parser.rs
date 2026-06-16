@@ -1,7 +1,6 @@
 use crate::models::{ClassBlock, EntityKind, MethodBlock};
 use anyhow::Result;
 use std::path::Path;
-use sha1::{Sha1, Digest};
 use regex::Regex;
 
 pub struct Parser {
@@ -29,14 +28,17 @@ impl Parser {
 
     pub fn parse_file(&mut self, file_path: &str, project: &str, root: &str) -> Result<ParsedFile> {
         let ext = Path::new(file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
-        let idx = match ext { "java" => 0, "ts"|"tsx" => 1, "py" => 2, "go" => 3, "rs" => 4, "php" => 5, _ => 6 };
-        if idx >= self.parsers.len() { return Ok(ParsedFile::default()); }
-        let parser = &mut self.parsers[idx];
-
-        let lang_name = match ext {
-            "java" => "java", "ts"|"tsx" => "typescript", "py" => "python",
-            "go" => "go", "rs" => "rust", "php" => "php", _ => "javascript",
+        let (idx, lang_name) = match ext {
+            "java" => (0, "java"),
+            "ts" | "tsx" => (1, "typescript"),
+            "py" => (2, "python"),
+            "go" => (3, "go"),
+            "rs" => (4, "rust"),
+            "php" => (5, "php"),
+            "js" | "jsx" | "mjs" | "cjs" => (6, "javascript"),
+            _ => return Ok(ParsedFile::default()),
         };
+        let parser = &mut self.parsers[idx];
 
         let content = std::fs::read_to_string(file_path).unwrap_or_default();
         let tree = match parser.parse(&content, None) { Some(t) => t, None => return Ok(ParsedFile::default()) };
@@ -44,7 +46,7 @@ impl Parser {
 
         let mut methods = Vec::new();
         let mut classes = Vec::new();
-        walk_node(&tree.root_node(), &content, project, &rel_path, lang_name, &mut methods, &mut classes);
+        walk_node(&tree.root_node(), &content, project, &rel_path, lang_name, &mut methods, &mut classes, "");
         Ok(ParsedFile { methods, classes })
     }
 }
@@ -53,12 +55,12 @@ impl Parser {
 pub struct ParsedFile { pub methods: Vec<MethodBlock>, pub classes: Vec<ClassBlock> }
 
 fn walk_node(node: &tree_sitter::Node, content: &str, project: &str, path: &str, lang: &str,
-    methods: &mut Vec<MethodBlock>, classes: &mut Vec<ClassBlock>) {
+    methods: &mut Vec<MethodBlock>, classes: &mut Vec<ClassBlock>, current_class: &str) {
 
     let is_method = matches!(node.kind(), "method_declaration" | "constructor_declaration"
         | "function_declaration" | "function_item" | "method_definition"
         | "function_definition" | "arrow_function");
-    let is_class = matches!(node.kind(), "class_declaration" | "interface_declaration"
+    let is_class = matches!(node.kind(), "class_declaration" | "class_definition" | "interface_declaration"
         | "enum_declaration" | "enum_item" | "struct_item" | "trait_item"
         | "union_item" | "trait_declaration");
 
@@ -66,18 +68,18 @@ fn walk_node(node: &tree_sitter::Node, content: &str, project: &str, path: &str,
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
             let sig = node.utf8_text(content.as_bytes()).unwrap_or("").to_string();
-            let start = content[..node.start_byte()].chars().filter(|c| *c == '\n').count() + 1;
-            let end = content[..node.end_byte()].chars().filter(|c| *c == '\n').count() + 1;
+            let start = node.start_position().row + 1;
+            let end = node.end_position().row + 1;
             let source = content[node.start_byte()..node.end_byte()].to_string();
             let calls = extract_calls(&source);
-            let mid = make_method_id(project, path, &name);
+            let mid = make_method_id(project, path, current_class, &name);
             let search_text = format!("Project: {}\nMethod: {}\nCalls: {}", project, name,
                 calls.iter().take(10).map(|s|s.as_str()).collect::<Vec<_>>().join(","));
 
             methods.push(MethodBlock {
                 method_id: mid, project: project.into(), file_path: path.into(),
                 language: lang.into(), package_or_module: String::new(),
-                class_name: String::new(), name, signature: sig,
+                class_name: current_class.to_string(), name, signature: sig,
                 params: vec![], return_type: String::new(),
                 source_code: source, search_text, summary: String::new(),
                 start_line: start, end_line: end,
@@ -95,8 +97,8 @@ fn walk_node(node: &tree_sitter::Node, content: &str, project: &str, path: &str,
                 "trait_item" | "trait_declaration" => EntityKind::Trait,
                 _ => EntityKind::Class,
             };
-            let start = content[..node.start_byte()].chars().filter(|c| *c == '\n').count() + 1;
-            let end = content[..node.end_byte()].chars().filter(|c| *c == '\n').count() + 1;
+            let start = node.start_position().row + 1;
+            let end = node.end_position().row + 1;
             let cid = make_class_id(project, path, &name);
             let search_text = format!("Project: {}\nClass: {}", project, name);
             classes.push(ClassBlock {
@@ -110,18 +112,26 @@ fn walk_node(node: &tree_sitter::Node, content: &str, project: &str, path: &str,
     }
 
     // Recurse into ALL children (named + anonymous)
+    let class_for_children = if is_class {
+        node.child_by_field_name("name")
+            .and_then(|n| n.utf8_text(content.as_bytes()).ok())
+            .unwrap_or("")
+    } else {
+        current_class
+    };
+
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_node(&child, content, project, path, lang, methods, classes);
+            walk_node(&child, content, project, path, lang, methods, classes, class_for_children);
         }
     }
 }
 
-fn make_method_id(project: &str, path: &str, sig: &str) -> String {
-    let mut h = Sha1::new(); h.update(format!("{}::{}::{}", project, path, sig).as_bytes()); hex::encode(h.finalize())
+fn make_method_id(project: &str, path: &str, class_name: &str, name: &str) -> String {
+    crate::common::hash::sha1_hex(&format!("{}::{}::{}::{}", project, path, class_name, name))
 }
 fn make_class_id(project: &str, path: &str, name: &str) -> String {
-    let mut h = Sha1::new(); h.update(format!("{}::{}::class::{}", project, path, name).as_bytes()); hex::encode(h.finalize())
+    crate::common::hash::sha1_hex(&format!("{}::{}::class::{}", project, path, name))
 }
 fn extract_calls(source: &str) -> Vec<String> {
     let re = Regex::new(r"\b([a-zA-Z_]\w*)\s*\(").unwrap();

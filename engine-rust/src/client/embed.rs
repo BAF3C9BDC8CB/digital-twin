@@ -13,14 +13,16 @@ pub async fn health() -> Result<(String, usize)> {
     let cfg = config::load();
     #[derive(Deserialize)]
     struct HealthResp { status: String, model: String, dim: usize }
-    let resp: HealthResp = reqwest::get(format!("{}/health", cfg.services.embed_server.url))
-        .await?.json().await?;
+    let client = crate::client::get_client();
+    let resp: HealthResp = client
+        .get(format!("{}/health", cfg.services.embed_server.url))
+        .send().await?.json().await?;
     Ok((resp.model, resp.dim))
 }
 
 pub async fn embed_batch(texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
     let cfg = config::load();
-    let client = reqwest::Client::new();
+    let client = crate::client::get_client();
     let resp: EmbedBatchResp = client
         .post(format!("{}/embed-batch", cfg.services.embed_server.url))
         .json(&EmbedBatchReq { texts })

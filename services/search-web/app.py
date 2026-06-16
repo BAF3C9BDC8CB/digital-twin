@@ -30,7 +30,9 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 
 def list_projects():
     """从 Neo4j 获取所有项目名，用于下拉框"""
-    auth = os.environ.get("NEO4J_AUTH", "bmVvNGo6bmVvNGo=")
+    auth = os.environ.get("NEO4J_AUTH", "")
+    if not auth:
+        return []
     try:
         r = requests.post(
             NEO4J_URL,
@@ -114,7 +116,9 @@ def search_code_all(vector: list, limit: int, project: str = ""):
 
 
 def neo4j_query(cypher: str, params: dict = None):
-    auth = os.environ.get("NEO4J_AUTH", "bmVvNGo6bmVvNGo=")  # base64(neo4j:neo4j)
+    auth = os.environ.get("NEO4J_AUTH", "")
+    if not auth:
+        return []
     r = requests.post(
         NEO4J_URL,
         json={"statements": [{"statement": cypher, "parameters": params or {}}]},
@@ -152,13 +156,13 @@ def expand_method(method_id: str):
 
 def search_all(vector: list, limit: int, domain: str = "code"):
     """跨项目搜索指定域"""
-    collections = {
-        "code": "code_method",
-        "document": "document",
-        "environment": "environment",
-    }
-    col_name = collections.get(domain, "code_method")
-    return search_qdrant(col_name, vector, limit)
+    if domain == "code":
+        return search_code_all(vector, limit)
+    elif domain == "document":
+        return search_qdrant("document", vector, limit)
+    elif domain == "environment":
+        return search_qdrant("environment", vector, limit)
+    return []
 
 
 LANG_MAP = {

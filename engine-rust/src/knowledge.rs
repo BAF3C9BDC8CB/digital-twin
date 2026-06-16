@@ -3,7 +3,7 @@ use chrono::Utc;
 use sha2::{Digest, Sha256};
 use serde_json::json;
 
-use crate::neo4j;
+use crate::client::neo4j;
 
 pub async fn write_knowledge(
     knowledge_type: &str,

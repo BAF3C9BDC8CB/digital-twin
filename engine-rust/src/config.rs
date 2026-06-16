@@ -22,6 +22,26 @@ pub struct ServicesConfig {
     pub neo4j: Neo4jConfig,
     pub qdrant: QdrantConfig,
     pub embed_server: EmbedConfig,
+    #[serde(default)]
+    pub k8s: Option<K8sConfig>,
+    #[serde(default)]
+    pub nacos: Option<NacosServerConfig>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct K8sConfig {
+    pub server: String,
+    pub username: String,
+    pub password: String,
+    pub cluster_id: String,
+    #[serde(default)]
+    pub skip_tls_verify: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NacosServerConfig {
+    pub test: String,
+    pub prod: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -72,7 +92,7 @@ pub fn load() -> &'static DtConfig {
                 neo4j: Neo4jConfig {
                     url: "http://localhost:7474".into(),
                     user: "neo4j".into(),
-                    password: "neo4j".into(),
+                    password: String::new(),
                 },
                 qdrant: QdrantConfig { url: "http://localhost:6333".into() },
                 embed_server: EmbedConfig {
@@ -80,6 +100,8 @@ pub fn load() -> &'static DtConfig {
                     dim: 768,
                     model: "BAAI/bge-base-zh-v1.5".into(),
                 },
+                k8s: None,
+                nacos: None,
             },
             snapshot_dir: "/var/lib/digital-twin/snapshots".into(),
         }

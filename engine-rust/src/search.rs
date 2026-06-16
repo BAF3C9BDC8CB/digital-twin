@@ -1,7 +1,8 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::{config, embed, neo4j, qdrant};
+use crate::config;
+use crate::client::{embed, qdrant};
 
 #[derive(Debug, Serialize)]
 pub struct SearchResultItem {
@@ -107,6 +108,9 @@ fn print_results(results: Vec<SearchResultItem>, json_output: bool) {
         println!("    语言: {} | 项目: {}", r.language, r.project);
         if !r.signature.is_empty() {
             println!("    {}", &r.signature.chars().take(200).collect::<String>());
+        }
+        if !r.calls.is_empty() {
+            println!("    calls: {}", r.calls.join(", "));
         }
     }
     println!();

@@ -1,5 +1,6 @@
 use anyhow::Result;
-use crate::{neo4j, embed, config};
+use crate::config;
+use crate::client::{neo4j, embed};
 
 pub async fn run_health() -> Result<()> {
     println!("=== Digital Twin Health Check ===\n");

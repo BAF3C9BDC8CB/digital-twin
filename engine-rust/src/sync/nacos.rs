@@ -4,10 +4,8 @@ use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::neo4j;
-
-const NACOS_TEST: &str = "https://nacos.newoffen.net/nacos";
-const NACOS_PROD: &str = "https://nacos.newoffen.com/nacos";
+use crate::config;
+use crate::client::neo4j;
 
 #[derive(Deserialize)]
 struct NamespaceResp {
@@ -79,12 +77,16 @@ struct ConfigDetailResp {
 }
 
 pub async fn run_sync(env: &str) -> Result<()> {
+    let cfg = config::load();
+    let nacos_cfg = cfg.services.nacos.as_ref()
+        .ok_or_else(|| anyhow!("config.yaml 缺少 services.nacos 配置"))?;
+
     match env {
-        "test" => sync_single("test", NACOS_TEST).await?,
-        "prod" => sync_single("prod", NACOS_PROD).await?,
+        "test" => sync_single("test", &nacos_cfg.test).await?,
+        "prod" => sync_single("prod", &nacos_cfg.prod).await?,
         "all" => {
-            sync_single("test", NACOS_TEST).await?;
-            sync_single("prod", NACOS_PROD).await?;
+            sync_single("test", &nacos_cfg.test).await?;
+            sync_single("prod", &nacos_cfg.prod).await?;
         }
         _ => return Err(anyhow!("环境必须是 test / prod / all")),
     }
@@ -391,6 +393,39 @@ ON CREATE SET
         "details": format!("Nacos {} sync: {} configs across {} namespaces", env_name, total_configs, active_ns),
         "ts": Utc::now().to_rfc3339(),
     })).await?;
+
+    // ── Link to K8s resources ──────────────────────────────
+    let k8s_ns = match env_name {
+        "prod" => Some("newoffen"),
+        "test" => Some("newoffen-test"),
+        _ => None,
+    };
+    if let Some(ns_name_k8s) = k8s_ns {
+        // Link Environment → Namespace
+        neo4j::run_cypher_raw("\
+MATCH (env:Environment {name: $env})
+MATCH (ns:Namespace {name: $k8s_ns})
+MERGE (env)-[:DEPLOYS_TO]->(ns)", json!({
+            "env": env_name,
+            "k8s_ns": ns_name_k8s,
+        })).await.ok();
+
+        // Link NacosService → K8Sservice (by name, exact or prefix+suffix)
+        neo4j::run_cypher_raw("\
+MATCH (env:Environment {name: $env_name})-[:HAS_NAMESPACE]->(ns:NacosNamespace)
+MATCH (k8s_ns_node:Namespace {name: $k8s_ns})
+MATCH (ns)-[:REGISTERS]->(s:NacosService)
+MATCH (k8s_ns_node)-[:HAS_SERVICE]->(svc:K8sService)
+WHERE svc.name = s.name
+   OR (svc.name STARTS WITH s.name
+       AND (svc.name ENDS WITH '-stable' OR svc.name ENDS WITH '-svc'))
+MERGE (s)-[:EXPOSED_BY]->(svc)", json!({
+            "env_name": env_name,
+            "k8s_ns": ns_name_k8s,
+        })).await.ok();
+
+        println!("  [Link] {} → Namespace {}, NacosService → K8sService", env_name, ns_name_k8s);
+    }
 
     println!("[完成] {} 环境同步结束: {} 命名空间, {} 配置", env_name, active_ns, total_configs);
     Ok(())

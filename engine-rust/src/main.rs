@@ -1,19 +1,16 @@
 mod config;
 mod models;
 mod parser;
-mod neo4j;
-mod qdrant;
-mod embed;
 mod scanner;
 mod event;
 mod knowledge;
-mod remove;
-mod build;
 mod search;
 mod health;
-mod update;
 mod validate;
-mod nacos_sync;
+mod common;
+mod client;
+mod index;
+mod sync;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -113,8 +110,13 @@ enum Commands {
     },
     /// Sync Nacos configurations into the knowledge graph
     NacosSync {
-        #[arg(long)]
+        #[arg(long, default_value = "all")]
         env: String,
+    },
+    /// Sync Kubernetes resources into the knowledge graph
+    K8sSync {
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Parse a single file to JSON (no DB writes)
     Parse {
@@ -133,16 +135,16 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Build { path, name } => {
-            build::run_build(&path, &name).await?;
+            index::build::run_build(&path, &name).await?;
         }
         Commands::Update { path, name, file } => {
-            update::run_update(&path, &name, &file).await?;
+            index::update::run_update(&path, &name, &file).await?;
         }
         Commands::Index { path, name } => {
-            build::run_index(&path, &name).await?;
+            index::full::run_index(&path, &name).await?;
         }
         Commands::Remove { project, file, all } => {
-            remove::run_remove(&project, file.as_deref(), all).await?;
+            index::remove::run_remove(&project, file.as_deref(), all).await?;
         }
         Commands::Event { r#type, entity_id, entity_type, project, details } => {
             event::write_event(&r#type, &entity_id, entity_type.as_deref(), project.as_deref(), details.as_deref()).await?;
@@ -154,15 +156,18 @@ async fn main() -> Result<()> {
             search::run_search(&query, project.as_deref(), limit, all, json).await?;
         }
         Commands::NacosSync { env } => {
-            nacos_sync::run_sync(&env).await?;
+            sync::nacos::run_sync(&env).await?;
+        }
+        Commands::K8sSync { limit } => {
+            sync::k8s::run_sync(limit).await?;
         }
         Commands::Health => {
             health::run_health().await?;
         }
         Commands::BuildCallGraph { name } => {
-            neo4j::ensure_schema().await?;
-            let count = neo4j::create_call_relationships(&name).await?;
-            println!("[完成] 为项目 {} 创建了 {} 条 CALLS 关系", name, count);
+            client::neo4j::ensure_schema().await?;
+            let count = client::neo4j::create_call_relationships(&name).await?;
+            println!("[done] created {} CALLS relationships for project {}", count, name);
         }
         Commands::Validate { path, name } => {
             validate::run_validate(&path, &name).await?;

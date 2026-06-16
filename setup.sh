@@ -59,45 +59,36 @@ log "  验证: curl http://localhost:8001/health"
 
 # ---- 5. 安装 OpenCode Skill ----
 log "安装 OpenCode Skill..."
-SKILL_DIR="$HOME/.opencode/skills/digital-twin"
+SKILL_DIR="$HOME/.config/opencode/skills"
 mkdir -p "$SKILL_DIR"
-if [ -f "SKILL.md" ]; then
-  cp "SKILL.md" "$SKILL_DIR/SKILL.md"
-  log "Skill 已安装到 $SKILL_DIR"
+if [ -L "$SKILL_DIR/digital-twin" ]; then
+  log "Skill symlink 已存在"
+elif [ -d "$SKILL_DIR/digital-twin" ]; then
+  warn "$SKILL_DIR/digital-twin 是目录而非 symlink，建议手动改为: ln -sf $SCRIPT_DIR $SKILL_DIR/digital-twin"
+else
+  ln -sf "$SCRIPT_DIR" "$SKILL_DIR/digital-twin"
+  log "Skill symlink 已创建: $SKILL_DIR/digital-twin -> $SCRIPT_DIR"
 fi
 
 # ---- 6. AGENTS.md 软链 ----
-if [ ! -L "$HOME/AGENTS.md" ]; then
-  if [ -f "$HOME/AGENTS.md" ]; then
-    cp "$HOME/AGENTS.md" "$HOME/AGENTS.md.bak"
-  fi
-  ln -sf "$SCRIPT_DIR/AGENTS.md" "$HOME/AGENTS.md"
-  log "AGENTS.md 已软链到 $HOME/AGENTS.md"
+AGENTS_TARGET="$HOME/.config/opencode/AGENTS.md"
+mkdir -p "$(dirname "$AGENTS_TARGET")"
+if [ -L "$AGENTS_TARGET" ]; then
+  log "AGENTS.md symlink 已存在"
+else
+  [ -f "$AGENTS_TARGET" ] && cp "$AGENTS_TARGET" "$AGENTS_TARGET.bak"
+  ln -sf "$SCRIPT_DIR/AGENTS.md" "$AGENTS_TARGET"
+  log "AGENTS.md 已软链到 $AGENTS_TARGET"
 fi
 
 # ---- 7. 初始化知识图谱 ----
 log "初始化 Neo4j Schema..."
-python3 -c "
-import json, urllib.request
-URL = 'http://localhost:7474/db/neo4j/tx/commit'
-AUTH = 'Basic bmVvNGo6bmVvNGo='
-statements = [
-    'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Method) REQUIRE n.method_id IS UNIQUE',
-    'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Class) REQUIRE n.class_id IS UNIQUE',
-    'CREATE CONSTRAINT IF NOT EXISTS FOR (n:Event) REQUIRE n.event_id IS UNIQUE',
-    'CREATE CONSTRAINT IF NOT EXISTS FOR (k:Knowledge) REQUIRE k.id IS UNIQUE',
-    'CREATE INDEX IF NOT EXISTS FOR (n:Method) ON (n.project)',
-    'CREATE INDEX IF NOT EXISTS FOR (n:Method) ON (n.name)',
-    'CREATE INDEX IF NOT EXISTS FOR (n:Event) ON (n.type)',
-    'CREATE INDEX IF NOT EXISTS FOR (n:Event) ON (n.timestamp)',
-]
-for stmt in statements:
-    data = json.dumps({'statements': [{'statement': stmt}]}).encode()
-    req = urllib.request.Request(URL, data=data,
-        headers={'Content-Type': 'application/json', 'Authorization': AUTH})
-    urllib.request.urlopen(req, timeout=30)
-print('Schema ready')
-" 2>/dev/null || warn "Neo4j 不可达，跳过 Schema 初始化"
+if command -v dt >/dev/null 2>&1; then
+  dt event --type SchemaInit --entity-id setup --details "schema bootstrap" 2>/dev/null
+  log "Schema 将在首次 dt build/index 时通过 ensure_schema() 自动初始化"
+else
+  warn "dt CLI 未安装，跳过 Schema 初始化（首次 dt build 会自动处理）"
+fi
 
 echo ""
 echo "============================================"
