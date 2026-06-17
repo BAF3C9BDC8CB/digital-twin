@@ -10,6 +10,10 @@ This project uses a Neo4j knowledge graph for persistent memory.
 
 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须先查 KG。
 
+## 代码搜索：语义优先
+
+需要定位代码、找函数、找文件时，**禁止直接 grep / glob / find**，必须先用 `dt search` 语义搜索。详见 digital-twin skill 的 [CODE-SEARCH.md](./CODE-SEARCH.md)。`dt search` 失败时才回退 grep。
+
 ## 代码提交流程规范
 
 ### 一、核心原则
