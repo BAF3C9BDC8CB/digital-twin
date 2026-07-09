@@ -244,51 +244,83 @@
   version       String   当前部署版本                   "v2.3.1"
   replica_count Integer  副本数                        2
 
-  // ─── Runtime 缓存字段（不入 Neo4j，但可通过 Context Builder 注入） ───
-  pod_name        String (缓存)   主 Pod 名称            "aflm-pay-7d8f9b6c-abcde"
-  pod_phase       String (缓存)   Pod 阶段               "Running"
+  // ─── Runtime 缓存字段（不入 Neo4j，Context Builder 实时注入） ───
   cpu_usage       String (缓存)   CPU 使用量             "250m"
   memory_usage    String (缓存)   内存使用量             "512Mi"
-  restarts        Integer(缓存)   重启次数              0
   uptime          String (缓存)   运行时长               "7d 12h"
   heap_used       String (缓存)   JVM Heap              "256MB / 512MB"
   thread_count    Integer(缓存)   活跃线程数            42
 
   // 注意：缓存字段不在 Neo4j 持久化，由 Context Builder 实时查询 K8s/Actuator 后注入
-  // 使用 Neo4j 的 temporal properties 或外部缓存 (Redis/内存) 存储快照
+  // pod_name/pod_phase/restarts 属于 K8sPod Reality 实体，不在此处缓存
 
 关系:
   (:Service)-[:HAS_INSTANCE]->(:ServiceInstance)
-  (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)         // 对应 K8s Pod
-  (:ServiceInstance)-[:DEPLOYED_ON]->(:Server)     // 部署在哪个服务器
+  (:ServiceInstance)-[:DEPLOYED_AS]->(:Deployment)     // 对应的 K8s Deployment
   (:ServiceInstance)-[:CONFIGURED_BY]->(:NacosConfig)  // 使用的配置（含环境差异）
 ```
 
 **设计说明：** Service 是跨环境的稳定标识（service_id 不含 env），ServiceInstance 承载每个环境的具体部署信息。好处：
-- 同一个服务名在不同环境有不同的 host/port/pod，天然支持
-- Runtime 实时指标（CPU/Mem/Pod状态）作为缓存字段挂到 ServiceInstance 上，不被 Neo4j 持久化污染
+- 同一个服务名在不同环境有不同的 host/port/deployment，天然支持
+- Runtime 实时指标（CPU/Mem/Uptime）作为缓存字段挂到 ServiceInstance 上，不被 Neo4j 持久化
 - Context Builder 组装上下文时，从 K8s API 实时拉取 Runtime 数据，注入到 ServiceInstance 的缓存字段中
 
-### 1.8 K8sPod（K8s Pod）
+#### Deployment（K8s Deployment — 稳定部署资源）
+
+```
+标签: Deployment
+属性:
+  deploy_name   String   K8s Deployment 名称              "aflm-pay"
+  namespace     String   K8s 命名空间                      "newoffen"
+  image         String   容器镜像                          "aflm-pay:v2.3.1"
+  replicas      Integer  期望副本数                        2
+  available     Integer  可用副本数                        2
+  strategy      String   更新策略                          "RollingUpdate"
+  labels        Map      标签
+  created_at    DateTime 创建时间
+关系:
+  (:Deployment)-[:HAS_POD]->(:K8sPod)                   // 管理的 Pod
+  (:ServiceInstance)-[:DEPLOYED_AS]->(:Deployment)      // 对应的服务实例
+```
+
+### 1.8 K8sPod（K8s Pod — 有生命周期的 Reality 实体）
+
+> ⚠️ **K8sPod 的归属**：pod_name 和 pod_ip 每次部署都会变——Pod 不是"稳定"实体，而是 Deployment 的一次短暂化身。
+> 但它仍属于 **Reality World**，因为它是一个**客观存在的事实**（"2026-07-09 14:00 时刻，名为 X 的 Pod 以 IP Y 运行在节点 Z 上"）。
+> 关键是**生命周期管理**：终止的 Pod 不删除，而是标记 `phase = "Terminated"`，作为历史记录保留。
 
 ```
 标签: K8sPod
 属性:
+  // ─── Reality 字段（persisted） ───
   pod_name      String   Pod 名称                      "aflm-pay-7d8f9b6c-abcde"
   namespace     String   K8s 命名空间                   "newoffen"
-  phase         String   "Running" | "Pending" | "Failed"
-  node          String   所在节点
-  ip            String   Pod IP
-  restarts      Integer  重启次数
+  pod_ip        String   Pod IP                       "10.244.1.23"
+  node_name     String   所在节点名                     "node-01"
   image         String   容器镜像                      "aflm-pay:v2.3.1"
   containers    List<Container>  容器列表 (JSON)
   cpu_request   String   请求 CPU                      "500m"
   memory_request String  请求内存                      "1Gi"
   created_at    DateTime Pod 创建时间
+
+  // ─── 快照字段（k8s-sync 每小时更新，保留最后一次已知状态） ───
+  phase         String   最后一次 k8s-sync 时的阶段     "Running" | "Terminated"
+  restarts      Integer  最后一次 k8s-sync 时的重启次数 3
+
+  // 注意：phase 和 restarts 可能随时变化，k8s-sync 每小时快照会丢失中间态
+  // 如需实时 phase/restarts → 查 Runtime 缓存（Context Builder 实时拉取）
+  // 如需历史 phase 变化 → 查 Memory World 事件记录（Phase 2+）
+
 关系:
-  (:K8sPod)-[:BELONGS_TO]->(:Deployment | :StatefulSet)  // K8s 层级
-  (:K8sPod)-[:SCHEDULED_ON]->(:Server)                   // 运行节点
-  (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)               // 对应的服务实例
+  (:Deployment)-[:HAS_POD]->(:K8sPod)                   // 所属 Deployment
+  (:K8sPod)-[:SCHEDULED_ON]->(:Server)                  // 运行节点
+
+生命周期:
+  1. 新 Pod 创建 → k8s-sync MERGE (:K8sPod {phase: "Running"})
+  2. Pod 运行中 → phase 可能变化，但仅在下一次 k8s-sync 时更新快照
+  3. 旧 Pod 终止 → k8s-sync 检测到 Pod 不存在 → SET phase = "Terminated"
+     (不删除节点！保留为历史记录，可追溯"当时哪个 Pod 以哪个 IP 运行")
+  4. 新 Pod 上线 → 创建新 (:K8sPod) 节点，旧节点保留
 ```
 
 ---
@@ -633,7 +665,27 @@ Payload:
 ## 五、Runtime World（实时世界）
 
 **存储：不入 Neo4j 持久化，实时查询后注入到 ServiceInstance 缓存字段**  
-**特征：瞬时状态，随查随取，Context Builder 组装时动态拉取**
+**特征：瞬时状态，每秒变化，随查随取**
+
+### Reality vs Runtime 分界
+
+```
+Pod 的两面：
+
+Reality (Neo4j)                    Runtime (缓存)
+─────────────────────────          ────────────────────
+pod_name: "aflm-pay-7d8f..."       pod_phase: "Running"    ← 随时可能变
+pod_ip: "10.244.1.23"              cpu_usage: "250m"        ← 每秒变化
+node_name: "node-01"               memory_usage: "512Mi"    ← 每秒变化
+image: "aflm-pay:v2.3.1"           restarts: 3 (实时)      ← 缓慢增长
+cpu_request: "500m"                uptime: "7d 12h"        ← 持续增长
+created_at: 2026-07-01             heap_used: "256MB/512MB"
+                                    thread_count: 42
+k8s-sync 每小时更新                 Context Builder 每次请求实时拉取
+用于: 部署溯源、影响分析              用于: 故障排查、容量感知
+```
+
+**判断标准**：这个字段下次 k8s-sync（一小时）之前会不会变？会变 → Runtime。不会变 → Reality。
 
 ### 5.1 Service Instance Runtime（服务实例运行时快照）
 
@@ -844,11 +896,11 @@ BASED_ON          Decision          Knowledge         决策基于哪些知识
 BELONGS_TO        *                 Thread/Project    属于哪个主线/项目
 RELATED_TO        *                 *                 通用关联
 HAS_INSTANCE      Service           ServiceInstance   服务的环境实例
-RUNS_AS           ServiceInstance   K8sPod            实例对应的 K8s Pod
-DEPLOYED_ON       ServiceInstance   Server            实例部署在哪个服务器
-CONFIGURED_BY     ServiceInstance   NacosConfig       实例使用的配置
+DEPLOYED_AS       ServiceInstance   Deployment        实例对应的 K8s Deployment
+HAS_POD           Deployment        K8sPod            Deployment 管理的 Pod
 SCHEDULED_ON      K8sPod            Server            Pod 调度到的节点
-BELONGS_TO        K8sPod            Deployment        Pod 所属 Deployment
+CONFIGURED_BY     ServiceInstance   NacosConfig       实例使用的配置（含环境差异）
+DEPLOYS           Deployment        ServiceInstance   部署事件→服务实例
 ```
 
 ---

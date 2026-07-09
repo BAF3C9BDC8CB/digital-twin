@@ -95,44 +95,110 @@
 
 | 世界 | 存储 | 核心实体 | 特征 |
 |------|------|----------|------|
-| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **K8sPod** | 客观存在，可被自动发现。Service 是稳定标识，ServiceInstance 承载每个环境的部署信息 |
+| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **Deployment**, **K8sPod** | 客观存在，可被自动发现。实体有稳定性层级：Service(年)→ServiceInstance(周)→K8sPod(时/天) |
 | **Knowledge** | Neo4j (Bolt) | Knowledge, Playbook, Experience, Concept, Domain | 人类整理或 AI 自动沉淀。@knowledge 注释→自动提取；dt_learn→任务完成后沉淀 |
 | **Memory** | Neo4j (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。完整审计日志 |
-| **Runtime** | 缓存（不入 Neo4j） | pod_phase, cpu_usage, memory_usage, restarts, uptime, heap_used | 实时查询 K8s/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 请求重新拉取 |
+| **Runtime** | 缓存（不入 Neo4j） | cpu_usage, memory_usage, uptime, heap_used, thread_count | 实时查询 K8s Metrics/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 重新拉取 |
 | **Semantic** | Qdrant (gRPC) | Code/Doc/Config/API/Exp/Log 向量 | BGE-M3 1024 维，通过 entity_id 反查 Neo4j |
 | **Reasoning** | Neo4j（会话级） | Observation, Analysis, Decision | AI 推理痕迹。验证后升级为 Knowledge；未验证的会话结束后降级 |
 
-### Reality World 深入：多环境模型
+### Reality World 深入：多环境模型与稳定性层级
 
-Reality World 的核心设计决策是 **Service ↔ ServiceInstance 拆分**：
+Reality World 中的实体有天然的**稳定性层级**——不是所有实体都同等"稳定"：
 
 ```
-(:Service)                              ← 跨环境稳定标识
-  service_id: "dt://service/aflm-pay"   ← 不含 env
+稳定性从高到低：
+──────────────────────────────────────────────────────────────▶
+
+
+(:Service)           (:Deployment)         (:K8sPod)           Pod Metrics
+  service_id            name                  pod_name            cpu_usage
+  永不变化              部署策略              每次部署变           每秒变化
+                      image, replicas       pod_ip               memory_usage
+                                            node                 uptime
+  Reality ✅          Reality ✅            node_name              Runtime ⚠️
+                                        created_at             (缓存字段，
+                                        phase (快照)            不入Neo4j)
+                                        restarts (快照)
+
+                                        Reality ⚠️
+                                        (有生命周期，
+                                         k8s-sync 标记
+                                         终止的Pod)
+```
+
+**归属判断标准**：这个字段的写入频率是否合理？
+
+| 字段 | 变化频率 | k8s-sync(每小时)写入 | 归属 |
+|------|----------|---------------------|------|
+| Deployment.name, image, replicas | 部署时 | ✅ 合理 | Reality |
+| **pod_name** | **每次部署** | ✅ 合理（部署频率 < 每小时） | **Reality** |
+| **pod_ip** | **每次部署** | ✅ 合理 | **Reality** |
+| **node** | 每次调度 | ✅ 合理 | **Reality** |
+| **phase** | 随时可能变 | ❌ 每小时快照丢失中间态 | **Runtime + Reality 快照** |
+| **restarts** | 缓慢增长 | ⚠️ 可存快照，但实时值更重要 | **Runtime（实时）+ Reality（快照）** |
+| cpu_usage, memory_usage | 每秒 | ❌ 写 Neo4j 是浪费 | **Runtime** |
+| uptime | 持续增长 | ❌ 无持久化价值 | **Runtime** |
+
+核心设计决策是 **Service ↔ ServiceInstance ↔ Deployment ↔ K8sPod** 四级层级：
+
+```
+(:Service)                              ← 跨环境稳定标识 (service_id 不含 env)
+  service_id: "dt://service/aflm-pay"
   name: "aflm-pay"
   framework: "Spring Boot 2.7"
     │
     ├──[:HAS_INSTANCE]──▶ (:ServiceInstance {env: "prod"})
     │                        host: "10.0.1.50", port: 8080
     │                        status: "running", version: "v2.3.1"
-    │                        cpu_usage: "250m" (缓存)  ← Runtime 注入
+    │                        // Runtime 缓存字段 ↓
+    │                        cpu_usage: "250m", memory_usage: "512Mi"
+    │                        pod_phase: "Running", restarts: 3
     │                          │
-    │                          └──[:RUNS_AS]──▶ (:K8sPod)
-    │                                phase: "Running", node: "node-01"
+    │                          ├──[:DEPLOYED_AS]──▶ (:Deployment)
+    │                          │     name: "aflm-pay"
+    │                          │     image: "aflm-pay:v2.3.1"
+    │                          │     replicas: 2
+    │                          │       │
+    │                          │       └──[:HAS_POD]──▶ (:K8sPod)  ← 当前运行的 Pod
+    │                          │       │     pod_name: "aflm-pay-7d8f9b6c-abcde"
+    │                          │       │     pod_ip: "10.244.1.23"
+    │                          │       │     node_name: "node-01"
+    │                          │       │     phase: "Running" (快照)
+    │                          │       │
+    │                          │       └──[:HAS_POD]──▶ (:K8sPod)  ← 旧的已终止 Pod
+    │                          │             pod_name: "aflm-pay-5c8d7f-xyz12"
+    │                          │             pod_ip: "10.244.1.67"
+    │                          │             phase: "Terminated"    ← k8s-sync 标记
+    │                          │
+    │                          └──[:CONFIGURED_BY]──▶ (:NacosConfig)
     │
     └──[:HAS_INSTANCE]──▶ (:ServiceInstance {env: "test"})
                              host: "10.0.2.50", port: 8080
-                             status: "running", version: "v2.4.0-rc1"
+                             version: "v2.4.0-rc1"
                              cpu_usage: "100m" (缓存)
                                │
-                               └──[:RUNS_AS]──▶ (:K8sPod)
+                               └──[:DEPLOYED_AS]──▶ (:Deployment)
+```
+
+**K8sPod 的生命周期：**
+
+```
+1. 新 Pod 创建 → k8s-sync 写入 (:K8sPod {phase: "Running"})
+2. Pod 运行中 → phase 和 restarts 可能变化，但放在 Runtime 缓存中（不入 Neo4j）
+3. 旧 Pod 终止 → k8s-sync 检测到 Pod 不存在 → SET phase = "Terminated"
+   （不删除节点，保留 pod_name/ip/node 作为历史事实）
+4. 下一次 sync → 新 Pod 节点创建，旧 Pod 节点保留为历史记录
 ```
 
 **设计原则：**
 - Service = 稳定标识，service_id 不含环境
 - ServiceInstance = 每个环境的部署快照，含 host/port/version
-- Runtime 指标（CPU/Mem/Pod状态）作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j 持久化**
+- Deployment = K8s 稳定资源，含 image/replicas
+- K8sPod = Reality 中的**有生命周期实体**，终止后保留为历史记录
+- Runtime 指标（CPU/Mem/Uptime）作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j**
 - Context Builder 组装时实时查询 K8s API → 注入 ServiceInstance 缓存字段
+- 想追溯"昨天 Pod 为什么 CrashLoop"→ 查 Memory World 的事件记录（Phase 2+）
 
 ### Knowledge World 深入：来源与沉淀
 
