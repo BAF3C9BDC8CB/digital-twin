@@ -6,13 +6,13 @@
 
 **Architecture:** 5 个 Phase，严格按依赖关系排序——Schema 先行，数据管线跟进，上层组件逐步叠加，最后集成验证。每个 Phase 产出可独立验证的能力增量。
 
-**Tech Stack:** Rust (dt CLI), Python (MCP Server / dt-embed), Neo4j (Cypher), Qdrant (REST), BGE-M3 (1024-dim)
+**Tech Stack:** Rust (dt CLI daemon + gRPC), Python (MCP Server / dt-embed), Neo4j (Bolt), Qdrant (gRPC), BGE-M3 (1024-dim)
 
 ---
 
 ## TL;DR
 
-> **Summary**: 5 个 Phase，总预估 XL（2-3 月）。Phase 1 落地新 Schema + 重写数据管道（最硬核），Phase 4 实现 Context Builder（最核心价值），Phase 5 集成验证上线。
+> **Summary**: 5 个 Phase，总预估 3-4 月。Phase 1 搭建全部基础设施（workspace + gRPC + 插件系统 + 日志 + Schema + 管线），Phase 4 实现 Context Builder（最核心价值），Phase 5 集成验证上线。
 > **Estimated Effort**: XL
 > **Branch**: `feat/v2-architecture`
 
@@ -24,12 +24,15 @@
 基于 V2 六世界模型设计文档，制定分阶段实施路线图。关键前提：完全不兼容 V1，所有数据清空重来。
 
 ### Key Findings
-- 当前已有 22 个底层 MCP 工具（搜索/服务管理/K8s/Jenkins/管道/写入/运维），它们是 Phase 4 高层 MCP 的底层依赖
-- dt CLI (Rust) 已具备 build/search/sync/event/memorize 能力，但都基于 V1 schema
-- **通信架构需重构**：当前 5 条链路用了 4 种协议（HTTP REST/REST/自定义 Unix Socket/subprocess），V2 统一为 gRPC + Bolt（详见 Phase 1.0）
-- Neo4j 当前 schema 是 V1 的单层扁平结构（Method/Class + Infrastructure/Server/Database + Event），V2 要变成六世界 + Digital Thread
-- 设计文档完整覆盖：六世界模型 (185 lines) + 数据格式 (786 lines) + 全链路 (293 lines) + MCP API (1611 lines) + 管道实现 (921 lines)
-- 底层基础设施（Neo4j/Qdrant/dt-embed/tree-sitter/Nacos同步/K8s同步）已就绪，需切换驱动方式
+- V1 代码库（engine-rust/ 34 文件）是面条代码：**0 个 trait、4 个 God File、70% 重复、无分层**——V2 需要完全重写，不兼容 V1
+- **架构决策已就绪**（详见 docs/）：
+  - [项目结构设计](../docs/architecture-v2-project-structure.md)：11 crate workspace，4 层架构，6 种设计模式
+  - gRPC + Bolt 统一通信（消除 HTTP REST + 自定义帧 + subprocess）
+  - 插件系统集成 kub/svc/jcli 三个工具
+  - 统一日志系统（dt-log crate + gRPC LogService）
+- **三步基础设施**先行（Phase 1.0a/1.0/1.0b）：workspace 搭建 → gRPC + 插件 → 日志系统
+- 设计文档完整覆盖：六世界模型 + 数据格式 + 全链路 + MCP API + 管道实现 + 项目结构
+- 底层基础设施（Neo4j/Qdrant/dt-embed/tree-sitter/Nacos/K8s）已就绪，需切换驱动和通信协议
 
 ---
 
@@ -39,24 +42,27 @@
 在 `feat/v2-architecture` 分支上，分 5 个 Phase 完成从 Schema 到 Context Builder 到高层 MCP 的全链路实现。
 
 ### Deliverables
-- [ ] Phase 1: 新 Neo4j Schema + Reality World 数据管线重写
+- [ ] Phase 1: Workspace + gRPC/插件/日志基础设施 + 新 Neo4j Schema + Reality World 数据管线
 - [ ] Phase 2: Memory + Knowledge World 写入管线
 - [ ] Phase 3: Semantic + Reasoning World
 - [ ] Phase 4: Context Builder + 8 个高层 MCP 工具
 - [ ] Phase 5: 端到端集成测试 + 性能优化 + 文档
 
 ### Definition of Done
-- [ ] `dt health` 全部服务绿灯
-- [ ] `dt build --path /data/myProject/aflm-pay --name aflm-pay` 成功写入新 Schema 的 Method/Class/Module 节点
-- [ ] `dt nacos-sync --env test` 成功写入新 Schema 的 NacosConfig/ConfigKey/Service
-- [ ] `dt_event` 写入的 Memory Event 能沿 Day→Session→Event 时间线查询
-- [ ] `dt_context --task "支付平台从通联切换到银盛"` 返回六世界聚合上下文
+- [ ] `cargo check --workspace && cargo test --workspace && cargo clippy --workspace` 全部通过
+- [ ] `dt daemon --status` 显示所有插件和后端健康（Neo4j Bolt / Qdrant gRPC / dt-embed gRPC / LogService）
+- [ ] `dt build --path /data/myProject/aflm-pay` 成功写入新 Schema 的 Method/Class/Module 节点，日志通过统一管道输出
+- [ ] `dt nacos-sync --env test` 成功写入 NacosConfig/ConfigKey/Service
+- [ ] Memory Event 写入后能沿 Day→Session→Event 时间线查询
+- [ ] `dt_context --task "支付平台从通联切换到银盛"` 返回六世界聚合上下文（< 3 秒）
 - [ ] `dt_verify` 能在修改后检测 config/db/api 不一致
-- [ ] 全部 8 个高层 MCP 工具通过 MCP Server 可调用
+- [ ] 全部 8 个高层 MCP 工具通过 gRPC 可调用
+- [ ] kub/svc/jcli 三个独立 CLI 可正常工作（thin wrapper → dt daemon gRPC）
 
 ### Guardrails (Must NOT)
-- **不兼容 V1**：不考虑数据迁移，不保留旧 schema
-- **不修改现有底层工具的参数签名**：22 个底层 MCP 的接口保持稳定
+- **不兼容 V1**：不考虑数据迁移，不保留旧 schema，旧 engine-rust/ 代码仅作参考不复用
+- **不跳过基础设施**：必须先完成 workspace + gRPC + 日志 + 插件框架，再编写业务代码
+- **不违反分层架构**：上层不可直接依赖下层具体实现，全部通过 trait 注入
 - **不影响生产环境**：所有操作在 feat/v2-architecture 分支，未完成前不合入 main
 
 ---
@@ -71,7 +77,7 @@
 
 **依赖**：无（起点）
 
-**预估工作量**：XL（最硬核的 Phase）
+**预估工作量**：XXL（包含 workspace 搭建 + gRPC 通信 + 插件系统 + 日志系统 + Schema + 管线重写，是整个 V2 最硬核的 Phase）
 
 ---
 
@@ -709,7 +715,7 @@
 
 - [ ] 5.1 端到端集成测试
   **What**: 编写完整的集成测试场景，覆盖从代码变更到 Context Builder 返回六世界聚合上下文的全程。
-  **Files**: 创建 `engine-rust/tests/integration_v2.rs`
+  **Files**: 创建 `tests/integration/` 目录
   **Acceptance**:
   - 测试场景 1：代码修改 → `dt update` → Memory Event 写入 → `dt_context` 返回包含该修改的上下文
   - 测试场景 2：Nacos 配置变更 → `nacos-sync` → `dt_verify` 检测到不一致 → `dt_plan` 生成修复计划
@@ -719,7 +725,7 @@
 
 - [ ] 5.2 性能优化
   **What**: Context Builder 查询优化、批量写入优化、Qdrant 索引调优。
-  **Files**: 修改 `engine-rust/src/context/builder.rs`，修改 `engine-rust/src/client/neo4j.rs`
+  **Files**: 修改 `crates/dt-context/src/`，修改 `crates/dt-storage/src/neo4j/`
   **Acceptance**:
   - `dt_context` 返回时间 < 3 秒（当前 < 5 秒目标）
   - `dt_build` 单个 300+ 文件的 Java 项目在 30 秒内完成（增量 < 5 秒）
@@ -729,7 +735,7 @@
 
 - [ ] 5.3 错误处理与降级
   **What**: 为所有 MCP 工具和 Context Builder 添加完善的错误处理和降级策略。
-  **Files**: 修改 `mcp-server.py`，修改 `engine-rust/src/context/builder.rs`
+  **Files**: 修改 `mcp-server.py`，修改 `crates/dt-context/src/pipeline.rs`
   **Acceptance**:
   - Neo4j 不可达时，`dt_context` 跳过 Reality/Knowledge/Memory 查询，仍返回 Semantic + Runtime
   - Qdrant 不可达时，`dt_context` 跳过 Semantic 查询
@@ -761,12 +767,13 @@
 ## Verification
 
 - [ ] Phase 1-5 所有 checklist 项通过
-- [ ] `dt health` 全部绿灯（Neo4j / Qdrant / Embed / KG Bridge / Fulltext）
-- [ ] `dt_context --task "支付平台从通联切换到银盛"` 返回六世界聚合上下文（JSON 格式规范）
-- [ ] `cargo test` 和 `cargo test --test integration_v2` 全部通过
-- [ ] 0 regressions on 22 existing low-level MCP tools
-- [ ] `dt clean --confirm && dt schema init && dt build-all` 一键可重建整个 V2 知识图谱
-- [ ] MCP Server 注册的 30 个工具（22 底层 + 8 高层）在 OpenCode 中可调用
+- [ ] `cargo check --workspace && cargo test --workspace && cargo clippy --workspace` 全部通过
+- [ ] `dt daemon --status` 全部绿灯（Neo4j Bolt / Qdrant gRPC / Embed gRPC / LogService / 3 plugins）
+- [ ] `dt --help` 显示所有命令（build / search / sync / event / memorize / learn / context / plan / domain / history / dependency / verify）
+- [ ] `dt_context --task "支付平台从通联切换到银盛"` 返回六世界聚合上下文（JSON 格式规范，< 3 秒）
+- [ ] MCP Server 通过 gRPC 调用 dt daemon，所有 8 个高层 MCP 工具在 OpenCode 中可调用
+- [ ] kub / svc / jcli 三个独立 CLI 作为 thin wrapper 正常工作
+- [ ] 日志聚合：`/var/log/digital-twin/dt-daemon.log` 包含所有组件日志，`trace_id` 跨进程可串联
 
 ---
 
@@ -786,6 +793,7 @@ P1:Core ████████████████████████
    1.4  k8s-sync     ░░░░░░░░░░░░███░
    1.5  dt_update    ░░░░░░░░░░░░░░██
    1.6  dt_watch     ░░░░░░░░░░░░░░░█
+   1.7  clean        ░░░░░░░░░░░░░░░░█
 P2:Mem+Know ░░░░░░░░░░░░░░░████████████████░░░░░░░░░░░░░░░░░░░  L
   2.1  Day/Session ░░░░░░░░░░░░░████░░░░░░░░
   2.2  Event types ░░░░░░░░░░░░░░░████░░░░░░
