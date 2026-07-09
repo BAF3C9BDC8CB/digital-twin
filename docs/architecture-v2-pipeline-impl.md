@@ -49,15 +49,51 @@
                                          └────────────────┘
 ```
 
-**核心组件通信方式：**
+**核心组件通信方式（V2 统一为 gRPC + Bolt）：**
 
 ```
-Rust dt CLI ──HTTP POST──▶ Neo4j    ({url}/db/neo4j/tx/commit)
-Rust dt CLI ──HTTP PUT ──▶ Qdrant   ({url}/collections/{name}/points)
-Rust dt CLI ──SQLite─────▶ lazy.db  (/var/lib/digital-twin/lazy.db)
-Rust dt CLI ──UnixSocket─▶ dt-embed (/tmp/dt-embed.sock)
-dt-embed    ──GPU推理───▶ BGE-M3   (1024维向量)
-MCP Server  ──subprocess─▶ dt CLI   (所有 MCP Tool 最终调用 dt 命令)
+                        ┌─────────────────────────────────┐
+                        │     dt CLI (Rust daemon)         │
+                        │     gRPC Server :50051           │
+                        │                                  │
+                        │  ┌───────────────────────────┐   │
+                        │  │  tonic (gRPC framework)    │   │
+                        │  │  neo4rs (Bolt driver)      │   │
+                        │  │  qdrant-client (gRPC)      │   │
+                        │  │  rusqlite (SQLite local)    │   │
+                        │  └───────────────────────────┘   │
+                        └──────┬──────┬───────┬────────────┘
+                ┌──────────────┼──────┼───────┼──────────────┐
+                │ gRPC         │ gRPC │  Bolt │ gRPC          │
+                ▼              ▼      ▼        ▼              ▼
+        ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────┐
+        │  dt-embed  │ │   Qdrant   │ │  Neo4j   │ │  MCP Server  │
+        │  (Python)  │ │(gRPC:6334) │ │(Bolt:7687│ │  (Python)    │
+        │ gRPC:50052 │ └────────────┘ └──────────┘ │ gRPC client  │
+        └─────┬──────┘                             └──────┬───────┘
+              │ in-process                                │ JSON-RPC
+        ┌─────▼──────┐                             ┌──────▼───────┐
+        │  BGE-M3    │                             │   OpenCode   │
+        │  (GPU)     │                             │   (LLM)      │
+        └────────────┘                             └──────────────┘
+
+统一要点：
+- 全链路使用 protobuf 序列化，类型安全，编译期校验
+- gRPC HTTP/2 多路复用，连接池，无需每次新建连接
+- dt CLI 变为常驻 daemon（systemd socket activated），不再 subprocess 启动
+- Neo4j 走 Bolt 二进制协议（原生驱动，无法用 gRPC 替代），持久连接池
+- dt-embed 不再手写 Unix Socket 帧协议，改用标准 gRPC
+- MCP Server 不再解析 stdout，改为结构化 gRPC 调用
+```
+
+**旧架构（V1）— 已废弃：**
+```
+Rust dt CLI ──HTTP POST──▶ Neo4j    (REST Cypher, 每次新建连接)
+Rust dt CLI ──HTTP PUT ──▶ Qdrant   (REST, JSON 序列化开销大)
+Rust dt CLI ──SQLite─────▶ lazy.db  (本地文件, ✅ 保留)
+Rust dt CLI ──UnixSocket─▶ dt-embed (自定义4字节帧+JSON, ❌ 无类型安全)
+dt-embed    ──GPU推理───▶ BGE-M3   (进程内, ✅ 保留)
+MCP Server  ──subprocess─▶ dt CLI   (stdout解析, ❌ 错误处理脆弱)
 ```
 
 ---

@@ -26,9 +26,10 @@
 ### Key Findings
 - 当前已有 22 个底层 MCP 工具（搜索/服务管理/K8s/Jenkins/管道/写入/运维），它们是 Phase 4 高层 MCP 的底层依赖
 - dt CLI (Rust) 已具备 build/search/sync/event/memorize 能力，但都基于 V1 schema
+- **通信架构需重构**：当前 5 条链路用了 4 种协议（HTTP REST/REST/自定义 Unix Socket/subprocess），V2 统一为 gRPC + Bolt（详见 Phase 1.0）
 - Neo4j 当前 schema 是 V1 的单层扁平结构（Method/Class + Infrastructure/Server/Database + Event），V2 要变成六世界 + Digital Thread
 - 设计文档完整覆盖：六世界模型 (185 lines) + 数据格式 (786 lines) + 全链路 (293 lines) + MCP API (1611 lines) + 管道实现 (921 lines)
-- 底层基础设施（Neo4j/Qdrant/dt-embed/tree-sitter/Nacos同步/K8s同步）已就绪，可直接复用
+- 底层基础设施（Neo4j/Qdrant/dt-embed/tree-sitter/Nacos同步/K8s同步）已就绪，需切换驱动方式
 
 ---
 
@@ -71,6 +72,43 @@
 **预估工作量**：XL（最硬核的 Phase）
 
 ---
+
+- [ ] 1.0 gRPC 统一通信基础设施
+  **What**: 将全链路通信统一为 gRPC（Neo4j 用 Bolt），消除 HTTP REST 和自定义帧协议。dt CLI 变为常驻 gRPC daemon。
+  **Files**: 创建 `proto/` 目录（顶层 proto 定义），新建 `engine-rust/src/grpc/server.rs` / `engine-rust/src/grpc/client.rs`，修改 `mcp-server.py`（从 subprocess 改为 gRPC client），修改 `engine-rust/src/client/neo4j.rs`（从 HTTP 改为 Bolt 驱动），修改 `engine-rust/src/client/qdrant.rs`（从 HTTP REST 改为 gRPC），重写 `engine-rust/src/embed.rs`（Unix Socket → gRPC client）
+  **Proto 定义**（`proto/` 目录）：
+  - `proto/dt_service.proto`：dt CLI 对外暴露的 gRPC 接口（build/search/context/event/memorize/sync...）
+  - `proto/embed.proto`：dt-embed 的 gRPC 接口（EmbedRequest/EmbedResponse）
+  - 编译：Rust 用 `tonic-build`，Python 用 `grpcio-tools`
+  **架构变更**：
+  ```
+                        ┌─────────────────────────────┐
+                        │     dt CLI (Rust daemon)     │
+                        │     gRPC Server :50051       │
+                        └──────┬──────┬───────┬────────┘
+                ┌──────────────┼──────┼───────┼──────────────┐
+                │ gRPC         │ gRPC │  Bolt │ gRPC          │
+                ▼              ▼      ▼        ▼              ▼
+        ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────┐
+        │  dt-embed  │ │   Qdrant   │ │  Neo4j   │ │  MCP Server  │
+        │  (Python)  │ │(gRPC:6334) │ │(Bolt:7687│ │  (Python)    │
+        │ gRPC:50052 │ └────────────┘ └──────────┘ │ gRPC client  │
+        └─────┬──────┘                             └──────────────┘
+              │ in-process                                  │
+        ┌─────▼──────┐                             OpenCode MCP
+        │  BGE-M3    │                             (JSON-RPC)
+        │  (GPU)     │
+        └────────────┘
+  ```
+  **Acceptance**:
+  - `dt daemon` 启动后常驻后台（systemd 管理，socket activated）
+  - `dt daemon --status` 显示所有后端连接状态（Neo4j Bolt / Qdrant gRPC / dt-embed gRPC）
+  - gRPC 端口所有工具正常可用（`dt build` / `dt search` / `dt event` 等通过 gRPC 调用）
+  - Neo4j 连接走 Bolt 驱动（`neo4rs` crate），支持连接池、事务重试、自动重连
+  - Qdrant 连接走 gRPC（`tonic` + Qdrant proto），向量批量写入走 streaming
+  - dt-embed 提供 gRPC 接口，proto 定义 `EmbedRequest { repeated string texts }` → `EmbedResponse { repeated Vector vectors }`
+  - MCP Server 通过 gRPC 调用 dt CLI，不再 subprocess 解析 stdout
+  - HTTP 端点完全移除（Neo4j 7474 / Qdrant 6333 仅用于管理面板，dt CLI 不访问）
 
 - [ ] 1.1 新 Neo4j Schema 设计与落地
   **What**: 在新 clean database 中创建所有 V2 约束、索引、节点标签。
@@ -484,14 +522,15 @@
                        Month 1              Month 2              Month 3
 Phase   W1  W2  W3  W4  W5  W6  W7  W8  W9  W10 W11 W12
 ────────────────────────────────────────────────────────────────────────
-P1:Core ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  XL
-  1.1  Schema      ████░░░░░░░░░░
-  1.2  dt_build    ░░████████░░░░
-  1.3  nacos-sync  ░░░░████░░░░░░
-  1.4  k8s-sync    ░░░░░░███░░░░░
-  1.5  dt_update   ░░░░░░░░██░░░░
-  1.6  dt_watch    ░░░░░░░░░░███░
-  1.7  clean       ░░░░░░░░░░░░░██
+P1:Core ████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  XL
+   1.0  gRPC infra   ██░░░░░░░░░░░░░
+   1.1  Schema       ░████░░░░░░░░░░
+   1.2  dt_build     ░░░████████░░░░
+   1.3  nacos-sync   ░░░░░░████░░░░░
+   1.4  k8s-sync     ░░░░░░░░███░░░░
+   1.5  dt_update    ░░░░░░░░░░██░░░
+   1.6  dt_watch     ░░░░░░░░░░░░██░
+   1.7  clean        ░░░░░░░░░░░░░░██
 P2:Mem+Know ░░░░░░░░░░░░░░░████████████████░░░░░░░░░░░░░░░░░░░  L
   2.1  Day/Session ░░░░░░░░░░░░░████░░░░░░░░
   2.2  Event types ░░░░░░░░░░░░░░░████░░░░░░
@@ -539,8 +578,11 @@ Phase 2 和 Phase 3 可以并行推进（Phase 3 仅依赖 Phase 1 的 Reality �
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
+| gRPC proto 定义不完整，后期频繁修改 | 接口不稳定，Phase 1-4 都需要改 | Phase 1.0 完成所有 proto 定义（Embed/Service/Qdrant），后续只增不改；proto 版本化 |
+| Neo4j Bolt 驱动 (neo4rs) 成熟度不足 | 连接池/事务处理有 bug | 评估 neo4rs 社区活跃度；备选方案：保留 HTTP 作为 fallback driver，用 feature flag 切换 |
+| dt CLI daemon 进程崩溃影响全局 | 所有 MCP 工具不可用 | systemd `Restart=always` + `RestartSec=3`；MCP Server 检测 gRPC 不可用时自动 fallback 到 subprocess 模式 |
 | Schema 设计返工 | Phase 1 延期 | Phase 1.1 完成前做一次完整 review，确保所有实体类型被后续 Phase 覆盖 |
-| Neo4j 写入性能瓶颈 | Phase 1/2 写入慢 | 沿用 V1 的批量写入（2000/批），提前 PROFILE 验证索引 |
-| Context Builder 延迟高 | Phase 4 体验差 | 并行查询六世界（Neo4j + Qdrant 并发），结果缓存 60s TTL |
-| BGE-M3 向量维度不兼容当前 Qdrant | Phase 3 无法写入 | V1 已用 BGE-M3 1024-dim，确认兼容；新 collection 需重新创建 |
-| 22 个底层 MCP 工具在 Schema 变更后失效 | 日常使用中断 | 底层 MCP 不直接依赖 Neo4j schema（它们调 dt CLI），只需确保 dt CLI 命令输出不变 |
+| Qdrant gRPC API 与 REST API 行为差异 | Phase 3 写入/查询异常 | Phase 1.0 中做 A/B 对比测试，验证 gRPC 和 REST 返回结果一致 |
+| Context Builder 延迟高 | Phase 4 体验差 | 并行查询六世界（Neo4j + Qdrant 并发 gRPC 调用），结果缓存 60s TTL |
+| BGE-M3 向量维度不兼容 | Phase 3 无法写入 | V1 已用 BGE-M3 1024-dim，确认兼容；新 collection 需重新创建 |
+| 22 个底层 MCP 工具在 gRPC 改造后失效 | 日常使用中断 | 底层 MCP 通过 gRPC 调用 dt CLI daemon，接口签名不变；逐个迁移+回归测试 |
