@@ -108,18 +108,15 @@ dt memorize --type KnowledgeAdded \
 | 4 | 做出架构/技术决策（选型、迁移、方案设计） | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>; scope: <影响范围>" --project "<项目>"` |
 | 5 | Jenkins 部署（`jenkins_build_job` MCP） | **仅生产/stable 环境** | `dt event --type Deploy --entity-id "<job_name>" --entity-type JenkinsJob --details "branch: <分支>, env: <环境>, params: <参数>" --project "<项目>"` |
 
-### 不写 Event/Knowledge 但同步代码实体到 KG + 向量库
+### 代码实体同步（自动）
 
-`dt build` 会同步更新 **Method/Class/CALLS 节点到 Neo4j** 和 **向量到 Qdrant**，两者始终保持一致。只不写 Event/Knowledge 节点（避免高频噪声）。
+`dt build` 已由 OpenCode 插件自动触发（`tool.execute.after` 钩子拦截 `edit`/`write`），**AI 无需手动执行**。
 
 | 触发操作 | 条件 | 命令 |
 |---------|------|------|
-| 源码修改（创建/编辑 .py/.java/.ts 等） | 总是 | `dt build --file <文件中任意文件的绝对路径>` |
-| 批量同步 / 项目首次索引 | 项目维度 | `dt build --path <项目路径> --name <项目名>` |
+| 源码修改 | 自动（插件） | 无需 AI 执行 |
 | 删除文件 | 文件已删除 | `dt remove --project <项目名> --file <原相对路径>` |
-
-`dt build --file` 会根据 `config.yaml` 的 `projects` 段自动解析项目名和路径，AI 只需传文件路径。
-新增的文件会自动被 `dt build` 发现并索引。`dt build` 通过 SQLite 记录文件哈希，只处理有改动的文件，不重新索引整个项目。
+| 批量同步 / 项目首次索引 | 项目维度 | `dt build --path <项目路径> --name <项目名>`（手动触发） |
 
 ### 完全不操作
 

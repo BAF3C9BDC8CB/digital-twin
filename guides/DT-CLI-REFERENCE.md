@@ -25,8 +25,8 @@
 
 | 用户做了 | 应执行 | 说明 |
 |---------|--------|------|
-| 修改了代码文件（.java/.py/.ts等） | `dt build --path <根目录> --name <项目名>` 或 `dt build --file <文件绝对路径>` | 增量索引 |
-| 批量修改了多个文件 | `dt build --path <根目录> --name <项目名>` | 增量构建 |
+| 修改了代码文件（.java/.py/.ts等） | ✅ 插件自动触发，AI 无需操作 | 自动增量索引 |
+| 批量同步 / 首次索引 | `dt build --path <根目录> --name <项目名>` | 手动触发 |
 | 删除了文件 | `dt remove --project <项目名> --file <路径>` | 清理索引 |
 | 修改了 Nacos/Apollo 配置 | `dt nacos-sync --env test`（测试）或 `--env prod`（生产） | 同步到 KG |
 | 安装了软件（apt/pip/npm等） | `dt event --type SoftwareInstalled --entity-id <包名> --details "version: X"` | 记录事件 |

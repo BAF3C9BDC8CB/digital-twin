@@ -14,12 +14,15 @@
 
 ## 二、代码修改类
 
+> **dt build 已由 OpenCode 插件自动触发**（`tool.execute.after` 钩子），**AI 无需手动执行**。仅在以下情况手动操作：
+
 | 操作 | 必须执行 |
 |------|---------|
-| 修改文件（任意数量） | `dt build --file <项目中任意文件的绝对路径>` |
+| 修改文件（任意数量） | ✅ 插件自动触发 `dt build`，AI 无需操作 |
 | 删除文件 | `dt remove --file <被删文件的绝对路径>` |
+| 批量同步 / 首次索引 | `dt build --path <项目路径> --name <项目名>`（手动） |
 
-> **自动解析**：`dt build/remove/index --file` 会根据 `config.yaml` 的 `projects` 段自动解析项目名和路径。AI 只需传文件路径。
+> **自动解析**：`dt build/remove --file` 会根据 `config.yaml` 的 `projects` 段自动解析项目名和路径。
 
 ## 三、环境与配置变更类
 
@@ -49,6 +52,5 @@
 
 ## 七、关于文件同步机制
 
-- `dt build`：项目增量构建，通过 SQLite 记录文件哈希，只索引有改动的文件（传 `--file` 定位单文件，传 `--path` 全项目扫描）
-- 两者都会同时更新 **Neo4j（代码实体） + Qdrant（向量）**，始终保持一致
-- 新增的文件会自动被 `dt build` 发现并索引
+- `dt build`：由 OpenCode 插件自动触发（`edit`/`write` 工具后 3 秒防抖），无需 AI 手动执行
+- 插件会同时更新 **Neo4j（代码实体） + Qdrant（向量）**，始终保持一致
