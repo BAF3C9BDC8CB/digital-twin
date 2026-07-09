@@ -63,6 +63,8 @@
 
 ## TODOs
 
+> **项目结构规范**：详见 [architecture-v2-project-structure.md](../docs/architecture-v2-project-structure.md)。所有实现必须遵守该文档定义的分层架构（Interface→Application→Domain→Infrastructure）、Trait 体系和设计模式。
+
 ### Phase 1: Core Infrastructure — 新 Schema + Reality World 数据管线重写
 
 **目标**：落地新 Neo4j Schema，重写代码/配置/K8s 数据采集管线，确保 Reality World 能全量填充。本阶段同时完成插件系统、gRPC 通信和统一日志三大基础设施。
@@ -72,6 +74,21 @@
 **预估工作量**：XL（最硬核的 Phase）
 
 ---
+
+- [ ] 1.0a Workspace 初始化：Cargo workspace + 空 crate 骨架 + CI
+  **What**: 搭建 Cargo workspace 结构，创建所有 crates 的空骨架（仅 Cargo.toml + lib.rs + 依赖声明），配置 CI 门禁。
+  **Files**: 
+  - 根 `Cargo.toml`（workspace 定义 + 共享依赖）
+  - 所有 `crates/dt-*/Cargo.toml`（仅依赖声明）
+  - `crates/dt-common/src/lib.rs`（types/error/traits/id 模块声明）
+  - 所有 crate 的 `src/lib.rs`（仅 `// TODO: Phase N` 占位）
+  - `dt-daemon/src/main.rs`（空 tokio::main + gRPC server 骨架）
+  - `rust-toolchain.toml`, `.rustfmt.toml`, `clippy.toml`
+  - `.github/workflows/ci.yml`（check + test + clippy + fmt）
+  **Acceptance**:
+  - `cargo check --workspace` 0 errors
+  - `cargo build --workspace` 成功
+  - 依赖图无循环（`cargo tree --workspace` 验证）
 
 - [ ] 1.0 插件系统 + gRPC 统一通信基础设施
   **What**: 设计插件系统骨架（`Plugin` trait），将 kub/svc/jcli 三个工具重构为插件，统一注册到 dt CLI daemon 的 gRPC server 上。所有服务间通信走 gRPC（Neo4j 用 Bolt），消除 HTTP REST、自定义帧协议和 subprocess 调用。
@@ -759,16 +776,16 @@
                        Month 1              Month 2              Month 3
 Phase   W1  W2  W3  W4  W5  W6  W7  W8  W9  W10 W11 W12
 ────────────────────────────────────────────────────────────────────────
-P1:Core ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░  XL
-   1.0  plugin+grpc ████░░░░░░░░░░░░
-   1.0b dt-log      ░░██░░░░░░░░░░░░
-   1.1  Schema       ░░░████░░░░░░░░
-   1.2  dt_build     ░░░░░████████░░
-   1.3  nacos-sync   ░░░░░░░░████░░░
-   1.4  k8s-sync     ░░░░░░░░░░███░░
-   1.5  dt_update    ░░░░░░░░░░░░██░
-   1.6  dt_watch     ░░░░░░░░░░░░░██
-   1.7  clean        ░░░░░░░░░░░░░░██
+P1:Core ██████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░  XL
+   1.0a workspace ██░░░░░░░░░░░░░░░
+   1.0  plugin+grpc ░███░░░░░░░░░░░░░
+   1.0b dt-log      ░░░██░░░░░░░░░░░░
+   1.1  Schema       ░░░░████░░░░░░░░
+   1.2  dt_build     ░░░░░░████████░░
+   1.3  nacos-sync   ░░░░░░░░░░████░░
+   1.4  k8s-sync     ░░░░░░░░░░░░███░
+   1.5  dt_update    ░░░░░░░░░░░░░░██
+   1.6  dt_watch     ░░░░░░░░░░░░░░░█
 P2:Mem+Know ░░░░░░░░░░░░░░░████████████████░░░░░░░░░░░░░░░░░░░  L
   2.1  Day/Session ░░░░░░░░░░░░░████░░░░░░░░
   2.2  Event types ░░░░░░░░░░░░░░░████░░░░░░
