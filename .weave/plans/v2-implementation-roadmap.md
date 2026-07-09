@@ -65,7 +65,7 @@
 
 ### Phase 1: Core Infrastructure — 新 Schema + Reality World 数据管线重写
 
-**目标**：落地新 Neo4j Schema，重写代码/配置/K8s 数据采集管线，确保 Reality World 能全量填充。
+**目标**：落地新 Neo4j Schema，重写代码/配置/K8s 数据采集管线，确保 Reality World 能全量填充。本阶段同时完成插件系统、gRPC 通信和统一日志三大基础设施。
 
 **依赖**：无（起点）
 
@@ -219,7 +219,135 @@
   - 所有 HTTP REST 端点从 dt CLI 代码中移除
   - 插件违反约束时编译报错（trait 方法签名强制 async、强制返回 Result、禁止 `std::process::Command`）
 
-- [ ] 1.1 新 Neo4j Schema 设计与落地
+- [ ] 1.0b 统一日志系统（`dt-log` crate + gRPC LogService）
+  **What**: 所有组件通过统一的日志管道输出，单一聚合文件可追踪跨进程调用链。日志系统覆盖 dt daemon、所有插件、dt-embed (Python) 和 MCP Server (Python) 四个进程。
+
+  **日志格式**（结构化 JSON，一行一条）：
+  ```json
+  {"ts":"2026-07-09T14:30:00.123Z","level":"INFO","target":"dt::build","trace_id":"a1b2c3","span_id":"d4e5f6","plugin":"dt_core","path":"/data/...","message":"Starting project build","methods":312,"elapsed_ms":4200}
+  ```
+
+  **必选字段**（所有组件统一）：
+  | 字段 | 类型 | 说明 |
+  |------|------|------|
+  | `ts` | RFC3339 | 时间戳，精确到毫秒 |
+  | `level` | enum | TRACE / DEBUG / INFO / WARN / ERROR |
+  | `target` | string | 日志来源模块，如 `dt::build`, `plugin_k8s::logs`, `dt_embed` |
+  | `trace_id` | string | 全链路追踪 ID，跨进程通过 gRPC metadata `x-trace-id` 传递 |
+  | `message` | string | 人类可读日志消息 |
+
+  **可选字段**：`span_id`, `plugin`, `error`（错误详情+堆栈）, 业务自定义字段（如 `methods`, `elapsed_ms`）
+
+  **日志输出目标**：
+  | 目标 | 用途 |
+  |------|------|
+  | `/var/log/digital-twin/dt-daemon.log` | 主日志文件，每日轮转，保留 30 天 |
+  | systemd journal | `journalctl -u dt-daemon -f` 实时查看 |
+  | gRPC LogService stream | `dt logs --follow` 命令行实时查看（未来 MCP 工具） |
+
+  **Rust 侧实现（`dt-log` crate）**：
+  ```rust
+  // 基于 tracing + tracing-subscriber
+  // Cargo.toml: dt-log = { path = "crates/dt-log" }
+  
+  use dt_log::{info, warn, error, debug, instrument};
+
+  #[instrument(skip(ctx), fields(project = %name))]
+  async fn build_project(ctx: &Context, name: &str) -> Result<usize> {
+      info!("Starting project build");
+      let methods = do_build(ctx, name).await?;
+      info!(methods = methods, "Build complete");
+      Ok(methods)
+  }
+  // 自动产出：
+  // {"ts":"...","level":"INFO","target":"dt::build","trace_id":"...","span_id":"...",
+  //  "project":"aflm-pay","message":"Starting project build"}
+  // {"ts":"...","level":"INFO","target":"dt::build","trace_id":"...","span_id":"...",
+  //  "project":"aflm-pay","message":"Build complete","methods":312}
+  ```
+
+  **gRPC LogService**（dt daemon 内置）：
+  ```protobuf
+  // proto/log.proto
+  service LogService {
+      // 外部进程流式上报日志到 daemon
+      rpc StreamLogs(stream LogEntry) returns (LogAck);
+      // 查询历史日志（供 dt logs 命令）
+      rpc QueryLogs(LogQuery) returns (stream LogEntry);
+  }
+  
+  message LogEntry {
+      string timestamp = 1;       // RFC3339
+      string level = 2;           // TRACE|DEBUG|INFO|WARN|ERROR
+      string target = 3;          // 来源模块
+      string trace_id = 4;        // 全链路追踪 ID
+      string span_id = 5;         // span ID
+      string plugin = 6;          // 插件名称（dt_core|plugin_k8s|plugin_svc|plugin_jenkins）
+      string message = 7;         // 日志消息
+      string error = 8;           // 错误详情（JSON）
+      map<string, string> fields = 9;  // 业务自定义字段
+  }
+  ```
+
+  **Python 侧（dt-embed / MCP Server）**：
+  ```python
+  # dt_log.py — Python 日志桥接模块
+  import logging, grpc
+  from dt_log_pb2 import LogEntry
+  from log_pb2_grpc import LogServiceStub
+
+  class GrpcLogHandler(logging.Handler):
+      """将 Python logging 记录流式发送到 dt daemon 的 LogService"""
+      def __init__(self, daemon_addr="localhost:50051"):
+          self.stub = LogServiceStub(grpc.aio.insecure_channel(daemon_addr))
+          self._stream = None  # 延迟创建 gRPC stream
+      
+      async def emit(self, record: logging.LogRecord):
+          entry = LogEntry(
+              timestamp=datetime.utcnow().isoformat() + "Z",
+              level=record.levelname,
+              target=record.name,
+              trace_id=get_trace_id(),  # 从 gRPC metadata 提取
+              message=record.getMessage(),
+          )
+          # 流式发送到 daemon
+  ```
+
+  **PluginContext 集成**：
+  ```rust
+  pub struct PluginContext {
+      // ... 已有字段
+      pub log: dt_log::PluginLogger,  // 插件命名空间隔离的 logger
+  }
+  // 插件中使用：
+  // ctx.log.info!("Pod {} status: {}", pod_name, status);
+  // → {"ts":"...","level":"INFO","target":"plugin_k8s::status","plugin":"plugin_k8s",...}
+  ```
+
+  **Files**:
+  - 创建 `crates/dt-log/` (Cargo.toml, src/lib.rs — tracing 封装)
+  - 创建 `proto/log.proto` (LogService 定义)
+  - 创建 `engine-rust/src/grpc/log_service.rs` (LogService 实现)
+  - 创建 `python/dt_log.py` (Python gRPC log handler)
+  - 修改 `engine-rust/Cargo.toml` (添加 dt-log + tracing 依赖)
+  - 修改 `engine-rust/src/main.rs` (初始化 tracing-subscriber)
+  - 修改 `engine-rust/src/plugin/context.rs` (添加 log 字段)
+  - 修改 `mcp-server.py` (使用 GrpcLogHandler)
+  - 修改 `services/embed-server/cli.py` (使用 GrpcLogHandler)
+  - 修改 `engine-rust/src/plugins/*/` (所有 println! 改为 dt_log 宏)
+
+  **Acceptance**:
+  - `dt daemon` 启动后 `/var/log/digital-twin/dt-daemon.log` 开始写入
+  - 日志格式统一为单行 JSON，所有字段一致
+  - 一次 `dt build` 调用的完整过程（扫描→解析→嵌入→写入）通过相同的 `trace_id` 串联
+  - `journalctl -u dt-daemon -f` 实时看到结构化日志
+  - dt-embed Python 进程的日志出现在同一个 log 文件中（通过 gRPC StreamLogs 上报）
+  - MCP Server Python 进程的日志同上
+  - `dt daemon --status` 显示 LogService 状态和最近日志条目数
+  - 插件中无残留 `println!` / `eprintln!`，全部走 `ctx.log`
+  - 日志文件每日 00:00 轮转，保留最近 30 天
+  - ERROR 级别日志自动附带堆栈（Rust: `error!(error = %e, "msg")`，Python: `logger.exception()`）
+  - `dt logs --level ERROR --since 1h` 可查询最近的错误日志（通过 gRPC QueryLogs）
   **What**: 在新 clean database 中创建所有 V2 约束、索引、节点标签。
   **Files**: 新建 `engine-rust/src/schema/mod.rs`，修改 `engine-rust/src/client/neo4j.rs`
   **Acceptance**:
@@ -631,14 +759,15 @@
                        Month 1              Month 2              Month 3
 Phase   W1  W2  W3  W4  W5  W6  W7  W8  W9  W10 W11 W12
 ────────────────────────────────────────────────────────────────────────
-P1:Core ████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  XL
-   1.0  gRPC infra   ██░░░░░░░░░░░░░
-   1.1  Schema       ░████░░░░░░░░░░
-   1.2  dt_build     ░░░████████░░░░
-   1.3  nacos-sync   ░░░░░░████░░░░░
-   1.4  k8s-sync     ░░░░░░░░███░░░░
-   1.5  dt_update    ░░░░░░░░░░██░░░
-   1.6  dt_watch     ░░░░░░░░░░░░██░
+P1:Core ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░  XL
+   1.0  plugin+grpc ████░░░░░░░░░░░░
+   1.0b dt-log      ░░██░░░░░░░░░░░░
+   1.1  Schema       ░░░████░░░░░░░░
+   1.2  dt_build     ░░░░░████████░░
+   1.3  nacos-sync   ░░░░░░░░████░░░
+   1.4  k8s-sync     ░░░░░░░░░░███░░
+   1.5  dt_update    ░░░░░░░░░░░░██░
+   1.6  dt_watch     ░░░░░░░░░░░░░██
    1.7  clean        ░░░░░░░░░░░░░░██
 P2:Mem+Know ░░░░░░░░░░░░░░░████████████████░░░░░░░░░░░░░░░░░░░  L
   2.1  Day/Session ░░░░░░░░░░░░░████░░░░░░░░
