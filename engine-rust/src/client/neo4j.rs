@@ -83,6 +83,8 @@ pub async fn ensure_schema() -> Result<()> {
         "CREATE INDEX IF NOT EXISTS FOR (n:K8sService) ON (n.name)",
         "CREATE INDEX IF NOT EXISTS FOR (n:NacosConfig) ON (n.data_id)",
         "CREATE INDEX IF NOT EXISTS FOR (n:NacosService) ON (n.name)",
+        // AGENTS.md Scene B: 全文索引，覆盖基础设施/服务/配置类标签
+        "CREATE FULLTEXT INDEX infra_search IF NOT EXISTS FOR (n:Infrastructure|Server|Database|Project|Environment|Software|Knowledge|Configuration|NacosConfig|NacosService) ON EACH [n.name, n.description, n.auth_user, n.hostname, n.host, n.url, n.service_type, n.source_file, n.data_id, n.service_name]",
     ];
     for cypher in &constraints {
         run_cypher_raw(cypher, json!({})).await?;
@@ -165,6 +167,21 @@ DETACH DELETE m";
     Ok(())
 }
 
+pub async fn delete_methods_by_files_batch(project: &str, file_paths: &[String]) -> Result<()> {
+    if file_paths.is_empty() {
+        return Ok(());
+    }
+    let stmt = "\
+MATCH (m:Method {project: $project})
+WHERE m.file_path IN $file_paths
+OPTIONAL MATCH (c:Class)-[r:CONTAINS]->(m)
+DELETE r
+WITH m
+DETACH DELETE m";
+    run_cypher_raw(stmt, json!({"project": project, "file_paths": file_paths})).await?;
+    Ok(())
+}
+
 pub async fn delete_all_methods(project: &str) -> Result<()> {
     run_cypher_raw(
         "MATCH (m:Method {project: $project}) DETACH DELETE m",
@@ -174,6 +191,20 @@ pub async fn delete_all_methods(project: &str) -> Result<()> {
         "MATCH (c:Class) WHERE NOT (c)-[:CONTAINS]->() DELETE c",
         json!({}),
     ).await?;
+    Ok(())
+}
+
+/// 写入项目的语言和类型元数据到 Project 节点
+pub async fn write_project_meta(
+    project: &str,
+    language: &str,
+    project_type: &str,
+) -> Result<()> {
+    let stmt = "\
+MERGE (p:Project {name: $project})
+SET p.language = $language,
+    p.project_type = $project_type";
+    run_cypher_raw(stmt, json!({"project": project, "language": language, "project_type": project_type})).await?;
     Ok(())
 }
 

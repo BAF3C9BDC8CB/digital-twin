@@ -2,103 +2,161 @@
 
 This project uses a Neo4j knowledge graph for persistent memory.
 
-## ⚠️ 必须先加载 digital-twin 技能
+## ⚠️ [新增] 必须先加载 digital-twin 技能
 
 执行任何任务前，先调用 `skill` 工具加载 **digital-twin** 技能，获取完整指令后再按流程执行。仅靠本文件不够——skill 文件中包含最新的详细工作流。
 
-## 唯一不查 KG 的情况
+## ⚠️ 第一动作：每次工作必须先查询知识图谱
 
-当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须先查 KG。
+执行任何任务的**第一个动作**必须是查知识图谱。不允许直接读文件或探索目录而不先查 KG。
 
-## 代码搜索：语义优先
-
-需要定位代码、找函数、找文件时，**禁止直接 grep / glob / find**，必须先用 `dt search` 语义搜索。详见 digital-twin skill 的 [CODE-SEARCH.md](./CODE-SEARCH.md)。`dt search` 失败时才回退 grep。
-
-## 代码提交流程规范
-
-### 一、核心原则
-
-用户说"提交"，实际执行链路为：**更新代码 → 展示完整 diff → 用户确认 → commit → push**。严禁跳过任何环节。
-
-### 二、提交范围控制
-
-1. **只提交会话内修改** — 每次 commit 前，确认暂存区只包含本次会话修改的文件。
-2. **禁止混入无关变更** — 不得连带提交之前会话的遗留修改、未跟踪文件、临时文件或调试代码。
-
-### 三、高危变更确认制度
-
-以下类型的变更，在展示 diff 时必须**额外标注风险等级**，逐项等待用户确认：
-
-| 风险等级 | 范围 | 确认要求 |
-|---------|------|---------|
-| **生产环境** | 数据库连接、API 地址、域名、HTTPS 配置、日志级别、缓存策略、第三方服务密钥 | 必须逐条确认，不得批量确认 |
-| **配置文件** | `.env*`、`config/`、`vue.config.js`、`babel.config.js`、`jest.config.js`、`package.json`、`composer.json`、路由/权限配置 | 逐行审查后确认 |
-| **构建/部署** | CI 配置（`.travis.yml`、Jenkinsfile）、Dockerfile、部署脚本 | 必须确认无误 |
-
-> 原则：**不确认，不提交；有疑虑，停下来问。**
-
-### 四、提交前必须展示完整 diff
-
-在 `git commit` 执行前，必须执行 `git diff` 向用户展示本次提交的**全部变更内容**，等待用户明确确认。
-
-### 五、提交后自动推送
-
-用户确认 commit 后，必须执行 `git push`（除非用户明确要求暂不推送）。
+**执行流程：**
+1. 从用户消息提取关键词（服务名、文件路径、API、Bug、术语）
+2. 从当前环境提取关键词（项目名、工作目录、当前文件、git remote、README 中的项目名）
+3. 如果第 1+2 步有任何关键词 → 立即查询 KG。没有关键词 → 继续正常分析。
 
 ---
 
-## Jenkins 操作：使用 jcli 替代 Jenkins MCP
+### 查询策略：按场景选择（优先级从高到低）
 
-当需要与 Jenkins 交互时，使用本地安装的 `jcli` 命令行工具，**不要使用 Jenkins MCP**。
+#### 🥇 场景 A：查找基础设施/服务/凭证/配置信息
 
-### 配置
+**最先尝试** `dt search-kg`（向量语义搜索，无需写 Cypher）：
 
-配置文件位于 `~/.jcli.toml`，已包含服务器地址和认证信息，无需额外传参。
+```bash
+dt search-kg "<关键词>" --limit 10
+```
 
-### 可用命令
+拿到 `elementId` 后，用精确查询取完整属性：
 
-| 用途 | 命令 |
+```cypher
+MATCH (n) WHERE elementId(n) = "4:xxx..."
+RETURN n.auth_user, n.auth_password, n.hostname, n.port, n.url, n.service_type
+```
+
+#### 🥈 场景 B：全文关键词精确匹配
+
+如果是明确的命名关键词（如服务名、配置名），用全文索引兜底：
+
+```cypher
+CALL db.index.fulltext.queryNodes("infra_search", "<关键词>")
+YIELD node, score
+RETURN node.name, labels(node)[0] AS type, node.auth_user, node.hostname, node.url, score
+ORDER BY score DESC LIMIT 10
+```
+
+> 全文索引覆盖标签：Infrastructure, Server, Database, Project, Environment, Software, Knowledge, Configuration, NacosConfig, NacosService
+
+#### 🥉 场景 C：探索性查询（不确定目标类型时）
+
+```cypher
+MATCH (n)
+WHERE (
+  n.name CONTAINS $keyword
+  OR n.auth_user CONTAINS $keyword
+  OR n.hostname CONTAINS $keyword
+  OR n.service_type CONTAINS $keyword
+  OR n.description CONTAINS $keyword
+  OR n.url CONTAINS $keyword
+  OR n.source_file CONTAINS $keyword
+  OR ANY(lbl IN labels(n) WHERE toLower(lbl) CONTAINS toLower($keyword))
+)
+AND NONE(lbl IN labels(n) WHERE lbl IN ['Method','Class','Interface','Enum','Package','Module'])
+RETURN labels(n)[0] AS type, n.name, n.auth_user, n.hostname, n.description
+LIMIT 20
+```
+
+> ⚠️ 场景 C 是兜底方案，优先用场景 A 或 B。场景 A (`dt search-kg`) 是推荐首选。
+
+**唯一不查的情况：** 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须查。
+
+---
+
+## Active Trigger: "记忆" keyword
+
+用户说 "记忆" / "记一下" / "记住这个" / "记下来" / "记住" 时：
+
+必须立即写入 KG。这是命令，不是建议。
+
+写入方式（优先使用系统命令，不依赖编辑器 API）：
+```bash
+dt memorize --type KnowledgeAdded \
+  --entity-id "<唯一标识>" \
+  --entity-type "<实体类型>" \
+  --details "<要记住的内容>" \
+  --project "<项目名>"
+```
+
+写入后必须回复：`📝 已将 [XXX] 记录到知识图谱`
+
+---
+
+## ⚠️ 触发规则：AI 操作后写入知识图谱
+
+> **优先使用 MCP Tool**（`dt_memorize` / `dt_event` / `dt_build` 等），MCP 不可用时降级为 CLI。
+
+以下 AI 操作完成后，必须**无条件**执行对应的写入命令。不可省略，不可跳过。
+
+### 写 KG
+
+| # | 触发操作 | 条件 | 命令 |
+|---|---------|------|------|
+| 1 | 用户说"记忆/记一下/记住这个/记下来/记住" | 总是 | `dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"` |
+| 2 | 安装软件（apt/pip/npm/brew 等） | 总是 | `dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>, method: <安装方式>" --project "<项目>"` |
+| 3 | 修改 Nacos/Apollo/Consul 等外部配置 | 总是 | `dt event --type ConfigChange --entity-id "<data_id>" --entity-type NacosConfig --details "<改动摘要>" --project "<项目>"` |
+| - | 同步 Nacos 配置到知识图谱 | AI 判断必要时 | `dt nacos-sync --env test` 或 `dt nacos-sync --env prod` |
+| 4 | 做出架构/技术决策（选型、迁移、方案设计） | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>; scope: <影响范围>" --project "<项目>"` |
+| 5 | Jenkins 部署（`jenkins_build_job` MCP） | **仅生产/stable 环境** | `dt event --type Deploy --entity-id "<job_name>" --entity-type JenkinsJob --details "branch: <分支>, env: <环境>, params: <参数>" --project "<项目>"` |
+
+### 不写 Event/Knowledge 但同步代码实体到 KG + 向量库
+
+`dt build` 会同步更新 **Method/Class/CALLS 节点到 Neo4j** 和 **向量到 Qdrant**，两者始终保持一致。只不写 Event/Knowledge 节点（避免高频噪声）。
+
+| 触发操作 | 条件 | 命令 |
+|---------|------|------|
+| 源码修改（创建/编辑 .py/.java/.ts 等） | 总是 | `dt build --file <文件中任意文件的绝对路径>` |
+| 批量同步 / 项目首次索引 | 项目维度 | `dt build --path <项目路径> --name <项目名>` |
+| 删除文件 | 文件已删除 | `dt remove --project <项目名> --file <原相对路径>` |
+
+`dt build --file` 会根据 `config.yaml` 的 `projects` 段自动解析项目名和路径，AI 只需传文件路径。
+新增的文件会自动被 `dt build` 发现并索引。`dt build` 通过 SQLite 记录文件哈希，只处理有改动的文件，不重新索引整个项目。
+
+### 完全不操作
+
+| 操作 | 原因 |
 |------|------|
-| 列出所有 Job | `jcli jobs` |
-| 查看 Job 参数定义 | `jcli params <JOB>` |
-| 查看构建历史（含参数） | `jcli history <JOB> [-n 数量]` |
-| 触发构建 | `jcli build <JOB> [-p KEY=VALUE...] [-w] [-s]` |
-| 查看构建日志 | `jcli log <JOB> [BUILD_NUMBER]` |
+| Bug 修复 | 信息已 inline 在代码中 |
+| 开发/测试环境的临时部署构建 | 非生产发布，无回溯价值 |
+| 一般的 API 请求（查询类 GET） | 读操作不产生变更 |
+| 一次性对话、临时调试、常规编辑 | 无长期价值 |
 
-### 典型使用场景
+### 执行规则
 
-**查找 Job：**
-```bash
-jcli jobs | grep <关键词>
+- 写入后必须回复：`📝 已将 [XXX] 记录到知识图谱`
+- 写入时优先关联已有实体，禁止创建孤立节点
+- 不执行的后果：Event 节点会变为孤立节点，后续时间线查询全部失效
+
+## Session-end Protocol
+
+用户说 "done" / "结束" 时：
+1. 列出关键发现
+2. 执行：`dt event --type Conversation --entity-id "<会话日期>" --entity-type Session --project "<项目>" --details "<关键发现摘要>"` 
+3. 回复：`📝 已将 [本次会话摘要] 记录到知识图谱`
+
+---
+
+## Event 知识图谱架构说明
+
+当前知识图谱中的 Event 节点已通过以下关系关联到对应实体：
+
+```
+(:Event)-[:INDEXED_METHOD]->(:Method)       # 方法/文件被索引
+(:Event)-[:INDEXED_PROJECT]->(:Project)     # 项目被索引
+(:Event)-[:INSTALLED_SOFTWARE]->(:Software)  # 软件被安装
+(:Event)-[:INDEXED_DOC]->(:Document)        # 文档被索引
+(:Event)-[:SYNCED_NAMESPACE]->(:NacosNamespace) # Nacos 配置同步
+(:Event)-[:SCANNED_SERVER]->(:Server)       # 服务器被扫描
+(:Event)-[:DEPLOYED_JOB]->(:JenkinsJob)     # Jenkins 部署
 ```
 
-**查看 Job 参数和上次发布版本：**
-```bash
-jcli params <JOB>
-jcli history <JOB> -n 3
-```
-
-**触发构建并等待结果：**
-```bash
-jcli build <JOB> -p Mode=deploy -p branch=master -p version=<版本号> -p message=<说明> --status
-```
-
-**查看构建日志（排错）：**
-```bash
-jcli log <JOB>          # 最新构建
-jcli log <JOB> 5        # 指定构建号
-```
-
-### build 命令参数说明
-
-| 参数 | 说明 |
-|------|------|
-| `-p KEY=VALUE` | 构建参数，可多次使用 |
-| `-w` | 等待构建完成后输出日志 |
-| `-s` | 等待构建完成，返回退出码（0=成功, 1=失败, 2=中止） |
-
-### 注意事项
-
-- 优先使用 `jcli history` 查看上次发布的版本号，再递增版本号触发新构建
-- 部署前先用 `jcli params` 确认 Job 需要哪些参数
-- 构建失败时用 `jcli log` 查看日志定位问题
+Event 节点通过 `event_id` 唯一约束去重（SHA256 哈希），重复操作不会创建重复节点。

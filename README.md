@@ -9,31 +9,35 @@ A persistent memory layer for AI-assisted development. Digital Twin combines a *
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    AI Agent (OpenCode)                    │
-│  AGENTS.md triggers: dt event / dt memorize / dt update  │
+│  AGENTS.md triggers: dt event / dt memorize / dt build   │
 └──────────────────────┬──────────────────────────────────┘
                        │ dt CLI
 ┌──────────────────────▼──────────────────────────────────┐
 │                    dt (Rust CLI)                         │
 │                                                         │
 │  ┌──────────┐  ┌───────────┐  ┌────────┐  ┌─────────┐  │
-│  │ dt event │  │ dt memorize│  │dt build│  │dt update│  │
+│  │ dt event │  │ dt memorize│  │dt build│  │dt search │  │
 │  │ dt remove│  │ dt search  │  │ index  │  │validate │  │
 │  └─────┬────┘  └─────┬─────┘  └───┬────┘  └────┬────┘  │
 │        │              │            │            │       │
 │  ┌─────▼──────────────▼────────────▼────────────▼─────┐ │
 │  │           tree-sitter (7 languages)                │ │
 │  └───────────────────────┬───────────────────────────┘ │
-└──────────────────────────┼─────────────────────────────┘
+│                          │ subprocess                  │
+│  ┌───────────────────────▼───────────────────────────┐ │
+│  │           dt-embed CLI (Python + BGE-M3)           │ │
+│  └───────────────────────────────────────────────────┘ │
+└──────────────────────────┬──────────────────────────────┘
                            │
         ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────────┐
-│   Neo4j      │  │   Qdrant     │  │   Embed Server    │
-│  Knowledge   │  │   Vector     │  │  (Python + BGE)   │
-│  Graph       │  │   Database   │  │  localhost:8001   │
-│  localhost   │  │  localhost   │  └──────────────────┘
-│  :7474       │  │  :6333       │
-└──────────────┘  └──────────────┘
+        ▼                  ▼                  
+┌──────────────┐  ┌──────────────┐  
+│   Neo4j      │  │   Qdrant     │  
+│  Knowledge   │  │   Vector     │  
+│  Graph       │  │   Database   │  
+│  localhost   │  │  localhost   │  
+│  :7474       │  │  :6333       │  
+└──────────────┘  └──────────────┘  
 ```
 
 ### Components
@@ -41,7 +45,7 @@ A persistent memory layer for AI-assisted development. Digital Twin combines a *
 | Component | Language | Purpose |
 |-----------|----------|---------|
 | `engine-rust/` | Rust | Core CLI (`dt`): indexing, search, event/memory management |
-| `services/embed-server/` | Python + sentence-transformers | Text embedding inference (BGE-base-zh-v1.5) |
+| `services/embed-server/` | Python + sentence-transformers | `dt-embed` CLI: GPU text embedding (BGE-M3, 1024-dim) |
 | `services/search-web/` | Python + Flask | Web search UI |
 | `config.yaml` | YAML | Central configuration |
 
@@ -64,8 +68,8 @@ A persistent memory layer for AI-assisted development. Digital Twin combines a *
 # Build essentials for Rust tree-sitter
 sudo apt install build-essential cmake pkg-config
 
-# Python dependencies (for embed server)
-sudo apt install python3 python3-pip python3-venv
+# Python dependencies (for dt-embed CLI)
+sudo apt install python3 python3-pip
 ```
 
 ---
@@ -91,16 +95,19 @@ curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-
 # Or via package manager
 ```
 
-### 2. Embed Server
+### 2. dt-embed CLI
 
 ```bash
 cd services/embed-server
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python3 main.py
-# Starts on http://localhost:8001
+pip install -e .
+sudo ln -sf $(which dt-embed) /usr/local/bin/dt-embed
+
+# Verify
+dt-embed --info
+# → {"model": "BAAI/bge-m3", "dim": 1024, "device": "cuda", "fp16": true}
 ```
+
+`dt` calls `dt-embed` automatically via subprocess — no HTTP server needed.
 
 ### 3. Build and Install `dt` CLI
 
@@ -150,11 +157,11 @@ bash setup.sh
 # Full index (rebuild from scratch)
 dt index --path /path/to/project --name my-project
 
-# Incremental build (uses SQLite hash cache)
-dt build --path /path/to/project --name my-project
-
 # Index a single file (after editing)
-dt update --path /path/to/project --name my-project --file src/main.py
+dt build --file /path/to/project/src/main.py
+
+# Or full project incremental build
+dt build --path /path/to/project --name my-project
 
 # Remove a file from index
 dt remove --project my-project --file src/old.py
@@ -238,7 +245,7 @@ dt build --path /proj --name myapp
   │
   ├─ For each changed file:
   │   1. tree-sitter parse → extract methods/classes
-  │   2. Embed via HTTP → get 768-dim vector
+  │   2. dt-embed CLI (subprocess) → get 1024-dim vector (BGE-M3)
   │   3. Write to Qdrant (vector + payload)
   │   4. Write to Neo4j (Method node + Class + CONTAINS)
   │   5. Update SQLite hash cache
@@ -264,7 +271,7 @@ The AI agent reads `~/AGENTS.md` at session start and follows these rules:
 | Config changed | `dt event --type ConfigChange --entity-type NacosConfig ...` |
 | Architecture decision | `dt memorize --type Decision --entity-type ArchitectureDecision ...` |
 | Production deploy | `dt event --type Deploy --entity-type JenkinsJob ...` |
-| Source file edited | `dt update --path <root> --name <project> --file <path>` |
+| Source file edited | `dt build --path <root> --name <project>` or `dt build --file <abs_path>` |
 | File deleted | `dt remove --project <name> --file <path>` |
 
 ---
@@ -299,7 +306,7 @@ digital-twin/
 │       ├── config.rs            # Config reader (YAML + env fallback)
 │       ├── neo4j.rs             # Neo4j HTTP client
 │       ├── qdrant.rs            # Qdrant HTTP client
-│       ├── embed.rs             # Embed server HTTP client
+│       ├── embed.rs             # dt-embed CLI subprocess client
 │       ├── scanner.rs           # File scanner
 │       ├── parser.rs            # tree-sitter parser
 │       ├── models.rs            # Data models
@@ -310,9 +317,12 @@ digital-twin/
 │       └── search.rs            # Semantic search
 │
 ├── services/
-│   ├── embed-server/            # Embedding inference (Python)
-│   │   ├── main.py
-│   │   └── requirements.txt
+│   ├── embed-server/            # dt-embed CLI (Python, pip-installable)
+│   │   ├── pyproject.toml
+│   │   └── src/dt_embed/
+│   │       ├── cli.py           # CLI entry point
+│   │       ├── engine.py        # GPU model + inference
+│   │       └── pipeline.py      # Batch pipeline
 │   └── search-web/              # Web search UI (Python)
 │       ├── app.py
 │       └── templates/
@@ -333,9 +343,9 @@ digital-twin/
 | `services.neo4j.user` | `neo4j` | Neo4j username |
 | `services.neo4j.password` | `neo4j` | Neo4j password |
 | `services.qdrant.url` | `http://localhost:6333` | Qdrant REST API URL |
-| `services.embed_server.url` | `http://localhost:8001` | Embed server URL |
-| `services.embed_server.dim` | `768` | Embedding dimension |
-| `services.embed_server.model` | `BAAI/bge-base-zh-v1.5` | Embedding model name |
+| `services.embed_server.url` | `http://localhost:8001` | (deprecated) dt calls dt-embed CLI directly |
+| `services.embed_server.dim` | `1024` | Embedding dimension |
+| `services.embed_server.model` | `BAAI/bge-m3` | Embedding model name |
 | `snapshot_dir` | `/var/lib/digital-twin/snapshots` | Directory for snapshots |
 | `projects` | `[]` | List of project definitions (name + path) |
 | `watcher` | (internal) | File watcher config (for dt-sync) |

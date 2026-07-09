@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dt-embed"
+version = "3.0.0"
+description = "本地 GPU 文本向量化工具 (BGE-M3)"
+requires-python = ">=3.10"
+dependencies = [
+    "sentence-transformers>=3.3",
+    "numpy",
+    "orjson>=3.10",
+]
+
+[project.scripts]
+dt-embed = "dt_embed.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

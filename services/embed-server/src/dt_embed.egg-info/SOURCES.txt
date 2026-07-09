@@ -1,0 +1,11 @@
+pyproject.toml
+src/dt_embed/__init__.py
+src/dt_embed/cli.py
+src/dt_embed/engine.py
+src/dt_embed/pipeline.py
+src/dt_embed.egg-info/PKG-INFO
+src/dt_embed.egg-info/SOURCES.txt
+src/dt_embed.egg-info/dependency_links.txt
+src/dt_embed.egg-info/entry_points.txt
+src/dt_embed.egg-info/requires.txt
+src/dt_embed.egg-info/top_level.txt

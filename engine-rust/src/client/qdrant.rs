@@ -95,6 +95,34 @@ pub async fn delete_points_by_filter(collection: &str, file_path: &str) -> Resul
     Ok(())
 }
 
+/// Delete points for multiple file paths in one batch call via Qdrant should-filter.
+pub async fn delete_points_by_files_batch(
+    collection: &str,
+    file_paths: &[String],
+) -> Result<()> {
+    if file_paths.is_empty() {
+        return Ok(());
+    }
+    let should_clauses: Vec<serde_json::Value> = file_paths
+        .iter()
+        .map(|fp| json!({"key": "file_path", "match": {"value": fp}}))
+        .collect();
+    let body = json!({"filter": {"should": should_clauses}});
+    let url = format!("{}/collections/{}/points/delete", qdrant_url(), collection);
+    let client = crate::client::get_client();
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("Failed to batch delete points: {}", text));
+    }
+    Ok(())
+}
+
 pub async fn search(collection: &str, vector: Vec<f32>, limit: usize) -> Result<Vec<SearchResult>> {
     let body = json!({"vector": vector, "limit": limit, "with_payload": true});
     let url = format!("{}/collections/{}/points/search", qdrant_url(), collection);
@@ -110,6 +138,11 @@ pub async fn search(collection: &str, vector: Vec<f32>, limit: usize) -> Result<
         .header("Content-Type", "application/json")
         .json(&body)
         .send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("Qdrant search failed ({}): {} — collection '{}' may not exist or has no data", status, text, collection));
+    }
     let data: QdrantResp = resp.json().await?;
     Ok(data.result.into_iter().map(|p| SearchResult {
         id: format!("{}", p.id),

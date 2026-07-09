@@ -6,9 +6,10 @@ server:
 
 services:
   embed_server:
+    # url is vestigial — dt calls dt-embed CLI via subprocess, not HTTP
     url: http://localhost:8001
-    dim: 768
-    model: BAAI/bge-base-zh-v1.5
+    dim: 1024
+    model: BAAI/bge-m3
   neo4j:
     url: http://localhost:7474
     user: neo4j

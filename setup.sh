@@ -44,18 +44,14 @@ else
   warn "跳过 dt 编译，请手动编译 engine-rust/"
 fi
 
-# ---- 4. 安装 Embed Server ----
-log "部署 Embed Server..."
+# ---- 4. 安装 dt-embed CLI ----
+log "安装 dt-embed CLI..."
 cd "$SCRIPT_DIR"
-if [ ! -d "services/embed-server/venv" ]; then
-  python3 -m venv services/embed-server/venv
-  source services/embed-server/venv/bin/activate
-  pip install -r services/embed-server/requirements.txt -q
-  deactivate
-fi
-log "Embed Server 依赖已安装"
-log "  启动: cd services/embed-server && venv/bin/python3 main.py"
-log "  验证: curl http://localhost:8001/health"
+pip install -e services/embed-server/ -q 2>/dev/null || \
+  pip3 install -e services/embed-server/ -q
+sudo ln -sf "$(which dt-embed)" /usr/local/bin/dt-embed 2>/dev/null || true
+log "dt-embed CLI 已安装"
+log "  验证: dt-embed --info"
 
 # ---- 5. 安装 OpenCode Skill ----
 log "安装 OpenCode Skill..."
@@ -95,14 +91,15 @@ echo "============================================"
 echo " 部署完成!"
 echo "============================================"
 echo ""
-echo "  1. 启动 Embed Server:"
-echo "     cd services/embed-server && venv/bin/python main.py &"
+echo "  1. 验证 dt-embed:"
+echo "     dt-embed --info"
 echo ""
 echo "  2. 索引项目:"
 echo "     dt build --path /path/to/project --name my-project"
 echo ""
 echo "  3. 验证:"
-echo "     curl http://localhost:8001/health   # Embed Server"
-echo "     dt event --type Test --entity-id hello --details 'setup ok'"
+echo "     dt-embed --info                    # 向量化 CLI"
+echo "     dt build --path . --name test      # 索引项目"
+echo "     dt search \"hello\"                  # 语义搜索"
 echo ""
 echo "  4. 查看 AGENTS.md 了解 AI 集成规则"

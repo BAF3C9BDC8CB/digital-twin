@@ -5,6 +5,7 @@ use crate::config;
 use crate::client::{neo4j, qdrant, embed};
 use crate::index::convert::{build_qdrant_point, split_class_path};
 use crate::index::callgraph;
+use crate::index::pipeline;
 use crate::scanner;
 use crate::parser::Parser;
 
@@ -36,7 +37,7 @@ pub async fn run_update(root: &str, project: &str, file: &str) -> Result<()> {
 
     if parsed.methods.is_empty() {
         println!("[update] {}: no methods to index", rel);
-        let db = crate::index::build::init_sqlite()?;
+        let db = pipeline::init_sqlite()?;
         let hash = crate::common::hash::sha1_hex(&content);
         db.execute(
             "INSERT OR REPLACE INTO file_snapshots (file_path, project, file_sha1, file_mtime, method_count, updated_at)
@@ -85,7 +86,7 @@ pub async fn run_update(root: &str, project: &str, file: &str) -> Result<()> {
     let rels = callgraph::rebuild_calls_for_files(project, &[rel.clone()]).await?;
     println!("[rels] created {} CALLS relationships", rels);
 
-    let db = crate::index::build::init_sqlite()?;
+    let db = pipeline::init_sqlite()?;
     let hash = crate::common::hash::sha1_hex(&content);
     db.execute(
         "INSERT OR REPLACE INTO file_snapshots (file_path, project, file_sha1, file_mtime, method_count, updated_at)
