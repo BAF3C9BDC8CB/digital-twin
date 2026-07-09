@@ -8,6 +8,7 @@
  */
 
 import { appendFileSync } from "node:fs";
+import { exec } from "node:child_process";
 
 const LOG = "/tmp/dt-build-plugin.log";
 const SOURCE_EXT = /\.(java|py|ts|js|tsx|jsx|go|rs|cpp|c|h|vue|svelte)$/;
@@ -18,10 +19,23 @@ function log(msg) {
   appendFileSync(LOG, `[${ts}] ${msg}\n`);
 }
 
-const DtBuildPlugin = async ({ $ }) => {
+const DtBuildPlugin = async (ctx) => {
   const changedFiles = new Set();
   let timer = null;
   log("插件已加载");
+
+  function runBuild(file) {
+    return new Promise((resolve) => {
+      exec(`dt build --file ${file}`, (err, stdout, stderr) => {
+        if (err || stderr) {
+          log(`  ✗ ${file}: ${err?.message || stderr}`);
+        } else {
+          log(`  ✓ ${file}`);
+        }
+        resolve();
+      });
+    });
+  }
 
   function scheduleBuild() {
     if (timer) clearTimeout(timer);
@@ -33,12 +47,7 @@ const DtBuildPlugin = async ({ $ }) => {
 
       log(`触发 dt build，共 ${files.length} 个文件`);
       for (const file of files) {
-        try {
-          await $`dt build --file ${file}`;
-          log(`  ✓ ${file}`);
-        } catch (err) {
-          log(`  ✗ ${file}: ${err}`);
-        }
+        await runBuild(file);
       }
       log("完成");
     }, DEBOUNCE_MS);
