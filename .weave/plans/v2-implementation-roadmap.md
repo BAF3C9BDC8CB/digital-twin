@@ -73,42 +73,151 @@
 
 ---
 
-- [ ] 1.0 gRPC 统一通信基础设施
-  **What**: 将全链路通信统一为 gRPC（Neo4j 用 Bolt），消除 HTTP REST 和自定义帧协议。dt CLI 变为常驻 gRPC daemon。
-  **Files**: 创建 `proto/` 目录（顶层 proto 定义），新建 `engine-rust/src/grpc/server.rs` / `engine-rust/src/grpc/client.rs`，修改 `mcp-server.py`（从 subprocess 改为 gRPC client），修改 `engine-rust/src/client/neo4j.rs`（从 HTTP 改为 Bolt 驱动），修改 `engine-rust/src/client/qdrant.rs`（从 HTTP REST 改为 gRPC），重写 `engine-rust/src/embed.rs`（Unix Socket → gRPC client）
-  **Proto 定义**（`proto/` 目录）：
-  - `proto/dt_service.proto`：dt CLI 对外暴露的 gRPC 接口（build/search/context/event/memorize/sync...）
-  - `proto/embed.proto`：dt-embed 的 gRPC 接口（EmbedRequest/EmbedResponse）
-  - 编译：Rust 用 `tonic-build`，Python 用 `grpcio-tools`
+- [ ] 1.0 插件系统 + gRPC 统一通信基础设施
+  **What**: 设计插件系统骨架（`Plugin` trait），将 kub/svc/jcli 三个工具重构为插件，统一注册到 dt CLI daemon 的 gRPC server 上。所有服务间通信走 gRPC（Neo4j 用 Bolt），消除 HTTP REST、自定义帧协议和 subprocess 调用。
+  
+  **Plugin trait 定义**（`engine-rust/src/plugin/mod.rs`）：
+  ```rust
+  #[async_trait]
+  pub trait Plugin: Send + Sync + 'static {
+      fn id(&self) -> &'static str;
+      fn name(&self) -> &'static str;
+      fn version(&self) -> &'static str;
+      
+      /// 注册 gRPC service 到 tonic Router
+      fn register_grpc(&self, builder: tonic::transport::server::Router)
+          -> Result<tonic::transport::server::Router, PluginError>;
+      
+      /// 初始化（在所有插件注册后、server 启动前调用）
+      async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError>;
+      
+      /// 健康检查（daemon 定期调用）
+      async fn health(&self) -> Result<HealthStatus, PluginError>;
+      
+      /// 优雅关闭
+      async fn shutdown(&self) -> Result<(), PluginError>;
+  }
+  
+  pub struct PluginContext {
+      pub neo4j: Arc<Neo4jClient>,     // Bolt 驱动
+      pub qdrant: Arc<QdrantClient>,   // gRPC 驱动
+      pub config: Arc<Config>,
+      pub data_dir: PathBuf,           // 插件私有数据目录
+  }
+  ```
+
+  **插件使用约束**（不可违反）：
+  1. **禁止直接文件系统访问** — 所有路径操作走 `PluginContext` 提供的接口
+  2. **禁止 subprocess 调用** — 所有外部交互通过 gRPC client traits（Neo4jClient/QdrantClient 等）
+  3. **禁止阻塞 async runtime** — 所有 I/O 必须是 async，不允许 `std::thread::sleep` 或同步 IO
+  4. **必须实现健康检查** — `health()` 返回值决定 daemon 是否标记该插件不可用
+  5. **错误必须映射到 gRPC Status** — 插件内部不允许 `panic!`，所有错误走 `PluginError → tonic::Status`
+  6. **proto 文件必须独立声明** — 每个插件的 gRPC service 定义在自己的 proto 文件中，不交叉引用
+
+  **三个工具 → 三个插件**：
+  ```
+  kub ──重构──▶ plugin_k8s    (proto/plugin_k8s.proto)
+  svc ──重构──▶ plugin_svc    (proto/plugin_svc.proto)
+  jcli ──重构──▶ plugin_jenkins (proto/plugin_jenkins.proto)
+  ```
+  
+  **Proto 结构**（`proto/` 目录）：
+  ```
+  proto/
+  ├── common.proto           # 共享类型（HealthStatus, Error, Empty）
+  ├── dt_core.proto          # dt CLI 核心 service（build/search/context/event/memorize/sync）
+  ├── embed.proto            # dt-embed 嵌入 service
+  ├── plugin_k8s.proto       # K8s 插件 service（pods/logs/download/status）
+  ├── plugin_svc.proto       # 本地服务管理插件（list/start/stop/restart/logs/status）
+  └── plugin_jenkins.proto   # Jenkins 插件（jobs/params/history/build/log）
+  ```
+  编译：Rust 用 `tonic-build`，Python 用 `grpcio-tools`
+  
+  **dt CLI daemon 启动流程**：
+  ```
+  1. 加载 config.yaml
+  2. 初始化 Neo4j Bolt client + 连接池
+  3. 初始化 Qdrant gRPC client
+  4. 构建 tonic Router
+  5. 依次注册所有插件 → register_grpc()
+  6. 并行调用所有插件 → init(ctx)
+  7. 启动 gRPC server :50051
+  8. 启动健康检查循环（每 30s 调所有插件的 health()）
+  ```
+
   **架构变更**：
   ```
-                        ┌─────────────────────────────┐
-                        │     dt CLI (Rust daemon)     │
-                        │     gRPC Server :50051       │
-                        └──────┬──────┬───────┬────────┘
-                ┌──────────────┼──────┼───────┼──────────────┐
-                │ gRPC         │ gRPC │  Bolt │ gRPC          │
-                ▼              ▼      ▼        ▼              ▼
-        ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────┐
-        │  dt-embed  │ │   Qdrant   │ │  Neo4j   │ │  MCP Server  │
-        │  (Python)  │ │(gRPC:6334) │ │(Bolt:7687│ │  (Python)    │
-        │ gRPC:50052 │ └────────────┘ └──────────┘ │ gRPC client  │
-        └─────┬──────┘                             └──────────────┘
-              │ in-process                                  │
-        ┌─────▼──────┐                             OpenCode MCP
-        │  BGE-M3    │                             (JSON-RPC)
-        │  (GPU)     │
-        └────────────┘
+                         ┌──────────────────────────────────────┐
+                         │       dt CLI daemon (Rust)           │
+                         │       gRPC Server :50051             │
+                         │                                      │
+                         │  ┌──────────────────────────────┐    │
+                         │  │        Plugin Registry        │    │
+                         │  │  ┌────────┐ ┌──────┐ ┌─────┐ │    │
+                         │  │  │plugin_ │ │plugin│ │plg_ │ │    │
+                         │  │  │  k8s   │ │ _svc │ │jcli │ │    │
+                         │  │  └───┬────┘ └──┬───┘ └──┬──┘ │    │
+                         │  └──────┼─────────┼────────┼────┘    │
+                         │         │         │        │         │
+                         │  ┌──────┴─────────┴────────┴────┐    │
+                         │  │      Host Client Traits       │    │
+                         │  │  Neo4j(Bolt) Qdrant(gRPC)    │    │
+                         │  └───────────────────────────────┘    │
+                         └──────┬──────┬───────┬─────────────────┘
+                 ┌──────────────┼──────┼───────┼──────────────┐
+                 │ gRPC         │ gRPC │  Bolt │ gRPC          │
+                 ▼              ▼      ▼        ▼              ▼
+         ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────┐
+         │  dt-embed  │ │   Qdrant   │ │  Neo4j   │ │  MCP Server  │
+         │  (Python)  │ │(gRPC:6334) │ │(Bolt:7687│ │  (Python)    │
+         │ gRPC:50052 │ └────────────┘ └──────────┘ │ gRPC client  │
+         └─────┬──────┘                             └──────┬───────┘
+               │ in-process                                │ JSON-RPC
+         ┌─────▼──────┐                             ┌──────▼───────┐
+         │  BGE-M3    │                             │   OpenCode   │
+         │  (GPU)     │                             │   (LLM)      │
+         └────────────┘                             └──────────────┘
   ```
+
+  **Files**: 
+  - 创建 `proto/` 目录（全部 proto 定义）
+  - 创建 `engine-rust/src/plugin/` (mod.rs, trait.rs, registry.rs, context.rs)
+  - 创建 `engine-rust/src/plugins/k8s/` (从 /data/myProject/kub 重构，暴露 lib.rs)
+  - 创建 `engine-rust/src/plugins/svc/` (从 /data/myProject/svc 重构)
+  - 创建 `engine-rust/src/plugins/jenkins/` (从 /data/myProject/jenkins-cli-rs 重构)
+  - 创建 `engine-rust/src/grpc/server.rs` (tonic server + plugin 注册)
+  - 修改 `engine-rust/src/client/neo4j.rs` (HTTP REST → Bolt 驱动 neo4rs)
+  - 修改 `engine-rust/src/client/qdrant.rs` (HTTP REST → gRPC)
+  - 重写 `engine-rust/src/embed.rs` (Unix Socket → gRPC client)
+  - 修改 `mcp-server.py` (subprocess → gRPC client 调用 dt daemon)
+  - 修改 `engine-rust/Cargo.toml` (添加 tonic/neo4rs/prost 依赖，workspace 结构)
+
   **Acceptance**:
-  - `dt daemon` 启动后常驻后台（systemd 管理，socket activated）
-  - `dt daemon --status` 显示所有后端连接状态（Neo4j Bolt / Qdrant gRPC / dt-embed gRPC）
-  - gRPC 端口所有工具正常可用（`dt build` / `dt search` / `dt event` 等通过 gRPC 调用）
-  - Neo4j 连接走 Bolt 驱动（`neo4rs` crate），支持连接池、事务重试、自动重连
-  - Qdrant 连接走 gRPC（`tonic` + Qdrant proto），向量批量写入走 streaming
-  - dt-embed 提供 gRPC 接口，proto 定义 `EmbedRequest { repeated string texts }` → `EmbedResponse { repeated Vector vectors }`
-  - MCP Server 通过 gRPC 调用 dt CLI，不再 subprocess 解析 stdout
-  - HTTP 端点完全移除（Neo4j 7474 / Qdrant 6333 仅用于管理面板，dt CLI 不访问）
+  - `dt daemon` 启动后常驻后台（systemd socket activated），监听 :50051
+  - `dt daemon --status` 显示所有插件和后端连接状态：
+    ```
+    插件                  版本      状态      延迟
+    ──────────────────────────────────────────────
+    dt_core              0.1.0    ✓ 正常     —
+    plugin_k8s           0.1.0    ✓ 正常     12ms
+    plugin_svc           0.1.0    ✓ 正常     5ms
+    plugin_jenkins       0.1.0    ✓ 正常     8ms
+    ──────────────────────────────────────────────
+    后端                  状态      延迟
+    Neo4j (Bolt:7687)    ✓ 正常    8ms
+    Qdrant (gRPC:6334)   ✓ 正常    5ms
+    dt-embed (gRPC:50052) ✓ 正常   3ms
+    ```
+  - MCP Server 通过 gRPC 调用所有工具（无 subprocess）
+    - 原 `kublog_status` → gRPC `K8sService.GetPods`
+    - 原 `svc_list` → gRPC `SvcService.ListServices`
+    - 原 `jcli_list` → gRPC `JenkinsService.ListJobs`
+  - 三个原独立 CLI 工具仍可独立运行（`kub`/`svc`/`jcli` 二进制保留），但它们现在是 dt CLI workspace 的成员
+  - Neo4j 走 Bolt 驱动（连接池、事务重试、自动重连）
+  - Qdrant 走 gRPC streaming（大批量向量写入）
+  - dt-embed 提供 gRPC EmbedService
+  - 所有 HTTP REST 端点从 dt CLI 代码中移除
+  - 插件违反约束时编译报错（trait 方法签名强制 async、强制返回 Result、禁止 `std::process::Command`）
 
 - [ ] 1.1 新 Neo4j Schema 设计与落地
   **What**: 在新 clean database 中创建所有 V2 约束、索引、节点标签。
@@ -578,11 +687,13 @@ Phase 2 和 Phase 3 可以并行推进（Phase 3 仅依赖 Phase 1 的 Reality �
 
 | 风险 | 影响 | 缓解措施 |
 |------|------|----------|
-| gRPC proto 定义不完整，后期频繁修改 | 接口不稳定，Phase 1-4 都需要改 | Phase 1.0 完成所有 proto 定义（Embed/Service/Qdrant），后续只增不改；proto 版本化 |
+| Plugin trait 设计不完善，后期频繁修改 | 所有插件需要适配，Phase 1.0 延期 | 先基于 3 个已知插件（k8s/svc/jenkins）设计 trait，验证后再固化；预留 `PluginExt` 扩展 trait 供未来可选方法 |
+| 重构 kub/svc/jcli 时遗漏功能 | 原 CLI 能力丢失 | 保留原仓库完整代码但标记 deprecated；1:1 映射原 subcommand 到 gRPC rpc；Phase 1.0 验收时逐条对比原 CLI --help 输出 |
+| gRPC proto 定义不完整，后期频繁修改 | 接口不稳定 | Phase 1.0 完成所有 6 个 proto 定义（common/core/embed/k8s/svc/jenkins），后续只增不改；proto 版本化 |
 | Neo4j Bolt 驱动 (neo4rs) 成熟度不足 | 连接池/事务处理有 bug | 评估 neo4rs 社区活跃度；备选方案：保留 HTTP 作为 fallback driver，用 feature flag 切换 |
 | dt CLI daemon 进程崩溃影响全局 | 所有 MCP 工具不可用 | systemd `Restart=always` + `RestartSec=3`；MCP Server 检测 gRPC 不可用时自动 fallback 到 subprocess 模式 |
+| 插件间状态泄漏（一个插件 panic 影响全局） | 其他插件连带不可用 | tonic 每个 service 独立 tokio task；panic 只影响当前请求不传播；plugin health check 独立运行 |
 | Schema 设计返工 | Phase 1 延期 | Phase 1.1 完成前做一次完整 review，确保所有实体类型被后续 Phase 覆盖 |
 | Qdrant gRPC API 与 REST API 行为差异 | Phase 3 写入/查询异常 | Phase 1.0 中做 A/B 对比测试，验证 gRPC 和 REST 返回结果一致 |
 | Context Builder 延迟高 | Phase 4 体验差 | 并行查询六世界（Neo4j + Qdrant 并发 gRPC 调用），结果缓存 60s TTL |
 | BGE-M3 向量维度不兼容 | Phase 3 无法写入 | V1 已用 BGE-M3 1024-dim，确认兼容；新 collection 需重新创建 |
-| 22 个底层 MCP 工具在 gRPC 改造后失效 | 日常使用中断 | 底层 MCP 通过 gRPC 调用 dt CLI daemon，接口签名不变；逐个迁移+回归测试 |
