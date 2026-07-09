@@ -209,27 +209,86 @@
   (:Document)-[:BELONGS_TO]->(:Project)
 ```
 
-### 1.7 Service（微服务）
+### 1.7 Service（微服务 — 稳定标识）
 
 ```
 标签: Service
 属性:
-  service_id   String   dt://entity/{env}/service/{name}
-  name         String   服务名
+  service_id   String   dt://service/{name}          ← 与环境无关
+  name         String   服务名                         "aflm-pay"
   type         String   "spring-boot" | "nodejs" | "python"
-  host         String   部署主机
-  port         Integer  服务端口
-  url          String   服务 URL
-  framework    String   "Spring Boot 2.7"
-  version      String   版本号
+  framework    String   框架版本                       "Spring Boot 2.7"
+  description  String   服务说明
+  project      String   所属项目
   config_path  String   配置文件路径
   log_path     String   日志文件路径
-  status       String   "running" | "stopped"
 关系:
-  (:Service)-[:RUNNING_ON]->(:Server)
-  (:Service)-[:DEPENDS_ON]->(:Database)
-  (:Service)-[:DEPENDS_ON]->(:Service)       // 服务间调用
-  (:Service)-[:REGISTERED_IN]->(:NacosService)
+  (:Service)-[:DEPENDS_ON]->(:Database)              // 依赖的数据库
+  (:Service)-[:DEPENDS_ON]->(:Service)               // 服务间调用
+  (:Service)-[:REGISTERED_IN]->(:NacosService)       // 注册中心
+  (:Service)-[:HAS_INSTANCE]->(:ServiceInstance)     // 各环境实例
+```
+
+#### ServiceInstance（服务实例 — 每环境一个）
+
+```
+标签: ServiceInstance
+属性:
+  instance_id   String   dt://service/{name}/instance/{env}
+  service_id    String   反向引用 Service.service_id
+  environment   String   "prod" | "test" | "dev" | "staging"
+  host          String   部署主机 IP/域名
+  port          Integer  服务端口
+  url           String   完整访问 URL                  "http://10.0.1.50:8080"
+  status        String   "running" | "stopped" | "unknown"
+  version       String   当前部署版本                   "v2.3.1"
+  replica_count Integer  副本数                        2
+
+  // ─── Runtime 缓存字段（不入 Neo4j，但可通过 Context Builder 注入） ───
+  pod_name        String (缓存)   主 Pod 名称            "aflm-pay-7d8f9b6c-abcde"
+  pod_phase       String (缓存)   Pod 阶段               "Running"
+  cpu_usage       String (缓存)   CPU 使用量             "250m"
+  memory_usage    String (缓存)   内存使用量             "512Mi"
+  restarts        Integer(缓存)   重启次数              0
+  uptime          String (缓存)   运行时长               "7d 12h"
+  heap_used       String (缓存)   JVM Heap              "256MB / 512MB"
+  thread_count    Integer(缓存)   活跃线程数            42
+
+  // 注意：缓存字段不在 Neo4j 持久化，由 Context Builder 实时查询 K8s/Actuator 后注入
+  // 使用 Neo4j 的 temporal properties 或外部缓存 (Redis/内存) 存储快照
+
+关系:
+  (:Service)-[:HAS_INSTANCE]->(:ServiceInstance)
+  (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)         // 对应 K8s Pod
+  (:ServiceInstance)-[:DEPLOYED_ON]->(:Server)     // 部署在哪个服务器
+  (:ServiceInstance)-[:CONFIGURED_BY]->(:NacosConfig)  // 使用的配置（含环境差异）
+```
+
+**设计说明：** Service 是跨环境的稳定标识（service_id 不含 env），ServiceInstance 承载每个环境的具体部署信息。好处：
+- 同一个服务名在不同环境有不同的 host/port/pod，天然支持
+- Runtime 实时指标（CPU/Mem/Pod状态）作为缓存字段挂到 ServiceInstance 上，不被 Neo4j 持久化污染
+- Context Builder 组装上下文时，从 K8s API 实时拉取 Runtime 数据，注入到 ServiceInstance 的缓存字段中
+
+### 1.8 K8sPod（K8s Pod）
+
+```
+标签: K8sPod
+属性:
+  pod_name      String   Pod 名称                      "aflm-pay-7d8f9b6c-abcde"
+  namespace     String   K8s 命名空间                   "newoffen"
+  phase         String   "Running" | "Pending" | "Failed"
+  node          String   所在节点
+  ip            String   Pod IP
+  restarts      Integer  重启次数
+  image         String   容器镜像                      "aflm-pay:v2.3.1"
+  containers    List<Container>  容器列表 (JSON)
+  cpu_request   String   请求 CPU                      "500m"
+  memory_request String  请求内存                      "1Gi"
+  created_at    DateTime Pod 创建时间
+关系:
+  (:K8sPod)-[:BELONGS_TO]->(:Deployment | :StatefulSet)  // K8s 层级
+  (:K8sPod)-[:SCHEDULED_ON]->(:Server)                   // 运行节点
+  (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)               // 对应的服务实例
 ```
 
 ---
@@ -419,7 +478,7 @@
   session_id   String   所属会话
   timestamp    DateTime
 关系:
-  (:Deployment)-[:DEPLOYS]->(:Service)
+  (:Deployment)-[:DEPLOYS]->(:ServiceInstance)   // 部署到哪个服务实例（含环境）
 ```
 
 ### 3.5 ConfigChange（配置变更）
@@ -573,71 +632,95 @@ Payload:
 
 ## 五、Runtime World（实时世界）
 
-**存储：不入库，实时查询**  
-**特征：瞬时状态，随查随取**
+**存储：不入 Neo4j 持久化，实时查询后注入到 ServiceInstance 缓存字段**  
+**特征：瞬时状态，随查随取，Context Builder 组装时动态拉取**
 
-### 5.1 Pod Status（Pod 状态）
+### 5.1 Service Instance Runtime（服务实例运行时快照）
+
+Context Builder 在组装上下文时，对每个 ServiceInstance 执行实时查询，将结果注入到实例的缓存字段中。
+
+```
+来源: K8s Metrics API / Spring Actuator / 本地进程管理
+目标: ServiceInstance.{pod_phase, cpu_usage, memory_usage, restarts, uptime, ...}
+
+查询流程:
+  1. 从 Neo4j 获取所有 ServiceInstance
+  2. 对每个 instance:
+     a. K8s: GET /apis/metrics.k8s.io/.../pods → cpu_usage, memory_usage
+     b. K8s: GET /api/v1/namespaces/{ns}/pods → phase, restarts
+     c. Actuator (未来): GET /actuator/metrics → heap_used, thread_count
+     d. svc_status (本地): → uptime, pid
+  3. 注入到 ServiceInstance 的缓存字段
+  4. 有效期为当前请求 (TTL: 0)，每次 dt_context 调用重新拉取
+```
+
+### 5.2 Pod Status（Pod 状态 — 对应 K8sPod）
 
 ```
 来源: K8s Metrics API / Kuboard
 格式:
 {
-  pod_name:    String,
-  namespace:   String,
-  phase:       String,        // "Running" | "Pending" | "Failed"
-  node:        String,        // 所在节点
-  ip:          String,        // Pod IP
-  restarts:    Integer,
-  cpu_usage:   String,        // "250m"
-  memory_usage: String,       // "512Mi"
-  containers:  [{name, image, ready, restarts}]
+  pod_name:       String,
+  namespace:      String,
+  phase:          String,        // "Running" | "Pending" | "Failed"
+  node:           String,
+  ip:             String,
+  restarts:       Integer,
+  cpu_usage:      String,        // "250m"
+  memory_usage:   String,        // "512Mi"
+  containers:     [{name, image, ready, restarts}]
 }
+关联: (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)  ← 通过 Pod name 匹配
 ```
 
-### 5.2 Service Metrics（服务指标）
+### 5.3 Service Metrics（服务指标 — 对应 ServiceInstance）
 
 ```
 来源: Spring Actuator / Prometheus（未来）
 格式:
 {
-  service:     String,
-  uptime:      String,        // "7d 12h 35m"
-  heap_used:   String,        // "256MB / 512MB"
-  thread_count: Integer,
+  service:         String,
+  environment:     String,        // "prod" | "test"
+  uptime:          String,        // "7d 12h 35m"
+  heap_used:       String,        // "256MB / 512MB"
+  thread_count:    Integer,
   active_connections: Integer,
-  request_count: Integer,
-  error_rate:  Float          // 0.05 (5%)
+  request_count:   Integer,
+  error_rate:      Float          // 0.05 (5%)
 }
+关联: 通过 service + environment 匹配 ServiceInstance
 ```
 
-### 5.3 Pod Logs（Pod 日志）
+### 5.4 Pod Logs（Pod 日志 — 对应 K8sPod）
 
 ```
 来源: Kuboard WebSocket
 格式:
 {
-  pod:         String,
-  namespace:   String,
-  timestamp:   String,
-  level:       String,        // "INFO" | "WARN" | "ERROR"
-  message:     String,
-  stacktrace:  String | null
+  pod:             String,
+  namespace:       String,
+  timestamp:       String,
+  level:           String,        // "INFO" | "WARN" | "ERROR"
+  message:         String,
+  stacktrace:      String | null
 }
+关联: 通过 pod name 匹配 K8sPod → K8sPod.RUNS_AS ← ServiceInstance
 ```
 
-### 5.4 Local Service Status（本地服务状态）
+### 5.5 Local Service Status（本地服务状态 — 开发环境专用）
 
 ```
 来源: svc_status MCP
 格式:
 {
-  name:        String,        // 服务名
-  status:      String,        // "running" | "stopped" | "error"
-  pid:         Integer | null,
-  port:        Integer,
-  uptime:      String | null,
-  memory_mb:   Float | null
+  name:            String,
+  status:          String,        // "running" | "stopped" | "error"
+  pid:             Integer | null,
+  port:            Integer,
+  uptime:          String | null,
+  memory_mb:       Float | null
 }
+关联: 通过 name 匹配 Service（仅环境="dev" 的 ServiceInstance）
 ```
 
 ---
@@ -755,11 +838,17 @@ IMPLEMENTED_BY    Knowledge         Method/Class      知识被哪个代码实�
 DESCRIBED_BY      Knowledge         Document          知识被哪个文档描述
 REFERENCES        Knowledge         Document          知识引用哪个文档
 AFFECTS           Modification      Method/Class/Cfg  修改影响了哪个实体
-DEPLOYS           Deployment        Service           部署了哪个服务
+DEPLOYS           Deployment        ServiceInstance   部署了哪个服务实例
 FIXES             BugFix            Method            Bug 修复了哪个方法
 BASED_ON          Decision          Knowledge         决策基于哪些知识
 BELONGS_TO        *                 Thread/Project    属于哪个主线/项目
 RELATED_TO        *                 *                 通用关联
+HAS_INSTANCE      Service           ServiceInstance   服务的环境实例
+RUNS_AS           ServiceInstance   K8sPod            实例对应的 K8s Pod
+DEPLOYED_ON       ServiceInstance   Server            实例部署在哪个服务器
+CONFIGURED_BY     ServiceInstance   NacosConfig       实例使用的配置
+SCHEDULED_ON      K8sPod            Server            Pod 调度到的节点
+BELONGS_TO        K8sPod            Deployment        Pod 所属 Deployment
 ```
 
 ---
@@ -770,17 +859,88 @@ RELATED_TO        *                 *                 通用关联
 ┌────────────┬──────────────────────────────────────────────────┐
 │   存储层    │                    内容                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ Neo4j      │ Reality (Code/Server/DB/Config/API/Doc/Service)  │
-│            │ Knowledge (Knowledge/Playbook/Experience/Concept) │
-│            │ Memory (Day/Session/Event/Decision/Fix)           │
-│            │ Reasoning (Observation/Analysis/Decision)         │
-│            │ Thread (Thread/Requirement)                       │
-│            │ 全部关系                                           │
+│ Neo4j      │ Reality: Code(Method/Class/Module) +             │
+│            │   Server + Database + Table +                    │
+│            │   Config(NacosConfig/ConfigKey) +                │
+│            │   API(Endpoint) + Document +                     │
+│            │   Service + ServiceInstance + K8sPod             │
+│            │ Knowledge: Knowledge + Playbook + Experience     │
+│            │   + Concept + Domain                             │
+│            │ Memory: Day + Session + Modification +           │
+│            │   Deployment + ConfigChange + BugFix + Decision   │
+│            │ Reasoning: Observation + Analysis + Decision     │
+│            │ Thread: Thread + Requirement                     │
+│            │ 全部关系 (含 HAS_INSTANCE, RUNS_AS 等)            │
 ├────────────┼──────────────────────────────────────────────────┤
-│ Qdrant     │ Semantic (Code/Doc/Config/API/Exp/Log vectors)    │
+│ Qdrant     │ Semantic: Code/Doc/Config/API/Exp/Log vectors    │
 │            │ 通过 entity_id 反查 Neo4j                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ 实时查询    │ Runtime (K8s Pod/Service Metrics/Logs/本地服务)    │
-│            │ 不入库，Context Builder 动态拉取                    │
+│ 运行时缓存  │ Runtime: ServiceInstance 的 pod_phase,            │
+│            │ cpu_usage, memory_usage 等缓存字段                │
+│            │ Context Builder 实时拉取 K8s API / Actuator       │
+│            │ 注入到 ServiceInstance，不入 Neo4j 持久化          │
 └────────────┴──────────────────────────────────────────────────┘
 ```
+
+---
+
+## 十、扩展指南：如何新增实体/关系/属性
+
+### 扩展模式总览
+
+| 你要做什么 | 改动文件 | 改动量 | 示例 |
+|-----------|---------|--------|------|
+| 实体新增属性 | `dt-common/src/types.rs` | 1 行 field | Service 加 `team: String` |
+| 新增子实体 | types.rs + repo trait + repo impl | ~40 行 | Service → +ServiceInstance |
+| 新增独立实体 | types.rs + repo trait + repo impl + schema init | ~60 行 | 新增 Environment 实体 |
+| 新增关系 | repo trait + repo impl | ~15 行 Cypher | RUNS_AS: Instance→Pod |
+| Runtime 缓存字段 | types.rs (ServiceInstance 缓存区) | ~5 行 field | 新增 `disk_usage` |
+| 数据源填充新字段 | 对应 sync/pipeline 文件 | 改采集逻辑 | nacos-sync 填 instance host |
+| 新增数据源 | SyncSource trait 实现 | ~150 行 | Apollo 配置中心同步 |
+
+### 原则
+
+1. **Neo4j schemaless** — 加属性不需要 migration，加标签不需要 schema change（但需在 `schema init` 中加约束索引）
+2. **trait 先行** — 先在 `dt-common/src/traits.rs` 中定义接口，再在 `dt-storage` 中实现
+3. **ServiceInstance 是扩展枢纽** — 任何与环境相关的字段都挂在 ServiceInstance，不污染 Service
+4. **缓存字段不入 Neo4j** — Runtime 数据标记为 `(缓存)`，由 Context Builder 实时注入
+5. **关系命名规范** — 全大写动词：`HAS_INSTANCE`, `RUNS_AS`, `DEPLOYED_ON`, `CONFIGURED_BY`
+
+### 完整示例：新增 Environment 实体
+
+假设未来需要将环境（prod/test/dev）作为独立实体管理：
+
+```
+步骤 1: types.rs
+  pub struct Environment {
+      pub env_id: String,     // dt://env/prod
+      pub name: String,        // "生产环境"
+      pub code: String,        // "prod"
+      pub description: String,
+  }
+
+步骤 2: traits.rs
+  async fn upsert_environment(&self, env: &Environment) -> Result<()>;
+
+步骤 3: neo4j/repo.rs
+  MERGE (e:Environment {env_id: $id})
+  SET e.name = $name, e.code = $code, e.description = $desc
+
+步骤 4: schema/mod.rs
+  CREATE CONSTRAINT env_id_unique IF NOT EXISTS
+  FOR (e:Environment) REQUIRE e.env_id IS UNIQUE
+
+步骤 5: 迁移现有关系
+  MATCH (si:ServiceInstance)
+  MERGE (e:Environment {env_id: "dt://env/" + si.environment})
+  MERGE (si)-[:DEPLOYED_IN]->(e)
+```
+
+### 不改的部分（自动生效）
+
+以下组件不需要任何修改即可感知新增的实体和关系：
+- **gRPC proto** — 数据在内部流动，不暴露新接口
+- **Context Builder** — `MATCH (n) RETURN n` 自动发现新节点类型
+- **插件系统** — 不涉及
+- **日志系统** — `tracing::instrument` 自动覆盖
+- **DI 装配** — trait 注入，编译期自动解析
