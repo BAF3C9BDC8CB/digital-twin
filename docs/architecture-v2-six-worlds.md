@@ -1,103 +1,208 @@
 # Digital Twin v2 架构设计：六世界模型
 
-> 状态：设计阶段 | 日期：2026-07-09
+> 状态：设计阶段 | 日期：2026-07-09 | 关联文档：[项目结构](./architecture-v2-project-structure.md) · [数据格式](./architecture-v2-data-schema.md) · [数据管线](./architecture-v2-data-pipeline.md) · [MCP API](./architecture-v2-mcp-api-spec.md) · [实施路线图](../.weave/plans/v2-implementation-roadmap.md)
+
+---
 
 ## 一、整体架构
 
 ```
-                         ┌─────────────────────────────────┐
-                         │         Digital Twin v2          │
-                         │      (Agent-Native Platform)     │
-                         └──────────────┬──────────────────┘
+                         ┌──────────────────────────────────────────────┐
+                         │           Digital Twin v2                     │
+                         │        (Agent-Native Platform)                │
+                         │                                              │
+                         │  ┌────────────────────────────────────────┐  │
+                         │  │         dt CLI daemon (Rust)            │  │
+                         │  │         gRPC Server :50051              │  │
+                         │  │                                        │  │
+                         │  │  ┌──────────────────────────────────┐  │  │
+                         │  │  │          Plugin Registry          │  │  │
+                         │  │  │  plugin_k8s / plugin_svc /        │  │  │
+                         │  │  │  plugin_jenkins                   │  │  │
+                         │  │  └──────────────────────────────────┘  │  │
+                         │  │                                        │  │
+                         │  │  ┌──────────────────────────────────┐  │  │
+                         │  │  │        LogService (gRPC)          │  │  │
+                         │  │  │   统一日志 → /var/log/dt-daemon   │  │  │
+                         │  │  └──────────────────────────────────┘  │  │
+                         │  └────────────┬───────────────────────────┘  │
+                         └───────────────┼──────────────────────────────┘
+                                         │
+         ┌───────────────────────────────┼───────────────────────────────┐
+         │                               │                               │
+         │   Six Worlds                  │                               │
+         │                               │                               │
+         │  ┌─────────────┐  ┌───────────▼────────┐  ┌────────────────┐  │
+         │  │  Reality    │  │  Knowledge World   │  │  Memory World  │  │
+         │  │  (事实/资源) │  │  (知识/概念)        │  │  (历史/经验)    │  │
+         │  │             │  │                    │  │                │  │
+         │  │ Service     │  │ Knowledge          │  │ Day→Session    │  │
+         │  │  └Instance  │  │ Playbook           │  │  →Event        │  │
+         │  │ Method/Class│  │ Experience/Concept │  │ Modification   │  │
+         │  │ Server/DB   │  │ Domain             │  │ Deployment     │  │
+         │  │ NacosConfig │  │                    │  │ Decision       │  │
+         │  │ K8sPod      │  │                    │  │                │  │
+         │  └──────┬──────┘  └──────────┬─────────┘  └───────┬────────┘  │
+         │         │                    │                     │          │
+         │  ┌──────▼──────┐  ┌──────────▼─────────┐  ┌───────▼────────┐  │
+         │  │  Runtime    │  │  Semantic World    │  │  Reasoning     │  │
+         │  │  (实时状态)  │  │  (向量/相似度)      │  │  World         │  │
+         │  │             │  │                    │  │  (AI推理缓存)   │  │
+         │  │ →ServiceIns │  │ Qdrant collections │  │ Observation    │  │
+         │  │  tance缓存  │  │ BGE-M3 1024-dim    │  │ →Analysis     │  │
+         │  │  字段       │  │ entity_id→Neo4j    │  │ →Decision     │  │
+         │  │ 不入Neo4j   │  │                    │  │ →Knowledge    │  │
+         │  └──────┬──────┘  └──────────┬─────────┘  └───────┬────────┘  │
+         │         │                    │                     │          │
+         └─────────┼────────────────────┼─────────────────────┼──────────┘
+                   │                    │                     │
+                   └────────────────────┼─────────────────────┘
                                         │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-     ┌────────▼────────┐     ┌─────────▼──────────┐     ┌───────▼────────┐
-     │  Reality World  │     │  Knowledge World   │     │  Memory World  │
-     │  (事实/资源)     │     │  (知识/概念)        │     │  (历史/经验)    │
-     └────────┬────────┘     └─────────┬──────────┘     └───────┬────────┘
-              │                         │                         │
-     ┌────────▼────────┐     ┌─────────▼──────────┐     ┌───────▼────────┐
-     │  Runtime World  │     │  Semantic World    │     │ Reasoning World│
-     │  (实时状态)      │     │  (向量/相似度)      │     │  (AI推理缓存)   │
-     └────────┬────────┘     └─────────┬──────────┘     └───────┬────────┘
-              │                         │                         │
-              └─────────────────────────┼─────────────────────────┘
+                         ┌──────────────▼──────────────────────┐
+                         │         Context Builder              │
+                         │  Retriever→Ranker→Dedup→Resolver    │
+                         │  →Summarize (Chain of Responsibility)│
+                         │                                      │
+                         │  输出：六世界聚合上下文 (JSON)         │
+                         └──────────────┬──────────────────────┘
+                                        │ gRPC
+                         ┌──────────────▼──────────────────────┐
+                         │          MCP Server (Python)         │
+                         │  gRPC client → dt daemon :50051     │
+                         │  JSON-RPC → OpenCode / LLM           │
+                         └──────────────┬──────────────────────┘
                                         │
-                         ┌──────────────▼──────────────┐
-                         │      Context Builder        │
-                         │   (世界切片 → 任务上下文)      │
-                         └──────────────┬──────────────┘
-                                        │
-                         ┌──────────────▼──────────────┐
-                         │      MCP Interface          │
-                         │  dt_context / dt_plan / ... │
-                         └──────────────┬──────────────┘
-                                        │
-                         ┌──────────────▼──────────────┐
-                         │           LLM               │
-                         └─────────────────────────────┘
+                         ┌──────────────▼──────────────────────┐
+                         │               LLM                    │
+                         └─────────────────────────────────────┘
 ```
+
+**基础设施层（支撑六世界运行）：**
+
+| 组件 | 通信 | 说明 |
+|------|------|------|
+| dt CLI daemon | gRPC Server :50051 | 常驻进程，所有工具的统一入口 |
+| Neo4j | Bolt :7687 | 图数据库，存储 Reality/Knowledge/Memory/Reasoning/Thread |
+| Qdrant | gRPC :6334 | 向量数据库，存储 Semantic World |
+| dt-embed | gRPC :50052 | BGE-M3 嵌入服务 (Python) |
+| dt-log | gRPC LogService | 统一日志管道，聚合 4 个进程的日志 |
+| Plugin Registry | 进程内 | 插件生命周期管理，6 条强制约束 |
+| MCP Server | gRPC client | 协议适配，LLM ↔ dt daemon |
+
+---
 
 ## 二、六个世界
 
-| 世界 | 存储 | 内容 | 特征 |
-|------|------|------|------|
-| **Reality** | Neo4j | 代码、服务、数据库、服务器、K8s、配置、API | 客观存在，可被自动发现 |
-| **Knowledge** | Neo4j | 领域概念、业务术语、技术知识、架构模式 | 人类整理或 AI 自动沉淀 |
-| **Memory** | Neo4j | 修改记录、部署事件、Bug修复、会话摘要、经验 | 时间线驱动，只增不删 |
-| **Runtime** | 缓存/K8s API | CPU、内存、Pod状态、连接数、JVM指标 | 实时查询，不入库 |
-| **Semantic** | Qdrant | 所有文本的向量（代码、文档、日志、Issue、Chat） | 相似度检索 |
-| **Reasoning** | Neo4j（会话级） | Decision Graph：假设→证据→结论→置信度。AI 推理过程、模式发现、影响分析、决策链路 | AI 生成，验证后可升级为 Knowledge；未验证的会话结束后降级 |
+| 世界 | 存储 | 核心实体 | 特征 |
+|------|------|----------|------|
+| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **K8sPod** | 客观存在，可被自动发现。Service 是稳定标识，ServiceInstance 承载每个环境的部署信息 |
+| **Knowledge** | Neo4j (Bolt) | Knowledge, Playbook, Experience, Concept, Domain | 人类整理或 AI 自动沉淀。@knowledge 注释→自动提取；dt_learn→任务完成后沉淀 |
+| **Memory** | Neo4j (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。完整审计日志 |
+| **Runtime** | 缓存（不入 Neo4j） | pod_phase, cpu_usage, memory_usage, restarts, uptime, heap_used | 实时查询 K8s/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 请求重新拉取 |
+| **Semantic** | Qdrant (gRPC) | Code/Doc/Config/API/Exp/Log 向量 | BGE-M3 1024 维，通过 entity_id 反查 Neo4j |
+| **Reasoning** | Neo4j（会话级） | Observation, Analysis, Decision | AI 推理痕迹。验证后升级为 Knowledge；未验证的会话结束后降级 |
+
+### Reality World 深入：多环境模型
+
+Reality World 的核心设计决策是 **Service ↔ ServiceInstance 拆分**：
+
+```
+(:Service)                              ← 跨环境稳定标识
+  service_id: "dt://service/aflm-pay"   ← 不含 env
+  name: "aflm-pay"
+  framework: "Spring Boot 2.7"
+    │
+    ├──[:HAS_INSTANCE]──▶ (:ServiceInstance {env: "prod"})
+    │                        host: "10.0.1.50", port: 8080
+    │                        status: "running", version: "v2.3.1"
+    │                        cpu_usage: "250m" (缓存)  ← Runtime 注入
+    │                          │
+    │                          └──[:RUNS_AS]──▶ (:K8sPod)
+    │                                phase: "Running", node: "node-01"
+    │
+    └──[:HAS_INSTANCE]──▶ (:ServiceInstance {env: "test"})
+                             host: "10.0.2.50", port: 8080
+                             status: "running", version: "v2.4.0-rc1"
+                             cpu_usage: "100m" (缓存)
+                               │
+                               └──[:RUNS_AS]──▶ (:K8sPod)
+```
+
+**设计原则：**
+- Service = 稳定标识，service_id 不含环境
+- ServiceInstance = 每个环境的部署快照，含 host/port/version
+- Runtime 指标（CPU/Mem/Pod状态）作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j 持久化**
+- Context Builder 组装时实时查询 K8s API → 注入 ServiceInstance 缓存字段
+
+### Knowledge World 深入：来源与沉淀
+
+六个来源，按优先级：
+
+| 优先级 | 来源 | 触发 | 示例 |
+|--------|------|------|------|
+| ⭐1 | AI 会话自动提取 | 会话结束 | 从 Session 提取关键发现 |
+| ⭐2 | AI 任务主动沉淀 | `dt_learn` MCP | 记录模式、经验、踩坑 |
+| ⭐3 | 文档自动解析 | `dt build` 扫描 | md/pdf → 术语、概念 |
+| ⭐4 | 代码注释标记 | `dt build` AST | `@knowledge domain="支付"` |
+| ⭐5 | 执行结果采集 | AI 执行工具后 | kubectl/mysql 返回值沉淀 |
+| ⭐6 | 用户口述 | "记住" | `dt memorize` 兜底 |
 
 ### Reasoning World 深入：Decision Graph
 
-Reasoning World 不仅是"AI 推理缓存"，更是一个 **Decision Graph（决策图谱）**，记录 AI 的每一次分析和决策链路：
-
 ```
-(:Decision)           ← AI 做出的选择（如"为什么用 Redis 而不是本地缓存？"）
+(:Observation)        ← AI 发现但尚未得出结论的模式
+    ↓ 分析验证
+(:Decision)           ← AI 做出的选择/判断
   ├── context         ← 当时面临的问题
   ├── alternatives    ← 考虑过的候选方案
-  ├── evidence        ← 支撑决策的证据（文档、代码、历史）
+  ├── evidence        ← 支撑决策的证据
   ├── choice          ← 最终选择
   ├── confidence      ← 置信度 (0.0~1.0)
   └── verified        ← 是否已被验证为正确
-
-(:Observation)        ← AI 发现但尚未得出结论的模式
-  示例："Module A 和 Module B 结构高度相似"
-  示例："Payment 和 Refund 共用同一套 RedisLock 模式"
-  这类观察不是 Knowledge（未被验证），也不是 Memory（不是事实事件）
-
-验证 → 升级为 (:Knowledge)
-未验证 → 会话结束降级或丢弃
-```
-
-**生命周期：**
-```
-Observation（AI 发现模式/异常）
-    ↓ 分析验证
-Decision（AI 做出选择/判断）
     ↓ 执行确认
-Knowledge（验证正确，永久保留）
+(:Knowledge)          ← 验证正确，永久保留
 ```
+
+---
 
 ## 三、核心原则
 
 ### World 关系
-- **Reality + Knowledge + Memory** 是 Neo4j 中三类 Entity，通过统一的关系模型连接
+
+- **Reality + Knowledge + Memory** 是 Neo4j 中三类 Entity，通过统一关系模型连接
 - **Semantic** 是 Qdrant 中的向量，通过 `entity_id` 反查 Neo4j
-- **Runtime** 不入库，由 MCP 实时查询后注入 Context
-- **Reasoning** 是 AI 推理痕迹，会话内有效；AI 确认结论正确后升级为永久 Knowledge
+- **Runtime** 不入 Neo4j，通过 ServiceInstance 缓存字段注入 Context：
+  ```
+  K8s API / Actuator ──实时查询──▶ Context Builder ──注入──▶ ServiceInstance.{cpu_usage, pod_phase, ...}
+  ```
+- **Reasoning** 会话内有效；AI 确认结论正确后升级为永久 Knowledge
+
+### 通信统一
+
+- 全链路使用 **gRPC + Bolt**，消除 HTTP REST / 自定义帧 / subprocess
+- dt CLI daemon 是唯一 gRPC 入口，MCP Server 作为 gRPC client
+- 插件通过 Plugin trait 注册到 dt daemon，遵守 6 条强制约束
 
 ### 代码定位
+
 - 代码不是架构的中心，而是 Knowledge 的附件
 - 查询路径：任务 → 匹配 Knowledge/Playbook → 定位相关 Entity → 找到 Code
 - 不再是：搜索代码 → 找到 Method → 结束
 
 ### 关系价值
+
 - Graph 的价值不在存储节点，而在存储**世界之间的联系**
-- 统一关系模型（CALLS、DEPENDS_ON、BELONGS_TO、CONFIGURES 等）
+- 统一关系模型：CALLS、DEPENDS_ON、HAS_INSTANCE、RUNS_AS、IMPLEMENTED_BY、AFFECTS 等
 - 关系是跨世界的：一个 Knowledge 节点可以通过 `IMPLEMENTED_BY` 关联到 Code Entity
+
+### 扩展性
+
+- **Neo4j schemaless**：加属性不需要 migration，加标签不需要 schema change
+- **trait 先行**：所有扩展通过实现已有 trait（GraphRepository、SyncSource、EventHandler、Plugin）完成
+- **ServiceInstance 是扩展枢纽**：任何与环境相关的字段都挂在 ServiceInstance 上
+- 详见 [数据格式文档第十节：扩展指南](./architecture-v2-data-schema.md#十扩展指南如何新增实体关系属性)
+
+---
 
 ## 四、核心组件：Context Builder
 
@@ -106,38 +211,52 @@ Context Builder 是整个平台的大脑，负责从六世界中切出当前任�
 ```
 输入：用户任务描述
   ↓
-Context Builder:
-  1. 解析意图 → 确定涉及哪些 World
-  2. 查询 Reality → 相关代码、服务、配置
-  3. 查询 Knowledge → 领域概念、业务术语
-  4. 查询 Memory → 历史相似任务、踩坑记录
-  5. 查询 Semantic → 相关文档、设计记录
-  6. 查询 Runtime → 当前服务状态
-  7. 组装 Reasoning → AI 之前对此类任务的分析
+Context Builder (Chain of Responsibility 模式):
+  ┌─────────────────────────────────────────────────────────┐
+  │ Stage 1: Retriever — 并行查询六世界                       │
+  │   Reality   → Neo4j: 相关代码、服务实例、配置              │
+  │   Knowledge → Neo4j: 领域概念、业务术语                    │
+  │   Memory    → Neo4j: 历史相似任务、踩坑记录                │
+  │   Semantic  → Qdrant: 文档向量检索                        │
+  │   Runtime   → K8s API/Actuator: 实时拉取                  │
+  │              → 注入 ServiceInstance 缓存字段               │
+  │   Reasoning → Neo4j: 之前对此类任务的分析                  │
+  ├─────────────────────────────────────────────────────────┤
+  │ Stage 2: Ranker  — 按语义相关度排序，过滤低分结果 (<0.5)    │
+  │ Stage 3: Dedup   — 合并重复信息，保留来源引用               │
+  │ Stage 4: Resolver— 检测冲突（如配置 vs 代码不一致），标记    │
+  │ Stage 5: Summarizer — 超 token 预算时压缩，保留关键证据     │
+  └─────────────────────────────────────────────────────────┘
   ↓
-组装完成后进入压缩管道（避免 Context 爆炸）：
-  8. Ranker    → 按相关度排序，过滤噪声
-  9. Dedup     → 合并重复信息，保留来源
-  10. Resolver  → 检测冲突信息（如两处记录互斥），标记或消解
-  11. Summarize → 对大规模结果做摘要压缩，保留关键证据
-  ↓
-输出：聚合 Task Context → 注入 LLM
+输出：聚合 Task Context (JSON) → 注入 LLM
 ```
+
+---
 
 ## 五、MCP 接口
 
-最终 LLM 只看到 8 个高层 MCP（替代现有底层工具）：
+LLM 通过 OpenCode MCP Protocol 调用以下 8 个高层工具，底层全部走 gRPC：
 
-| MCP | 功能 |
-|-----|------|
-| `dt_context` | 聚合返回任务所需全部上下文（六世界切片） |
-| `dt_plan` | 根据任务自动生成执行计划（匹配 Playbook） |
-| `dt_domain` | 返回某一业务领域的知识模型 |
-| `dt_history` | 检索历史相似任务与修改记录 |
-| `dt_dependency` | 返回调用链、依赖关系、影响范围 |
-| `dt_verify` | 修改完成后验证受影响配置/数据库/接口一致性 |
-| `dt_learn` | 将本次修改/经验/决策写回知识图谱 |
-| `dt_search` | 语义搜索代码（保留，但不再是第一步） |
+| MCP | 功能 | 底层 gRPC |
+|-----|------|-----------|
+| `dt_context` | 聚合返回任务所需全部上下文（六世界切片） | `DtCoreService.BuildContext` |
+| `dt_plan` | 根据任务自动生成执行计划（匹配 Playbook） | `DtCoreService.GeneratePlan` |
+| `dt_domain` | 返回某一业务领域的知识模型 | `DtCoreService.QueryDomain` |
+| `dt_history` | 检索历史相似任务与修改记录 | `DtCoreService.QueryHistory` |
+| `dt_dependency` | 返回调用链、依赖关系、影响范围 | `DtCoreService.QueryDependency` |
+| `dt_verify` | 修改完成后验证受影响配置/数据库/接口一致性 | `DtCoreService.Verify` |
+| `dt_learn` | 将本次修改/经验/决策写回知识图谱 | `DtCoreService.Learn` |
+| `dt_search` | 跨世界语义搜索（代码/知识/文档） | `DtCoreService.Search` |
+
+底层运维工具由插件暴露，LLM 也可直接调用：
+
+| 插件 | gRPC Service | 提供的 RPC |
+|------|-------------|-----------|
+| plugin_k8s | `K8sService` | GetPods, GetLogs (stream), DownloadLogs, GetStatus |
+| plugin_svc | `SvcService` | ListServices, GetStatus, Start (stream), Stop, Restart, GetLogs (stream) |
+| plugin_jenkins | `JenkinsService` | ListJobs, GetParams, GetHistory, Build (stream), GetBuildLog (stream) |
+
+---
 
 ## 六、数字主线（Digital Thread）
 
@@ -147,11 +266,11 @@ Digital Thread 是跨六世界的横切层，将**同一条业务主线**上分�
 
 一次业务需求（如"支付平台从通联迁移到银盛"）会散落在不同世界：
 
-- Reality：代码改了 5 个文件、Nacos 配置变了
-- Memory：记录了修改事件、部署记录
-- Knowledge：沉淀了迁移经验和 Playbook
-- Semantic：保存了相关设计文档的向量
-- Reasoning：保存了迁移分析过程的决策链路
+- **Reality**：代码改了 5 个文件、Nacos 配置变了、ServiceInstance 版本更新
+- **Memory**：记录了 Modification + Deployment（→ServiceInstance）事件
+- **Knowledge**：沉淀了迁移经验和 Playbook
+- **Semantic**：保存了相关设计文档的向量
+- **Reasoning**：保存了迁移分析过程的决策链路
 
 但它们彼此孤立，缺少一条主线将它们关联在一起。
 
@@ -163,13 +282,14 @@ Digital Thread 是跨六世界的横切层，将**同一条业务主线**上分�
   ├── created_at:  2026-07-09
   ├── status:      进行中 / 已完成 / 已归档
   │
-  ├── [:HAS_REQUIREMENT] → (:Requirement)
-  ├── [:HAS_SESSION]     → (:Session)      ← 多个会话
-  ├── [:HAS_DECISION]    → (:Decision)     ← 架构决策
-  ├── [:HAS_MODIFICATION]→ (:Modification) ← 代码变更
-  ├── [:HAS_DEPLOYMENT]  → (:Deployment)   ← 部署记录
-  ├── [:HAS_KNOWLEDGE]   → (:Knowledge)    ← 沉淀的经验
-  └── [:HAS_PLAYBOOK]    → (:Playbook)     ← 生成的执行手册
+  ├── [:HAS_REQUIREMENT] → (:Requirement)     ← 需求定义
+  ├── [:HAS_SESSION]     → (:Session)         ← 多个会话
+  ├── [:HAS_DECISION]    → (:Decision)        ← 架构决策
+  ├── [:HAS_MODIFICATION]→ (:Modification)    ← 代码变更
+  ├── [:HAS_DEPLOYMENT]  → (:Deployment)      ← 部署记录
+  │                            └─[:DEPLOYS]→ (:ServiceInstance)
+  ├── [:HAS_KNOWLEDGE]   → (:Knowledge)       ← 沉淀的经验
+  └── [:HAS_PLAYBOOK]    → (:Playbook)        ← 生成的执行手册
 ```
 
 ### 价值
@@ -180,6 +300,26 @@ Digital Thread 是跨六世界的横切层，将**同一条业务主线**上分�
 
 还能回答：
 
-> **"这次迁移为什么这样设计？经历了哪些讨论？哪些代码、配置、部署和经验属于同一个任务？"**
+> **"这次迁移为什么这样设计？经历了哪些讨论？哪些代码、配置、部署（哪个环境？哪个版本？）和经验属于同一个任务？"**
 
 Thread 把六个世界从**"六张独立的快照"**变成**"跨时间、跨系统、跨知识的完整演化链"**。
+
+---
+
+## 七、技术分层总览
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Interface    gRPC services + MCP + CLI              │
+├─────────────────────────────────────────────────────┤
+│  Application  BuildService, SyncService,             │
+│               ContextService, MemoryService, ...     │
+├─────────────────────────────────────────────────────┤
+│  Domain       types, traits, entities, rules         │
+├─────────────────────────────────────────────────────┤
+│  Infrastructure  Neo4jRepo, QdrantRepo,              │
+│                  NacosClient, K8sClient, dt-log      │
+└─────────────────────────────────────────────────────┘
+```
+
+详见 [项目结构设计文档](./architecture-v2-project-structure.md)。
