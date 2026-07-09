@@ -245,14 +245,15 @@
   replica_count Integer  副本数                        2
 
   // ─── Runtime 缓存字段（不入 Neo4j，Context Builder 实时注入） ───
-  cpu_usage       String (缓存)   CPU 使用量             "250m"
-  memory_usage    String (缓存)   内存使用量             "512Mi"
-  uptime          String (缓存)   运行时长               "7d 12h"
-  heap_used       String (缓存)   JVM Heap              "256MB / 512MB"
-  thread_count    Integer(缓存)   活跃线程数            42
+  pods            Array(缓存)   Pod 列表 (name, ip, phase, restarts, node, cpu, memory)
+  cpu_usage       String (缓存)  CPU 使用量 (聚合)       "250m"
+  memory_usage    String (缓存)  内存使用量 (聚合)        "512Mi"
+  uptime          String (缓存)  运行时长                 "7d 12h"
+  heap_used       String (缓存)  JVM Heap                "256MB / 512MB"
+  thread_count    Integer(缓存)  活跃线程数              42
 
-  // 注意：缓存字段不在 Neo4j 持久化，由 Context Builder 实时查询 K8s/Actuator 后注入
-  // pod_name/pod_phase/restarts 属于 K8sPod Reality 实体，不在此处缓存
+  // 注意：pods[] 从 K8s API 实时拉取（GET /pods），不在 Neo4j 持久化
+  // Pod 的历史问题（哪天哪个 Pod 崩溃了）→ Memory World 事件记录（Phase 2+）
 
 关系:
   (:Service)-[:HAS_INSTANCE]->(:ServiceInstance)
@@ -283,45 +284,13 @@
   (:ServiceInstance)-[:DEPLOYED_AS]->(:Deployment)      // 对应的服务实例
 ```
 
-### 1.8 K8sPod（K8s Pod — 有生命周期的 Reality 实体）
+### 1.8 K8sPod（已移除）
 
-> ⚠️ **K8sPod 的归属**：pod_name 和 pod_ip 每次部署都会变——Pod 不是"稳定"实体，而是 Deployment 的一次短暂化身。
-> 但它仍属于 **Reality World**，因为它是一个**客观存在的事实**（"2026-07-09 14:00 时刻，名为 X 的 Pod 以 IP Y 运行在节点 Z 上"）。
-> 关键是**生命周期管理**：终止的 Pod 不删除，而是标记 `phase = "Terminated"`，作为历史记录保留。
-
-```
-标签: K8sPod
-属性:
-  // ─── Reality 字段（persisted） ───
-  pod_name      String   Pod 名称                      "aflm-pay-7d8f9b6c-abcde"
-  namespace     String   K8s 命名空间                   "newoffen"
-  pod_ip        String   Pod IP                       "10.244.1.23"
-  node_name     String   所在节点名                     "node-01"
-  image         String   容器镜像                      "aflm-pay:v2.3.1"
-  containers    List<Container>  容器列表 (JSON)
-  cpu_request   String   请求 CPU                      "500m"
-  memory_request String  请求内存                      "1Gi"
-  created_at    DateTime Pod 创建时间
-
-  // ─── 快照字段（k8s-sync 每小时更新，保留最后一次已知状态） ───
-  phase         String   最后一次 k8s-sync 时的阶段     "Running" | "Terminated"
-  restarts      Integer  最后一次 k8s-sync 时的重启次数 3
-
-  // 注意：phase 和 restarts 可能随时变化，k8s-sync 每小时快照会丢失中间态
-  // 如需实时 phase/restarts → 查 Runtime 缓存（Context Builder 实时拉取）
-  // 如需历史 phase 变化 → 查 Memory World 事件记录（Phase 2+）
-
-关系:
-  (:Deployment)-[:HAS_POD]->(:K8sPod)                   // 所属 Deployment
-  (:K8sPod)-[:SCHEDULED_ON]->(:Server)                  // 运行节点
-
-生命周期:
-  1. 新 Pod 创建 → k8s-sync MERGE (:K8sPod {phase: "Running"})
-  2. Pod 运行中 → phase 可能变化，但仅在下一次 k8s-sync 时更新快照
-  3. 旧 Pod 终止 → k8s-sync 检测到 Pod 不存在 → SET phase = "Terminated"
-     (不删除节点！保留为历史记录，可追溯"当时哪个 Pod 以哪个 IP 运行")
-  4. 新 Pod 上线 → 创建新 (:K8sPod) 节点，旧节点保留
-```
+> **设计决策**：K8sPod **不属于 Reality World**。Pod 是 K8s 的运行时概念——每次部署、重启、调度都产生新 Pod。将 Pod 持久化到 Neo4j 会导致：脏数据（Pod 已终止但节点还在）、生命周期管理负担、无谓的写入开销。
+>
+> Pod 的全部信息（name、ip、phase、restarts、node、cpu、memory）属于 **Runtime World**，由 Context Builder 实时查询 K8s API 获取，注入到 `ServiceInstance.pods[]` 缓存字段。
+>
+> Deployment 是 Reality 中唯一的 K8s 实体——它足够稳定，仅在部署时变化。
 
 ---
 
@@ -664,86 +633,69 @@ Payload:
 
 ## 五、Runtime World（实时世界）
 
-**存储：不入 Neo4j 持久化，实时查询后注入到 ServiceInstance 缓存字段**  
-**特征：瞬时状态，每秒变化，随查随取**
+**存储：不入 Neo4j，Context Builder 实时查询后注入 ServiceInstance 缓存字段**  
+**特征：瞬时状态，每次 dt_context 请求重新拉取**
 
 ### Reality vs Runtime 分界
 
 ```
-Pod 的两面：
-
-Reality (Neo4j)                    Runtime (缓存)
-─────────────────────────          ────────────────────
-pod_name: "aflm-pay-7d8f..."       pod_phase: "Running"    ← 随时可能变
-pod_ip: "10.244.1.23"              cpu_usage: "250m"        ← 每秒变化
-node_name: "node-01"               memory_usage: "512Mi"    ← 每秒变化
-image: "aflm-pay:v2.3.1"           restarts: 3 (实时)      ← 缓慢增长
-cpu_request: "500m"                uptime: "7d 12h"        ← 持续增长
-created_at: 2026-07-01             heap_used: "256MB/512MB"
-                                    thread_count: 42
-k8s-sync 每小时更新                 Context Builder 每次请求实时拉取
-用于: 部署溯源、影响分析              用于: 故障排查、容量感知
+Reality (Neo4j, k8s-sync 每小时)     Runtime (缓存, 每次 dt_context 实时拉取)
+────────────────────────────         ────────────────────────────────────────
+(:Deployment)                        ServiceInstance.pods[]:
+  name: "aflm-pay"                     [{name, ip, phase, restarts, node,
+  image: "aflm-pay:v2.3.1"              cpu, memory}, ...]
+  replicas: 2
+                                     ServiceInstance 缓存字段:
+(:ServiceInstance)                     cpu_usage, memory_usage
+  host: "10.0.1.50"                    uptime, heap_used, thread_count
+  port: 8080
+  version: "v2.3.1"                  所有 Pod 信息不入 Neo4j
+                                      所有 Metrics 不入 Neo4j
+k8s-sync 无需管理 Pod 生命周期          每次查询都是最新数据
 ```
 
-**判断标准**：这个字段下次 k8s-sync（一小时）之前会不会变？会变 → Runtime。不会变 → Reality。
-
-### 5.1 Service Instance Runtime（服务实例运行时快照）
-
-Context Builder 在组装上下文时，对每个 ServiceInstance 执行实时查询，将结果注入到实例的缓存字段中。
+### 5.1 Pod List（Pod 列表 — 完整运行时信息）
 
 ```
-来源: K8s Metrics API / Spring Actuator / 本地进程管理
-目标: ServiceInstance.{pod_phase, cpu_usage, memory_usage, restarts, uptime, ...}
+来源: K8s API (GET /api/v1/namespaces/{ns}/pods)
+注入目标: ServiceInstance.pods[]
 
-查询流程:
-  1. 从 Neo4j 获取所有 ServiceInstance
-  2. 对每个 instance:
-     a. K8s: GET /apis/metrics.k8s.io/.../pods → cpu_usage, memory_usage
-     b. K8s: GET /api/v1/namespaces/{ns}/pods → phase, restarts
-     c. Actuator (未来): GET /actuator/metrics → heap_used, thread_count
-     d. svc_status (本地): → uptime, pid
-  3. 注入到 ServiceInstance 的缓存字段
-  4. 有效期为当前请求 (TTL: 0)，每次 dt_context 调用重新拉取
-```
-
-### 5.2 Pod Status（Pod 状态 — 对应 K8sPod）
-
-```
-来源: K8s Metrics API / Kuboard
 格式:
-{
-  pod_name:       String,
-  namespace:      String,
+[{
+  name:           String,        // "aflm-pay-7d8f9b6c-abcde"
+  ip:             String,        // "10.244.1.23"
   phase:          String,        // "Running" | "Pending" | "Failed"
-  node:           String,
-  ip:             String,
-  restarts:       Integer,
-  cpu_usage:      String,        // "250m"
-  memory_usage:   String,        // "512Mi"
-  containers:     [{name, image, ready, restarts}]
-}
-关联: (:ServiceInstance)-[:RUNS_AS]->(:K8sPod)  ← 通过 Pod name 匹配
+  node:           String,        // "node-01"
+  restarts:       Integer,       // 3
+  cpu_usage:      String,        // "250m"    (from Metrics API)
+  memory_usage:   String,        // "512Mi"   (from Metrics API)
+  containers:     [{name, image, ready}]
+}]
 ```
 
-### 5.3 Service Metrics（服务指标 — 对应 ServiceInstance）
+### 5.2 Service Metrics（服务指标）
 
 ```
-来源: Spring Actuator / Prometheus（未来）
-格式:
-{
-  service:         String,
-  environment:     String,        // "prod" | "test"
-  uptime:          String,        // "7d 12h 35m"
-  heap_used:       String,        // "256MB / 512MB"
-  thread_count:    Integer,
-  active_connections: Integer,
-  request_count:   Integer,
-  error_rate:      Float          // 0.05 (5%)
-}
-关联: 通过 service + environment 匹配 ServiceInstance
+来源: Spring Actuator / Prometheus / K8s Metrics API
+注入目标: ServiceInstance 缓存字段
+
+Context Builder 查询流程:
+  1. 从 Neo4j 获取 ServiceInstance（含 DEPLOYED_AS→Deployment）
+  2. 通过 Deployment.name 查询 K8s API:
+     GET /api/v1/namespaces/{ns}/pods?labelSelector=app={deploy_name}
+     → 填充 ServiceInstance.pods[]
+  3. 查询 K8s Metrics API:
+     GET /apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods
+     → 填充每个 pod 的 cpu_usage, memory_usage
+  4. 查询 Actuator (未来):
+     GET /actuator/metrics → heap_used, thread_count
+  5. 查询本地服务状态 (开发环境):
+     svc status → uptime, pid
+  6. 注入到 ServiceInstance 缓存字段
+  7. 有效期: 当前请求 (TTL: 0)，每次 dt_context 重新拉取
 ```
 
-### 5.4 Pod Logs（Pod 日志 — 对应 K8sPod）
+### 5.3 Pod Logs（Pod 日志）
 
 ```
 来源: Kuboard WebSocket
@@ -756,7 +708,7 @@ Context Builder 在组装上下文时，对每个 ServiceInstance 执行实时�
   message:         String,
   stacktrace:      String | null
 }
-关联: 通过 pod name 匹配 K8sPod → K8sPod.RUNS_AS ← ServiceInstance
+关联: 通过 pod name 匹配 ServiceInstance.pods[] 中的 Pod
 ```
 
 ### 5.5 Local Service Status（本地服务状态 — 开发环境专用）
@@ -897,8 +849,6 @@ BELONGS_TO        *                 Thread/Project    属于哪个主线/项目
 RELATED_TO        *                 *                 通用关联
 HAS_INSTANCE      Service           ServiceInstance   服务的环境实例
 DEPLOYED_AS       ServiceInstance   Deployment        实例对应的 K8s Deployment
-HAS_POD           Deployment        K8sPod            Deployment 管理的 Pod
-SCHEDULED_ON      K8sPod            Server            Pod 调度到的节点
 CONFIGURED_BY     ServiceInstance   NacosConfig       实例使用的配置（含环境差异）
 DEPLOYS           Deployment        ServiceInstance   部署事件→服务实例
 ```
@@ -915,22 +865,24 @@ DEPLOYS           Deployment        ServiceInstance   部署事件→服务实�
 │            │   Server + Database + Table +                    │
 │            │   Config(NacosConfig/ConfigKey) +                │
 │            │   API(Endpoint) + Document +                     │
-│            │   Service + ServiceInstance + K8sPod             │
+│            │   Service + ServiceInstance + Deployment          │
+│            │   (⚠️ K8sPod 已移除 — 全部属于 Runtime)         │
 │            │ Knowledge: Knowledge + Playbook + Experience     │
 │            │   + Concept + Domain                             │
 │            │ Memory: Day + Session + Modification +           │
 │            │   Deployment + ConfigChange + BugFix + Decision   │
 │            │ Reasoning: Observation + Analysis + Decision     │
 │            │ Thread: Thread + Requirement                     │
-│            │ 全部关系 (含 HAS_INSTANCE, RUNS_AS 等)            │
 ├────────────┼──────────────────────────────────────────────────┤
 │ Qdrant     │ Semantic: Code/Doc/Config/API/Exp/Log vectors    │
 │            │ 通过 entity_id 反查 Neo4j                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ 运行时缓存  │ Runtime: ServiceInstance 的 pod_phase,            │
-│            │ cpu_usage, memory_usage 等缓存字段                │
-│            │ Context Builder 实时拉取 K8s API / Actuator       │
-│            │ 注入到 ServiceInstance，不入 Neo4j 持久化          │
+│ 运行时缓存  │ Runtime: ServiceInstance.pods[]                   │
+│            │ (name, ip, phase, restarts, node)                 │
+│            │ + cpu_usage, memory_usage, uptime,                │
+│            │ heap_used, thread_count                           │
+│            │ Context Builder 实时查询 K8s API / Actuator       │
+│            │ 有效期为当前请求，不入 Neo4j                        │
 └────────────┴──────────────────────────────────────────────────┘
 ```
 
