@@ -1,0 +1,94 @@
+// K8s plugin gRPC service — Kubernetes operations.
+syntax = "proto3";
+
+package dt.plugin.k8s;
+
+import "common.proto";
+
+service K8sPlugin {
+  // List pods, deployments, or services.
+  rpc GetPods(GetResourcesRequest) returns (GetPodsResponse);
+  rpc GetDeployments(GetResourcesRequest) returns (GetDeploymentsResponse);
+  rpc GetServices(GetResourcesRequest) returns (GetServicesResponse);
+
+  // Stream pod logs (server-side streaming).
+  rpc GetLogs(GetLogsRequest) returns (stream LogLine);
+
+  // Download pod logs to a local file.
+  rpc DownloadLogs(DownloadLogsRequest) returns (DownloadLogsResponse);
+
+  // Get overall status summary.
+  rpc GetStatus(dt.common.Empty) returns (K8sStatusResponse);
+}
+
+message GetResourcesRequest {
+  string namespace = 1;
+}
+
+message PodInfo {
+  string name = 1;
+  string namespace = 2;
+  string status = 3;
+  int32 restarts = 4;
+  string age = 5;
+}
+
+message GetPodsResponse {
+  repeated PodInfo pods = 1;
+}
+
+message DeploymentInfo {
+  string name = 1;
+  string namespace = 2;
+  int32 ready = 3;
+  int32 desired = 4;
+  string age = 5;
+}
+
+message GetDeploymentsResponse {
+  repeated DeploymentInfo deployments = 1;
+}
+
+message ServiceInfo {
+  string name = 1;
+  string namespace = 2;
+  string type = 3;
+  string cluster_ip = 4;
+  string ports = 5;
+  string age = 6;
+}
+
+message GetServicesResponse {
+  repeated ServiceInfo services = 1;
+}
+
+message GetLogsRequest {
+  string pod = 1;
+  string namespace = 2;
+  string since = 3;   // e.g. "30m", "2h"
+  bool previous = 4;  // previous container instance
+}
+
+message LogLine {
+  string timestamp = 1;
+  string content = 2;
+}
+
+message DownloadLogsRequest {
+  string pod = 1;
+  string namespace = 2;
+  string since = 3;
+  string output_path = 4;
+}
+
+message DownloadLogsResponse {
+  string output_path = 1;
+  int64 bytes_written = 2;
+}
+
+message K8sStatusResponse {
+  string cluster_status = 1;
+  int32 total_pods = 2;
+  int32 healthy_pods = 3;
+  int32 unhealthy_pods = 4;
+}

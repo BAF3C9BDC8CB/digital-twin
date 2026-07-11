@@ -1,0 +1,75 @@
+// Local service plugin gRPC service — microservice lifecycle management.
+syntax = "proto3";
+
+package dt.plugin.svc;
+
+import "common.proto";
+
+service SvcPlugin {
+  // List all tracked local microservices.
+  rpc ListServices(dt.common.Empty) returns (ListServicesResponse);
+
+  // Get detailed status of a single service.
+  rpc GetStatus(GetStatusRequest) returns (ServiceStatus);
+
+  // Start a service (server-side streaming for build + startup output).
+  rpc Start(StartRequest) returns (stream ServiceLogLine);
+
+  // Stop a service.
+  rpc Stop(StopRequest) returns (ServiceStatus);
+
+  // Restart a service (server-side streaming as above).
+  rpc Restart(RestartRequest) returns (stream ServiceLogLine);
+
+  // Stream service logs (tail -f style).
+  rpc GetLogs(GetLogsRequest) returns (stream ServiceLogLine);
+}
+
+message GetStatusRequest {
+  string name = 1;
+}
+
+message StartRequest {
+  string name = 1;
+}
+
+message StopRequest {
+  string name = 1;
+}
+
+message RestartRequest {
+  string name = 1;
+}
+
+message GetLogsRequest {
+  string name = 1;
+  int32 lines = 2;  // initial tail lines
+}
+
+message ServiceInfo {
+  string name = 1;
+  string status = 2;   // running / stopped / error
+  int32 pid = 3;
+  string port = 4;
+  string uptime = 5;
+}
+
+message ListServicesResponse {
+  repeated ServiceInfo services = 1;
+}
+
+message ServiceStatus {
+  string name = 1;
+  string status = 2;
+  int32 pid = 3;
+  string port = 4;
+  string uptime = 5;
+  string last_error = 6;
+}
+
+message ServiceLogLine {
+  string timestamp = 1;
+  string level = 2;
+  string content = 3;
+  string service = 4;
+}

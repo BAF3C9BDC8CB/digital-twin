@@ -28,6 +28,36 @@ services:
   #   test: http://nacos-test.example.com
   #   prod: http://nacos.example.com
 
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+# Sensitive credentials MUST use the "env:" prefix to read from environment
+# variables. Plain-text passwords are rejected in production when
+# `allow_plain_passwords` is false.
+#
+#   "env:NEO4J_PASSWORD"   →  read $NEO4J_PASSWORD
+#   "vault:secret/neo4j"   →  external vault (future)
+#   "plaintext"            →  plain text (DEV only)
+#
+security:
+  # gRPC mTLS certificates (for external clients connecting over TCP).
+  # Unix-socket callers (MCP, CLI) bypass TLS entirely.
+  tls:
+    ca_cert: "/etc/dt/ca.pem"
+    server_cert: "/etc/dt/server.pem"
+    server_key: "/etc/dt/server.key"
+  # JWT secret used to validate bearer tokens for remote clients.
+  jwt_secret: "env:DT_JWT_SECRET"
+  # When true, plain-text passwords in config are accepted.
+  # Production deployments must set this to false.
+  allow_plain_passwords: false
+
+# Neo4j / Qdrant passwords shipped via env vars:
+#   export NEO4J_PASSWORD=...
+#   export QDRANT_API_KEY=...
+# In config.yaml the value is "env:NEO4J_PASSWORD" (not the real password).
+
 snapshot_dir: /var/lib/digital-twin/snapshots
 
 # Optional: register projects for dt-sync incremental mode

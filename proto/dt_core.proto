@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package dt.core;
+
+import "common.proto";
+
+// Digital Twin Core gRPC service — dt CLI operations.
+service DtCore {
+  // Build / index a project or file into the vector store.
+  rpc Build(BuildRequest) returns (BuildResponse);
+
+  // Semantic code search.
+  rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Retrieve context for a given query or entity.
+  rpc GetContext(ContextRequest) returns (ContextResponse);
+
+  // Record an event (deploy, install, config change, etc.).
+  rpc RecordEvent(EventRequest) returns (dt.common.Empty);
+
+  // Memorize knowledge (decision, note, dependency).
+  rpc Memorize(MemorizeRequest) returns (dt.common.Empty);
+
+  // Sync knowledge graph nodes to vector store.
+  rpc Sync(SyncRequest) returns (SyncResponse);
+}
+
+// ---- Build ----
+
+message BuildRequest {
+  string path = 1;
+  string name = 2;   // optional project name
+  bool is_file = 3;  // true if path is a single file
+}
+
+message BuildResponse {
+  int32 files_indexed = 1;
+  int32 vectors_created = 2;
+  int32 files_skipped = 3;
+  double elapsed_secs = 4;
+}
+
+// ---- Search ----
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+  bool expand = 3;   // expand query with variants
+  string path = 4;   // scope to path
+  string project = 5; // scope to project
+}
+
+message SearchResult {
+  float score = 1;
+  string name = 2;
+  string file_path = 3;
+  int32 start_line = 4;
+  string signature = 5;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+  int32 total = 2;
+  double elapsed_secs = 3;
+}
+
+// ---- Context ----
+
+message ContextRequest {
+  string query = 1;
+  repeated string file_paths = 2;
+  int32 max_tokens = 3;
+}
+
+message ContextResponse {
+  string context = 1;
+  int32 token_count = 2;
+}
+
+// ---- Event ----
+
+message EventRequest {
+  string type = 1;          // Deploy / SoftwareInstalled / ConfigChange / Conversation
+  string entity_id = 2;
+  string entity_type = 3;
+  string project = 4;
+  string details = 5;
+}
+
+// ---- Memorize ----
+
+message MemorizeRequest {
+  string type = 1;          // Decision / KnowledgeAdded / Environment / Dependencies
+  string entity_id = 2;
+  string entity_type = 3;
+  string project = 4;
+  string details = 5;
+}
+
+// ---- Sync ----
+
+message SyncRequest {
+  bool incremental = 1;
+  repeated string labels = 2;
+}
+
+message SyncResponse {
+  int32 nodes_synced = 1;
+  int32 nodes_skipped = 2;
+  double elapsed_secs = 3;
+}

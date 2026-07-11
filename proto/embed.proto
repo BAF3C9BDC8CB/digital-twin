@@ -1,0 +1,28 @@
+// Embedding service — text → vector conversion.
+syntax = "proto3";
+
+package dt.embed;
+
+import "common.proto";
+
+service EmbedService {
+  // Generate embeddings for one or more texts.
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+
+  // Health check.
+  rpc Health(dt.common.Empty) returns (dt.common.Empty);
+}
+
+message EmbedRequest {
+  repeated string texts = 1;
+  string model = 2;  // optional model override
+}
+
+message Embedding {
+  repeated float vector = 1;
+}
+
+message EmbedResponse {
+  repeated Embedding embeddings = 1;
+  string model_used = 2;
+}

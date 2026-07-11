@@ -1,6 +1,10 @@
 # Digital Twin v2 数据全链路设计
 
-> 状态：设计阶段 | 日期：2026-07-09
+> ⚠️ **DEPRECATED**: 本文档已被 [V3 单 Crate 分层架构](./architecture-v3-single-crate-layered.md) 替代。
+> V2 多 crate workspace 方案已废弃，实际实现采用单 crate 内部模块分层。
+> 保留本文档仅供历史参考。
+
+> 状态：设计阶段 | 日期：2026-07-09（已刷新：新增 WriteCoordinator、安全鉴权、指标采集、备份归档管道）
 
 ## 一、总览：数据流全景
 
@@ -15,8 +19,8 @@
                           └──────────┼─────────────┘
                                      │
                           ┌──────────▼──────────┐
-                          │   dt update (脚本)   │
-                          │   --file / --project │
+                          │  WriteCoordinator    │
+                          │  并发写入串行化       │
                           └──────────┬──────────┘
                                      │
               ┌──────────────────────┼──────────────────────┐
@@ -40,6 +44,8 @@
                                      │
                           ┌──────────▼──────────┐
                           │   MCP Interface     │
+                          │ (+ backup/archive/  │
+                          │  cleanup/metrics)   │
                           └─────────────────────┘
 ```
 
@@ -142,7 +148,7 @@ dt update --path /data/aflmProjects     # 批量扫描目录
 | ⭐2 | **AI 任务后主动沉淀** | `dt_learn` MCP | 任务完成后 AI 主动调用，记录模式、经验、踩坑 |
 | ⭐3 | **文档自动解析** | `dt build` 扫描 document_dirs | md/pdf → 提取领域术语、架构概念 |
 | ⭐4 | **代码注释提取** | `dt build` AST 解析 | `@knowledge` 标记 → 自动创建 Knowledge 节点 |
-| ⭐5 | **执行结果自动采集** | AI 执行工具后自动判断 | `kubectl`/`mysql`/`curl`/`docker` 等命令的返回中有长期价值的部分 |
+| ⭐5 | **执行结果自动采集** | AI 执行工具后自动判断 | `kubectl`/`mysql`/`curl`/`docker` 等命令的返回中有长期价值的部分。黑名单跳过（ls/cat/echo/cd/pwd/grep/find） |
 | ⭐6 | **用户口述** | 用户说"记住" | `dt memorize` 兜底方案 |
 
 #### 来源 1+2 详细流程（AI 自主采集，核心）
@@ -179,7 +185,7 @@ dt_learn({
 private String ifCode;
 ```
 
-`dt build` 解析到 `@knowledge` → 创建 `(:Knowledge {name:"ifCode", definition:"...", domain:"支付"})`
+`dt build` 解析到 `@knowledge` → 创建 `(:Concept {name:"ifCode", definition:"...", domain:"支付"})`
 
 #### 来源 5：执行结果自动采集
 
@@ -215,6 +221,16 @@ AI 执行工具命令后，将返回结果中有长期价值的结构化信息�
 | 会话结束 | `(:Session {summary, key_decisions})` |
 | 架构决策 | `(:Decision {context, choice, rationale})` |
 
+**生命周期（两级设计）：**
+- **Memory Event**：所有 Event 节点 TTL 365 天。超期 → `dt archive` 导出为 `.json.gz`，级联清理孤儿 Session/Day。
+- **Reasoning**：两级生命周期：阶段一（弃用）— 会话结束时 `SET _stale_at = timestamp()`，节点不可被 Context Builder 查询；阶段二（删除）— `dt cleanup` 每夜清理 `_stale_at` 距今 > 30 天的节点，30 天窗口内仍可被 `dt history` 审计回溯。
+
+**归档级联清理策略：** `dt archive` 执行后，自动清理孤立的父节点：
+1. 删除超期 Event 节点及其 `[:HAS_EVENT]` 关系
+2. `MATCH (s:Session) WHERE NOT (s)-[:HAS_EVENT]->()` DETACH DELETE 所有无事件的孤儿 Session
+3. `MATCH (d:Day) WHERE NOT (d)-[:HAS_SESSION]->()` DETACH DELETE 所有无 Session 的孤儿 Day
+4. 归档文件名包含清理统计：`{date_range}_{event_count}_{session_count}_{day_count}.json.gz`
+
 **更新机制：**
 - 只增不删（immutable），完整审计日志
 - 按时间线组织：`Day → Session → Event` 链
@@ -235,7 +251,7 @@ AI 执行工具命令后，将返回结果中有长期价值的结构化信息�
 | Log patterns | K8s 日志中提取的错误模板 | 独立向量 |
 | Experience | Memory World 中的经验节点 | `entity_id` → Neo4j Experience Entity |
 
-**生成方式：** 文本 chunk → BGE-M3 1024维 → Qdrant Collection `{project}_semantic`
+**生成方式：** 文本 chunk → BGE-M3 1024维 → Qdrant Collection `{project}_semantic_{model_version}`
 
 **更新机制：** 与 Reality World 联动 —— 代码变 → 对应 chunk 重新 embedding → Qdrant upsert（by entity_id）
 
@@ -257,20 +273,33 @@ AI 执行工具命令后，将返回结果中有长期价值的结构化信息�
 
 ### Reasoning World（推理世界）
 
-AI 推理过程缓存，提高重复任务效率。
+AI 推理过程缓存，提高重复任务效率。实体类型：Observation → Analysis → Decision（三层递进），详见 [数据格式文档](./architecture-v2-data-schema.md#六reasoning-world推理世界)。
 
 **生成方式：**
 ```
 AI 分析出 "支付平台切换需要改 5 个地方"
   ↓
-Context Builder 自动记录:
-  (:Reasoning {
-    hypothesis:   "支付平台切换影响范围",
-    entities:     [PayService, BusinessService, NacosCfg, DB],
-    conclusion:   "需改 ifCode + wayCode + merchantNo + channelExtra + DB",
-    confidence:   0.9,
-    session_id:   "2026-07-09-001"
-  })
+逐层沉淀：
+
+1. (:Observation {                              ← 发现现象
+     description:  "PayService 和 BusinessService 结构高度相似",
+     evidence:     "两者都有 payChannel、merchant、callback 三层",
+     confidence:   0.7
+   })
+
+2. (:Analysis {                                 ← 分析过程
+     question:     "切换支付平台影响哪些文件？",
+     hypothesis:   "需改 5 处",
+     conclusion:   "ifCode + wayCode + merchantNo + channelExtra + DB",
+     confidence:   0.9,
+     session_id:   "2026-07-09-001"
+   })
+     └─[:PRODUCED]→ (:Decision {               ← 最终决策
+          choice:       "切换到银盛",
+          rationale:    "费率低 0.1%，API 兼容好",
+          confidence:   0.9,
+          verified:     false
+        })
 ```
 
 **更新机制：**
@@ -291,3 +320,7 @@ Context Builder 自动记录:
 | `dt nacos-sync` | 同步 Nacos 配置 | 定时 / 手动 |
 | `dt k8s-sync` | 同步 K8s 资源 | 定时 / 手动 |
 | `dt kg-sync` | KG 节点同步到 Qdrant | 增量自动 / 手动 |
+| `dt backup` | Neo4j/Qdrant/SQLite 分层备份 | CLI / cron |
+| `dt archive` | Memory.Event 超期归档 | CLI / cron |
+| `dt cleanup` | 按 TTL 策略清理过期数据 | CLI / cron |
+| `dt metrics` | gRPC 指标查询（无 HTTP） | CLI |

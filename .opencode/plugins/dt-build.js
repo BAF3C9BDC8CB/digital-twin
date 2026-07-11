@@ -2,7 +2,7 @@
  * dt-build Plugin: 文件修改后自动触发 dt build 更新代码索引
  *
  * 使用 tool.execute.after 钩子拦截 edit/write 工具，
- * 3 秒防抖后批量执行 dt build。
+ * 3 秒防抖后批量执行 dt build + dt event（Modification Event）。
  *
  * 日志输出到: /tmp/dt-build-plugin.log
  */
@@ -37,6 +37,24 @@ const DtBuildPlugin = async (ctx) => {
     });
   }
 
+  /** 写入 Modification Event 到知识图谱 */
+  function runEvent(file) {
+    return new Promise((resolve) => {
+      const escaped = file.replace(/"/g, '\\"');
+      exec(
+        `dt event --type Modification --entity-id "${escaped}" --entity-type Method --details "file: ${escaped}"`,
+        (err, stdout, stderr) => {
+          if (err || stderr) {
+            log(`  ✗ event ${file}: ${err?.message || stderr}`);
+          } else {
+            log(`  ✓ event ${file}`);
+          }
+          resolve();
+        }
+      );
+    });
+  }
+
   function scheduleBuild() {
     if (timer) clearTimeout(timer);
     timer = setTimeout(async () => {
@@ -45,9 +63,10 @@ const DtBuildPlugin = async (ctx) => {
       timer = null;
       if (files.length === 0) return;
 
-      log(`触发 dt build，共 ${files.length} 个文件`);
+      log(`触发 dt build + event，共 ${files.length} 个文件`);
       for (const file of files) {
         await runBuild(file);
+        await runEvent(file);
       }
       log("完成");
     }, DEBOUNCE_MS);

@@ -1,6 +1,10 @@
 # Digital Twin v2 架构设计：六世界模型
 
-> 状态：设计阶段 | 日期：2026-07-09 | 关联文档：[项目结构](./architecture-v2-project-structure.md) · [数据格式](./architecture-v2-data-schema.md) · [数据管线](./architecture-v2-data-pipeline.md) · [MCP API](./architecture-v2-mcp-api-spec.md) · [实施路线图](../.weave/plans/v2-implementation-roadmap.md)
+> ⚠️ **DEPRECATED**: 本文档已被 [V3 单 Crate 分层架构](./architecture-v3-single-crate-layered.md) 替代。
+> V2 多 crate workspace 方案已废弃，实际实现采用单 crate 内部模块分层。
+> 保留本文档仅供历史参考。
+
+> 状态：设计阶段 | 日期：2026-07-09（已刷新：新增安全/指标/备份/并发控制/版本管理/反馈闭环） | 关联文档：[项目结构](./architecture-v2-project-structure.md) · [数据格式](./architecture-v2-data-schema.md) · [数据管线](./architecture-v2-data-pipeline.md) · [MCP API](./architecture-v2-mcp-api-spec.md) · [实施路线图](../.weave/plans/v2-implementation-roadmap.md)
 
 ---
 
@@ -41,7 +45,6 @@
          │  │ Method/Class│  │ Experience/Concept │  │ Modification   │  │
          │  │ Server/DB   │  │ Domain             │  │ Deployment     │  │
          │  │ NacosConfig │  │                    │  │ Decision       │  │
-         │  │ K8sPod      │  │                    │  │                │  │
          │  └──────┬──────┘  └──────────┬─────────┘  └───────┬────────┘  │
          │         │                    │                     │          │
          │  ┌──────▼──────┐  ┌──────────▼─────────┐  ┌───────▼────────┐  │
@@ -88,6 +91,9 @@
 | dt-log | gRPC LogService | 统一日志管道，聚合 4 个进程的日志 |
 | Plugin Registry | 进程内 | 插件生命周期管理，6 条强制约束 |
 | MCP Server | gRPC client | 协议适配，LLM ↔ dt daemon |
+| Auth Interceptor | 进程内 | gRPC mTLS + Unix socket 鉴权，权限分级（Admin/ReadOnly） |
+| MetricsService | gRPC (:50051) | 指标采集与查询，不暴露 HTTP 端口 |
+| Backup Manager | 进程内 | Neo4j/Qdrant/SQLite 分层备份与恢复 |
 
 ---
 
@@ -95,9 +101,9 @@
 
 | 世界 | 存储 | 核心实体 | 特征 |
 |------|------|----------|------|
-| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **Deployment** | 客观存在，可被自动发现。实体有稳定性层级：Service(年)→ServiceInstance(周)→Deployment(部署时) |
+| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **K8sDeployment** | 客观存在，可被自动发现。实体有稳定性层级：Service(年)→ServiceInstance(周)→K8sDeployment(部署时) |
 | **Knowledge** | Neo4j (Bolt) | Knowledge, Playbook, Experience, Concept, Domain | 人类整理或 AI 自动沉淀。@knowledge 注释→自动提取；dt_learn→任务完成后沉淀 |
-| **Memory** | Neo4j (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。完整审计日志 |
+| **Memory** | Neo4j (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。TTL 365天后归档。完整审计日志 |
 | **Runtime** | 缓存（不入 Neo4j） | **Pod 信息** (name, ip, phase, restarts, node) + **Metrics** (cpu, memory, uptime, heap, thread) | 实时查询 K8s API/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 重新拉取 |
 | **Semantic** | Qdrant (gRPC) | Code/Doc/Config/API/Exp/Log 向量 | BGE-M3 1024 维，通过 entity_id 反查 Neo4j |
 | **Reasoning** | Neo4j（会话级） | Observation, Analysis, Decision | AI 推理痕迹。验证后升级为 Knowledge；未验证的会话结束后降级 |
@@ -110,7 +116,7 @@ Reality World 中的实体有天然的**稳定性层级**：
 稳定性从高到低：
 ──────────────────────────────────────────────▶
 
-(:Service)           (:Deployment)          Pods & Metrics
+(:Service)           (:K8sDeployment)       Pods & Metrics
   service_id            name                  pod_name, pod_ip
   永不变化              部署策略              phase, restarts
                        image, replicas        cpu, memory
@@ -128,7 +134,7 @@ K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩�
 - 减少 Neo4j 写入量（k8s-sync 不再写 Pod）
 - Pod 的历史信息（哪天哪个 Pod 崩溃了）应该走 Memory World 事件，不污染 Reality
 
-**Reality 中唯一的 K8s 实体是 Deployment**——它足够稳定（name/image/replicas 仅部署时变），提供足够的追溯信息。
+**Reality 中唯一的 K8s 实体是 K8sDeployment**——它足够稳定（name/image/replicas 仅部署时变），提供足够的追溯信息。
 
 ```
 (:Service)                              ← 跨环境稳定标识
@@ -138,7 +144,7 @@ K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩�
     │                        host: "10.0.1.50", port: 8080
     │                        status: "running", version: "v2.3.1"
     │                          │
-    │                          ├──[:DEPLOYED_AS]──▶ (:Deployment)
+    │                          ├──[:DEPLOYED_AS]──▶ (:K8sDeployment)
     │                          │     name: "aflm-pay"
     │                          │     image: "aflm-pay:v2.3.1"
     │                          │     replicas: 2
@@ -158,7 +164,7 @@ K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩�
                              host: "10.0.2.50", port: 8080
                              version: "v2.4.0-rc1"
                                │
-                               └──[:DEPLOYED_AS]──▶ (:Deployment)
+                                └──[:DEPLOYED_AS]──▶ (:K8sDeployment)
                              // Runtime 缓存 ↓
                              pods: [{name: "aflm-pay-3f2e-mno", phase: "Pending", ...}]
 ```
@@ -169,7 +175,7 @@ K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩�
 k8s-sync (每小时)                    Context Builder (按需)
 ─────────────────                    ─────────────────────
 写入 Neo4j:                          实时查询 K8s API:
-  (:Deployment)                        GET /pods → pods[]
+  (:K8sDeployment)                     GET /pods → pods[]
     name, image, replicas              GET /metrics → cpu, memory
   (:ServiceInstance)                   GET actuator → heap, threads
     host, port, version
@@ -181,11 +187,11 @@ k8s-sync (每小时)                    Context Builder (按需)
 **设计原则：**
 - Service = 稳定标识，service_id 不含环境
 - ServiceInstance = 每个环境的部署快照，含 host/port/version
-- Deployment = K8s 稳定资源，含 image/replicas
-- K8sPod = Reality 中的**有生命周期实体**，终止后保留为历史记录
-- Runtime 指标（CPU/Mem/Uptime）作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j**
+- K8sDeployment = K8s 稳定资源，含 image/replicas
+- K8sPod 全部属于 Runtime（实时查询，不入 Neo4j），终止后的历史追溯走 Memory World 事件
+- Runtime 指标（CPU/Mem/Uptime）和 Pod 信息全部作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j**
 - Context Builder 组装时实时查询 K8s API → 注入 ServiceInstance 缓存字段
-- 想追溯"昨天 Pod 为什么 CrashLoop"→ 查 Memory World 的事件记录（Phase 2+）
+- 想追溯"昨天 Pod 为什么 CrashLoop"→ 查 Memory World 的事件记录
 
 ### Knowledge World 深入：来源与沉淀
 
@@ -288,7 +294,7 @@ Context Builder (Chain of Responsibility 模式):
 
 ## 五、MCP 接口
 
-LLM 通过 OpenCode MCP Protocol 调用以下 8 个高层工具，底层全部走 gRPC：
+LLM 通过 OpenCode MCP Protocol 调用以下 12 个高层 MCP 工具（含 4 个运维工具），底层全部走 gRPC：
 
 | MCP | 功能 | 底层 gRPC |
 |-----|------|-----------|
@@ -301,13 +307,20 @@ LLM 通过 OpenCode MCP Protocol 调用以下 8 个高层工具，底层全部�
 | `dt_learn` | 将本次修改/经验/决策写回知识图谱 | `DtCoreService.Learn` |
 | `dt_search` | 跨世界语义搜索（代码/知识/文档） | `DtCoreService.Search` |
 
-底层运维工具由插件暴露，LLM 也可直接调用：
+底层运维 + 系统工具由插件暴露，LLM 也可直接调用：
 
 | 插件 | gRPC Service | 提供的 RPC |
 |------|-------------|-----------|
 | plugin_k8s | `K8sService` | GetPods, GetLogs (stream), DownloadLogs, GetStatus |
 | plugin_svc | `SvcService` | ListServices, GetStatus, Start (stream), Stop, Restart, GetLogs (stream) |
 | plugin_jenkins | `JenkinsService` | ListJobs, GetParams, GetHistory, Build (stream), GetBuildLog (stream) |
+
+| 系统工具 | CLI | 功能 |
+|----------|-----|------|
+| dt_backup | `dt backup [--restore\|--list\|--verify]` | Neo4j/Qdrant/SQLite 分层备份与灾难恢复 |
+| dt_archive | `dt archive [--before\|--dry-run\|--list]` | Memory World 超期数据归档（.json.gz） |
+| dt_cleanup | `dt cleanup [--dry-run\|--execute]` | 按 TTL 策略自动清理过期数据 |
+| dt_metrics | `dt metrics [--watch\|--interval]` | gRPC MetricsService 查询，不暴露 HTTP |
 
 ---
 
@@ -343,6 +356,10 @@ Digital Thread 是跨六世界的横切层，将**同一条业务主线**上分�
   │                            └─[:DEPLOYS]→ (:ServiceInstance)
   ├── [:HAS_KNOWLEDGE]   → (:Knowledge)       ← 沉淀的经验
   └── [:HAS_PLAYBOOK]    → (:Playbook)        ← 生成的执行手册
+
+回溯版本链：
+(:Knowledge)-[:EVOLVED_FROM*]->(:Knowledge)        ← 知识版本演化
+(:KnowledgeVersion)                                 ← 每次变更的 diff
 ```
 
 ### 价值
@@ -372,6 +389,10 @@ Thread 把六个世界从**"六张独立的快照"**变成**"跨时间、跨系�
 ├─────────────────────────────────────────────────────┤
 │  Infrastructure  Neo4jRepo, QdrantRepo,              │
 │                  NacosClient, K8sClient, dt-log      │
+├─────────────────────────────────────────────────────┤
+│  Cross-cutting   Security (mTLS+SecretString),       │
+│                  Metrics (gRPC, no HTTP),            │
+│                  Backup (分层快照)                    │
 └─────────────────────────────────────────────────────┘
 ```
 

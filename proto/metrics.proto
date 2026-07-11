@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package dt.metrics;
+
+// MetricsService — internal metrics collection (no HTTP port).
+//
+// Exposes `GetMetrics` for point-in-time snapshots and `WatchMetrics` for
+// periodic polling (server-side streaming).
+service MetricsService {
+    // Get a point-in-time snapshot of all registered metrics.
+    rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
+
+    // Watch receives metric snapshots at a regular interval (5s default).
+    rpc WatchMetrics(MetricsRequest) returns (stream MetricSnapshot);
+}
+
+// Request parameters.
+message MetricsRequest {
+    int32 interval_secs = 1;    // for WatchMetrics: snapshot interval (default 5)
+    string filter = 2;          // optional prefix filter for metric names
+}
+
+// Response containing a full snapshot.
+message MetricsResponse {
+    string timestamp = 1;
+    map<string, double> gauges = 2;
+    map<string, double> counters = 3;
+    map<string, Histogram> histograms = 4;
+}
+
+// A single metric snapshot (also used for streaming).
+message MetricSnapshot {
+    string timestamp = 1;
+    map<string, double> gauges = 2;
+    map<string, double> counters = 3;
+    map<string, Histogram> histograms = 4;
+}
+
+// Histogram bucket data.
+message Histogram {
+    uint64 count = 1;
+    double sum = 2;
+    repeated double bounds = 3;     // bucket upper bounds
+    repeated uint64 bucket_counts = 4;
+}

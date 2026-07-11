@@ -1,6 +1,10 @@
 # Digital Twin V2 项目结构设计
 
-> 状态：设计阶段 | 日期：2026-07-09
+> ⚠️ **DEPRECATED**: 本文档已被 [V3 单 Crate 分层架构](./architecture-v3-single-crate-layered.md) 替代。
+> V2 多 crate workspace 方案已废弃，实际实现采用单 crate 内部模块分层。
+> 保留本文档仅供历史参考。
+
+> 状态：设计阶段 | 日期：2026-07-09（已刷新：新增 dt-backup crate、WriteCoordinator、auth 模块、metrics proto）
 
 ---
 
@@ -91,6 +95,7 @@ digital-twin-v2/
 │   ├── dt_core.proto
 │   ├── embed.proto
 │   ├── log.proto
+│   ├── metrics.proto                   # MetricsService (gRPC 指标，无 HTTP)
 │   ├── plugin_k8s.proto
 │   ├── plugin_svc.proto
 │   └── plugin_jenkins.proto
@@ -143,6 +148,8 @@ digital-twin-v2/
 │   │       │   ├── mod.rs
 │   │       │   ├── incremental.rs      # IncrementalStrategy
 │   │       │   └── full_rebuild.rs     # FullRebuildStrategy
+│   │       ├── coordinator.rs          # WriteCoordinator (并发写入控制)
+│   │       ├── chunker.rs              # 文档 Chunking 策略配置
 │   │       ├── scanner.rs              # 文件扫描 + 变更检测
 │   │       ├── parser/
 │   │       │   ├── mod.rs              # ParserRegistry (Strategy 模式)
@@ -241,6 +248,15 @@ digital-twin-v2/
 │   │               ├── client.rs       # Jenkins REST client
 │   │               └── build.rs        # 构建触发与监控
 │   │
+│   ├── dt-backup/                      # 备份与归档
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── neo4j.rs                # neo4j-admin dump/restore 封装
+│   │       ├── qdrant.rs               # Qdrant snapshot API
+│   │       ├── sqlite.rs               # SQLite 文件备份
+│   │       └── verify.rs               # SHA256 checksum 验证
+│   │
 │   └── dt-daemon/                      # 组合根 (二进制)
 │       ├── Cargo.toml                  # depends on all crates
 │       ├── build.rs                    # tonic-build proto 编译
@@ -249,6 +265,8 @@ digital-twin-v2/
 │           ├── server.rs               # gRPC server 装配 (tonic Router)
 │           ├── wiring.rs               # DI 装配 (创建所有具体实例 + 注入)
 │           ├── config.rs               # config.yaml 加载
+│           ├── auth.rs                 # gRPC auth interceptor (mTLS + 角色)
+│           ├── archive.rs              # Memory 数据归档
 │           └── signal.rs               # SIGTERM/SIGINT 优雅关闭
 │
 ├── bin/                                # 独立 CLI 入口 (thin wrapper)
@@ -283,7 +301,8 @@ digital-twin-v2/
 │   ├── architecture-v2-data-schema.md
 │   ├── architecture-v2-mcp-api-spec.md
 │   ├── architecture-v2-pipeline-impl.md
-│   └── architecture-v2-project-structure.md  ← 本文件
+│   ├── architecture-v2-project-structure.md  ← 本文件
+│   └── v2-migration-guide.md           # V1→V2 迁移指南（Phase 5）
 │
 ├── tests/                              # 集成测试
 │   ├── integration/
@@ -470,7 +489,7 @@ EventHandler (trait)
   └── handle(event, graph) → Result<()>
 
   ├── ModificationHandler  → creates (:Modification)-[:AFFECTS]->(:Method)
-  ├── DeploymentHandler    → creates (:Deployment)-[:DEPLOYS]->(:Service)
+  ├── DeploymentHandler    → creates (:Deployment)-[:DEPLOYS]->(:ServiceInstance)
   ├── ConfigChangeHandler  → creates (:ConfigChange)-[:AFFECTS]->(:NacosConfig)
   └── BugFixHandler        → creates (:BugFix)-[:FIXES]->(:Method)
 
@@ -608,6 +627,9 @@ pub async fn wire(config: &AppConfig) -> Result<AppComponents> {
 | `sync/k8s.rs` (763行 God File) | `dt-sync/src/k8s/` | 拆 client + resource_sync + timeline_sync |
 | `sync/kg.rs` (178行) | `dt-sync/` (保留为 kg_bridge) | 重写查询标签 |
 | `main.rs` (285行) | `dt-daemon/src/main.rs` | gRPC server 入口 |
+| (新增) | `dt-daemon/src/auth.rs` | gRPC auth interceptor |
+| (新增) | `dt-pipeline/src/coordinator.rs` | 并发写入控制 |
+| (新增) | `crates/dt-backup/` | 分层备份与恢复 |
 
 ---
 
@@ -627,6 +649,7 @@ members = [
     "crates/dt-knowledge",
     "crates/dt-context",
     "crates/dt-plugins",
+    "crates/dt-backup",
     "crates/dt-daemon",
     "bin/kub",
     "bin/svc",
@@ -667,6 +690,7 @@ fn main() -> Result<()> {
                 "../proto/dt_core.proto",
                 "../proto/embed.proto",
                 "../proto/log.proto",
+                "../proto/metrics.proto",
                 "../proto/plugin_k8s.proto",
                 "../proto/plugin_svc.proto",
                 "../proto/plugin_jenkins.proto",

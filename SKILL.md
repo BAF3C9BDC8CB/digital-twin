@@ -54,4 +54,4 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 - ❌ **禁止直接用 grep / glob / find 搜索代码——先用 MCP Tool `dt_search_expand` 语义搜索**
 - ❌ **禁止用 `ls` + `read` 浏览目录来替代语义搜索——查找代码逻辑第一步永远是 `dt_search_expand`**
 - ❌ **禁止让用户去 Kuboard 网页查看 K8s Pod 日志——一律用 MCP Tool `kublog_*`（已解决网页日志断开问题）**
-- ❌ **禁止用 `kubectl logs` 替代 `kublog`**——kublog 已封装 Kuboard 鉴权与 WS 稳定性
+- ❌ **禁止用 `kubectl logs` 替代 `kublog`**——kublog 已封装 Kuboard 鉴权与 WS 稳定性（（（

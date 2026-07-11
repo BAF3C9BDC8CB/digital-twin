@@ -1,6 +1,10 @@
 # Digital Twin v2 MCP 接口规范
 
-> 状态：当前实现 + v2 设计 | 日期：2026-07-09
+> ⚠️ **DEPRECATED**: 本文档已被 [V3 单 Crate 分层架构](./architecture-v3-single-crate-layered.md) 替代。
+> V2 多 crate workspace 方案已废弃，实际实现采用单 crate 内部模块分层。
+> 保留本文档仅供历史参考。
+
+> 状态：当前实现 + v2 设计 | 日期：2026-07-09（已刷新：新增备份/归档/清理/指标/推理 MCP 工具）
 
 本文档定义所有 MCP 工具的请求参数、返回内容及完整调用示例。
 
@@ -18,7 +22,7 @@
 6. [知识写入](#六知识写入)
 7. [健康检查](#七健康检查)
 
-**第二部分：v2 规划中的 MCP 工具（8 个）**
+**第二部分：v2 规划中的 MCP 工具（12 个）**
 
 8. [v2 高层 MCP 接口](#八v2-高层-mcp-接口)
 
@@ -33,21 +37,21 @@ LLM / OpenCode
     │
     ▼  MCP Protocol (JSON-RPC)
 ┌───────────────────────┐
-│  mcp-server.py        │  ← Python FastMCP server
+│  mcp-server.py        │  ← Python FastMCP server (gRPC client)
 │  /home/luis/.local/   │
 │  bin/digital-twin-mcp │
 └───────────┬───────────┘
-            │  subprocess.run()
+            │  gRPC :50051
             ▼
 ┌───────────────────────┐
-│  dt CLI (Rust)        │  ← /usr/local/bin/dt
-│  svc / kublog / jcli  │  ← 独立脚本
+│  dt daemon (Rust)     │  ← systemd socket activated
+│  常驻后台 gRPC 服务     │
 └───────────────────────┘
 ```
 
 ### 返回格式
 
-所有工具统一返回 `[TextContent(type="text", text=text)]`，其中 `text` 为子进程的 stdout+stderr 拼接（ANSI 转义序列已剥离）。
+所有工具统一返回 `[TextContent(type="text", text=text)]`，其中 `text` 为 gRPC 响应的结构化内容（不再解析 stdout/stderr）。
 
 ---
 
@@ -769,7 +773,7 @@ dt kg-sync --incremental
 
 ```text
 [KG Sync] 增量模式
-[查询] 找到 12 个未同步节点 (标签: Infrastructure, Server, Database, ...)
+[查询] 找到 12 个未同步节点 (标签: Server, Database, K8sDeployment, Service, Knowledge, Experience, Concept, ...)
 [嵌入] 12 个文本 → BGE-M3 (1024维) ... ✓ (2.1s)
 [写入] Qdrant collection: kg_nodes, 12 points
 [标记] SET n._kg_synced_at = datetime() ... ✓
@@ -939,7 +943,7 @@ dt memorize --type Decision \
 | `type` | string | ✅ | — | 事件类型：`Deploy`, `SoftwareInstalled`, `ConfigChange`, `Conversation` |
 | `entity_id` | string | ✅ | — | 唯一标识 |
 | `details` | string | ✅ | — | 详细内容 |
-| `entity_type` | string | ❌ | — | 实体类型，如 `JenkinsJob`, `Software`, `NacosConfig`, `Session` |
+| `entity_type` | string | ❌ | — | 实体类型，如 `ServiceInstance`, `Software`, `NacosConfig`, `Session` |
 | `project` | string | ❌ | — | 所属项目 |
 
 **请求示例 1 — 部署事件：**
@@ -948,7 +952,7 @@ dt memorize --type Decision \
 {
   "type": "Deploy",
   "entity_id": "aflm-pay-deploy-prod",
-  "entity_type": "JenkinsJob",
+  "entity_type": "ServiceInstance",
   "project": "aflm",
   "details": "branch: master, env: prod, version: v2.3.1, params: SKIP_TESTS=false"
 }
@@ -994,7 +998,7 @@ dt memorize --type Decision \
 ```bash
 dt event --type Deploy \
   --entity-id "aflm-pay-deploy-prod" \
-  --entity-type JenkinsJob \
+  --entity-type ServiceInstance \
   --project aflm \
   --details "branch: master, env: prod, version: v2.3.1"
 ```
@@ -1004,7 +1008,7 @@ dt event --type Deploy \
 ```text
 📝 已写入事件: Deploy/aflm-pay-deploy-prod
    event_id: evt-abc123def456
-   已关联: JenkinsJob:aflm-pay-deploy-prod → DEPLOYED_JOB
+   已关联: Deployment:2026-07-09-prod → DEPLOYS→ServiceInstance:aflm-pay
 ```
 
 ---
@@ -1033,8 +1037,8 @@ dt health
 服务              状态      延迟      说明
 ─────────────────────────────────────────────────
 Neo4j             ✓ 正常    12ms      bolt://localhost:7687
-Qdrant            ✓ 正常    8ms       http://localhost:6333
-Embed Server      ✓ 正常    5ms       unix:///tmp/dt-embed.sock (BGE-M3)
+Qdrant            ✓ 正常    8ms       grpc://localhost:6334
+Embed Server      ✓ 正常    5ms       grpc://localhost:50052 (BGE-M3)
 KG Bridge         ✓ 正常    —         kg_nodes collection: 1,234 points
 Fulltext Index    ✓ 正常    —         infra_search: 567 nodes indexed
 
@@ -1045,7 +1049,7 @@ Fulltext Index    ✓ 正常    —         infra_search: 567 nodes indexed
 
 # 第二部分：v2 规划中的 MCP 工具
 
-以下 8 个高层 MCP 是六世界模型设计中 v2 的目标接口，**部分尚未实现**。当前由 AI（Loom）通过编排上述 22 个底层工具来模拟。
+以下 12 个高层 MCP 是六世界模型设计中 v2 的目标接口（包含 4 个系统运维工具：dt_cleanup, dt_backup, dt_archive, dt_metrics），**部分尚未实现**。当前由 AI（Loom）通过编排上述 22 个底层工具来模拟。
 
 ---
 
@@ -1493,6 +1497,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
 | `decisions` | object[] | ❌ | 决策记录 |
 | `thread_id` | string | ❌ | 关联的 Digital Thread ID |
 | `success` | boolean | ❌ | 是否成功 |
+| `playbook_id` | string | ❌ | — | 关联的 Playbook ID（更新 success_count/failure_count） |
 
 **请求示例：**
 
@@ -1515,7 +1520,8 @@ Context Builder 解析意图 → 确定涉及哪些 World
     }
   ],
   "thread_id": "thread-pay-migration-tonglian-to-yinsheng",
-  "success": true
+  "success": true,
+  "playbook_id": "dt://playbook/aflm/pay-migration"
 }
 ```
 
@@ -1568,6 +1574,164 @@ Context Builder 解析意图 → 确定涉及哪些 World
 
 ---
 
+### 31. dt_cleanup — 数据生命周期清理
+
+按 TTL 策略预览/执行过期数据清理。
+
+**请求参数（设计）：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `dry_run` | boolean | ❌ | true | 预览模式，不实际删除 |
+| `targets` | string[] | ❌ | all | 清理目标：`"memory"`, `"reasoning"`, `"snapshots"`, `"all"` |
+
+**请求示例：**
+```json
+{
+  "dry_run": true,
+  "targets": ["memory", "reasoning"]
+}
+```
+
+**返回示例（设计）：**
+```json
+{
+  "dry_run": true,
+  "results": {
+    "memory_events": {
+      "before_date": "2025-07-09",
+      "count": 1234,
+      "size_estimate": "45MB",
+      "action": "archive"
+    },
+    "reasoning_stale": {
+      "older_than_days": 30,
+      "count": 87,
+      "action": "delete"
+    },
+    "snapshots_old": {
+      "count": 156,
+      "action": "delete"
+    }
+  },
+  "summary": "预览模式：将归档 1234 条 Event，删除 87 条 stale Reasoning，清理 156 条旧快照"
+}
+```
+
+---
+
+### 32. dt_backup — 备份与灾难恢复
+
+分层备份 Neo4j + Qdrant + SQLite，支持指定日期恢复。
+
+**请求参数（设计）：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `action` | string | ✅ | — | `"backup"`, `"restore"`, `"list"`, `"verify"` |
+| `date` | string | ❌ | — | 恢复/验证的目标日期，如 `"2026-07-09"` |
+
+**请求示例：**
+```json
+{
+  "action": "restore",
+  "date": "2026-07-09"
+}
+```
+
+**返回示例（设计）：**
+```json
+{
+  "action": "backup",
+  "timestamp": "2026-07-09T03:00:00Z",
+  "targets": {
+    "neo4j": {"size": "250MB", "format": "dump", "checksum": "sha256:abc123..."},
+    "qdrant": {"collections": 12, "size": "1.2GB", "format": "snapshot"},
+    "sqlite": {"size": "15MB", "format": "file_copy"}
+  },
+  "location": "/var/lib/dt/backups/2026-07-09/",
+  "duration_seconds": 45.3
+}
+```
+
+---
+
+### 33. dt_archive — Memory 数据归档
+
+将超过 TTL 的 Memory.Event 数据导出为压缩 JSON 归档，释放 Neo4j 存储。
+
+**请求参数（设计）：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `before` | string | ❌ | — | 归档此日期之前的 Event，默认 365 天前 |
+| `dry_run` | boolean | ❌ | true | 预览模式 |
+| `output_dir` | string | ❌ | `/var/lib/dt/archive/` | 归档输出目录 |
+
+**请求示例：**
+```json
+{
+  "before": "2026-01-01",
+  "dry_run": false
+}
+```
+
+**返回示例（设计）：**
+```json
+{
+  "archive_file": "/var/lib/dt/archive/2025.json.gz",
+  "events_archived": 5678,
+  "events_remaining": 2345,
+  "neo4j_space_freed": "120MB",
+  "duration_seconds": 12.7
+}
+```
+
+---
+
+### 34. dt_metrics — 系统指标查询
+
+通过 gRPC MetricsService 查询系统运行指标，不暴露 HTTP 端口。
+
+**请求参数（设计）：**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `watch` | boolean | ❌ | false | 持续监听模式 |
+| `interval` | integer | ❌ | 5 | 监听间隔（秒） |
+| `filter` | string | ❌ | — | 过滤指标名，如 `"dt_build*"` |
+
+**请求示例：**
+```json
+{
+  "watch": true,
+  "interval": 10,
+  "filter": "dt_context*"
+}
+```
+
+**返回示例（设计）：**
+```json
+{
+  "timestamp": "2026-07-09T14:30:00Z",
+  "gauges": {
+    "dt_neo4j_connection_pool_size": 8,
+    "dt_plugin_health_status{plugin=\"plugin_k8s\"}": 1,
+    "dt_write_coordinator_active_locks": 2
+  },
+  "counters": {
+    "dt_embed_requests_total{status=\"success\"}": 15234,
+    "dt_qdrant_write_bytes_total": 1073741824
+  },
+  "histograms": {
+    "dt_build_duration_seconds": {"p50": 4.2, "p99": 28.5, "count": 340},
+    "dt_context_total_duration_seconds": {"p50": 1.2, "p99": 2.8, "count": 89}
+  }
+}
+```
+
+---
+
 ## 接口总览
 
 ### 当前已实现（22 个）
@@ -1597,15 +1761,19 @@ Context Builder 解析意图 → 确定涉及哪些 World
 | 21 | `dt_event` | 写入 | 写入事件节点到 KG |
 | 22 | `dt_health` | 运维 | 后端服务健康检查 |
 
-### v2 规划中（8 个）
+### v2 规划中（12 个）
 
 | # | 工具 | 类型 | 核心功能 |
 |---|------|------|----------|
-| 23 | `dt_context` | 聚合 | 六世界聚合上下文（替代手动逐个查询） |
+| 23 | `dt_context` | 聚合 | 六世界聚合上下文（含 alerts 反馈） |
 | 24 | `dt_plan` | 规划 | 匹配 Playbook 生成执行计划 |
 | 25 | `dt_domain` | 查询 | 领域知识模型子图 |
-| 26 | `dt_history` | 查询 | 历史相似任务检索 |
+| 26 | `dt_history` | 查询 | 历史相似任务检索（含归档数据） |
 | 27 | `dt_dependency` | 分析 | 调用链 + 依赖 + 影响范围分析 |
 | 28 | `dt_verify` | 验证 | 修改后的一致性验证 |
-| 29 | `dt_learn` | 写入 | 任务完成后写回知识（高层语义） |
+| 29 | `dt_learn` | 写入 | 任务完成后写回知识（含 Playbook 成功率反馈） |
 | 30 | `dt_search` | 搜索 | 跨世界语义搜索 |
+| 31 | `dt_cleanup` | 运维 | 按 TTL 策略清理过期数据 |
+| 32 | `dt_backup` | 运维 | 分层备份与灾难恢复 |
+| 33 | `dt_archive` | 运维 | Memory 超期数据归档 |
+| 34 | `dt_metrics` | 监控 | gRPC 指标查询（无 HTTP 端口） |

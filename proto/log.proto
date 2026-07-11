@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package dt.log;
+
+import "common.proto";
+
+// LogService — unified log ingestion & query.
+//
+// All components (Rust daemon, Python MCP server, embed server) send their
+// logs through this service. The daemon aggregates everything into a single
+// JSON-lines file.
+service LogService {
+    // StreamLogs accepts a stream of log entries from clients.
+    // The server acknowledges after each batch.
+    rpc StreamLogs(stream LogEntry) returns (LogAck);
+
+    // QueryLogs searches historical logs (server-side filtering + pagination).
+    rpc QueryLogs(LogQuery) returns (stream LogEntry);
+}
+
+// A single log entry produced by any component.
+message LogEntry {
+    string timestamp = 1;           // RFC3339 with milliseconds
+    string level = 2;               // TRACE|DEBUG|INFO|WARN|ERROR
+    string target = 3;              // source module, e.g. "dt::build"
+    string trace_id = 4;            // cross-process tracing ID
+    string span_id = 5;             // parent span ID
+    string plugin = 6;              // plugin name (empty for core)
+    string message = 7;             // log message
+    string error = 8;               // error details (JSON, optional)
+    map<string, string> fields = 9; // business-specific key-value pairs
+}
+
+// Ack from the server after stream ingestion.
+message LogAck {
+    int32 received = 1;             // number of entries accepted
+    string error = 2;               // error message (empty = success)
+}
+
+// Query parameters for historical log retrieval.
+message LogQuery {
+    string start_time = 1;          // RFC3339 lower bound (inclusive)
+    string end_time = 2;            // RFC3339 upper bound (exclusive)
+    repeated string levels = 3;     // filter by level
+    string target = 4;              // filter by target (substring)
+    string trace_id = 5;            // filter by trace ID
+    string plugin = 6;              // filter by plugin
+    string query = 7;               // free-text search in message
+    int32 limit = 8;                // max entries to return (default 100)
+    int32 offset = 9;               // pagination offset
+}

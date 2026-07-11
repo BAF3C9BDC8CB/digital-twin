@@ -1,370 +1,167 @@
-# Digital Twin
+# Digital Twin V2
 
-A persistent memory layer for AI-assisted development. Digital Twin combines a **Neo4j knowledge graph** for structured memory (events, decisions, configurations) with a **Qdrant vector database** for semantic code search, enabling AI agents to maintain context across sessions.
+**AI 辅助开发的持久记忆层**。结合 Neo4j 知识图谱 + Qdrant 向量数据库，为 AI Agent 提供跨会话上下文。
 
----
+## 架构
 
-## Architecture
+单 crate DDD 分层 (src/domain → src/infrastructure → src/application → src/interfaces)，六世界模型：
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    AI Agent (OpenCode)                    │
-│  AGENTS.md triggers: dt event / dt memorize / dt build   │
-└──────────────────────┬──────────────────────────────────┘
-                       │ dt CLI
-┌──────────────────────▼──────────────────────────────────┐
-│                    dt (Rust CLI)                         │
-│                                                         │
-│  ┌──────────┐  ┌───────────┐  ┌────────┐  ┌─────────┐  │
-│  │ dt event │  │ dt memorize│  │dt build│  │dt search │  │
-│  │ dt remove│  │ dt search  │  │ index  │  │validate │  │
-│  └─────┬────┘  └─────┬─────┘  └───┬────┘  └────┬────┘  │
-│        │              │            │            │       │
-│  ┌─────▼──────────────▼────────────▼────────────▼─────┐ │
-│  │           tree-sitter (7 languages)                │ │
-│  └───────────────────────┬───────────────────────────┘ │
-│                          │ subprocess                  │
-│  ┌───────────────────────▼───────────────────────────┐ │
-│  │           dt-embed CLI (Python + BGE-M3)           │ │
-│  └───────────────────────────────────────────────────┘ │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  
-┌──────────────┐  ┌──────────────┐  
-│   Neo4j      │  │   Qdrant     │  
-│  Knowledge   │  │   Vector     │  
-│  Graph       │  │   Database   │  
-│  localhost   │  │  localhost   │  
-│  :7474       │  │  :6333       │  
-└──────────────┘  └──────────────┘  
+src/
+  domain/          # 领域层: types, traits, error, config, id
+  infrastructure/  # 基础设施: neo4j, qdrant, sqlite, parser, scanner, embedder
+  application/     # 应用层: build, sync, context, knowledge, plugins
+  interfaces/      # 接口层: gRPC server, CLI
+  shared/          # 横切: logging, metrics, coordinator, chunker, vectorizer
 ```
 
-### Components
+六世界聚合上下文：
 
-| Component | Language | Purpose |
-|-----------|----------|---------|
-| `engine-rust/` | Rust | Core CLI (`dt`): indexing, search, event/memory management |
-| `services/embed-server/` | Python + sentence-transformers | `dt-embed` CLI: GPU text embedding (BGE-M3, 1024-dim) |
-| `services/search-web/` | Python + Flask | Web search UI |
-| `config.yaml` | YAML | Central configuration |
+| 世界 | 数据 | 存储 |
+|------|------|------|
+| Reality | 代码、配置、K8s 资源 | Neo4j + Qdrant |
+| Knowledge | 概念、模式、Playbook、经验 | Neo4j |
+| Memory | 事件、会话、时间线 | Neo4j |
+| Semantic | 文档、API、日志模式向量 | Qdrant |
+| Runtime | Pod 状态、服务运行态 | K8s API 实时查询 |
+| Reasoning | 观察 → 分析 → 决策链路 | Neo4j (含 TTL) |
 
----
+## 快速开始
 
-## Requirements
+### 依赖
 
-### Runtime
+- Neo4j 5.x (Bolt :7687)
+- Qdrant (gRPC :6334)
+- dt-embed (Python, BGE-M3 :50052)
 
-| Service | Version | Purpose |
-|---------|---------|---------|
-| [Neo4j](https://neo4j.com/download/) | 5.x | Knowledge graph storage |
-| [Qdrant](https://qdrant.tech/documentation/quick-start/) | 1.x | Vector database for semantic search |
-| Python | 3.10+ | Embed server |
-| Rust | 1.75+ | Building the `dt` CLI |
-
-### System Dependencies
+### 构建
 
 ```bash
-# Build essentials for Rust tree-sitter
-sudo apt install build-essential cmake pkg-config
-
-# Python dependencies (for dt-embed CLI)
-sudo apt install python3 python3-pip
-```
-
----
-
-## Installation
-
-### 1. Start Required Services
-
-**Neo4j:**
-```bash
-# Native install (systemd)
-sudo systemctl start neo4j
-
-# Or download from https://neo4j.com/download/
-```
-
-**Qdrant:**
-```bash
-# Native install
-curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-unknown-linux-gnu.tar.gz | tar xz
-./qdrant &
-
-# Or via package manager
-```
-
-### 2. dt-embed CLI
-
-```bash
-cd services/embed-server
-pip install -e .
-sudo ln -sf $(which dt-embed) /usr/local/bin/dt-embed
-
-# Verify
-dt-embed --info
-# → {"model": "BAAI/bge-m3", "dim": 1024, "device": "cuda", "fp16": true}
-```
-
-`dt` calls `dt-embed` automatically via subprocess — no HTTP server needed.
-
-### 3. Build and Install `dt` CLI
-
-```bash
-cd engine-rust
 cargo build --release
-sudo cp target/release/dt /usr/local/bin/dt
-
-# Verify
-dt --help
+./target/release/dt --help
 ```
 
-### 4. Configure
+## CLI 命令 (24 个)
 
-```bash
-cp config.yaml.example config.yaml
-```
+### 管线
 
-Edit `config.yaml` to match your environment.
+| 命令 | 功能 |
+|------|------|
+| `dt build` | 构建项目索引到知识图谱 |
+| `dt update` | 单文件增量更新 |
+| `dt watch` | 文件监视 daemon |
+| `dt nacos-sync` | 同步 Nacos 配置 |
+| `dt k8s-sync` | 同步 K8s 资源 |
+| `dt kg-sync` | KG 节点同步到 Qdrant |
 
-The `dt` CLI reads `config.yaml` from the project root directory. Override with `DT_CONFIG` environment variable.
+### 搜索
 
-### 5. Install OpenCode Skill (Optional)
+| `dt search` | 跨世界语义搜索 |
 
-```bash
-# The skill tells AI agents to query the knowledge graph automatically
-mkdir -p ~/.opencode/skills/digital-twin
-cp SKILL.md ~/.opencode/skills/digital-twin/SKILL.md
+### 知识
 
-# Symlink AGENTS.md for AI behavior rules
-ln -sf "$(pwd)/AGENTS.md" ~/AGENTS.md
-```
+| `dt memorize` | 写入知识节点 |
+| `dt event` | 写入事件节点 |
+| `dt learn` | AI 任务后沉淀知识 |
+| `dt thread` | 管理 Digital Thread |
 
-Or run the setup script which does all of this automatically:
+### 分析
 
-```bash
-bash setup.sh
-```
+| `dt context` | 六世界聚合上下文 |
+| `dt plan` | 匹配 Playbook 生成执行计划 |
+| `dt domain` | 领域知识模型子图 |
+| `dt history` | 历史相似任务检索 |
+| `dt dependency` | 调用链与依赖分析 |
+| `dt verify` | 修改后一致性验证 |
 
----
+### 运维
 
-## Usage
+| `dt backup` | 分层备份 (Neo4j + Qdrant + SQLite) |
+| `dt archive` | Memory 数据归档 |
+| `dt clean` | 清空所有数据 |
+| `dt cleanup` | TTL 数据清理 |
+| `dt schema` | Schema 管理 (`dt schema init`) |
+| `dt health` | 健康检查 |
+| `dt metrics` | 指标查询 |
 
-### Code Indexing
-
-```bash
-# Full index (rebuild from scratch)
-dt index --path /path/to/project --name my-project
-
-# Index a single file (after editing)
-dt build --file /path/to/project/src/main.py
-
-# Or full project incremental build
-dt build --path /path/to/project --name my-project
-
-# Remove a file from index
-dt remove --project my-project --file src/old.py
-
-# Remove entire project
-dt remove --project my-project --all
-```
-
-### Knowledge Graph Operations
-
-```bash
-# Record an Event (e.g., deploy, config change)
-dt event --type Deploy \
-  --entity-id "user-center" \
-  --entity-type JenkinsJob \
-  --project "user-center" \
-  --details "branch: main, env: production"
-
-# Record a Knowledge entry (e.g., architecture decision)
-dt memorize --type Decision \
-  --entity-id "REST-to-gRPC" \
-  --entity-type ArchitectureDecision \
-  --project "user-center" \
-  --details "decision: migrate to gRPC; reason: 10x lower latency; scope: user-service"
-```
-
-### Semantic Code Search
-
-```bash
-# Search within a project
-dt search "user login flow" --project user-center
-
-# Search all projects
-dt search "payment timeout" --all --limit 20
-
-# JSON output
-dt search "refund logic" --project order-center --json
-
-# Rebuild call graph relationships
-dt build-call-graph --name user-center
-```
-
-### Nacos Configuration Sync
-
-```bash
-# Sync test environment (nacos.newoffen.net)
-dt nacos-sync --env test
-
-# Sync production environment (nacos.newoffen.com)
-dt nacos-sync --env prod
-
-# Sync both
-dt nacos-sync --env all
-```
-
-### Utility
-
-```bash
-# Validate extraction quality (dry run, no DB writes)
-dt validate --path /path/to/project --name my-project
-
-# Parse a single file and output JSON
-dt parse --file src/main.py --project my-project --root /path/to/project
-```
-
----
-
-## How Incremental Build Works
+## 项目结构
 
 ```
-dt build --path /proj --name myapp
-  │
-  ├─ Scan project directory (ignores node_modules, .git, etc.)
-  │
-  ├─ Compute SHA1 hash for each file
-  │
-  ├─ Compare with SQLite cache (/var/lib/digital-twin/lazy.db)
-  │   ├─ Hash matches → skip (unchanged)
-  │   ├─ Hash differs → re-index
-  │   └─ File in cache but not on disk → delete from Neo4j + Qdrant
-  │
-  ├─ For each changed file:
-  │   1. tree-sitter parse → extract methods/classes
-  │   2. dt-embed CLI (subprocess) → get 1024-dim vector (BGE-M3)
-  │   3. Write to Qdrant (vector + payload)
-  │   4. Write to Neo4j (Method node + Class + CONTAINS)
-  │   5. Update SQLite hash cache
-  │
-  └─ Rebuild CALLS relationships in Neo4j
-```
-
----
-
-## AI Integration (OpenCode)
-
-Copy `AGENTS.md` to your home directory (or symlink) to enable autonomous KG updates:
-
-```bash
-ln -s /path/to/digital-twin/AGENTS.md ~/AGENTS.md
-```
-
-The AI agent reads `~/AGENTS.md` at session start and follows these rules:
-
-| Trigger | Command |
-|---------|---------|
-| Software installed | `dt event --type SoftwareInstalled --entity-type Software ...` |
-| Config changed | `dt event --type ConfigChange --entity-type NacosConfig ...` |
-| Architecture decision | `dt memorize --type Decision --entity-type ArchitectureDecision ...` |
-| Production deploy | `dt event --type Deploy --entity-type JenkinsJob ...` |
-| Source file edited | `dt build --path <root> --name <project>` or `dt build --file <abs_path>` |
-| File deleted | `dt remove --project <name> --file <path>` |
-
----
-
-## Supported Languages
-
-| Language | File Extensions | Parser |
-|----------|----------------|--------|
-| Java | `.java` | tree-sitter-java |
-| TypeScript | `.ts`, `.tsx` | tree-sitter-typescript |
-| Python | `.py` | tree-sitter-python |
-| Go | `.go` | tree-sitter-go |
-| Rust | `.rs` | tree-sitter-rust |
-| PHP | `.php` | tree-sitter-php |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter-javascript |
-
----
-
-## Project Structure
-
-```
-digital-twin/
+digital-twin-v2/
 ├── README.md
-├── config.yaml                  # Central configuration
-├── setup.sh                     # One-click deployment script
-├── dt-sync                      # Orchestration script for incremental sync
-│
-├── engine-rust/                 # Rust CLI (dt)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs              # CLI entry point (clap)
-│       ├── config.rs            # Config reader (YAML + env fallback)
-│       ├── neo4j.rs             # Neo4j HTTP client
-│       ├── qdrant.rs            # Qdrant HTTP client
-│       ├── embed.rs             # dt-embed CLI subprocess client
-│       ├── scanner.rs           # File scanner
-│       ├── parser.rs            # tree-sitter parser
-│       ├── models.rs            # Data models
-│       ├── build.rs             # Index/build/update/validate logic
-│       ├── event.rs             # Event node writer
-│       ├── knowledge.rs         # Knowledge node writer
-│       ├── remove.rs            # Code entity remover
-│       └── search.rs            # Semantic search
-│
+├── Cargo.toml                  # 单 crate (dt-daemon)
+├── config.yaml                 # 集中配置
+├── src/
+│   ├── main.rs                 # CLI 入口 (clap) + gRPC server 启动
+│   ├── lib.rs
+│   ├── domain/
+│   │   ├── config.rs           # AppConfig + SecretString
+│   │   ├── error.rs            # DomainError
+│   │   ├── id.rs               # 统一 ID 格式 (dt://entity/...)
+│   │   ├── traits.rs           # GraphRepository, VectorRepository, EmbedService, ...
+│   │   └── types.rs            # 六世界实体类型定义
+│   ├── infrastructure/
+│   │   ├── embedder.rs         # dt-embed gRPC client
+│   │   ├── neo4j/              # Neo4j Bolt 驱动 (neo4rs)
+│   │   ├── parser/             # tree-sitter 多语言解析器
+│   │   ├── qdrant/             # Qdrant gRPC 驱动
+│   │   ├── scanner.rs          # 项目文件扫描
+│   │   └── sqlite/             # SQLite 快照缓存
+│   ├── application/
+│   │   ├── build/              # dt build / update / watch
+│   │   ├── context/            # Context Builder 管道 (6 world)
+│   │   ├── knowledge/          # memorize / learn / event
+│   │   ├── plugins/            # Plugin trait + registry
+│   │   └── sync/               # nacos-sync / k8s-sync / kg-sync
+│   ├── interfaces/
+│   │   ├── cli/                # CLI 辅助模块 (cleanup, backup, archive)
+│   │   └── grpc/               # gRPC server + services + auth
+│   └── shared/
+│       ├── chunker.rs          # 文档分块策略
+│       ├── coordinator.rs      # WriteCoordinator 并发写入协调
+│       ├── logging/            # 统一日志 (tracing + JSON)
+│       └── vectorizer.rs       # 文本向量化工具
+├── docs/                       # 架构设计文档 (7 份)
+│   ├── architecture-v3-single-crate-layered.md
+│   ├── architecture-v2-six-worlds.md
+│   ├── architecture-v2-data-schema.md
+│   ├── architecture-v2-data-pipeline.md
+│   ├── architecture-v2-pipeline-impl.md
+│   ├── architecture-v2-project-structure.md
+│   └── architecture-v2-mcp-api-spec.md
 ├── services/
-│   ├── embed-server/            # dt-embed CLI (Python, pip-installable)
-│   │   ├── pyproject.toml
-│   │   └── src/dt_embed/
-│   │       ├── cli.py           # CLI entry point
-│   │       ├── engine.py        # GPU model + inference
-│   │       └── pipeline.py      # Batch pipeline
-│   └── search-web/              # Web search UI (Python)
-│       ├── app.py
-│       └── templates/
-│
-└── (data directories)           # SQLite cache, Neo4j data, etc.
+│   └── embed-server/           # dt-embed (Python + BGE-M3)
+└── .weave/plans/               # 实施路线图
+    └── v2-implementation-roadmap.md
 ```
 
----
+## 架构文档
 
-## Configuration Reference
+详见 [docs/](docs/) 目录 (7 份架构设计文档)：
 
-`config.yaml`:
+| 文档 | 内容 |
+|------|------|
+| [architecture-v3-single-crate-layered.md](docs/architecture-v3-single-crate-layered.md) | 当前架构: 单 crate DDD 五层 |
+| [architecture-v2-six-worlds.md](docs/architecture-v2-six-worlds.md) | 六世界模型设计 |
+| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Neo4j Schema: 25 约束 + 全文索引 |
+| [architecture-v2-data-pipeline.md](docs/architecture-v2-data-pipeline.md) | 数据采集管线设计 |
+| [architecture-v2-pipeline-impl.md](docs/architecture-v2-pipeline-impl.md) | 管道实现细节 |
+| [architecture-v2-project-structure.md](docs/architecture-v2-project-structure.md) | 项目结构设计 |
+| [architecture-v2-mcp-api-spec.md](docs/architecture-v2-mcp-api-spec.md) | 12 个 MCP 工具 API 规范 |
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `server.hostname` | `localhost` | Server hostname for inventory |
-| `services.neo4j.url` | `http://localhost:7474` | Neo4j REST API URL |
-| `services.neo4j.user` | `neo4j` | Neo4j username |
-| `services.neo4j.password` | `neo4j` | Neo4j password |
-| `services.qdrant.url` | `http://localhost:6333` | Qdrant REST API URL |
-| `services.embed_server.url` | `http://localhost:8001` | (deprecated) dt calls dt-embed CLI directly |
-| `services.embed_server.dim` | `1024` | Embedding dimension |
-| `services.embed_server.model` | `BAAI/bge-m3` | Embedding model name |
-| `snapshot_dir` | `/var/lib/digital-twin/snapshots` | Directory for snapshots |
-| `projects` | `[]` | List of project definitions (name + path) |
-| `watcher` | (internal) | File watcher config (for dt-sync) |
+## AI 集成 (OpenCode)
 
-Environment variable `DT_CONFIG` overrides the config file path.
+`dt` CLI 通过 gRPC 与 OpenCode MCP Server 通信，实现以下自动触发：
 
----
+| 触发操作 | 自动执行 |
+|---------|---------|
+| 源码编辑 | `dt update --file <path>` |
+| 软件安装 | `dt event --type SoftwareInstalled ...` |
+| Nacos 配置变更 | `dt event --type ConfigChange ...` |
+| 架构决策 | `dt memorize --type Decision ...` |
+| 生产部署 | `dt event --type Deploy ...` |
+| 会话结束 | `dt event --type Conversation ...` |
 
-## Data Storage
-
-| Data | Location | Technology |
-|------|----------|------------|
-| Knowledge graph | Neo4j (`localhost:7474`) | Nodes & relationships |
-| Code vectors | Qdrant (`localhost:6333`) | Collections per project |
-| File hash cache | `/var/lib/digital-twin/lazy.db` | SQLite |
-| Embeddings | In-memory / CPU | BGE-base-zh-v1.5 |
-
----
-
-## License
+## 许可证
 
 MIT

@@ -1,0 +1,26 @@
+// Common shared types for all Digital Twin proto definitions.
+syntax = "proto3";
+
+package dt.common;
+
+// Health status enum matching dt-common::types::HealthStatus.
+enum HealthStatus {
+  HEALTHY = 0;
+  DEGRADED = 1;
+  UNHEALTHY = 2;
+}
+
+// Generic error message.
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+// Empty message for RPCs with no inputs or outputs.
+message Empty {}
+
+// Generic key-value pair.
+message KeyValue {
+  string key = 1;
+  string value = 2;
+}

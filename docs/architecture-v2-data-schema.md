@@ -1,6 +1,10 @@
 # Digital Twin v2 数据格式定义
 
-> 状态：设计阶段 | 日期：2026-07-09
+> ⚠️ **DEPRECATED**: 本文档已被 [V3 单 Crate 分层架构](./architecture-v3-single-crate-layered.md) 替代。
+> V2 多 crate workspace 方案已废弃，实际实现采用单 crate 内部模块分层。
+> 保留本文档仅供历史参考。
+
+> 状态：设计阶段 | 日期：2026-07-09（已刷新：新增 KnowledgeVersion 实体、备份/归档策略、chunking 参数、模型迁移命名）
 
 本文档定义六世界中每种数据内容的精确格式：节点标签、属性字段、类型、关系、存储位置。
 
@@ -30,7 +34,7 @@
   project           String   所属项目   "aflm-pay"
   start_line        Integer  起始行号
   end_line          Integer  结束行号
-  calls             List<String>  内部调用的 method_id 列表
+  calls             List<String>  内部调用的方法名列表（通过正则提取，用于 CALLS 关系重建时按 name 模糊匹配。如需精确定位重载方法，应使用 file_path + start_line 组合定位）
   comment           String   Javadoc/Docstring/注释摘要
 关系:
   (:Class)-[:CONTAINS]->(:Method)
@@ -91,8 +95,8 @@
   url          String   管理面板 URL
   description  String   描述
 关系:
-  (:Server)-[:RUNNING_ON]->(:OS)
   (:Server)-[:DEPLOYED_IN]->(:Environment)
+  // (:Server)-[:RUNNING_ON]->(:OS) — OS 实体延后到 Phase 3+
 ```
 
 ### 1.3 Database
@@ -206,7 +210,6 @@
   modified     String   最后修改时间
 关系:
   (:Document)-[:DESCRIBES]->(:Concept)        // 文档描述的概念
-  (:Document)-[:BELONGS_TO]->(:Project)
 ```
 
 ### 1.7 Service（微服务 — 稳定标识）
@@ -244,34 +247,37 @@
   version       String   当前部署版本                   "v2.3.1"
   replica_count Integer  副本数                        2
 
-  // ─── Runtime 缓存字段（不入 Neo4j，Context Builder 实时注入） ───
-  pods            Array(缓存)   Pod 列表 (name, ip, phase, restarts, node, cpu, memory)
-  cpu_usage       String (缓存)  CPU 使用量 (聚合)       "250m"
-  memory_usage    String (缓存)  内存使用量 (聚合)        "512Mi"
-  uptime          String (缓存)  运行时长                 "7d 12h"
-  heap_used       String (缓存)  JVM Heap                "256MB / 512MB"
-  thread_count    Integer(缓存)  活跃线程数              42
+  // ─── Runtime 瞬态注入字段（每次请求实时拉取，不入 Neo4j） ───
+  pods            Array(瞬态注入)   Pod 列表 (name, ip, phase, restarts, node, cpu, memory)
+  cpu_usage       String (瞬态注入)  CPU 使用量 (聚合)       "250m"
+  memory_usage    String (瞬态注入)  内存使用量 (聚合)        "512Mi"
+  uptime          String (瞬态注入)  运行时长                 "7d 12h"
+  heap_used       String (瞬态注入)  JVM Heap                "256MB / 512MB"
+  thread_count    Integer(瞬态注入)  活跃线程数              42
 
   // 注意：pods[] 从 K8s API 实时拉取（GET /pods），不在 Neo4j 持久化
   // Pod 的历史问题（哪天哪个 Pod 崩溃了）→ Memory World 事件记录（Phase 2+）
 
 关系:
   (:Service)-[:HAS_INSTANCE]->(:ServiceInstance)
-  (:ServiceInstance)-[:DEPLOYED_AS]->(:Deployment)     // 对应的 K8s Deployment
+  (:ServiceInstance)-[:DEPLOYED_AS]->(:K8sDeployment)     // 对应的 K8s Deployment
   (:ServiceInstance)-[:CONFIGURED_BY]->(:NacosConfig)  // 使用的配置（含环境差异）
 ```
 
 **设计说明：** Service 是跨环境的稳定标识（service_id 不含 env），ServiceInstance 承载每个环境的具体部署信息。好处：
 - 同一个服务名在不同环境有不同的 host/port/deployment，天然支持
 - Runtime 实时指标（CPU/Mem/Uptime）作为缓存字段挂到 ServiceInstance 上，不被 Neo4j 持久化
-- Context Builder 组装上下文时，从 K8s API 实时拉取 Runtime 数据，注入到 ServiceInstance 的缓存字段中
+  ⚠️ 注意：此处"缓存"是指 Context Builder 组装上下文时的瞬态注入字段，不持久化，TTL 由请求生命周期决定。
+- Context Builder 组装上下文时，从 K8s API 实时拉取 Runtime 数据，注入到 ServiceInstance 的瞬态字段中
 
-#### Deployment（K8s Deployment — 稳定部署资源）
+#### K8sDeployment（K8s Deployment — 稳定部署资源）
+
+> ⚠️ 注意：此标签在 V2 中已从 Deployment 重命名为 K8sDeployment，以区别于 Memory World 中的 Deployment（部署事件记录）。
 
 ```
-标签: Deployment
+标签: K8sDeployment
 属性:
-  deploy_name   String   K8s Deployment 名称              "aflm-pay"
+  name          String   K8s Deployment 名称              "aflm-pay"
   namespace     String   K8s 命名空间                      "newoffen"
   image         String   容器镜像                          "aflm-pay:v2.3.1"
   replicas      Integer  期望副本数                        2
@@ -280,17 +286,16 @@
   labels        Map      标签
   created_at    DateTime 创建时间
 关系:
-  (:Deployment)-[:HAS_POD]->(:K8sPod)                   // 管理的 Pod
-  (:ServiceInstance)-[:DEPLOYED_AS]->(:Deployment)      // 对应的服务实例
+  (:ServiceInstance)-[:DEPLOYED_AS]->(:K8sDeployment)      // 对应的服务实例
 ```
 
 ### 1.8 K8sPod（已移除）
 
 > **设计决策**：K8sPod **不属于 Reality World**。Pod 是 K8s 的运行时概念——每次部署、重启、调度都产生新 Pod。将 Pod 持久化到 Neo4j 会导致：脏数据（Pod 已终止但节点还在）、生命周期管理负担、无谓的写入开销。
 >
-> Pod 的全部信息（name、ip、phase、restarts、node、cpu、memory）属于 **Runtime World**，由 Context Builder 实时查询 K8s API 获取，注入到 `ServiceInstance.pods[]` 缓存字段。
+> Pod 的全部信息（name、ip、phase、restarts、node、cpu、memory）属于 **Runtime World**，由 Context Builder 实时查询 K8s API 获取，注入到 `ServiceInstance.pods[]` 瞬态字段中。
 >
-> Deployment 是 Reality 中唯一的 K8s 实体——它足够稳定，仅在部署时变化。
+> K8sDeployment 是 Reality 中唯一的 K8s 实体——它足够稳定，仅在部署时变化。K8sDeployment 不再有 `[:HAS_POD]` 关系（Pod 不入 Neo4j）。
 
 ---
 
@@ -323,6 +328,22 @@
   (:Knowledge)-[:IMPLEMENTED_BY]->(:Method)      // 哪个代码实现了此知识
   (:Knowledge)-[:REFERENCES]->(:Document)        // 引用文档
   (:Knowledge)-[:BELONGS_TO]->(:Domain)          // 所属领域
+  (:Knowledge)-[:EVOLVED_FROM]->(:Knowledge)     // 版本演化链
+```
+
+#### KnowledgeVersion（知识版本记录）
+
+```
+标签: KnowledgeVersion
+属性:
+  version_id     String   dt://knowledge-version/{knowledge_id}/v{version}
+  knowledge_id   String   所属知识节点 ID
+  version        Integer  版本号（1, 2, 3...）
+  diff           String   变更摘要  "新增 pitfall: pay-timeout.yml 容易遗漏"
+  session_id     String   变更所属会话
+  timestamp      DateTime 变更时间
+关系:
+  (:KnowledgeVersion)-[:RECORDS]->(:Knowledge)   // 记录的版本
 ```
 
 ### 2.2 Playbook（执行手册）
@@ -337,6 +358,8 @@
   domain        String   领域
   project       String   所属项目
   success_count Integer  使用成功次数
+  failure_count Integer  使用失败次数
+  _needs_review Boolean  成功率 < 70% 时标记为 true
   created_at    DateTime
 关系:
   (:Playbook)-[:USES_KNOWLEDGE]->(:Knowledge)
@@ -410,7 +433,7 @@
 
 ## 三、Memory World（记忆世界）
 
-**存储：Neo4j（只增不删，事件溯源）**  
+**存储：Neo4j（只增不删，事件溯源。TTL 365 天后归档 → /var/lib/dt/archive/）**  
 **特征：时间线驱动，完整审计日志**
 
 ### 3.1 Day（天）
@@ -441,6 +464,7 @@
   (:Session)-[:HAS_EVENT]->(:ConfigChange)
   (:Session)-[:HAS_EVENT]->(:BugFix)
   (:Session)-[:HAS_EVENT]->(:Decision)
+  (:Session)-[:HAS_EVENT]->(:PodEvent)
   (:Session)-[:BELONGS_TO]->(:Thread)
 ```
 
@@ -459,6 +483,7 @@
   session_id   String   所属会话
   timestamp    DateTime
 关系:
+  (:Modification)-[:BELONGS_TO]->(:Thread)    // 所属主线
   (:Modification)-[:AFFECTS]->(:Method)     // 影响的实体（Neo4j 节点）
   (:Modification)-[:AFFECTS]->(:Class)
   (:Modification)-[:AFFECTS]->(:NacosConfig)
@@ -538,6 +563,29 @@
   (:Decision)-[:BELONGS_TO]->(:Thread)
 ```
 
+### 3.8 PodEvent（Pod 异常事件）
+
+```
+标签: PodEvent
+属性:
+  event_id      String   唯一 ID  "dt://podevent/{project}/{id}"
+  pod_name      String   Pod 名称  "aflm-pay-7d8f9b6c-abcde"
+  namespace     String   K8s 命名空间
+  phase         String   Pod 状态  "CrashLoopBackOff" | "OOMKilled" | "Evicted"
+  reason        String   原因描述  "OOMKilled: memory limit exceeded"
+  message       String   K8s 事件消息
+  node          String   所在节点
+  container     String   出问题的容器名
+  restart_count Integer  当时重启次数
+  session_id    String   发现会话
+  timestamp     DateTime 发生时间
+关系:
+  (:PodEvent)-[:AFFECTS]->(:ServiceInstance)   // 影响的哪个服务实例
+  (:PodEvent)-[:RELATED_TO]->(:Deployment)     // 关联的部署事件（如有）
+```
+
+> **设计说明**：Pod 的全部运行时信息（name, ip, phase, restarts, cpu, memory）属于 Runtime World，不入 Neo4j。但当 Pod 出现异常时（如 CrashLoopBackOff、OOMKilled），通过 K8s 监控自动生成 PodEvent 事件节点，关联到对应 Session 或 Thread。这解决了"昨天 Pod 为什么 Crash"的历史追溯需求，同时不污染 Reality 数据。
+
 ---
 
 ## 四、Semantic World（语义世界）
@@ -548,7 +596,7 @@
 ### 4.1 Code Snippet
 
 ```
-Qdrant Collection: {project}_methods
+Qdrant Collection: {project}_methods_{model_version}
 向量模型: BGE-M3 (1024 维)
 Payload:
   entity_id    String   对应 Neo4j 节点 ID（Method.method_id）
@@ -566,7 +614,7 @@ Payload:
 ### 4.2 Document Chunk
 
 ```
-Qdrant Collection: {project}_semantic
+Qdrant Collection: {project}_semantic_{model_version}
 向量模型: BGE-M3 (1024 维)
 Payload:
   entity_id    String   对应 Neo4j 节点 ID（Document.doc_id）
@@ -633,19 +681,19 @@ Payload:
 
 ## 五、Runtime World（实时世界）
 
-**存储：不入 Neo4j，Context Builder 实时查询后注入 ServiceInstance 缓存字段**  
+**存储：不入 Neo4j，Context Builder 实时查询后注入 ServiceInstance 瞬态字段**  
 **特征：瞬时状态，每次 dt_context 请求重新拉取**
 
 ### Reality vs Runtime 分界
 
 ```
-Reality (Neo4j, k8s-sync 每小时)     Runtime (缓存, 每次 dt_context 实时拉取)
+Reality (Neo4j, k8s-sync 每小时)     Runtime (瞬态注入, 每次 dt_context 实时拉取)
 ────────────────────────────         ────────────────────────────────────────
-(:Deployment)                        ServiceInstance.pods[]:
+(:K8sDeployment)                     ServiceInstance.pods[]:
   name: "aflm-pay"                     [{name, ip, phase, restarts, node,
   image: "aflm-pay:v2.3.1"              cpu, memory}, ...]
   replicas: 2
-                                     ServiceInstance 缓存字段:
+                                     ServiceInstance 瞬态注入字段:
 (:ServiceInstance)                     cpu_usage, memory_usage
   host: "10.0.1.50"                    uptime, heap_used, thread_count
   port: 8080
@@ -667,9 +715,8 @@ k8s-sync 无需管理 Pod 生命周期          每次查询都是最新数据
   phase:          String,        // "Running" | "Pending" | "Failed"
   node:           String,        // "node-01"
   restarts:       Integer,       // 3
-  cpu_usage:      String,        // "250m"    (from Metrics API)
-  memory_usage:   String,        // "512Mi"   (from Metrics API)
-  containers:     [{name, image, ready}]
+  cpu:            String,        // "250m"    (from Metrics API)
+  memory:         String,        // "512Mi"   (from Metrics API)
 }]
 ```
 
@@ -677,22 +724,22 @@ k8s-sync 无需管理 Pod 生命周期          每次查询都是最新数据
 
 ```
 来源: Spring Actuator / Prometheus / K8s Metrics API
-注入目标: ServiceInstance 缓存字段
+注入目标: ServiceInstance 瞬态注入字段
 
 Context Builder 查询流程:
-  1. 从 Neo4j 获取 ServiceInstance（含 DEPLOYED_AS→Deployment）
-  2. 通过 Deployment.name 查询 K8s API:
-     GET /api/v1/namespaces/{ns}/pods?labelSelector=app={deploy_name}
+  1. 从 Neo4j 获取 ServiceInstance（含 DEPLOYED_AS→K8sDeployment）
+  2. 通过 K8sDeployment.name 查询 K8s API:
+     GET /api/v1/namespaces/{ns}/pods?labelSelector=app={name}
      → 填充 ServiceInstance.pods[]
   3. 查询 K8s Metrics API:
      GET /apis/metrics.k8s.io/v1beta1/namespaces/{ns}/pods
-     → 填充每个 pod 的 cpu_usage, memory_usage
+     → 填充每个 pod 的 cpu, memory
   4. 查询 Actuator (未来):
      GET /actuator/metrics → heap_used, thread_count
   5. 查询本地服务状态 (开发环境):
      svc status → uptime, pid
-  6. 注入到 ServiceInstance 缓存字段
-  7. 有效期: 当前请求 (TTL: 0)，每次 dt_context 重新拉取
+   6. 注入到 ServiceInstance 瞬态字段
+   7. 有效期: 当前请求（每次 dt_context 实时拉取，不入 Neo4j）
 ```
 
 ### 5.3 Pod Logs（Pod 日志）
@@ -711,7 +758,7 @@ Context Builder 查询流程:
 关联: 通过 pod name 匹配 ServiceInstance.pods[] 中的 Pod
 ```
 
-### 5.5 Local Service Status（本地服务状态 — 开发环境专用）
+### 5.4 Local Service Status（本地服务状态 — 开发环境专用）
 
 ```
 来源: svc_status MCP
@@ -834,6 +881,8 @@ Reasoning.Decision = 推理中的决策（可能未确认）
 
 ## 八、跨世界统一关系
 
+> ⚠️ **注意**：V2 已将 Reality World 的 K8s 实体重命名为 **K8sDeployment**（属性：name/image/replicas），以区别于 Memory World 中的 **Deployment**（部署事件记录，属性：deploy_id/job/env/version）。两者是完全不同的实体类型，`MATCH (d:Deployment)` 仅返回部署事件，`MATCH (d:K8sDeployment)` 仅返回 K8s 资源。关系区分：`[:DEPLOYED_AS]→K8sDeployment` vs `[:DEPLOYS]→ServiceInstance`。
+
 所有实体可通过以下关系跨世界连接：
 
 ```
@@ -845,12 +894,19 @@ AFFECTS           Modification      Method/Class/Cfg  修改影响了哪个实�
 DEPLOYS           Deployment        ServiceInstance   部署了哪个服务实例
 FIXES             BugFix            Method            Bug 修复了哪个方法
 BASED_ON          Decision          Knowledge         决策基于哪些知识
-BELONGS_TO        *                 Thread/Project    属于哪个主线/项目
+BELONGS_TO        *                 Thread             属于哪个主线/项目
 RELATED_TO        *                 *                 通用关联
 HAS_INSTANCE      Service           ServiceInstance   服务的环境实例
-DEPLOYED_AS       ServiceInstance   Deployment        实例对应的 K8s Deployment
+DEPLOYED_AS       ServiceInstance   K8sDeployment     实例对应的 K8s Deployment
 CONFIGURED_BY     ServiceInstance   NacosConfig       实例使用的配置（含环境差异）
-DEPLOYS           Deployment        ServiceInstance   部署事件→服务实例
+// --- Digital Thread 主线关系 ---
+HAS_REQUIREMENT   Thread            Requirement       主线关联的需求
+HAS_SESSION       Thread            Session           主线关联的会话
+HAS_DECISION      Thread            Decision          主线关联的决策
+HAS_MODIFICATION  Thread            Modification      主线关联的代码变更
+HAS_DEPLOYMENT    Thread            Deployment        主线关联的部署记录
+HAS_KNOWLEDGE     Thread            Knowledge         主线关联的知识
+HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手册
 ```
 
 ---
@@ -865,8 +921,9 @@ DEPLOYS           Deployment        ServiceInstance   部署事件→服务实�
 │            │   Server + Database + Table +                    │
 │            │   Config(NacosConfig/ConfigKey) +                │
 │            │   API(Endpoint) + Document +                     │
-│            │   Service + ServiceInstance + Deployment          │
-│            │   (⚠️ K8sPod 已移除 — 全部属于 Runtime)         │
+│            │   Service + ServiceInstance + K8sDeployment          │
+│            │   (⚠️ K8sPod 已移除 — 全部属于 Runtime,           │
+│            │    K8sDeployment 无 HAS_POD 关系)                     │
 │            │ Knowledge: Knowledge + Playbook + Experience     │
 │            │   + Concept + Domain                             │
 │            │ Memory: Day + Session + Modification +           │
@@ -877,7 +934,12 @@ DEPLOYS           Deployment        ServiceInstance   部署事件→服务实�
 │ Qdrant     │ Semantic: Code/Doc/Config/API/Exp/Log vectors    │
 │            │ 通过 entity_id 反查 Neo4j                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ 运行时缓存  │ Runtime: ServiceInstance.pods[]                   │
+│ 文件系统    │ Backup: Neo4j dump + Qdrant snapshot + SQLite cp  │
+│            │ 位置: /var/lib/dt/backups/{date}/                  │
+│            │ Archive: Memory.Event JSON export (.json.gz)        │
+│            │ 位置: /var/lib/dt/archive/{date_range}.json.gz     │
+├────────────┼──────────────────────────────────────────────────┤
+│ 运行时数据  │ Runtime (瞬态注入): ServiceInstance.pods[]         │
 │            │ (name, ip, phase, restarts, node)                 │
 │            │ + cpu_usage, memory_usage, uptime,                │
 │            │ heap_used, thread_count                           │
@@ -895,10 +957,11 @@ DEPLOYS           Deployment        ServiceInstance   部署事件→服务实�
 | 你要做什么 | 改动文件 | 改动量 | 示例 |
 |-----------|---------|--------|------|
 | 实体新增属性 | `dt-common/src/types.rs` | 1 行 field | Service 加 `team: String` |
+| 新增数据保留规则 | `dt-storage/src/neo4j/schema.rs` TTL 表 | ~5 行 YAML | Event 365 天 TTL |
 | 新增子实体 | types.rs + repo trait + repo impl | ~40 行 | Service → +ServiceInstance |
 | 新增独立实体 | types.rs + repo trait + repo impl + schema init | ~60 行 | 新增 Environment 实体 |
 | 新增关系 | repo trait + repo impl | ~15 行 Cypher | RUNS_AS: Instance→Pod |
-| Runtime 缓存字段 | types.rs (ServiceInstance 缓存区) | ~5 行 field | 新增 `disk_usage` |
+| Runtime 瞬态字段 | types.rs (ServiceInstance 瞬态字段区) | ~5 行 field | 新增 `disk_usage` |
 | 数据源填充新字段 | 对应 sync/pipeline 文件 | 改采集逻辑 | nacos-sync 填 instance host |
 | 新增数据源 | SyncSource trait 实现 | ~150 行 | Apollo 配置中心同步 |
 
@@ -907,8 +970,8 @@ DEPLOYS           Deployment        ServiceInstance   部署事件→服务实�
 1. **Neo4j schemaless** — 加属性不需要 migration，加标签不需要 schema change（但需在 `schema init` 中加约束索引）
 2. **trait 先行** — 先在 `dt-common/src/traits.rs` 中定义接口，再在 `dt-storage` 中实现
 3. **ServiceInstance 是扩展枢纽** — 任何与环境相关的字段都挂在 ServiceInstance，不污染 Service
-4. **缓存字段不入 Neo4j** — Runtime 数据标记为 `(缓存)`，由 Context Builder 实时注入
-5. **关系命名规范** — 全大写动词：`HAS_INSTANCE`, `RUNS_AS`, `DEPLOYED_ON`, `CONFIGURED_BY`
+4. **瞬态字段不入 Neo4j** — Runtime 数据标记为 `(瞬态注入)`，由 Context Builder 实时注入
+5. **关系命名规范** — 全大写动词：`HAS_INSTANCE`, `DEPLOYED_AS`, `CONFIGURED_BY`
 
 ### 完整示例：新增 Environment 实体
 
