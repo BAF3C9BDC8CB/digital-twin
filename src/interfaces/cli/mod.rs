@@ -16,3 +16,4 @@ pub mod context;
 pub mod thread;
 pub mod kub;
 pub mod jcli;
+pub mod jenkins_sync;
