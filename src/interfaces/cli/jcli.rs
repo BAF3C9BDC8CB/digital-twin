@@ -116,10 +116,15 @@ pub async fn handle_jcli(
                                 Some(job_name.clone()),
                             );
                             match source.sync_job(g.as_ref()).await {
-                                Ok(r) => tracing::info!(
-                                    "jcli build: incremental sync for {job_name}: {} builds",
-                                    r.items_created,
-                                ),
+                                Ok(r) => {
+                                    tracing::info!(
+                                        "jcli build: incremental sync for {job_name}: {} builds",
+                                        r.items_created,
+                                    );
+                                    tracing::info!(
+                                        "jcli build: deploy event for {job_name} in {env} environment",
+                                    );
+                                }
                                 Err(e) => tracing::warn!(
                                     "jcli build: incremental sync failed for {job_name}: {e}",
                                 ),

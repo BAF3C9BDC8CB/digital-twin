@@ -47,9 +47,9 @@ pub async fn handle_jenkins_sync(
                     }
                 };
                 println!(
-                    "  ✓ {} views, {} jobs, {} builds ({} links, {}ms)",
+                    "  ✓ {} views, {} jobs linked, {} builds ({} total ops, {}ms)",
                     report.namespaces,
-                    report.services,
+                    report.configs,
                     report.items_created,
                     report.links_created,
                     report.elapsed_ms,

@@ -62,13 +62,13 @@ impl JobSyncSource {
     }
 
     /// Build a unique node ID for a job.
-    fn job_id(env: &str, job_name: &str) -> String {
-        format!("dt://jenkins/{env}/job/{job_name}")
+    fn job_id(env: &str, full_name: &str) -> String {
+        format!("dt://jenkins/{env}/job/{full_name}")
     }
 
     /// Build a unique node ID for a build.
-    fn build_id(env: &str, job_name: &str, build_number: i64) -> String {
-        format!("dt://jenkins/{env}/job/{job_name}/build/{build_number}")
+    fn build_id(env: &str, full_name: &str, build_number: i64) -> String {
+        format!("dt://jenkins/{env}/job/{full_name}/build/{build_number}")
     }
 }
 
@@ -142,12 +142,11 @@ impl SyncSource for JobSyncSource {
             params.insert("url".to_string(), serde_json::json!(""));
             params.insert("env".to_string(), serde_json::json!(&self.env_name));
             graph.write_query(cypher, params).await?;
-            report.links_created += 1;
         }
 
         // ── 4. Process each job ───────────────────────────────────────────
         for job in &jobs {
-            let jid = Self::job_id(&self.env_name, &job.name);
+            let jid = Self::job_id(&self.env_name, &job.full_name);
             let view_name = Self::extract_view_name(&job.full_name);
             let vid = Self::view_id(&self.env_name, &view_name);
 
@@ -195,7 +194,7 @@ impl SyncSource for JobSyncSource {
             report.links_created += 1;
 
             // ── 5. Fetch builds ───────────────────────────────────────────
-            let builds = self.client.get_all_builds(&job.name).await?;
+            let mut builds = self.client.get_all_builds(&job.name, &job.full_name).await?;
 
             if builds.is_empty() {
                 println!("0 builds");
@@ -206,11 +205,10 @@ impl SyncSource for JobSyncSource {
             println!("{build_count} builds");
 
             // Sort builds by number ascending for chain creation
-            let mut sorted_builds = builds.clone();
-            sorted_builds.sort_by_key(|b| b.number);
+            builds.sort_by_key(|b| b.number);
 
-            for build in &sorted_builds {
-                let bid = Self::build_id(&self.env_name, &job.name, build.number);
+            for build in &builds {
+                let bid = Self::build_id(&self.env_name, &job.full_name, build.number);
 
                 let merge_build = r#"
                     MERGE (b:JenkinsBuild {build_id: $build_id})
@@ -254,9 +252,9 @@ impl SyncSource for JobSyncSource {
             }
 
             // ── 6. Create build chain (NEXT_BUILD) ────────────────────────
-            for pair in sorted_builds.windows(2) {
-                let prev_id = Self::build_id(&self.env_name, &job.name, pair[0].number);
-                let next_id = Self::build_id(&self.env_name, &job.name, pair[1].number);
+            for pair in builds.windows(2) {
+                let prev_id = Self::build_id(&self.env_name, &job.full_name, pair[0].number);
+                let next_id = Self::build_id(&self.env_name, &job.full_name, pair[1].number);
 
                 let chain = r#"
                     MATCH (prev:JenkinsBuild {build_id: $prev_id})
@@ -337,16 +335,32 @@ mod tests {
     #[test]
     fn job_id_format() {
         assert_eq!(
-            JobSyncSource::job_id("prod", "my-job"),
-            "dt://jenkins/prod/job/my-job"
+            JobSyncSource::job_id("prod", "my-service"),
+            "dt://jenkins/prod/job/my-service"
+        );
+    }
+
+    #[test]
+    fn job_id_format_with_folder() {
+        assert_eq!(
+            JobSyncSource::job_id("test", "team-a/my-service"),
+            "dt://jenkins/test/job/team-a/my-service"
         );
     }
 
     #[test]
     fn build_id_format() {
         assert_eq!(
-            JobSyncSource::build_id("test", "my-job", 42),
-            "dt://jenkins/test/job/my-job/build/42"
+            JobSyncSource::build_id("test", "my-service", 42),
+            "dt://jenkins/test/job/my-service/build/42"
+        );
+    }
+
+    #[test]
+    fn build_id_format_with_folder() {
+        assert_eq!(
+            JobSyncSource::build_id("test", "team-a/my-service", 42),
+            "dt://jenkins/test/job/team-a/my-service/build/42"
         );
     }
 }

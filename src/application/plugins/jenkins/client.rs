@@ -313,12 +313,12 @@ impl JenkinsApiClient {
     }
 
     /// Fetch all builds for a job (for jc-sync).
-    pub async fn get_all_builds(&self, job_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
-        let encoded = urlencoding(job_name);
+    pub async fn get_all_builds(&self, _job_name: &str, full_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
+        let path = full_name.replace('/', "/job/");
         let json = self
             .get_json(&format!(
                 "/job/{}/api/json?tree=builds[number,result,timestamp,duration,url]",
-                encoded
+                path
             ))
             .await?;
         let builds: Vec<JenkinsBuildInfo> = json["builds"]
