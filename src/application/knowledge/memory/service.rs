@@ -403,10 +403,11 @@ mod tests {
 
         svc.record_event(&evt).await.expect("record_event");
         // Expected writes: ensure_day (read), create_session (write),
-        // handler write (write), link_event_to_session (write)
-        // So at least 3 writes + 1 read.
+        // handler write (write). link_event_to_session is skipped
+        // for Deployment events (handler does it inline).
+        // So at least 2 writes + 1 read.
         assert!(read.load(Ordering::SeqCst) >= 1);
-        assert!(write.load(Ordering::SeqCst) >= 3);
+        assert!(write.load(Ordering::SeqCst) >= 2);
     }
 
     #[tokio::test]

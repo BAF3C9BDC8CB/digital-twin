@@ -139,6 +139,12 @@ pub async fn link_event_to_session(
     event_node_id: &str,
     event_type: EventType,
 ) -> Result<(), DtError> {
+    // Deployment handler creates the Session->JenkinsBuild link itself
+    // so we skip it here.
+    if event_type == EventType::Deployment {
+        return Ok(());
+    }
+
     let event_id_field = match event_type {
         EventType::Modification => "mod_id",
         EventType::Deployment => "deploy_id",

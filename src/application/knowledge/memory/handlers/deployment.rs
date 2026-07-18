@@ -1,12 +1,23 @@
-//! [`DeploymentHandler`] — creates `(:Deployment)` nodes in Neo4j.
+//! [`DeploymentHandler`] — records deployment by linking JenkinsJob,
+//! JenkinsBuild, and ServiceInstance in a three-node model.
 //!
 //! Parses [`MemoryEvent::details`] for:
-//! - `job`     — Jenkins Job name
-//! - `env`     — deployment environment ("test" | "prod")
-//! - `branch`  — git branch
-//! - `version` — artifact version
-//! - `params`  — build parameters (JSON)
-//! - `status`  — "success" | "failure"
+//! - `job`            — Jenkins Job name
+//! - `env`            — deployment environment ("test" | "prod")
+//! - `build_number`   — Jenkins build number (required, used to find/build_id)
+//! - `branch`         — git branch
+//! - `version`        — artifact version
+//! - `params`         — build parameters (JSON)
+//! - `status`         — "success" | "failure"
+//!
+//! Produces Cypher:
+//! ```cypher
+//! MERGE (job:JenkinsJob {name: $job}) ...
+//! MATCH (build:JenkinsBuild {build_id: $build_id}) ...
+//! MERGE (si:ServiceInstance {instance_id: $instance_id}) ...
+//! MERGE (job)-[:LATEST_DEPLOY]->(si)
+//! MERGE (build)-[:DEPLOYED_TO {env, version, deployed_at}]->(si)
+//! ```
 
 use async_trait::async_trait;
 use crate::domain::error::DtError;
@@ -14,16 +25,23 @@ use crate::domain::traits::GraphRepository;
 
 use crate::application::knowledge::memory::dispatcher::EventHandler;
 use crate::application::knowledge::memory::entities::{EventType, MemoryEvent};
-use crate::application::knowledge::memory::handlers::{make_event_id, parse_key_values};
+use crate::application::knowledge::memory::handlers::parse_key_values;
 
 /// Handler for deployment events.
 ///
 /// Produces Cypher:
 /// ```cypher
-/// MERGE (e:Deployment {deploy_id: $deploy_id})
-/// SET e.job = $job, e.env = $env, ...
+/// MERGE (job:JenkinsJob {name: $job})
+/// ON CREATE SET job.job_id = $job_id, ...
+/// MERGE (build:JenkinsBuild {build_id: $build_id})
+/// ON CREATE SET build.number = $build_number_int, ...
 /// MERGE (si:ServiceInstance {instance_id: $instance_id})
-/// MERGE (e)-[:DEPLOYS]->(si)
+/// WITH job, build, si
+/// OPTIONAL MATCH (job)-[old:LATEST_DEPLOY]->() DELETE old
+/// MERGE (job)-[:LATEST_DEPLOY]->(si)
+/// MERGE (build)-[:DEPLOYED_TO {env, version, deployed_at}]->(si)
+/// MATCH (s:Session {session_id: $session_id})
+/// MERGE (s)-[:HAS_EVENT]->(build)
 /// ```
 pub struct DeploymentHandler;
 
@@ -64,92 +82,104 @@ impl EventHandler for DeploymentHandler {
             .get("status")
             .cloned()
             .unwrap_or_else(|| "success".to_string());
-        let deploy_id =
-            make_event_id("deploy", &job, &event.details);
+        let build_number = props
+            .get("build_number")
+            .cloned()
+            .unwrap_or_default();
 
         // Build an instance_id for the ServiceInstance target.
         // Format: dt://service/{service_name}/instance/{env}
-        let service_name = props
-            .get("service")
-            .cloned()
-            .unwrap_or_else(|| job.clone());
         let instance_id = format!(
             "dt://service/{}/instance/{}",
-            service_name, env
+            job, env
         );
 
+        let job_id = format!("dt://jenkins/job/{}", job);
+
+        let build_id = if build_number.is_empty() {
+            format!("dt://jenkins/job/{}/build/unknown", job)
+        } else {
+            format!("dt://jenkins/job/{}/build/{}", job, build_number)
+        };
+
         let cypher = r#"
-            MERGE (e:Deployment {deploy_id: $deploy_id})
-            SET e.job = $job,
-                e.env = $env,
-                e.branch = $branch,
-                e.version = $version,
-                e.params = $params,
-                e.status = $status,
-                e.session_id = $session_id,
-                e.timestamp = $timestamp,
-                e.entity_id = $entity_id,
-                e.event_type = $event_type,
-                e.details = $details
-            WITH e
+            // 1. Ensure JenkinsJob exists
+            MERGE (job:JenkinsJob {name: $job})
+            ON CREATE SET
+                job.job_id = $job_id,
+                job.full_name = $job,
+                job.latest_deploy_env = $env,
+                job.latest_deploy_version = $version,
+                job.latest_deployed_at = $now
+            ON MATCH SET
+                job.latest_deploy_env = $env,
+                job.latest_deploy_version = $version,
+                job.latest_deployed_at = $now
+
+            // 2. Update JenkinsBuild with deployment info
+            MERGE (build:JenkinsBuild {build_id: $build_id})
+            ON CREATE SET
+                build.number = $build_number_int,
+                build.deployed_env = $env,
+                build.deployed_at = $now,
+                build.deployed_version = $version,
+                build.result = $status,
+                build.timestamp = $timestamp_raw
+            ON MATCH SET
+                build.deployed_env = $env,
+                build.deployed_at = $now,
+                build.deployed_version = $version
+
+            // 3. Create ServiceInstance
             MERGE (si:ServiceInstance {instance_id: $instance_id})
-            MERGE (e)-[:DEPLOYS]->(si)
-            WITH e
-            MERGE (prj:Project {name: $project})
-            MERGE (e)-[:BELONGS_TO]->(prj)
+            ON CREATE SET
+                si.service_name = $job,
+                si.env = $env,
+                si.updated_at = $now
+            ON MATCH SET
+                si.service_name = $job,
+                si.env = $env,
+                si.updated_at = $now
+
+            // 4. Link JenkinsJob -> ServiceInstance (latest deploy, replace old)
+            WITH job, build, si
+            OPTIONAL MATCH (job)-[old:LATEST_DEPLOY]->()
+            DELETE old
+            MERGE (job)-[:LATEST_DEPLOY]->(si)
+
+            // 5. Link JenkinsBuild -> ServiceInstance
+            MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)
+
+            // 6. Link Session -> JenkinsBuild (timeline, replaces old Deployment link)
+            MATCH (s:Session {session_id: $session_id})
+            MERGE (s)-[:HAS_EVENT]->(build)
             "#.to_string();
 
         let mut params = std::collections::HashMap::new();
-        params.insert(
-            "deploy_id".into(),
-            serde_json::Value::String(deploy_id),
-        );
-        params.insert("job".into(), serde_json::Value::String(job));
+        params.insert("job".into(), serde_json::Value::String(job.clone()));
+        params.insert("job_id".into(), serde_json::Value::String(job_id));
+        params.insert("build_id".into(), serde_json::Value::String(build_id));
         params.insert("env".into(), serde_json::Value::String(env));
-        params.insert(
-            "branch".into(),
-            serde_json::Value::String(branch),
-        );
-        params.insert(
-            "version".into(),
-            serde_json::Value::String(version),
-        );
-        params.insert(
-            "params".into(),
-            serde_json::Value::String(params_json),
-        );
-        params.insert(
-            "status".into(),
-            serde_json::Value::String(status),
-        );
-        params.insert(
-            "session_id".into(),
-            serde_json::Value::String(event.session_id.clone()),
-        );
-        params.insert(
-            "timestamp".into(),
-            serde_json::Value::String(event.timestamp.to_rfc3339()),
-        );
-        params.insert(
-            "instance_id".into(),
-            serde_json::Value::String(instance_id),
-        );
-        params.insert(
-            "entity_id".into(),
-            serde_json::Value::String(event.entity_id.clone()),
-        );
-        params.insert(
-            "event_type".into(),
-            serde_json::Value::String(event.event_type.as_str().into()),
-        );
-        params.insert(
-            "details".into(),
-            serde_json::Value::String(event.details.clone()),
-        );
-        params.insert(
-            "project".into(),
-            serde_json::Value::String(event.project.clone()),
-        );
+        params.insert("branch".into(), serde_json::Value::String(branch));
+        params.insert("version".into(), serde_json::Value::String(version));
+        params.insert("params".into(), serde_json::Value::String(params_json));
+        params.insert("status".into(), serde_json::Value::String(status));
+        params.insert("now".into(), serde_json::Value::String(event.timestamp.to_rfc3339()));
+        params.insert("instance_id".into(), serde_json::Value::String(instance_id));
+
+        // build_number_int: parse for Neo4j integer property (0 if missing/invalid)
+        let build_number_int: i64 = build_number.parse().unwrap_or(0);
+        params.insert("build_number_int".into(), serde_json::Value::Number(build_number_int.into()));
+
+        // timestamp_raw: epoch millis for JenkinsBuild compatibility
+        let timestamp_raw = event.timestamp.timestamp_millis();
+        params.insert("timestamp_raw".into(), serde_json::Value::Number(timestamp_raw.into()));
+
+        params.insert("session_id".into(), serde_json::Value::String(event.session_id.clone()));
+        params.insert("entity_id".into(), serde_json::Value::String(event.entity_id.clone()));
+        params.insert("event_type".into(), serde_json::Value::String(event.event_type.as_str().into()));
+        params.insert("details".into(), serde_json::Value::String(event.details.clone()));
+        params.insert("project".into(), serde_json::Value::String(event.project.clone()));
 
         graph.write_query(&cypher, params).await?;
         Ok(())
@@ -186,8 +216,13 @@ mod tests {
             _params: std::collections::HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
             self.counter.fetch_add(1, Ordering::SeqCst);
-            assert!(query.contains("MERGE (e:Deployment"));
-            assert!(query.contains("e)-[:DEPLOYS]->(si)"));
+            assert!(query.contains("MERGE (job:JenkinsJob"), "should merge JenkinsJob");
+            assert!(query.contains("MERGE (build:JenkinsBuild"), "should merge JenkinsBuild");
+            assert!(query.contains("MERGE (si:ServiceInstance"), "should merge ServiceInstance");
+            assert!(query.contains("LATEST_DEPLOY"), "should create LATEST_DEPLOY");
+            assert!(query.contains("DEPLOYED_TO"), "should create DEPLOYED_TO");
+            // Must NOT create Deployment nodes
+            assert!(!query.contains("MERGE (e:Deployment"), "should NOT create Deployment node");
             Ok(serde_json::Value::Null)
         }
 
@@ -220,7 +255,7 @@ mod tests {
 
         let evt = make_event(
             "job: my-job; env: prod; branch: main; version: v2.0; \
-             params: {\"k\":\"v\"}; status: success",
+             build_number: 42; params: {\"k\":\"v\"}; status: success",
         );
 
         handler.handle(&evt, &repo).await.expect("handler should succeed");
@@ -228,30 +263,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deployment_handler_defaults() {
+    async fn deployment_handler_defaults_without_build_number() {
         let handler = DeploymentHandler;
         let counter = Arc::new(AtomicUsize::new(0));
         let repo = CountingRepo {
             counter: counter.clone(),
         };
 
-        let evt = make_event("job: test-job");
-
-        handler.handle(&evt, &repo).await.expect("handler should succeed");
-        assert_eq!(counter.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn deployment_handler_service_from_details() {
-        let handler = DeploymentHandler;
-        let counter = Arc::new(AtomicUsize::new(0));
-        let repo = CountingRepo {
-            counter: counter.clone(),
-        };
-
-        let evt = make_event(
-            "job: build-service; env: staging; service: my-svc",
-        );
+        let evt = make_event("job: test-job; env: prod");
 
         handler.handle(&evt, &repo).await.expect("handler should succeed");
         assert_eq!(counter.load(Ordering::SeqCst), 1);
