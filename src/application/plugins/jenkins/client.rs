@@ -264,6 +264,81 @@ impl JenkinsApiClient {
     }
 }
 
+// ── Structured response types for jc-sync ───────────────────────────────
+
+/// Structured Jenkins job info for sync.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JenkinsJobInfo {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub full_name: String,
+}
+
+/// Structured Jenkins build info for sync.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JenkinsBuildInfo {
+    pub number: i64,
+    pub result: Option<String>,
+    pub timestamp: i64,
+    pub duration: i64,
+    pub url: String,
+}
+
+impl JenkinsApiClient {
+    /// Fetch all jobs with full details (for jc-sync).
+    pub async fn list_all_jobs(&self) -> Result<Vec<JenkinsJobInfo>, DtError> {
+        let json = self
+            .get_json("/api/json?tree=jobs[name,url,color,description,fullName]")
+            .await?;
+        let jobs: Vec<JenkinsJobInfo> = json["jobs"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|j| serde_json::from_value(j.clone()).unwrap_or_else(|_| JenkinsJobInfo {
+                        name: j["name"].as_str().unwrap_or("?").to_string(),
+                        url: j["url"].as_str().unwrap_or("").to_string(),
+                        color: j["color"].as_str().unwrap_or("").to_string(),
+                        description: j["description"].as_str().unwrap_or("").to_string(),
+                        full_name: j["fullName"].as_str().unwrap_or("").to_string(),
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(jobs)
+    }
+
+    /// Fetch all builds for a job (for jc-sync).
+    pub async fn get_all_builds(&self, job_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
+        let encoded = urlencoding(job_name);
+        let json = self
+            .get_json(&format!(
+                "/job/{}/api/json?tree=builds[number,result,timestamp,duration,url]",
+                encoded
+            ))
+            .await?;
+        let builds: Vec<JenkinsBuildInfo> = json["builds"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|b| serde_json::from_value(b.clone()).unwrap_or_else(|_| JenkinsBuildInfo {
+                        number: b["number"].as_i64().unwrap_or(0),
+                        result: b["result"].as_str().map(|s| s.to_string()),
+                        timestamp: b["timestamp"].as_i64().unwrap_or(0),
+                        duration: b["duration"].as_i64().unwrap_or(0),
+                        url: b["url"].as_str().unwrap_or("").to_string(),
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(builds)
+    }
+}
+
 impl Default for JenkinsApiClient {
     fn default() -> Self {
         Self::new("http://localhost:8080", "", "")
