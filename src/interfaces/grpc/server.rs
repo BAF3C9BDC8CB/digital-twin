@@ -100,6 +100,7 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         crate::interfaces::grpc::services::dt_core_service::DtCoreServiceImpl::new(
             Some(graph.clone()),
             Some(vector.clone()),
+            components.embed.clone(),
         );
     server.add_service(
         crate::proto::dt::core::dt_core_server::DtCoreServer::new(dt_core_impl),

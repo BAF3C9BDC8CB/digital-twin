@@ -32,6 +32,7 @@ pub struct BuildServiceImpl {
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
     scan_config: ScanConfig,
+    full: bool,
 }
 
 impl BuildServiceImpl {
@@ -42,6 +43,7 @@ impl BuildServiceImpl {
         vector: Option<Arc<dyn VectorRepository>>,
         snapshot: Option<Arc<dyn SnapshotRepository>>,
         embed: Option<Arc<dyn EmbedService>>,
+        full: bool,
     ) -> Self {
         Self {
             parser_registry,
@@ -50,6 +52,7 @@ impl BuildServiceImpl {
             snapshot,
             embed,
             scan_config: ScanConfig::default(),
+            full,
         }
     }
 
@@ -61,9 +64,9 @@ impl BuildServiceImpl {
 
     /// Choose the appropriate build strategy.
     fn select_strategy(&self) -> Box<dyn BuildStrategy> {
-        // If we have snapshot storage available, use incremental.
-        // Otherwise fall back to full rebuild.
-        if self.snapshot.is_some() {
+        if self.full {
+            Box::new(FullRebuildStrategy)
+        } else if self.snapshot.is_some() {
             Box::new(IncrementalStrategy)
         } else {
             Box::new(FullRebuildStrategy)
@@ -80,8 +83,6 @@ impl BuildService for BuildServiceImpl {
         let snapshot_ref: Option<&dyn SnapshotRepository> =
             self.snapshot.as_ref().map(|r| r.as_ref());
         let graph_ref: Option<&dyn GraphRepository> = self.graph.as_ref().map(|r| r.as_ref());
-        let embed_ref: Option<&dyn EmbedService> = self.embed.as_ref().map(|r| r.as_ref());
-        let vector_ref: Option<&dyn VectorRepository> = self.vector.as_ref().map(|r| r.as_ref());
 
         pipeline
             .execute(
@@ -91,8 +92,8 @@ impl BuildService for BuildServiceImpl {
                 &self.scan_config,
                 snapshot_ref,
                 graph_ref,
-                embed_ref,
-                vector_ref,
+                self.embed.clone(),
+                self.vector.clone(),
             )
             .await
     }
@@ -182,7 +183,7 @@ mod tests {
     #[test]
     fn service_creates() {
         let registry = Arc::new(ParserRegistry::new());
-        let service = BuildServiceImpl::new(registry, None, None, None, None);
+        let service = BuildServiceImpl::new(registry, None, None, None, None, false);
         // Just verify it compiles and is constructable
         assert_eq!(service.scan_config.max_file_size, 524_288);
     }

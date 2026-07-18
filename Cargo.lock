@@ -568,6 +568,7 @@ dependencies = [
  "clap",
  "dashmap",
  "flate2",
+ "futures",
  "hex",
  "neo4rs",
  "notify",

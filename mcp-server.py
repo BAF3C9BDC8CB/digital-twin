@@ -462,6 +462,8 @@ async def list_tools():
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "all": {"type": "boolean", "description": "构建 config.yaml 中所有项目", "default": False},
+                    "full": {"type": "boolean", "description": "全量重建，绕过增量快照", "default": False},
                     "path": {
                         "oneOf": [
                             {"type": "string", "description": "项目根路径或文件绝对路径"},
@@ -868,21 +870,27 @@ async def call_tool(name: str, arguments: dict):
 
     # ===== 管线 =====
     elif name == "dt_build":
-        paths = arguments.get("path", [])
-        if isinstance(paths, str):
-            paths = [paths]
-        project_name = arguments.get("name", "")
-        results = []
-        for p in paths:
-            if os.path.isfile(p):
-                r = run_cmd([DT_BIN, "build", "--file", p])
-            else:
-                cmd = [DT_BIN, "build", "--path", p]
-                if project_name:
-                    cmd += ["--name", project_name]
-                r = run_cmd(cmd, timeout=300)
-            results.append(r)
-        text = "\n".join(results)
+        if arguments.get("all"):
+            cmd = [DT_BIN, "build", "--all"]
+            if arguments.get("full"):
+                cmd.append("--full")
+            text = run_cmd(cmd, timeout=1800)
+        else:
+            paths = arguments.get("path", [])
+            if isinstance(paths, str):
+                paths = [paths]
+            project_name = arguments.get("name", "")
+            results = []
+            for p in paths:
+                if os.path.isfile(p):
+                    r = run_cmd([DT_BIN, "build", "--file", p])
+                else:
+                    cmd = [DT_BIN, "build", "--path", p]
+                    if project_name:
+                        cmd += ["--name", project_name]
+                    r = run_cmd(cmd, timeout=300)
+                results.append(r)
+            text = "\n".join(results)
 
     elif name == "nacos_sync":
         env = arguments.get("env", "all")

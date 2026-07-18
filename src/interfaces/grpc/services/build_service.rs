@@ -50,6 +50,7 @@ pub async fn handle_build(
         vector,
         None, // snapshot — not required for gRPC build
         None, // embed — using noop
+        false, // gRPC builds default to incremental
     );
 
     match service.build(&project_name, &project_path).await {

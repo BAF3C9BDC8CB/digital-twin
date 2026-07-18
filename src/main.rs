@@ -9,7 +9,7 @@
 //!    `watch`), executes the command and exits.
 
 use clap::{Parser, Subcommand};
-use dt_daemon::domain::traits::{GraphRepository, VectorRepository};
+use dt_daemon::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use dt_daemon::domain::types::AppConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -251,7 +251,7 @@ enum Commands {
     Build {
         /// Project root path.
         #[arg(long = "path")]
-        path: PathBuf,
+        path: Option<PathBuf>,
 
         /// Project name (required).
         #[arg(long = "name", short = 'n')]
@@ -260,6 +260,14 @@ enum Commands {
         /// Single file path (for dt update usage via build).
         #[arg(long = "file")]
         file: Option<PathBuf>,
+
+        /// Full rebuild — bypass incremental snapshots.
+        #[arg(long = "full")]
+        full: bool,
+
+        /// Build ALL projects from config.yaml.
+        #[arg(long = "all")]
+        all: bool,
     },
 
     /// Semantic code search across worlds.
@@ -557,6 +565,10 @@ struct ServiceConfig {
     k8s: K8sEndpointConfig,
     #[serde(default)]
     jenkins: JenkinsEndpointConfig,
+    #[serde(default)]
+    sqlite: SqliteConfig,
+    #[serde(default)]
+    embed_server: EmbedServerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -615,6 +627,36 @@ struct JenkinsEndpointConfig {
     user: Option<String>,
     #[serde(default)]
     token: Option<String>,
+}
+
+/// SQLite snapshot store configuration from config.yaml `services.sqlite`.
+#[derive(Debug, Deserialize)]
+struct SqliteConfig {
+    /// Path to the SQLite snapshot database file.
+    #[serde(default = "default_sqlite_path")]
+    path: String,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self { path: default_sqlite_path() }
+    }
+}
+
+fn default_sqlite_path() -> String {
+    "/var/lib/digital-twin/snapshots.db".to_string()
+}
+
+/// dt-embed gRPC server configuration from config.yaml `services.embed_server`.
+#[derive(Debug, Deserialize, Default)]
+struct EmbedServerConfig {
+    /// URL of the dt-embed gRPC server.
+    #[serde(default = "default_embed_url")]
+    url: String,
+}
+
+fn default_embed_url() -> String {
+    "http://[::1]:50052".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -787,18 +829,18 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
 
 /// Connect to the dt-embed gRPC service (falls back to NoopEmbedService).
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
-    match dt_daemon::infrastructure::embedder::GrpcEmbedService::connect(
-        "http://[::1]:50052",
-    )
-    .await
-    {
+    let url = load_config()
+        .map(|c| c.services.embed_server.url.clone())
+        .unwrap_or_else(default_embed_url);
+
+    match dt_daemon::infrastructure::embedder::GrpcEmbedService::connect(&url).await {
         Ok(svc) => {
-            tracing::info!("dt-embed connected via gRPC");
+            tracing::info!("dt-embed connected via gRPC: {url}");
             Some(Arc::new(svc) as Arc<dyn dt_daemon::domain::traits::EmbedService>)
         }
         Err(e) => {
             tracing::warn!(
-                "dt-embed gRPC unavailable: {e} — using NoopEmbedService (zero-vectors)"
+                "dt-embed gRPC unavailable at {url}: {e} — using NoopEmbedService (zero-vectors)"
             );
             Some(Arc::new(
                 dt_daemon::infrastructure::embedder::NoopEmbedService::default(),
@@ -810,11 +852,13 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
 
 /// Connect to the SQLite snapshot store (falls back to None if unavailable).
 async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::SnapshotRepository>> {
-    match dt_daemon::infrastructure::sqlite::SqliteRepo::open(
-        "/var/lib/digital-twin/snapshots.db",
-    ) {
+    let db_path = load_config()
+        .map(|c| c.services.sqlite.path.clone())
+        .unwrap_or_else(default_sqlite_path);
+
+    match dt_daemon::infrastructure::sqlite::SqliteRepo::open(&db_path) {
         Ok(repo) => {
-            tracing::info!("SQLite snapshot store connected");
+            tracing::info!("SQLite snapshot store connected: {db_path}");
             Some(Arc::new(repo) as Arc<dyn dt_daemon::domain::traits::SnapshotRepository>)
         }
         Err(e) => {
@@ -1249,9 +1293,13 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Health) => {
             let neo4j = connect_neo4j().await;
             let qdrant = connect_vector().await;
+            let snapshot = connect_snapshot().await;
+            let embed = connect_embed().await;
             dt_daemon::interfaces::cli::cleanup::run_health(
                 neo4j.as_ref().map(|c| c as &dyn GraphRepository),
                 qdrant.as_deref().map(|c| c as &dyn VectorRepository),
+                snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
+                embed.as_deref().map(|c| c as &dyn EmbedService),
             )
             .await?;
             return Ok(());
@@ -1327,7 +1375,39 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file }) => {
+        Some(Commands::Build { path, name, file, full, all }) => {
+            if all {
+                if path.is_some() || name.is_some() || file.is_some() {
+                    eprintln!("error: --all cannot be combined with --path/--name/--file");
+                    std::process::exit(1);
+                }
+
+                let neo4j = connect_neo4j().await;
+                let graph: Option<Arc<dyn GraphRepository>> =
+                    neo4j.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
+
+                let embed = connect_embed().await;
+                let vector = connect_vector().await;
+                let snapshot = connect_snapshot().await;
+
+                let Some(cfg) = load_config() else {
+                    eprintln!("error: config.yaml not found");
+                    std::process::exit(1);
+                };
+
+                let projects = resolve_project_paths(&cfg);
+                if projects.is_empty() {
+                    eprintln!("error: no projects configured in config.yaml");
+                    std::process::exit(1);
+                }
+
+                dt_daemon::interfaces::cli::build::handle_build_all(
+                    projects, full, graph, vector, embed, snapshot,
+                )
+                .await?;
+                return Ok(());
+            }
+
             let neo4j = connect_neo4j().await;
             let graph: Option<Arc<dyn GraphRepository>> =
                 neo4j.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
@@ -1337,7 +1417,7 @@ async fn main() -> anyhow::Result<()> {
             let snapshot = connect_snapshot().await;
 
             dt_daemon::interfaces::cli::build::handle_build(
-                path, name, file, graph, vector, embed, snapshot,
+                path.expect("--path is required"), name, file, full, graph, vector, embed, snapshot,
             )
             .await?;
             return Ok(());
@@ -1369,8 +1449,9 @@ async fn main() -> anyhow::Result<()> {
         // ---- CLI mode: dt context ----
         Some(Commands::Context { task, worlds, max_tokens, thread_id }) => {
             let graph = connect_graph().await;
+            let embed = connect_embed().await;
             dt_daemon::interfaces::cli::context::handle_context(
-                task, worlds, max_tokens, thread_id, graph,
+                task, worlds, max_tokens, thread_id, graph, embed,
             )
             .await?;
             return Ok(());
@@ -1546,9 +1627,13 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!("dt-daemon CLI: daemon --status");
                     let neo4j = connect_neo4j().await;
                     let qdrant = connect_vector().await;
+                    let snapshot = connect_snapshot().await;
+                    let embed = connect_embed().await;
                     dt_daemon::interfaces::cli::cleanup::run_health(
                         neo4j.as_ref().map(|c| c as &dyn GraphRepository),
                         qdrant.as_deref().map(|c| c as &dyn VectorRepository),
+                        snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
+                        embed.as_deref().map(|c| c as &dyn EmbedService),
                     ).await?;
                 }
                 _ => {

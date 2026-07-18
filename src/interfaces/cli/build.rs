@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 
@@ -16,6 +17,7 @@ pub async fn handle_build(
     path: PathBuf,
     name: Option<String>,
     file: Option<PathBuf>,
+    full: bool,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
@@ -47,7 +49,7 @@ pub async fn handle_build(
     let cmd = crate::application::build::builder::BuildCommand {
         project_path: path.clone(),
         project_name: project_name.clone(),
-        full: false,
+        full,
         verbose: true,
     };
 
@@ -59,6 +61,60 @@ pub async fn handle_build(
     };
 
     cmd.run(deps).await?;
+
+    Ok(())
+}
+
+/// Handle `dt build --all` — build multiple projects in sequence.
+///
+/// Iterates over a list of (project_name, project_path) tuples, calling
+/// `handle_build()` for each one. Errors are caught per-project and do
+/// not abort the batch. A summary is printed at the end.
+pub async fn handle_build_all(
+    projects: Vec<(String, PathBuf)>,
+    full: bool,
+    graph: Option<Arc<dyn GraphRepository>>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
+    snapshot: Option<Arc<dyn SnapshotRepository>>,
+) -> anyhow::Result<()> {
+    let total = projects.len();
+    let mut succeeded = 0u32;
+    let mut failed = 0u32;
+
+    println!("Building {} projects...", total);
+
+    for (i, (name, path)) in projects.into_iter().enumerate() {
+        let idx = i + 1; // 1-based display index
+        println!("[{idx}/{total}] Building {name} at {}", path.display());
+
+        match handle_build(
+            path,
+            Some(name.clone()),
+            None,
+            full,
+            graph.clone(),
+            vector.clone(),
+            embed.clone(),
+            snapshot.clone(),
+        )
+        .await
+        {
+            Ok(()) => {
+                succeeded += 1;
+                println!("[{idx}/{total}] ✓ {name}");
+            }
+            Err(err) => {
+                failed += 1;
+                eprintln!("[{idx}/{total}] ✗ {name}: {err}");
+            }
+        }
+
+        // Brief pause between projects to let logs flush
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    println!("Done. {succeeded} succeeded, {failed} failed.");
 
     Ok(())
 }

@@ -113,6 +113,12 @@ FOR (n:Server|Database|NacosConfig|NacosService|K8sDeployment|K8sService|Service
 ON EACH [n.name, n.description, n.hostname, n.url, n.auth_user, n.signature, n.file_path, n.package_or_module, n.data_id, n.title, n.summary, n.definition]
 "#;
 
+/// Regular b-tree indexes for query performance (not full-text).
+const INDEX_STATEMENTS: &[&str] = &[
+    // Speeds up call-graph rebuild: MATCH (callee:Method {project: $project, name: called_name})
+    "CREATE INDEX method_project_name IF NOT EXISTS FOR (n:Method) ON (n.project, n.name)",
+];
+
 // ---------------------------------------------------------------------------
 // Schema initialization
 // ---------------------------------------------------------------------------
@@ -142,9 +148,15 @@ pub async fn initialize_schema(graph: &dyn GraphRepository) -> Result<SchemaInit
 
     // --- full-text index ---
     graph
-        .write_query(FULLTEXT_INDEX_STATEMENT, empty_params)
+        .write_query(FULLTEXT_INDEX_STATEMENT, empty_params.clone())
         .await?;
     indexes_created += 1;
+
+    // --- regular b-tree indexes ---
+    for stmt in INDEX_STATEMENTS {
+        graph.write_query(stmt, empty_params.clone()).await?;
+        indexes_created += 1;
+    }
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -295,13 +307,13 @@ mod tests {
         let mock = MockGraphRepo::new();
         let report = initialize_schema(&mock).await.expect("should succeed");
 
-        // 27 constraints + 1 fulltext index
+        // 27 constraints + 1 fulltext index + 1 regular index
         assert_eq!(report.constraints_created, 27);
-        assert_eq!(report.indexes_created, 1);
+        assert_eq!(report.indexes_created, 2);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 28); // 27 constraints + 1 index
+        assert_eq!(write_calls.len(), 29); // 27 constraints + 2 indexes
         assert!(write_calls[0].contains("method_id_unique"));
         assert!(write_calls[26].contains("analysis_id_unique"));
         assert!(write_calls[27].contains("FULLTEXT INDEX"));
@@ -315,7 +327,7 @@ mod tests {
         // Second call — all statements have IF NOT EXISTS, so should succeed
         let report2 = initialize_schema(&mock).await.unwrap();
         assert_eq!(report2.constraints_created, 27);
-        assert_eq!(report2.indexes_created, 1);
+        assert_eq!(report2.indexes_created, 2);
     }
 
     #[tokio::test]

@@ -9,10 +9,13 @@
 //! reading `config.yaml`.  If either backend is unreachable, the
 //! corresponding field in [`AppComponents`] is set to `None` — callers
 //! (e.g. the gRPC server) must fall back to no-op implementations.
+//! The dt-embed service is also connected here; if unavailable it falls
+//! back to [`NoopEmbedService`] (zero-vector embedding).
 
 use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::embedder::GrpcEmbedService;
 use crate::application::build::service::BuildServiceImpl;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -34,6 +37,10 @@ struct ServiceConfig {
     neo4j: Neo4jConfig,
     #[serde(default)]
     qdrant: QdrantServiceConfig,
+    #[serde(default)]
+    sqlite: SqliteConfig,
+    #[serde(default)]
+    embed_server: EmbedServerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +66,32 @@ struct QdrantServiceConfig {
     url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SqliteConfig {
+    #[serde(default = "default_sqlite_path")]
+    path: String,
+}
+
+impl Default for SqliteConfig {
+    fn default() -> Self {
+        Self { path: default_sqlite_path() }
+    }
+}
+
+fn default_sqlite_path() -> String {
+    "/var/lib/digital-twin/snapshots.db".to_string()
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct EmbedServerConfig {
+    #[serde(default = "default_embed_url")]
+    url: String,
+}
+
+fn default_embed_url() -> String {
+    "http://[::1]:50052".to_string()
+}
+
 // ---------------------------------------------------------------------------
 // AppComponents
 // ---------------------------------------------------------------------------
@@ -77,6 +110,8 @@ pub struct AppComponents {
     pub graph: Option<Arc<dyn GraphRepository>>,
     /// Qdrant vector repository (None if connection failed).
     pub vector: Option<Arc<dyn VectorRepository>>,
+    /// dt-embed gRPC service (None if unavailable — callers fall back).
+    pub embed: Option<Arc<dyn EmbedService>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,10 +133,10 @@ pub async fn wire() -> AppComponents {
     // ---- Storage backends (real connections, fall back to None) ----
     let graph = connect_graph().await;
     let vector = connect_vector().await;
+    let embed = connect_embed().await;
 
-    // Snapshot and embed backends are optional; the pipeline adapts.
+    // Snapshot backend is optional; the pipeline adapts.
     let snapshot: Option<Arc<dyn SnapshotRepository>> = None;
-    let embed: Option<Arc<dyn EmbedService>> = None;
 
     // ---- Parser registry (all language parsers) ----
     let parser_registry = Arc::new(ParserRegistry::new());
@@ -112,7 +147,8 @@ pub async fn wire() -> AppComponents {
         graph.clone(),
         vector.clone(),
         snapshot,
-        embed,
+        embed.clone(),
+        false, // gRPC builds default to incremental
     ));
 
     // ---- Wrap with WriteCoordinator ----
@@ -132,6 +168,7 @@ pub async fn wire() -> AppComponents {
         coordinator,
         graph,
         vector,
+        embed,
     }
 }
 
@@ -235,6 +272,20 @@ async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
         }
         Err(e) => {
             tracing::warn!("Qdrant connection failed (will use noop): {}", e);
+            None
+        }
+    }
+}
+
+/// Connect to the dt-embed gRPC service (falls back to None).
+async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
+    match GrpcEmbedService::connect("http://[::1]:50052").await {
+        Ok(svc) => {
+            tracing::info!("dt-embed connected via gRPC");
+            Some(Arc::new(svc) as Arc<dyn EmbedService>)
+        }
+        Err(e) => {
+            tracing::warn!("dt-embed gRPC unavailable: {e} — build/sync will use zero-vector embeddings");
             None
         }
     }

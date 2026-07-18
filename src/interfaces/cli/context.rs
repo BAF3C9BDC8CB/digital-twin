@@ -29,6 +29,7 @@ pub async fn handle_context(
     max_tokens: Option<usize>,
     thread_id: Option<String>,
     graph: Option<Arc<dyn GraphRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt-daemon CLI: context --task {task} --worlds {:?} --max-tokens {:?} --thread-id {:?}",
@@ -50,7 +51,7 @@ pub async fn handle_context(
         RetrieverStage::new(
             g.clone(),
             None::<Arc<dyn VectorRepository>>,
-            None::<Arc<dyn EmbedService>>,
+            embed, // real dt-embed if available, None → NoopEmbedService internally
         )
     } else {
         RetrieverStage::empty()

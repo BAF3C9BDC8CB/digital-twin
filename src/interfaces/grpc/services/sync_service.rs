@@ -14,6 +14,7 @@ pub async fn handle_sync(
     req: SyncRequest,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
 ) -> Result<SyncResponse, Status> {
     let start = Instant::now();
 
@@ -25,10 +26,11 @@ pub async fn handle_sync(
         Status::unavailable("Qdrant vector backend not available")
     })?;
 
-    // Use a noop embed service — the embeds happen via the dt-embed sidecar.
-    // In a production gRPC setup, the embed service should be wired in.
-    let embed: Arc<dyn EmbedService> =
-        Arc::new(crate::infrastructure::embedder::NoopEmbedService::default());
+    // Use real dt-embed if available, fall back to zero-vector noop.
+    let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
+        tracing::warn!("dt-embed unavailable, sync will produce zero-vector embeddings");
+        Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
+    });
 
     let bridge =
         crate::application::sync::kg_bridge::KgBridge::new(graph, embed, vector);
@@ -66,7 +68,7 @@ mod tests {
             incremental: true,
             labels: vec![],
         };
-        let result = handle_sync(req, None, None).await;
+        let result = handle_sync(req, None, None, None).await;
         assert!(result.is_err());
     }
 }

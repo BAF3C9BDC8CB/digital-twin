@@ -247,13 +247,36 @@ impl Default for ContextOptions {
 impl ContextOptions {
     /// Returns `true` when the given world should be included given the
     /// configured world filter.
+    ///
+    /// Supports user-friendly aliases:
+    /// - "code" → "reality"
+    /// - "doc"  → "semantic"
     pub fn includes_world(&self, world: &str) -> bool {
-        match &self.worlds {
-            Some(worlds) if !worlds.is_empty() => {
-                worlds.iter().any(|w| w.eq_ignore_ascii_case(world))
-            }
-            _ => true, // No filter → include all worlds
+        includes_world_inner(&self.worlds, world)
+    }
+}
+
+/// Resolve user-friendly world name aliases (case-insensitive).
+fn resolve_world_alias(world: &str) -> &str {
+    if world.eq_ignore_ascii_case("code") {
+        "reality"
+    } else if world.eq_ignore_ascii_case("doc") {
+        "semantic"
+    } else {
+        world
+    }
+}
+
+/// Check whether a world name (possibly aliased) is in the filter list.
+fn includes_world_inner(filter: &Option<Vec<String>>, world: &str) -> bool {
+    let normalized = resolve_world_alias(world);
+    match filter {
+        Some(worlds) if !worlds.is_empty() => {
+            worlds.iter().any(|w| {
+                resolve_world_alias(w).eq_ignore_ascii_case(normalized)
+            })
         }
+        _ => true, // No filter → include all worlds
     }
 }
 

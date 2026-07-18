@@ -69,13 +69,16 @@ pub fn parse_document(
             .unwrap_or_default()
     };
 
-    let raw_content = std::fs::read_to_string(path)
-        .map_err(|e| format!("read error: {e}"))?;
+    // Attempt to read as text. Binary documents (PDF, DOCX, etc.) will fail
+    // UTF-8 decoding — fall back to metadata-only stub instead of erroring.
+    let raw_content = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return parse_binary_stub(path, project, &name, &rel_path, &doc_id, size, &modified),
+    };
 
     let (doc_type, title, content) = match extension.as_str() {
         "md" | "markdown" => parse_markdown(&raw_content, &name),
         "txt" | "text" => ("text".to_string(), name.clone(), raw_content),
-        "pdf" => return parse_pdf_stub(path, project, root),
         other => return Err(format!("unsupported document type: .{}", other)),
     };
 
@@ -228,46 +231,37 @@ fn strip_markdown_links(text: &str) -> String {
     re.replace_all(text, "$1").to_string()
 }
 
-/// Stub PDF parser: returns filename-based metadata without PDF content.
-fn parse_pdf_stub(
+/// Stub parser for binary documents: metadata-only, no content extraction.
+///
+/// Called when `read_to_string` fails on a binary file (PDF, DOCX, etc.).
+/// Records filename, size, and modification time without attempting content parsing.
+fn parse_binary_stub(
     path: &Path,
     project: &str,
-    root: &Path,
+    name: &str,
+    rel_path: &str,
+    doc_id: &str,
+    size: u64,
+    modified: &str,
 ) -> Result<ParsedDocument, String> {
-    let rel_path = crate::infrastructure::scanner::rel_path(root, path);
-    let doc_id = crate::domain::id::make_document_id(project, &rel_path);
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| rel_path.clone());
-
-    let metadata = std::fs::metadata(path).map_err(|e| format!("io error: {e}"))?;
-    let size = metadata.len();
-    let modified = {
-        metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| {
-                chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default()
-    };
+    let doc_type = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
 
     Ok(ParsedDocument {
-        doc_id,
-        name: name.clone(),
-        title: name,
+        doc_id: doc_id.to_string(),
+        name: name.to_string(),
+        title: name.to_string(),
         content: String::new(),
         summary: String::new(),
         file_path: path.to_path_buf(),
-        rel_path,
+        rel_path: rel_path.to_string(),
         project: project.to_string(),
-        doc_type: "pdf".to_string(),
+        doc_type,
         size,
-        modified,
+        modified: modified.to_string(),
     })
 }
 

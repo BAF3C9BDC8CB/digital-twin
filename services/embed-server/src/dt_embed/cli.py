@@ -68,7 +68,7 @@ def cmd_info(engine: EmbedEngine):
         "fp16": engine.fp16,
         "compiled": engine.compiled,
         "ready": engine.ready,
-    }, ensure_ascii=False, indent=2))
+    }, option=orjson.OPT_INDENT_2))
 
 
 def cmd_encode(engine: EmbedEngine, texts: list[str]):

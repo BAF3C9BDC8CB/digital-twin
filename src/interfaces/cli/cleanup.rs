@@ -9,7 +9,7 @@
 //! - `dt cleanup --targets all`       — run all cleanup targets
 //! - `dt health`         — check health of all backend services
 
-use crate::domain::traits::{GraphRepository, VectorRepository};
+use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::HealthStatus;
 use crate::infrastructure::neo4j::schema::{clean_all_data, initialize_schema};
 use crate::infrastructure::neo4j::{CleanReport, SchemaInitReport};
@@ -151,19 +151,48 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
 }
 
 // ---------------------------------------------------------------------------
+// check_health! macro — unified health check for any type with health_check()
+// ---------------------------------------------------------------------------
+
+/// Check health of any repository/service that exposes `health_check()`.
+macro_rules! check_health {
+    ($name:expr, $repo:expr) => {{
+        let start = std::time::Instant::now();
+        let status = $repo.health_check().await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+        match status {
+            Ok(HealthStatus::Healthy) => (true, format!("✅ {:<8}: healthy ({} ms)", $name, latency_ms)),
+            Ok(HealthStatus::Degraded(reason)) => (
+                false,
+                format!("⚠️  {:<8}: degraded — {} ({} ms)", $name, reason, latency_ms),
+            ),
+            Ok(HealthStatus::Unhealthy(reason)) => (
+                false,
+                format!("❌ {:<8}: unhealthy — {} ({} ms)", $name, reason, latency_ms),
+            ),
+            Err(e) => (
+                false,
+                format!("❌ {:<8}: error — {} ({} ms)", $name, e, latency_ms),
+            ),
+        }
+    }};
+}
+
+// ---------------------------------------------------------------------------
 // dt health
 // ---------------------------------------------------------------------------
 
 /// Run `dt health` — check health of all backend services.
 ///
-/// Contacts Neo4j, Qdrant, and (future) dt-embed, reporting each service's
+/// Contacts Neo4j, Qdrant, SQLite, and dt-embed, reporting each service's
 /// availability and latency.
 ///
-/// When `graph` is `None`, falls back to `NoopGraphRepo` (no-op, for testing).
-/// When `vector` is `None`, falls back to `NoopVectorRepo` (no-op).
+/// When a service is `None`, reports it as "no backend configured".
 pub async fn run_health(
     graph: Option<&dyn GraphRepository>,
     vector: Option<&dyn VectorRepository>,
+    snapshot: Option<&dyn SnapshotRepository>,
+    embed: Option<&dyn EmbedService>,
 ) -> anyhow::Result<()> {
     println!("Checking backend health...");
     println!();
@@ -172,10 +201,9 @@ pub async fn run_health(
 
     // --- Neo4j ---
     let (healthy, detail) = if let Some(g) = graph {
-        check_and_format("Neo4j", g).await
+        check_health!("Neo4j", g)
     } else {
-        let noop = crate::infrastructure::neo4j::NoopGraphRepo;
-        check_and_format("Neo4j", &noop).await
+        (false, "  ❌ Neo4j    : no backend configured".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -184,10 +212,9 @@ pub async fn run_health(
 
     // --- Qdrant ---
     let (healthy, detail) = if let Some(v) = vector {
-        check_vector("Qdrant", v).await
+        check_health!("Qdrant", v)
     } else {
-        let noop = crate::infrastructure::qdrant::NoopVectorRepo;
-        check_vector("Qdrant", &noop).await
+        (false, "  ❌ Qdrant   : no backend configured".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -195,10 +222,26 @@ pub async fn run_health(
     }
 
     // --- SQLite ---
-    println!("  N/A  SQLite   : no backend configured");
+    let (healthy, detail) = if let Some(s) = snapshot {
+        check_health!("SQLite", s)
+    } else {
+        (false, "  ❌ SQLite   : no backend configured".to_string())
+    };
+    println!("  {detail}");
+    if !healthy {
+        all_healthy = false;
+    }
 
     // --- dt-embed ---
-    println!("  N/A  dt-embed : no backend configured");
+    let (healthy, detail) = if let Some(e) = embed {
+        check_health!("dt-embed", e)
+    } else {
+        (false, "  ❌ dt-embed : no backend configured".to_string())
+    };
+    println!("  {detail}");
+    if !healthy {
+        all_healthy = false;
+    }
 
     println!();
     if all_healthy {
@@ -210,57 +253,7 @@ pub async fn run_health(
     Ok(())
 }
 
-/// Generic health check helper for both GraphRepository and VectorRepository.
-async fn check_and_format<R>(name: &str, repo: &R) -> (bool, String)
-where
-    R: GraphRepository + ?Sized,
-{
-    let start = Instant::now();
-    let status = repo.health_check().await;
-    let latency_ms = start.elapsed().as_millis() as u64;
 
-    match status {
-        Ok(HealthStatus::Healthy) => (true, format!("✅ {name:<8}: healthy ({latency_ms} ms)")),
-        Ok(HealthStatus::Degraded(reason)) => (
-            false,
-            format!("⚠️  {name:<8}: degraded — {reason} ({latency_ms} ms)"),
-        ),
-        Ok(HealthStatus::Unhealthy(reason)) => (
-            false,
-            format!("❌ {name:<8}: unhealthy — {reason} ({latency_ms} ms)"),
-        ),
-        Err(e) => (
-            false,
-            format!("❌ {name:<8}: error — {e} ({latency_ms} ms)"),
-        ),
-    }
-}
-
-// Also provide an overload for VectorRepository since it's a separate trait.
-async fn check_vector<R>(name: &str, repo: &R) -> (bool, String)
-where
-    R: VectorRepository + ?Sized,
-{
-    let start = Instant::now();
-    let status = repo.health_check().await;
-    let latency_ms = start.elapsed().as_millis() as u64;
-
-    match status {
-        Ok(HealthStatus::Healthy) => (true, format!("✅ {name:<8}: healthy ({latency_ms} ms)")),
-        Ok(HealthStatus::Degraded(reason)) => (
-            false,
-            format!("⚠️  {name:<8}: degraded — {reason} ({latency_ms} ms)"),
-        ),
-        Ok(HealthStatus::Unhealthy(reason)) => (
-            false,
-            format!("❌ {name:<8}: unhealthy — {reason} ({latency_ms} ms)"),
-        ),
-        Err(e) => (
-            false,
-            format!("❌ {name:<8}: error — {e} ({latency_ms} ms)"),
-        ),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // dt cleanup --targets reasoning
@@ -616,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_health_succeeds() {
-        let result = run_health(None, None).await;
+        let result = run_health(None, None, None, None).await;
         assert!(result.is_ok(), "health check should succeed with noop repos");
     }
 

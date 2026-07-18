@@ -12,7 +12,7 @@
 //! | `Memorize`   | [`knowledge_service::handle_memorize`] |
 //! | `Sync`       | [`sync_service::handle_sync`] |
 
-use crate::domain::traits::{GraphRepository, VectorRepository};
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use crate::proto::dt::core::dt_core_server::DtCore;
 use crate::proto::dt::core::*;
 use crate::proto::dt::common;
@@ -29,6 +29,7 @@ use super::{build_service, context_service, sync_service, knowledge_service, mem
 pub struct DtCoreServiceImpl {
     pub graph: Option<Arc<dyn GraphRepository>>,
     pub vector: Option<Arc<dyn VectorRepository>>,
+    pub embed: Option<Arc<dyn EmbedService>>,
 }
 
 impl DtCoreServiceImpl {
@@ -36,8 +37,9 @@ impl DtCoreServiceImpl {
     pub fn new(
         graph: Option<Arc<dyn GraphRepository>>,
         vector: Option<Arc<dyn VectorRepository>>,
+        embed: Option<Arc<dyn EmbedService>>,
     ) -> Self {
-        Self { graph, vector }
+        Self { graph, vector, embed }
     }
 }
 
@@ -66,9 +68,13 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<ContextRequest>,
     ) -> Result<Response<ContextResponse>, Status> {
         let req = request.into_inner();
-        let resp =
-            context_service::handle_get_context(req, self.graph.clone(), self.vector.clone())
-                .await?;
+        let resp = context_service::handle_get_context(
+            req,
+            self.graph.clone(),
+            self.vector.clone(),
+            self.embed.clone(),
+        )
+        .await?;
         Ok(Response::new(resp))
     }
 
@@ -95,7 +101,7 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<SyncRequest>,
     ) -> Result<Response<SyncResponse>, Status> {
         let req = request.into_inner();
-        let resp = sync_service::handle_sync(req, self.graph.clone(), self.vector.clone()).await?;
+        let resp = sync_service::handle_sync(req, self.graph.clone(), self.vector.clone(), self.embed.clone()).await?;
         Ok(Response::new(resp))
     }
 }
@@ -110,14 +116,15 @@ mod tests {
 
     #[test]
     fn service_impl_is_cloneable() {
-        let svc = DtCoreServiceImpl::new(None, None);
+        let svc = DtCoreServiceImpl::new(None, None, None);
         let _clone = svc.clone();
     }
 
     #[test]
     fn service_impl_new_accepts_options() {
-        let svc = DtCoreServiceImpl::new(None, None);
+        let svc = DtCoreServiceImpl::new(None, None, None);
         assert!(svc.graph.is_none());
         assert!(svc.vector.is_none());
+        assert!(svc.embed.is_none());
     }
 }

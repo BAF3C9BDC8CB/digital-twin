@@ -66,6 +66,7 @@ impl BuildCommand {
             deps.vector,
             deps.snapshot,
             deps.embed,
+            self.full,
         );
 
         let report = service.build(&self.project_name, &self.project_path).await?;

@@ -16,6 +16,7 @@
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BuildReport, FileSnapshot, ScanConfig};
+use futures::stream::{self, StreamExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -70,8 +71,8 @@ impl PipelineTemplate {
         scan_config: &ScanConfig,
         snapshot_repo: Option<&dyn SnapshotRepository>,
         graph: Option<&dyn GraphRepository>,
-        embed: Option<&dyn EmbedService>,
-        vector: Option<&dyn VectorRepository>,
+        embed: Option<Arc<dyn EmbedService>>,
+        vector: Option<Arc<dyn VectorRepository>>,
     ) -> Result<BuildReport, DtError> {
         let start = std::time::Instant::now();
 
@@ -105,12 +106,45 @@ impl PipelineTemplate {
         let methods_new = methods_total;
         let classes_total = extraction.classes.len();
 
-        // Step 5b: Process document files
+        // Step 5b: Process document files (incremental — skip unchanged docs)
         if !doc_files.is_empty() {
-            if let Some(graph) = graph {
-                let _documents_written = self
-                    .process_documents(project, root, &doc_files, Some(graph), embed, vector)
-                    .await?;
+            // Filter to only changed/new document files, same mtime logic as source files.
+            let mut doc_to_process: Vec<PathBuf> = Vec::new();
+            if let Some(repo) = snapshot_repo {
+                // Load stored snapshots to check mtime
+                if let Ok(stored) = repo.list_snapshots(project).await {
+                    let mut stored_map: std::collections::HashMap<String, (String, f64)> =
+                        std::collections::HashMap::new();
+                    for s in &stored {
+                        stored_map.insert(s.file_path.clone(), (s.file_sha1.clone(), s.file_mtime));
+                    }
+                    for p in &doc_files {
+                        let rel = scanner::rel_path(root, p);
+                        let current_mtime = p.metadata().ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0);
+                        if let Some((_, stored_mtime)) = stored_map.get(&rel) {
+                            if (current_mtime - stored_mtime).abs() < 1.0 {
+                                continue; // mtime unchanged → skip
+                            }
+                        }
+                        doc_to_process.push(p.clone());
+                    }
+                } else {
+                    doc_to_process = doc_files.to_vec();
+                }
+            } else {
+                doc_to_process = doc_files.to_vec();
+            }
+
+            if !doc_to_process.is_empty() {
+                if let Some(graph) = graph {
+                    let _documents_written = self
+                        .process_documents(project, root, &doc_to_process, Some(graph), embed.clone(), vector.clone(), snapshot_repo)
+                        .await?;
+                }
             }
         }
 
@@ -129,57 +163,84 @@ impl PipelineTemplate {
         }
 
         // Step 7b: Embed methods and write to Qdrant
-        if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
+        if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
             let texts: Vec<String> = extraction.methods.iter()
                 .map(|m| format!("{} {}", m.signature, m.comment))
                 .collect();
             if !texts.is_empty() {
-                // Chunked embedding: batch of 64 to stay under gRPC 4MB limit
-                const EMBED_BATCH: usize = 64;
+                // Embedded in batches of 512 (512 × ~500 bytes ≈ 256 KB, well under gRPC 4 MB limit).
+                // 8 concurrent gRPC streams for maximum throughput.
+                const EMBED_BATCH: usize = 512;
+                const CONCURRENT: usize = 3;
+
+                let chunk_pairs: Vec<(Vec<String>, Vec<crate::domain::types::MethodBlock>)> = texts.chunks(EMBED_BATCH)
+                    .zip(extraction.methods.chunks(EMBED_BATCH))
+                    .map(|(t, m)| (t.to_vec(), m.to_vec()))
+                    .collect();
+
+                let embed_svc = embed_svc.clone();
+                let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> = stream::iter(chunk_pairs)
+                    .map(|(text_chunk, method_chunk)| {
+                        let svc = embed_svc.clone();
+                        async move {
+                            let embeddings = svc.embed_batch(&text_chunk).await
+                                .map_err(|e| DtError::Repository(format!("embed: {}", e)))?;
+                            let points: Vec<serde_json::Value> = method_chunk.iter().zip(embeddings.iter())
+                                .map(|(m, vec)| serde_json::json!({
+                                    "id": m.method_id,
+                                    "vector": vec,
+                                    "payload": {
+                                        "name": m.name,
+                                        "signature": m.signature,
+                                        "class_name": m.class_name,
+                                        "file_path": m.file_path,
+                                        "package_or_module": m.package_or_module,
+                                        "language": m.language,
+                                        "project": m.project,
+                                        "start_line": m.start_line,
+                                        "end_line": m.end_line,
+                                        "calls": m.calls,
+                                        "comment": m.comment,
+                                        "params": m.params,
+                                        "return_type": m.return_type,
+                                        "entity_id": m.method_id,
+                                    }
+                                }))
+                                .collect();
+                            Ok(points)
+                        }
+                    })
+                    .buffer_unordered(CONCURRENT)
+                    .collect()
+                    .await;
+
                 let mut all_points = Vec::new();
-                for (chunk_start, (text_chunk, method_chunk)) in 
-                    texts.chunks(EMBED_BATCH).zip(extraction.methods.chunks(EMBED_BATCH)).enumerate()
-                {
-                    let embeddings = embed_svc.embed_batch(text_chunk).await?;
-                    tracing::info!("embedded batch {}: {} methods", chunk_start, embeddings.len());
-                    for (m, vec) in method_chunk.iter().zip(embeddings.iter()) {
-                        all_points.push(serde_json::json!({
-                            "id": m.method_id,
-                            "vector": vec,
-                            "payload": {
-                                "name": m.name,
-                                "signature": m.signature,
-                                "class_name": m.class_name,
-                                "file_path": m.file_path,
-                                "package_or_module": m.package_or_module,
-                                "language": m.language,
-                                "project": m.project,
-                                "start_line": m.start_line,
-                                "end_line": m.end_line,
-                                "calls": m.calls,
-                                "comment": m.comment,
-                                "params": m.params,
-                                "return_type": m.return_type,
-                                "entity_id": m.method_id,
-                            }
-                        }));
-                    }
+                for result in embed_results {
+                    all_points.extend(result?);
                 }
-                // Ensure collection exists before upsert
+
                 vector_repo.ensure_collection(&format!("{}_methods", project), 1024).await?;
-                vector_repo.upsert(&format!("{}_methods", project), all_points).await?;
-                tracing::info!("upserted {} vectors to Qdrant", extraction.methods.len());
+                // Upsert in batches to avoid Qdrant timeouts with large payloads
+                const UPSERT_BATCH: usize = 1000;
+                for chunk in all_points.chunks(UPSERT_BATCH) {
+                    vector_repo.upsert(&format!("{}_methods", project), chunk.to_vec()).await?;
+                }
+                tracing::info!("upserted {} vectors to Qdrant ({} concurrent batches)", extraction.methods.len(), (extraction.methods.len() + EMBED_BATCH - 1) / EMBED_BATCH);
             }
         }
 
         // Step 8: Rebuild call graph
         if let Some(graph) = graph {
+            tracing::info!("rebuilding call graph for {} methods...", extraction.methods.len());
             self.rebuild_call_graph(graph, project, &extraction.methods).await?;
+            tracing::info!("call graph rebuild complete");
         }
 
         // Step 9: Update SQLite snapshots
         if let Some(repo) = snapshot_repo {
+            tracing::info!("updating {} snapshots...", extraction.snapshots.len());
             strategy.update_snapshots(repo, project, &extraction.snapshots).await?;
+            tracing::info!("snapshot update complete");
         }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -196,68 +257,110 @@ impl PipelineTemplate {
     }
 
     /// Extract entities (methods, classes, modules, knowledge annotations) from a batch of files.
+    /// Uses multiple threads for parallel file I/O and parsing.
     fn extract_entities(
         &self,
         project: &str,
         root: &Path,
         files: &[std::path::PathBuf],
     ) -> Result<ExtractionResult, DtError> {
-        let mut all_methods = Vec::new();
-        let mut all_classes = Vec::new();
-        let mut all_snapshots = Vec::new();
-        let mut all_annotations = Vec::new();
-        let mut module_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let all_methods = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let all_classes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let all_snapshots = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let all_annotations = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let module_set = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
 
-        for file_path in files {
-            let source = match std::fs::read_to_string(file_path) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let chunk_size = (files.len() + num_threads - 1) / num_threads;
+        let registry = self.parser_registry.clone();
 
-            let rel_path = scanner::rel_path(root, file_path);
-            let (file_hash, file_mtime) = scanner::compute_file_hash(file_path).unwrap_or_default();
+        std::thread::scope(|s| {
+            for file_chunk in files.chunks(chunk_size.max(1)) {
+                let registry = registry.clone();
+                let project = project.to_string();
+                let root = root.to_path_buf();
+                let chunk = file_chunk.to_vec();
+                let methods = all_methods.clone();
+                let classes = all_classes.clone();
+                let snapshots = all_snapshots.clone();
+                let annotations = all_annotations.clone();
+                let modules = module_set.clone();
+                s.spawn(move || {
+                    for file_path in &chunk {
+                        // Compute hash FIRST (byte-level, works on all files) so
+                        // we always save a snapshot — even for files that fail
+                        // UTF-8 reading or parsing. Without this, unparseable
+                        // files would be detected as "changed" on every run.
+                        let rel_path = scanner::rel_path(&root, file_path);
+                        let (file_hash, file_mtime) =
+                            scanner::compute_file_hash(file_path).unwrap_or_default();
 
-            // Parse
-            let result = match self.parser_registry.parse_file(&source, file_path, project) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-
-            // Extract @knowledge annotations from code comments
-            let knowledge_anns = crate::infrastructure::parser::extract_knowledge_annotations(
-                &source,
-                &rel_path,
-                project,
-            );
-            all_annotations.extend(knowledge_anns);
-
-            let method_count = result.methods.len() as u32;
-
-            // Collect modules from package paths
-            for m in &result.methods {
-                if !m.package_or_module.is_empty() {
-                    module_set.insert(m.package_or_module.clone());
-                }
+                        let source = match std::fs::read_to_string(file_path) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                snapshots.lock().unwrap().push(FileSnapshot {
+                                    file_path: rel_path,
+                                    project: project.clone(),
+                                    file_sha1: file_hash,
+                                    file_mtime,
+                                    method_count: 0,
+                                    updated_at: chrono::Utc::now().to_rfc3339(),
+                                });
+                                continue;
+                            }
+                        };
+                        let result = match registry.parse_file(&source, file_path, &project) {
+                            Ok(r) => r,
+                            Err(_) => {
+                                snapshots.lock().unwrap().push(FileSnapshot {
+                                    file_path: rel_path,
+                                    project: project.clone(),
+                                    file_sha1: file_hash,
+                                    file_mtime,
+                                    method_count: 0,
+                                    updated_at: chrono::Utc::now().to_rfc3339(),
+                                });
+                                continue;
+                            }
+                        };
+                        let knowledge_anns =
+                            crate::infrastructure::parser::extract_knowledge_annotations(
+                                &source, &rel_path, &project,
+                            );
+                        annotations.lock().unwrap().extend(knowledge_anns);
+                        let method_count = result.methods.len() as u32;
+                        for m in &result.methods {
+                            if !m.package_or_module.is_empty() {
+                                modules.lock().unwrap().insert(m.package_or_module.clone());
+                            }
+                        }
+                        for c in &result.classes {
+                            if !c.package_or_module.is_empty() {
+                                modules.lock().unwrap().insert(c.package_or_module.clone());
+                            }
+                        }
+                        methods.lock().unwrap().extend(result.methods);
+                        classes.lock().unwrap().extend(result.classes);
+                        snapshots.lock().unwrap().push(FileSnapshot {
+                            file_path: rel_path,
+                            project: project.clone(),
+                            file_sha1: file_hash,
+                            file_mtime,
+                            method_count,
+                            updated_at: chrono::Utc::now().to_rfc3339(),
+                        });
+                    }
+                });
             }
-            for c in &result.classes {
-                if !c.package_or_module.is_empty() {
-                    module_set.insert(c.package_or_module.clone());
-                }
-            }
+        });
 
-            all_methods.extend(result.methods);
-            all_classes.extend(result.classes);
-
-            let updated_at = chrono::Utc::now().to_rfc3339();
-            all_snapshots.push(FileSnapshot {
-                file_path: rel_path,
-                project: project.to_string(),
-                file_sha1: file_hash,
-                file_mtime,
-                method_count,
-                updated_at,
-            });
-        }
+        let all_methods = Arc::try_unwrap(all_methods).unwrap().into_inner().unwrap();
+        let all_classes = Arc::try_unwrap(all_classes).unwrap().into_inner().unwrap();
+        let all_snapshots = Arc::try_unwrap(all_snapshots).unwrap().into_inner().unwrap();
+        let all_annotations = Arc::try_unwrap(all_annotations).unwrap().into_inner().unwrap();
+        let module_set = Arc::try_unwrap(module_set).unwrap().into_inner().unwrap();
 
         let modules: Vec<crate::domain::types::ModuleBlock> = module_set
             .into_iter()
@@ -309,103 +412,96 @@ impl PipelineTemplate {
                 .await?;
         }
 
-        // Write methods in batches
-        for chunk in extraction.methods.chunks(200) {
-            let methods_json: Vec<serde_json::Value> = chunk
-                .iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "method_id": m.method_id,
-                        "project": m.project,
-                        "file_path": m.file_path,
-                        "language": m.language,
-                        "package_or_module": m.package_or_module,
-                        "class_name": m.class_name,
-                        "name": m.name,
-                        "signature": m.signature,
-                        "params": m.params,
-                        "return_type": m.return_type,
-                        "start_line": m.start_line,
-                        "end_line": m.end_line,
-                        "calls": m.calls,
-                        "comment": m.comment,
-                        "source_text": m.source_text,
-                    })
-                })
-                .collect();
+        // Write methods, classes, and modules in parallel
+        {
+            let methods = &extraction.methods;
+            let classes = &extraction.classes;
+            let modules = &extraction.modules;
 
-            let mut params = HashMap::new();
-            params.insert("methods".to_string(), serde_json::Value::Array(methods_json));
+            let write_methods = async {
+                for chunk in methods.chunks(200) {
+                    let methods_json: Vec<serde_json::Value> = chunk.iter().map(|m| serde_json::json!({
+                        "method_id": m.method_id, "project": m.project, "file_path": m.file_path,
+                        "language": m.language, "package_or_module": m.package_or_module,
+                        "class_name": m.class_name, "name": m.name, "signature": m.signature,
+                        "params": m.params, "return_type": m.return_type,
+                        "start_line": m.start_line, "end_line": m.end_line,
+                        "calls": m.calls, "comment": m.comment, "source_text": m.source_text,
+                    })).collect();
+                    let mut params = HashMap::new();
+                    params.insert("methods".to_string(), serde_json::Value::Array(methods_json));
+                    graph
+                        .write_query(
+                            r#"UNWIND $methods AS m
+                            MERGE (n:Method {method_id: m.method_id})
+                            SET n.project = m.project, n.file_path = m.file_path,
+                                n.language = m.language, n.package_or_module = m.package_or_module,
+                                n.class_name = m.class_name, n.name = m.name,
+                                n.signature = m.signature, n.params = m.params,
+                                n.return_type = m.return_type, n.start_line = m.start_line,
+                                n.end_line = m.end_line, n.calls = m.calls, n.comment = m.comment
+                            WITH n, m
+                            MERGE (p:Project {name: m.project})
+                            MERGE (n)-[:BELONGS_TO]->(p)"#,
+                            params,
+                        )
+                        .await?;
+                }
+                Ok::<_, DtError>(())
+            };
 
-            graph
-                .write_query(
-                    r#"UNWIND $methods AS m
-                    MERGE (n:Method {method_id: m.method_id})
-                    SET n.project = m.project,
-                        n.file_path = m.file_path,
-                        n.language = m.language,
-                        n.package_or_module = m.package_or_module,
-                        n.class_name = m.class_name,
-                        n.name = m.name,
-                        n.signature = m.signature,
-                        n.params = m.params,
-                        n.return_type = m.return_type,
-                        n.start_line = m.start_line,
-                        n.end_line = m.end_line,
-                        n.calls = m.calls,
-                        n.comment = m.comment
-                    WITH n, m
-                    MERGE (p:Project {name: m.project})
-                    MERGE (n)-[:BELONGS_TO]->(p)"#,
-                    params,
-                )
-                .await?;
+            let write_classes = async {
+                for chunk in classes.chunks(100) {
+                    let classes_json: Vec<serde_json::Value> = chunk.iter().map(|c| serde_json::json!({
+                        "class_id": c.class_id, "name": c.name, "kind": c.kind.as_str(),
+                        "file_path": c.file_path, "package_or_module": c.package_or_module,
+                        "project": c.project, "start_line": c.start_line, "end_line": c.end_line,
+                    })).collect();
+                    let mut params = HashMap::new();
+                    params.insert("classes".to_string(), serde_json::Value::Array(classes_json));
+                    graph
+                        .write_query(
+                            r#"UNWIND $classes AS c
+                            MERGE (n:Class {class_id: c.class_id})
+                            SET n.name = c.name, n.kind = c.kind, n.file_path = c.file_path,
+                                n.package_or_module = c.package_or_module, n.project = c.project,
+                                n.start_line = c.start_line, n.end_line = c.end_line
+                            WITH n, c
+                            MERGE (p:Project {name: c.project})
+                            MERGE (n)-[:BELONGS_TO]->(p)"#,
+                            params,
+                        )
+                        .await?;
+                }
+                Ok::<_, DtError>(())
+            };
+
+            let write_modules = async {
+                for chunk in modules.chunks(100) {
+                    let modules_json: Vec<serde_json::Value> = chunk.iter().map(|m| serde_json::json!({
+                        "module_id": m.module_id, "name": m.name, "project": m.project,
+                    })).collect();
+                    let mut params = HashMap::new();
+                    params.insert("modules".to_string(), serde_json::Value::Array(modules_json));
+                    graph
+                        .write_query(
+                            r#"UNWIND $modules AS m
+                            MERGE (n:Module {module_id: m.module_id})
+                            SET n.name = m.name, n.project = m.project"#,
+                            params,
+                        )
+                        .await?;
+                }
+                Ok::<_, DtError>(())
+            };
+
+            let (r1, r2, r3) = tokio::join!(write_methods, write_classes, write_modules);
+            r1?;
+            r2?;
+            r3?;
         }
 
-        // Write classes in batches
-        for chunk in extraction.classes.chunks(100) {
-            let classes_json: Vec<serde_json::Value> = chunk
-                .iter()
-                .map(|c| {
-                    serde_json::json!({
-                        "class_id": c.class_id,
-                        "name": c.name,
-                        "kind": c.kind.as_str(),
-                        "file_path": c.file_path,
-                        "package_or_module": c.package_or_module,
-                        "project": c.project,
-                        "start_line": c.start_line,
-                        "end_line": c.end_line,
-                    })
-                })
-                .collect();
-
-            let mut params = HashMap::new();
-            params.insert(
-                "classes".to_string(),
-                serde_json::Value::Array(classes_json),
-            );
-
-            graph
-                .write_query(
-                    r#"UNWIND $classes AS c
-                    MERGE (n:Class {class_id: c.class_id})
-                    SET n.name = c.name,
-                        n.kind = c.kind,
-                        n.file_path = c.file_path,
-                        n.package_or_module = c.package_or_module,
-                        n.project = c.project,
-                        n.start_line = c.start_line,
-                        n.end_line = c.end_line
-                    WITH n, c
-                    MERGE (p:Project {name: c.project})
-                    MERGE (n)-[:BELONGS_TO]->(p)"#,
-                    params,
-                )
-                .await?;
-        }
-
-        // Write CONTAINS relationships
+        // Write CONTAINS relationships (depends on methods + classes being written)
         for c in &extraction.classes {
             for mid in &c.method_ids {
                 let mut params = HashMap::new();
@@ -428,36 +524,6 @@ impl PipelineTemplate {
             }
         }
 
-        // Write modules
-        for chunk in extraction.modules.chunks(100) {
-            let modules_json: Vec<serde_json::Value> = chunk
-                .iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "module_id": m.module_id,
-                        "name": m.name,
-                        "project": m.project,
-                    })
-                })
-                .collect();
-
-            let mut params = HashMap::new();
-            params.insert(
-                "modules".to_string(),
-                serde_json::Value::Array(modules_json),
-            );
-
-            graph
-                .write_query(
-                    r#"UNWIND $modules AS m
-                    MERGE (n:Module {module_id: m.module_id})
-                    SET n.name = m.name, n.project = m.project"#,
-                    params,
-                )
-                .await?;
-        }
-
-        let _ = &project;
         Ok(())
     }
 
@@ -754,11 +820,13 @@ impl PipelineTemplate {
         root: &Path,
         doc_files: &[PathBuf],
         graph: Option<&dyn GraphRepository>,
-        embed: Option<&dyn EmbedService>,
-        vector: Option<&dyn VectorRepository>,
+        embed: Option<Arc<dyn EmbedService>>,
+        vector: Option<Arc<dyn VectorRepository>>,
+        snapshot_repo: Option<&dyn SnapshotRepository>,
     ) -> Result<usize, DtError> {
         let mut written = 0usize;
         let config = crate::shared::chunker::ChunkConfig::default();
+        let mut doc_snapshots: Vec<FileSnapshot> = Vec::new();
 
         for file_path in doc_files {
             // Parse the document
@@ -785,23 +853,57 @@ impl PipelineTemplate {
                 crate::shared::chunker::chunk_text(&parsed.content, &doc_id, &config)
             };
 
-            // Embed chunks if embed service is available
-            if let Some(embed_svc) = embed {
+            // Embed chunks in batches if embed service is available.
+            // Large documents can generate thousands of chunks; batching by 256
+            // keeps each gRPC call well under 4 MB. 8 concurrent streams for throughput.
+            if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
                 if !chunks.is_empty() {
-                    let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-                    let embeddings = embed_svc.embed_batch(&texts).await?;
-                    if let Some(vector_repo) = vector {
-                        vector_repo.ensure_collection(&format!("{project}_semantic"), 1024).await?;
-                        let points: Vec<serde_json::Value> = chunks.iter()
-                            .zip(embeddings.iter())
-                            .map(|(chunk, vec)| serde_json::json!({
-                                "id": chunk.chunk_id,
-                                "vector": vec,
-                                "entity_id": chunk.chunk_id,
-                                "text": &chunk.text,
-                            }))
-                            .collect();
-                        vector_repo.upsert(&format!("{project}_semantic"), points).await?;
+                    const DOC_EMBED_BATCH: usize = 256;
+                    const DOC_CONCURRENT: usize = 2;
+                    let collection = format!("{project}_semantic");
+                    vector_repo.ensure_collection(&collection, 1024).await?;
+
+                    let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> = chunks
+                        .chunks(DOC_EMBED_BATCH)
+                        .map(|c| c.to_vec())
+                        .collect();
+
+                    let svc = embed_svc.clone();
+                    let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> =
+                        stream::iter(chunk_batches)
+                            .map(|chunk_batch| {
+                                let svc = svc.clone();
+                                async move {
+                                    let texts: Vec<String> = chunk_batch.iter().map(|c| c.text.clone()).collect();
+                                    let embeddings = svc.embed_batch(&texts).await
+                                        .map_err(|e| DtError::Repository(format!("embed: {}", e)))?;
+                                    let points: Vec<serde_json::Value> = chunk_batch.iter()
+                                        .zip(embeddings.iter())
+                                        .map(|(chunk, vec)| serde_json::json!({
+                                            "id": chunk.chunk_id,
+                                            "vector": vec,
+                                            "entity_id": chunk.chunk_id,
+                                            "text": &chunk.text,
+                                        }))
+                                        .collect();
+                                    Ok(points)
+                                }
+                            })
+                            .buffer_unordered(DOC_CONCURRENT)
+                            .collect()
+                            .await;
+
+                    // Collect all points and upsert once
+                    let mut all_points = Vec::new();
+                    for result in embed_results {
+                        all_points.extend(result?);
+                    }
+                    if !all_points.is_empty() {
+                        const DOC_UPSERT_BATCH: usize = 500;
+                        for chunk in all_points.chunks(DOC_UPSERT_BATCH) {
+                            vector_repo.upsert(&collection, chunk.to_vec()).await
+                                .map_err(|e| DtError::Repository(format!("upsert: {}", e)))?;
+                        }
                     }
                 }
             }
@@ -830,6 +932,25 @@ impl PipelineTemplate {
             }
 
             written += 1;
+
+            // Collect document snapshot for incremental skip on next build
+            if let Ok((hash, mtime)) = scanner::compute_file_hash(file_path) {
+                doc_snapshots.push(FileSnapshot {
+                    file_path: doc_item.file_path.clone(),
+                    project: project.to_string(),
+                    file_sha1: hash,
+                    file_mtime: mtime,
+                    method_count: 0,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                });
+            }
+        }
+
+        // Save all document snapshots in one batch
+        if let Some(repo) = snapshot_repo {
+            if !doc_snapshots.is_empty() {
+                let _ = repo.save_snapshots(project, &doc_snapshots).await;
+            }
         }
 
         Ok(written)

@@ -2,7 +2,7 @@
 //!
 //! Delegates to [`ContextPipeline`] to perform six-world context aggregation.
 
-use crate::domain::traits::{GraphRepository, VectorRepository};
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use crate::proto::dt::core::*;
 use crate::application::context::pipeline::ContextPipeline;
 use crate::application::context::stages::RetrieverStage;
@@ -15,6 +15,7 @@ pub async fn handle_get_context(
     req: ContextRequest,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
 ) -> Result<ContextResponse, Status> {
     if req.query.is_empty() {
         return Err(Status::invalid_argument("query is required"));
@@ -32,7 +33,7 @@ pub async fn handle_get_context(
 
     let retriever = match (graph, vector) {
         (Some(g), v) => {
-            RetrieverStage::new(g, v, None::<Arc<dyn crate::domain::traits::EmbedService>>)
+            RetrieverStage::new(g, v, embed)
         }
         (None, _) => RetrieverStage::empty(),
     };
@@ -151,7 +152,7 @@ mod tests {
             file_paths: vec![],
             max_tokens: 0,
         };
-        let result = handle_get_context(req, None, None).await;
+        let result = handle_get_context(req, None, None, None).await;
         assert!(result.is_err());
     }
 
@@ -164,7 +165,7 @@ mod tests {
         };
         // With empty retriever, pipeline will likely return empty results
         // or an error depending on implementation.
-        let result = handle_get_context(req, None, None).await;
+        let result = handle_get_context(req, None, None, None).await;
         // Pipeline may succeed with empty results or fail — both OK for now.
         let _ = result;
     }

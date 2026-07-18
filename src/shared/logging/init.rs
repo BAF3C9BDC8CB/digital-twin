@@ -9,6 +9,17 @@ use std::fs;
 use std::path::PathBuf;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::fmt::time::FormatTime;
+
+/// Log timestamps in local timezone (not UTC).
+struct LocalTimer;
+
+impl FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = chrono::Local::now();
+        write!(w, "{}", now.format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+    }
+}
 
 /// Default log directory. If unwritable, falls back to `/tmp`.
 const LOG_DIR: &str = "/var/log/digital-twin";
@@ -68,14 +79,16 @@ pub fn init_logging() -> anyhow::Result<()> {
         .json()
         .flatten_event(true)
         .with_writer(file)
-        .with_ansi(false);
+        .with_ansi(false)
+        .with_timer(LocalTimer);
 
     // ── Stderr layer (compact, human-readable) ──────────────────────
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
         .with_ansi(true)
-        .compact();
+        .compact()
+        .with_timer(LocalTimer);
 
     // ── Assemble ────────────────────────────────────────────────────
     tracing_subscriber::registry()

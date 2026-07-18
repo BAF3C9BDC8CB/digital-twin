@@ -62,6 +62,9 @@ clap = { version = "4", features = ["derive"] }
 # Concurrent map
 dashmap = "6"
 
+# Async streams
+futures = "0.3"
+
 # File system watcher
 notify = "7"
 
