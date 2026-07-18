@@ -143,6 +143,7 @@ impl EventHandler for DeploymentHandler {
             MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)
 
             // 6. Link Session -> JenkinsBuild (timeline, replaces old Deployment link)
+            WITH job, build, si
             MATCH (s:Session {session_id: $session_id})
             MERGE (s)-[:HAS_EVENT]->(build)
             "#.to_string();
@@ -207,6 +208,7 @@ mod tests {
             assert!(query.contains("MERGE (si:ServiceInstance"), "should merge ServiceInstance");
             assert!(query.contains("LATEST_DEPLOY"), "should create LATEST_DEPLOY");
             assert!(query.contains("DEPLOYED_TO"), "should create DEPLOYED_TO");
+            assert!(query.contains("WITH job, build, si"), "should carry vars with WITH before MATCH Session");
             // Must NOT create Deployment nodes
             assert!(!query.contains("MERGE (e:Deployment"), "should NOT create Deployment node");
             Ok(serde_json::Value::Null)
