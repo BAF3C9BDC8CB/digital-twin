@@ -73,6 +73,10 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
     // ── Reality World: Configuration ──
     "CREATE CONSTRAINT nacos_config_id_unique IF NOT EXISTS FOR (n:NacosConfig) REQUIRE n.config_id IS UNIQUE",
     "CREATE CONSTRAINT config_key_name_ns_unique IF NOT EXISTS FOR (n:ConfigKey) REQUIRE (n.name, n.namespace) IS UNIQUE",
+    // ── Jenkins ──
+    "CREATE CONSTRAINT jenkins_view_id_unique IF NOT EXISTS FOR (n:JenkinsView) REQUIRE n.view_id IS UNIQUE",
+    "CREATE CONSTRAINT jenkins_job_id_unique IF NOT EXISTS FOR (n:JenkinsJob) REQUIRE n.job_id IS UNIQUE",
+    "CREATE CONSTRAINT jenkins_build_id_unique IF NOT EXISTS FOR (n:JenkinsBuild) REQUIRE n.build_id IS UNIQUE",
     // ── Reality World: API ──
     "CREATE CONSTRAINT endpoint_id_unique IF NOT EXISTS FOR (n:Endpoint) REQUIRE n.endpoint_id IS UNIQUE",
     // ── Reality World: Document ──
@@ -109,7 +113,7 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
 /// Indexed properties: name, description, hostname, url, auth_user.
 const FULLTEXT_INDEX_STATEMENT: &str = r#"
 CREATE FULLTEXT INDEX infra_search IF NOT EXISTS
-FOR (n:Server|Database|NacosConfig|NacosService|K8sDeployment|K8sService|Service|ServiceInstance|Method|Class|Module|Knowledge|Concept|Experience|Playbook|Document|Thread|ConfigKey|Endpoint)
+FOR (n:Server|Database|NacosConfig|NacosService|K8sDeployment|K8sService|Service|ServiceInstance|Method|Class|Module|Knowledge|Concept|Experience|Playbook|Document|Thread|ConfigKey|Endpoint|JenkinsView|JenkinsJob|JenkinsBuild)
 ON EACH [n.name, n.description, n.hostname, n.url, n.auth_user, n.signature, n.file_path, n.package_or_module, n.data_id, n.title, n.summary, n.definition]
 "#;
 
@@ -307,16 +311,16 @@ mod tests {
         let mock = MockGraphRepo::new();
         let report = initialize_schema(&mock).await.expect("should succeed");
 
-        // 27 constraints + 1 fulltext index + 1 regular index
-        assert_eq!(report.constraints_created, 27);
+        // 30 constraints + 1 fulltext index + 1 regular index
+        assert_eq!(report.constraints_created, 30);
         assert_eq!(report.indexes_created, 2);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 29); // 27 constraints + 2 indexes
+        assert_eq!(write_calls.len(), 32); // 30 constraints + 2 indexes
         assert!(write_calls[0].contains("method_id_unique"));
-        assert!(write_calls[26].contains("analysis_id_unique"));
-        assert!(write_calls[27].contains("FULLTEXT INDEX"));
+        assert!(write_calls[29].contains("analysis_id_unique"));
+        assert!(write_calls[30].contains("FULLTEXT INDEX"));
     }
 
     #[tokio::test]
@@ -326,7 +330,7 @@ mod tests {
         initialize_schema(&mock).await.unwrap();
         // Second call — all statements have IF NOT EXISTS, so should succeed
         let report2 = initialize_schema(&mock).await.unwrap();
-        assert_eq!(report2.constraints_created, 27);
+        assert_eq!(report2.constraints_created, 30);
         assert_eq!(report2.indexes_created, 2);
     }
 
