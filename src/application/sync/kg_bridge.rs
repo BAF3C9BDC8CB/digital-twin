@@ -83,7 +83,6 @@ pub const BUSINESS_LABELS: &[&str] = &[
     "ConfigKey",
     "Table",
     // -- Events --
-    "Deployment",
     "ConfigChange",
     "BugFix",
     "Decision",
