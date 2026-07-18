@@ -69,7 +69,7 @@ mod tests {
     async fn init_schema_returns_report() {
         let repo = AcceptAllRepo;
         let report = init_schema(&repo).await.expect("init should succeed");
-        assert_eq!(report.constraints_created, 27);
+        assert_eq!(report.constraints_created, 30);
         assert_eq!(report.indexes_created, 2);
         assert!(report.elapsed_ms < 5_000);
     }
