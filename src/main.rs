@@ -528,6 +528,17 @@ enum Commands {
         env: String,
     },
 
+    /// Synchronize Jenkins Views, Jobs, and Builds to Knowledge Graph.
+    JcSync {
+        /// Target environment (test, prod). Default: sync all.
+        #[arg(long = "env")]
+        env: Option<String>,
+
+        /// Specific job name to sync. Default: sync all jobs.
+        #[arg(long = "job")]
+        job: Option<String>,
+    },
+
     /// Start the gRPC daemon server or show status.
     Daemon {
         /// Action: start (launch gRPC server) or status (health check).
@@ -1610,6 +1621,33 @@ async fn main() -> anyhow::Result<()> {
                 Some((url, user, token)) => {
                     dt_daemon::interfaces::cli::jcli::handle_jcli(
                         action, job, build, limit, params, env, &url, &user, &token,
+                    )
+                    .await?;
+                }
+                None => {
+                    eprintln!("Jenkins not configured in config.yaml (services.jenkins). Add jenkins section with url/user/token to enable.");
+                }
+            }
+            return Ok(());
+        }
+
+        // ---- CLI mode: dt jc-sync ----
+        Some(Commands::JcSync { env, job }) => {
+            let config = load_config();
+            let jenkins_creds = config.as_ref().and_then(|c| {
+                let j = &c.services.jenkins;
+                let url = j.url.as_deref()?;
+                let user = j.user.as_deref()?;
+                let token = j.token.as_deref()?;
+                if url.is_empty() { return None; }
+                Some((url.to_string(), user.to_string(), token.to_string()))
+            });
+
+            match jenkins_creds {
+                Some((url, user, token)) => {
+                    let graph = connect_graph().await;
+                    dt_daemon::interfaces::cli::jenkins_sync::handle_jenkins_sync(
+                        env, job, graph, &url, &user, &token,
                     )
                     .await?;
                 }
