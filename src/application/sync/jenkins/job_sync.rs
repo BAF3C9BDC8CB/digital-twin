@@ -72,6 +72,13 @@ impl JobSyncSource {
     }
 }
 
+impl JobSyncSource {
+    /// Sync a single job (for incremental updates after `jcli build`).
+    pub async fn sync_job(&self, graph: &dyn GraphRepository) -> Result<SyncReport, DtError> {
+        self.sync(graph).await
+    }
+}
+
 #[async_trait]
 impl SyncSource for JobSyncSource {
     fn name(&self) -> &str {

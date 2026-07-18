@@ -2,6 +2,11 @@
 //!
 //! Extracted from main.rs to keep the entrypoint lean.
 
+use std::sync::Arc;
+
+use crate::application::sync::jenkins::JobSyncSource;
+use crate::domain::traits::GraphRepository;
+
 /// Handle `dt jcli` — native Jenkins operations via jcli.
 ///
 /// Jenkins credentials must be pre-resolved from config by the caller.
@@ -15,6 +20,7 @@ pub async fn handle_jcli(
     jenkins_url: &str,
     jenkins_user: &str,
     jenkins_token: &str,
+    graph: Option<Arc<dyn GraphRepository>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt-daemon CLI: jcli --action {action} --job {:?} --build {:?} --limit {:?}",
@@ -96,7 +102,31 @@ pub async fn handle_jcli(
                 println!("⚠️  Triggering production build for {j}");
             }
             match jenkins.trigger_build(j, &parsed_params).await {
-                Ok(out) => println!("{out}"),
+                Ok(out) => {
+                    println!("{out}");
+                    // After successful build, incrementally sync this job
+                    if let Some(ref job_name) = job {
+                        if let Some(ref g) = graph {
+                            let client = crate::application::plugins::jenkins::client::JenkinsApiClient::new(
+                                jenkins_url, jenkins_user, jenkins_token,
+                            );
+                            let source = JobSyncSource::new(
+                                Arc::new(client),
+                                env.clone(),
+                                Some(job_name.clone()),
+                            );
+                            match source.sync_job(g.as_ref()).await {
+                                Ok(r) => tracing::info!(
+                                    "jcli build: incremental sync for {job_name}: {} builds",
+                                    r.items_created,
+                                ),
+                                Err(e) => tracing::warn!(
+                                    "jcli build: incremental sync failed for {job_name}: {e}",
+                                ),
+                            }
+                        }
+                    }
+                }
                 Err(e) => eprintln!("jcli build: {e}"),
             }
         }

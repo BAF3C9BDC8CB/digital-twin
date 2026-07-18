@@ -1619,8 +1619,9 @@ async fn main() -> anyhow::Result<()> {
 
             match jenkins_creds {
                 Some((url, user, token)) => {
+                    let graph = connect_graph().await;
                     dt_daemon::interfaces::cli::jcli::handle_jcli(
-                        action, job, build, limit, params, env, &url, &user, &token,
+                        action, job, build, limit, params, env, &url, &user, &token, graph,
                     )
                     .await?;
                 }
