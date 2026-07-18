@@ -147,6 +147,7 @@ pub async fn link_event_to_session(
 
     let event_id_field = match event_type {
         EventType::Modification => "mod_id",
+        // Dead arm — handled by early return above. Kept for match exhaustiveness.
         EventType::Deployment => "deploy_id",
         EventType::ConfigChange => "change_id",
         EventType::BugFix => "fix_id",

@@ -66,16 +66,8 @@ impl EventHandler for DeploymentHandler {
             .get("env")
             .cloned()
             .unwrap_or_else(|| "test".to_string());
-        let branch = props
-            .get("branch")
-            .cloned()
-            .unwrap_or_default();
         let version = props
             .get("version")
-            .cloned()
-            .unwrap_or_default();
-        let params_json = props
-            .get("params")
             .cloned()
             .unwrap_or_default();
         let status = props
@@ -160,9 +152,7 @@ impl EventHandler for DeploymentHandler {
         params.insert("job_id".into(), serde_json::Value::String(job_id));
         params.insert("build_id".into(), serde_json::Value::String(build_id));
         params.insert("env".into(), serde_json::Value::String(env));
-        params.insert("branch".into(), serde_json::Value::String(branch));
         params.insert("version".into(), serde_json::Value::String(version));
-        params.insert("params".into(), serde_json::Value::String(params_json));
         params.insert("status".into(), serde_json::Value::String(status));
         params.insert("now".into(), serde_json::Value::String(event.timestamp.to_rfc3339()));
         params.insert("instance_id".into(), serde_json::Value::String(instance_id));
@@ -176,10 +166,6 @@ impl EventHandler for DeploymentHandler {
         params.insert("timestamp_raw".into(), serde_json::Value::Number(timestamp_raw.into()));
 
         params.insert("session_id".into(), serde_json::Value::String(event.session_id.clone()));
-        params.insert("entity_id".into(), serde_json::Value::String(event.entity_id.clone()));
-        params.insert("event_type".into(), serde_json::Value::String(event.event_type.as_str().into()));
-        params.insert("details".into(), serde_json::Value::String(event.details.clone()));
-        params.insert("project".into(), serde_json::Value::String(event.project.clone()));
 
         graph.write_query(&cypher, params).await?;
         Ok(())
