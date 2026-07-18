@@ -30,6 +30,7 @@ pub async fn handle_jenkins_sync(
     };
 
     let client = Arc::new(JenkinsApiClient::new(jenkins_url, jenkins_user, jenkins_token));
+    tracing::info!("jenkins-sync starting: env={env:?}, job={job:?}");
 
     for env_name in &envs {
         println!("\n── Jenkins sync: {env_name} ──");
@@ -38,7 +39,13 @@ pub async fn handle_jenkins_sync(
 
         match graph.as_deref() {
             Some(g) => {
-                let report = source.sync(g).await?;
+                let report = match source.sync(g).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::error!("jenkins-sync failed for env={env_name}: {e}");
+                        return Err(e.into());
+                    }
+                };
                 println!(
                     "  ✓ {} views, {} jobs, {} builds ({} links, {}ms)",
                     report.namespaces,
@@ -60,5 +67,6 @@ pub async fn handle_jenkins_sync(
     }
 
     println!("\n✓ Jenkins sync complete");
+    tracing::info!("jenkins-sync complete");
     Ok(())
 }
