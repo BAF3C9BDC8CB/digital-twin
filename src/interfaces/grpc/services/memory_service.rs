@@ -168,9 +168,10 @@ mod tests {
         };
         let result = handle_record_event(req, Some(graph), None).await;
         assert!(result.is_ok());
-        // record_event triggers writes: ensure_day (read), create_session (write),
-        // handler write + link_event_to_session (2 writes) = at least 3 writes
-        assert!(write.load(Ordering::SeqCst) >= 3);
+        // Without hook_engine, deployment falls through to normal path:
+        // ensure_day (read), create_session (write). No handler write
+        // (all handlers migrated to hooks), link_event_to_session skipped.
+        assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
     #[test]

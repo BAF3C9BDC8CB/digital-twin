@@ -45,10 +45,16 @@ event_types:
       - { name: version, from: context.version }
       - { name: status, from: context.status, default: "success" }
     side_effects:
-      - "MERGE (job:JenkinsJob {name: $job}) ON CREATE SET job.job_id = $job_id, job.full_name = $job ON MATCH SET job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now"
-      - "MERGE (build:JenkinsBuild {build_id: $build_id}) SET build.number = $build_number, build.deployed_env = $env, build.deployed_at = $now, build.result = $status"
+      # 1. JenkinsJob — matches old handler ON CREATE/ON MATCH exactly
+      - "MERGE (job:JenkinsJob {name: $job}) ON CREATE SET job.job_id = $job_id, job.full_name = $job, job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now ON MATCH SET job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now"
+      # 2. JenkinsBuild — ON CREATE/ON MATCH, deployed_version + timestamp, integer build.number
+      - "MERGE (build:JenkinsBuild {build_id: $build_id}) ON CREATE SET build.number = toInteger($build_number), build.deployed_env = $env, build.deployed_at = $now, build.deployed_version = $version, build.result = $status, build.timestamp = toInteger($timestamp_raw) ON MATCH SET build.deployed_env = $env, build.deployed_at = $now, build.deployed_version = $version"
+      # 3. ServiceInstance
       - "MERGE (si:ServiceInstance {instance_id: $instance_id}) SET si.service_name = $job, si.env = $env, si.updated_at = $now"
-      - "OPTIONAL MATCH (job:JenkinsJob {name: $job})-[old:LATEST_DEPLOY]->() DELETE old WITH job, build, si MERGE (job)-[:LATEST_DEPLOY]->(si) MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)"
+      # 4. LATEST_DEPLOY + DEPLOYED_TO (self-contained — re-match si and build)
+      - "MATCH (si:ServiceInstance {instance_id: $instance_id}) MATCH (build:JenkinsBuild {build_id: $build_id}) OPTIONAL MATCH (job:JenkinsJob {name: $job})-[old:LATEST_DEPLOY]->() DELETE old MERGE (job)-[:LATEST_DEPLOY]->(si) MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)"
+      # 5. Session → JenkinsBuild (replaces old handler's inline MATCH + MERGE)
+      - "MATCH (build:JenkinsBuild {build_id: $build_id}) MATCH (s:Session {session_id: $session_id}) MERGE (s)-[:HAS_EVENT]->(build)"
 
   - label: ConfigChange
     subscribe: config_changed

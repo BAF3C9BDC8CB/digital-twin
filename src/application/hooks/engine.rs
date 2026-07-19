@@ -111,6 +111,7 @@ impl HookEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::error::DtError;
     use crate::domain::types::HealthStatus;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};

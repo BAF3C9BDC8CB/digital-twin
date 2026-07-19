@@ -14,8 +14,6 @@ use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
 use super::entities::{EventType, MemoryEvent};
-use super::handlers::DeploymentHandler;
-
 /// A handler that reacts to a specific event type.
 ///
 /// Handlers receive both the event payload and a reference to the
@@ -101,15 +99,12 @@ impl Default for EventDispatcher {
 // Convenience builder
 // ---------------------------------------------------------------------------
 
-/// Build an [`EventDispatcher`] pre-registered with all five standard
-/// event handlers: Modification, Deployment, ConfigChange, BugFix,
-/// and Decision.
+/// Build an empty [`EventDispatcher`].
 ///
-/// This is the recommended factory for production usage.
+/// All event types are now handled by [`HookEngine`]; the dispatcher
+/// is retained as a no-op fallback when no hook engine is configured.
 pub fn build_default_dispatcher() -> EventDispatcher {
-    let mut d = EventDispatcher::new();
-    d.register(Box::new(DeploymentHandler));
-    d
+    EventDispatcher::new()
 }
 
 /// Link an event to its parent session in the graph.
@@ -367,25 +362,19 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[tokio::test]
-    async fn default_dispatcher_has_one_handler() {
+    async fn default_dispatcher_is_empty() {
         let d = build_default_dispatcher();
-        assert_eq!(d.len(), 1);
+        assert_eq!(d.len(), 0);
     }
 
     #[tokio::test]
-    async fn default_dispatcher_routes_deployment() {
+    async fn default_dispatcher_noop_for_any_event() {
         let d = build_default_dispatcher();
         let repo = MockRepo;
-        let evt = make_event(EventType::Deployment);
-        d.dispatch(&evt, &repo).await.expect("dispatch should succeed");
-    }
-
-    #[tokio::test]
-    async fn default_dispatcher_routes_bug_fix() {
-        let d = build_default_dispatcher();
-        let repo = MockRepo;
-        let evt = make_event(EventType::BugFix);
-        d.dispatch(&evt, &repo).await.expect("dispatch should succeed");
+        // Empty dispatcher should succeed for any event type (no-op)
+        for et in [EventType::Deployment, EventType::BugFix, EventType::ConfigChange] {
+            d.dispatch(&make_event(et), &repo).await.expect("dispatch should succeed");
+        }
     }
 
     // -------------------------------------------------------------------

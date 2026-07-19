@@ -240,6 +240,33 @@ impl MemoryService for DefaultMemoryService {
                 }
                 return Ok(());
             }
+        } else if event.event_type == super::entities::EventType::Deployment {
+            if let Some(ref engine) = self.hook_engine {
+                let mut ctx = build_hook_context(event);
+                // Compute virtual variables that the side_effects Cypher templates need
+                let job = ctx.fields.get("job").cloned().unwrap_or_else(|| event.entity_id.clone());
+                let env = ctx.fields.get("env").cloned().unwrap_or_else(|| "test".to_string());
+                let build_number = ctx.fields.get("build_number").cloned().unwrap_or_default();
+                ctx.fields.insert("job_id".into(), format!("dt://jenkins/job/{}", job));
+                ctx.fields.insert("build_id".into(), if build_number.is_empty() {
+                    format!("dt://jenkins/job/{}/build/unknown", job)
+                } else {
+                    format!("dt://jenkins/job/{}/build/{}", job, build_number)
+                });
+                ctx.fields.insert("instance_id".into(), format!("dt://service/{}/instance/{}", job, env));
+                ctx.fields.insert("timestamp_raw".into(), event.timestamp.timestamp_millis().to_string());
+                let results = engine.fire("jenkins_deploy_completed", ctx).await;
+                for r in &results {
+                    if !r.success {
+                        tracing::warn!(
+                            "[hook] Deployment event failed for label {}: {}",
+                            r.label,
+                            r.error.as_deref().unwrap_or("unknown"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
         } else if event.event_type == super::entities::EventType::ConfigChange {
             if let Some(ref engine) = self.hook_engine {
                 let ctx = build_hook_context(event);
@@ -508,12 +535,11 @@ mod tests {
         };
 
         svc.record_event(&evt).await.expect("record_event");
-        // Expected writes: ensure_day (read), create_session (write),
-        // handler write (write). link_event_to_session is skipped
-        // for Deployment events (handler does it inline).
-        // So at least 2 writes + 1 read.
+        // Without hook_engine: ensure_day (read), create_session (write).
+        // Dispatcher is empty (all handlers migrated to hooks), so no handler write.
+        // link_event_to_session is skipped for Deployment.
         assert!(read.load(Ordering::SeqCst) >= 1);
-        assert!(write.load(Ordering::SeqCst) >= 2);
+        assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
