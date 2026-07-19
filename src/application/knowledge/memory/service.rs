@@ -16,7 +16,7 @@ use super::dispatcher::{
     build_default_dispatcher, link_event_to_session, EventDispatcher,
 };
 use super::entities::{Day, MemoryEvent, Session};
-use super::handlers::make_event_id;
+use super::handlers::{make_event_id, parse_key_values};
 
 /// Service for managing the time dimension (Day → Session → Event).
 ///
@@ -210,6 +210,21 @@ impl MemoryService for DefaultMemoryService {
                 }
                 return Ok(());
             }
+        } else if event.event_type == super::entities::EventType::Conversation {
+            if let Some(ref engine) = self.hook_engine {
+                let ctx = build_hook_context(event);
+                let results = engine.fire("session_ended", ctx).await;
+                for r in &results {
+                    if !r.success {
+                        tracing::warn!(
+                            "[hook] Conversation event failed for label {}: {}",
+                            r.label,
+                            r.error.as_deref().unwrap_or("unknown"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
         }
 
         // 1. Ensure the parent Day exists (lazy creation).
@@ -274,6 +289,21 @@ impl MemoryService for DefaultMemoryService {
     async fn get_timeline(&self, _days: u32) -> Result<Vec<Day>, DtError> {
         // Stub: full query implementation requires a real Neo4j connection.
         Ok(vec![])
+    }
+}
+
+/// Convert a [`MemoryEvent`] into a [`HookContext`] for hook engine dispatch.
+///
+/// Fields are populated from `details` (key=value pairs). `hook_name` is
+/// left empty — the caller sets it when calling [`HookEngine::fire`].
+fn build_hook_context(event: &MemoryEvent) -> HookContext {
+    HookContext {
+        hook_name: String::new(),
+        project: event.project.clone(),
+        session_id: event.session_id.clone(),
+        entity_id: event.entity_id.clone(),
+        entity_type: event.entity_type.clone(),
+        fields: parse_key_values(&event.details),
     }
 }
 
@@ -489,7 +519,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let events = svc.get_session_events("any").await.expect("stub");
         assert!(events.is_empty());

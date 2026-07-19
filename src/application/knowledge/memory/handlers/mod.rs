@@ -10,13 +10,11 @@ pub mod modification;
 pub mod deployment;
 pub mod config_change;
 pub mod decision;
-pub mod conversation;
 
 pub use modification::ModificationHandler;
 pub use deployment::DeploymentHandler;
 pub use config_change::ConfigChangeHandler;
 pub use decision::DecisionHandler;
-pub use conversation::ConversationHandler;
 
 use std::collections::HashMap;
 use sha2::{Digest, Sha256};
