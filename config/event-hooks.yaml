@@ -1,0 +1,121 @@
+hooks:
+  code_modified:
+    description: "代码文件被修改/创建/删除"
+  jenkins_deploy_started:
+    description: "Jenkins 构建开始"
+  jenkins_deploy_completed:
+    description: "Jenkins 构建完成"
+  config_changed:
+    description: "外部配置被修改"
+  decision_made:
+    description: "架构决策被记录"
+  bug_fix_recorded:
+    description: "Bug 修复被记录"
+  session_ended:
+    description: "AI 会话结束"
+  pod_event_occurred:
+    description: "K8s Pod 出现异常"
+  k8s_synced:
+    description: "K8s 资源同步完成"
+
+event_types:
+  - label: Modification
+    subscribe: code_modified
+    id: { prefix: mod, fields: [entity_id, details] }
+    id_field: mod_id
+    properties:
+      - { name: file, from: context.file, required: true }
+      - { name: entity_type, from: context.entity_type }
+      - { name: entity_id, from: context.entity_id }
+      - { name: change_type, from: context.change_type, default: "modify" }
+      - { name: diff_summary, from: context.diff_summary }
+      - { name: reason, from: context.reason }
+    relationships:
+      - { type: AFFECTS, target_label: Method, source_field: mod_id, match: { context_field: entity_id, target_field: method_id } }
+      - { type: BELONGS_TO, target_label: Project, source_field: mod_id, match: { context_field: project, target_field: name } }
+
+  - label: Deployment
+    subscribe: jenkins_deploy_completed
+    id: { prefix: deploy, fields: [entity_id, details] }
+    id_field: deploy_id
+    properties:
+      - { name: job, from: context.job, required: true }
+      - { name: env, from: context.env, required: true }
+      - { name: branch, from: context.branch }
+      - { name: version, from: context.version }
+      - { name: status, from: context.status, default: "success" }
+    side_effects:
+      - "MERGE (job:JenkinsJob {name: $job}) ON CREATE SET job.job_id = $job_id, job.full_name = $job ON MATCH SET job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now"
+      - "MERGE (build:JenkinsBuild {build_id: $build_id}) SET build.number = $build_number, build.deployed_env = $env, build.deployed_at = $now, build.result = $status"
+      - "MERGE (si:ServiceInstance {instance_id: $instance_id}) SET si.service_name = $job, si.env = $env, si.updated_at = $now"
+      - "OPTIONAL MATCH (job:JenkinsJob {name: $job})-[old:LATEST_DEPLOY]->() DELETE old WITH job, build, si MERGE (job)-[:LATEST_DEPLOY]->(si) MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)"
+
+  - label: ConfigChange
+    subscribe: config_changed
+    id: { prefix: cfg, fields: [entity_id, details] }
+    id_field: change_id
+    properties:
+      - { name: data_id, from: context.data_id }
+      - { name: key, from: context.key }
+      - { name: old_value, from: context.old_value }
+      - { name: new_value, from: context.new_value }
+    relationships:
+      - { type: AFFECTS, target_label: NacosConfig, source_field: change_id, match: { context_field: entity_id, target_field: config_id } }
+
+  - label: BugFix
+    subscribe: bug_fix_recorded
+    id: { prefix: fix, fields: [entity_id, details] }
+    id_field: fix_id
+    properties:
+      - { name: issue, from: context.issue, required: true }
+      - { name: root_cause, from: context.root_cause }
+      - { name: solution, from: context.solution }
+      - { name: files_changed, from: context.files_changed }
+    relationships:
+      - { type: FIXES, target_label: Method, source_field: fix_id, match: { context_field: entity_id, target_field: method_id } }
+
+  - label: Decision
+    subscribe: decision_made
+    id: { prefix: decision, fields: [entity_id, details] }
+    id_field: decision_id
+    properties:
+      - { name: title, from: context.title }
+      - { name: context, from: context.context }
+      - { name: choice, from: context.choice }
+      - { name: rationale, from: context.rationale }
+      - { name: alternatives, from: context.alternatives }
+      - { name: consequences, from: context.consequences }
+      - { name: confidence, from: context.confidence }
+    relationships:
+      - { type: BASED_ON, target_label: Knowledge, source_field: decision_id, match: { context_field: knowledge_id, target_field: knowledge_id } }
+
+  - label: Conversation
+    subscribe: session_ended
+    id: { prefix: conv, fields: [entity_id, details] }
+    id_field: conv_id
+    properties:
+      - { name: summary, from: context.summary }
+
+  - label: PodEvent
+    subscribe: pod_event_occurred
+    id: { prefix: pod, fields: [entity_id, details] }
+    id_field: event_id
+    properties:
+      - { name: pod_name, from: context.pod_name }
+      - { name: namespace, from: context.namespace }
+      - { name: reason, from: context.reason }
+      - { name: message, from: context.message }
+      - { name: restart_count, from: context.restart_count }
+    relationships:
+      - { type: AFFECTS, target_label: ServiceInstance, source_field: event_id, match: { context_field: entity_id, target_field: instance_id } }
+
+  - label: K8sSyncEvent
+    subscribe: k8s_synced
+    id: { prefix: k8s, fields: [entity_id, details] }
+    id_field: event_id
+    properties:
+      - { name: cluster, from: context.cluster }
+      - { name: namespaces_count, from: context.namespaces_count }
+      - { name: deployments_count, from: context.deployments_count }
+      - { name: services_count, from: context.services_count }
+      - { name: duration_ms, from: context.duration_ms }
