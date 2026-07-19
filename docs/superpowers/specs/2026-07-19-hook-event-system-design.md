@@ -12,14 +12,15 @@
 
 当前 Memory World 的事件系统有 7 个 handler，每个独立处理一种事件类型：
 
-| Handler | 代码量 | 职责 | 重复度 |
-|---------|--------|------|--------|
-| `ModificationHandler` | ~70 行 | 代码修改事件 | 高 |
-| `DeploymentHandler` | ~170 行 | Jenkins 部署事件 | 中（含复杂 side effects） |
-| `ConfigChangeHandler` | ~50 行 | Nacos 配置变更 | 高 |
-| `BugFixHandler` | ~40 行 | Bug 修复记录 | 高 |
-| `DecisionHandler` | ~70 行 | 架构决策记录 | 高 |
-| `ConversationHandler` | ~50 行 | 会话结束记录 | 高 |
+| Handler | 代码量 | 写入标签 | 节点数 | 重复度 |
+|---------|--------|---------|-------|--------|
+| `ModificationHandler` | ~70 行 | `:Modification` | 52 | 高 |
+| `DeploymentHandler` | ~170 行 | `:JenkinsJob`, `:JenkinsBuild`, `:ServiceInstance`（但不写 `:Deployment` 节点）| 各 208+/1k+/1 | 中（含复杂 side effects）|
+| `ConfigChangeHandler` | ~50 行 | `:ConfigChange` | 4 | 高 |
+| `BugFixHandler` | ~40 行 | `:BugFix` | 0 | 高 |
+| `DecisionHandler` | ~70 行 | `:Decision` | 0 | 高 |
+| `ConversationHandler` | ~50 行 | `:Conversation` | 0 | 高 |
+| `PodEvent` | 无 handler | `:PodEvent` | 0 | 枚举中有定义，从未实现 |
 
 **所有 handler 的核心流程完全一致：**
 1. 解析 `details` 中的 key=value 对
@@ -112,6 +113,12 @@ hooks:
 
   session_ended:
     description: "AI 会话结束"
+
+  bug_fix_recorded:
+    description: "Bug 修复被记录"
+
+  pod_event_occurred:
+    description: "K8s Pod 出现异常"
 
   k8s_synced:
     description: "K8s 资源同步完成"
@@ -259,6 +266,55 @@ event_types:
     properties:
       - name: summary
         from: context.summary
+
+  # ── Bug 修复 ──────────────────────────────────
+  - label: BugFix
+    subscribe: bug_fix_recorded
+    id:
+      prefix: fix
+      fields: [entity_id, details]
+    id_field: fix_id
+    properties:
+      - name: issue
+        from: context.issue
+        required: true
+      - name: root_cause
+        from: context.root_cause
+      - name: solution
+        from: context.solution
+      - name: files_changed
+        from: context.files_changed
+    relationships:
+      - type: FIXES
+        target_label: Method
+        match:
+          context_field: entity_id
+          target_field: method_id
+
+  # ── Pod 异常事件（预留） ───────────────────────
+  - label: PodEvent
+    subscribe: pod_event_occurred
+    id:
+      prefix: pod
+      fields: [entity_id, details]
+    id_field: event_id
+    properties:
+      - name: pod_name
+        from: context.pod_name
+      - name: namespace
+        from: context.namespace
+      - name: reason
+        from: context.reason
+      - name: message
+        from: context.message
+      - name: restart_count
+        from: context.restart_count
+    relationships:
+      - type: AFFECTS
+        target_label: ServiceInstance
+        match:
+          context_field: entity_id
+          target_field: instance_id
 
   # ── K8s 同步 ──────────────────────────────────
   - label: K8sSyncEvent
@@ -666,7 +722,9 @@ impl SideEffectRunner {
 | `jenkins_deploy_completed` | `jcli_build` MCP / 构建状态轮询 | Jenkins 构建完成时 | 外部 MCP / `dt trigger-hook` |
 | `config_changed` | `dt event --hook` | AI 修改外部配置后 | `src/interfaces/cli/event.rs` |
 | `decision_made` | `dt memorize` | 记录架构决策时 | `src/interfaces/cli/event.rs` |
+| `bug_fix_recorded` | `dt event --hook` | AI 记录 Bug 修复时 | `src/interfaces/cli/event.rs` |
 | `session_ended` | session-end protocol | AI 会话结束时 | AGENTS.md 协议 |
+| `pod_event_occurred` | K8s 监控/事件监听 | K8s Pod 异常时 | 预留 |
 | `k8s_synced` | `dt k8s-sync` | K8s 同步完成后 | `src/application/sync/k8s/` |
 
 ### 触发方式
@@ -741,13 +799,13 @@ dt event --hook jenkins_deploy_completed \
 
 逐个替换，每个 handler 替换后可独立验证：
 
-| 步骤 | Handler | 改为 | 验证方式 |
-|------|---------|------|---------|
-| 2a | `ConversationHandler` | `hooks.fire("session_ended", ...)` | 会话结束写入正常 |
-| 2b | `BugFixHandler` | `hooks.fire("bug_fix_recorded", ...)` | BugFix 节点写入正常 |
-| 2c | `ConfigChangeHandler` | `hooks.fire("config_changed", ...)` | ConfigChange 节点写入正常 |
-| 2d | `DecisionHandler` | `hooks.fire("decision_made", ...)` | Decision 节点写入正常 |
-| 2e | `ModificationHandler` | `hooks.fire("code_modified", ...)` | Modification 节点写入正常 |
+| 步骤 | Handler | 写入标签 | 改为 | 验证方式 |
+|------|---------|---------|------|---------|
+| 2a | `ConversationHandler` | `:Conversation` | `hooks.fire("session_ended", ...)` | 会话结束写入正常 |
+| 2b | `BugFixHandler` | `:BugFix` | `hooks.fire("bug_fix_recorded", ...)` | BugFix 节点写入正常 |
+| 2c | `ConfigChangeHandler` | `:ConfigChange` | `hooks.fire("config_changed", ...)` | ConfigChange 节点写入正常 |
+| 2d | `DecisionHandler` | `:Decision` | `hooks.fire("decision_made", ...)` | Decision 节点写入正常 |
+| 2e | `ModificationHandler` | `:Modification` | `hooks.fire("code_modified", ...)` | Modification 节点写入正常 |
 
 ### 第三步：替换 DeploymentHandler（最复杂）
 
