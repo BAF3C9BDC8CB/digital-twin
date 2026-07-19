@@ -225,6 +225,21 @@ impl MemoryService for DefaultMemoryService {
                 }
                 return Ok(());
             }
+        } else if event.event_type == super::entities::EventType::ConfigChange {
+            if let Some(ref engine) = self.hook_engine {
+                let ctx = build_hook_context(event);
+                let results = engine.fire("config_changed", ctx).await;
+                for r in &results {
+                    if !r.success {
+                        tracing::warn!(
+                            "[hook] ConfigChange event failed for label {}: {}",
+                            r.label,
+                            r.error.as_deref().unwrap_or("unknown"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
         }
 
         // 1. Ensure the parent Day exists (lazy creation).

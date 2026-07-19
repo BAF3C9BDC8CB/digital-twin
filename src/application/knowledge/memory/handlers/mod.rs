@@ -8,12 +8,10 @@
 
 pub mod modification;
 pub mod deployment;
-pub mod config_change;
 pub mod decision;
 
 pub use modification::ModificationHandler;
 pub use deployment::DeploymentHandler;
-pub use config_change::ConfigChangeHandler;
 pub use decision::DecisionHandler;
 
 use std::collections::HashMap;

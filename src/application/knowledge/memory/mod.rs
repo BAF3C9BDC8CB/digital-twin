@@ -8,10 +8,10 @@
 //!
 //! ```text
 //! service::DefaultMemoryService (trait impl)
+//!   ├── HookEngine (routes `config_changed` and other hook events)
 //!   ├── dispatcher::EventDispatcher (routes by EventType)
 //!   │     ├── handlers::ModificationHandler → (:Modification)-[:AFFECTS]->(:Method|:Class|:NacosConfig)
 //!   │     ├── handlers::DeploymentHandler   → (:Deployment)-[:DEPLOYS]->(:ServiceInstance)
-//!   │     ├── handlers::ConfigChangeHandler → (:ConfigChange)-[:AFFECTS]->(:NacosConfig)
 //!   │     ├── handlers::BugFixHandler       → (:BugFix)-[:FIXES]->(:Method)
 //!   │     └── handlers::DecisionHandler     → (:Decision)-[:BASED_ON]->(:Knowledge)
 //!   └── entities::MemoryEvent (payload)

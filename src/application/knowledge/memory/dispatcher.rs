@@ -15,7 +15,7 @@ use crate::domain::traits::GraphRepository;
 
 use super::entities::{EventType, MemoryEvent};
 use super::handlers::{
-    ConfigChangeHandler, DecisionHandler, DeploymentHandler, ModificationHandler,
+    DecisionHandler, DeploymentHandler, ModificationHandler,
 };
 
 /// A handler that reacts to a specific event type.
@@ -112,7 +112,6 @@ pub fn build_default_dispatcher() -> EventDispatcher {
     let mut d = EventDispatcher::new();
     d.register(Box::new(ModificationHandler));
     d.register(Box::new(DeploymentHandler));
-    d.register(Box::new(ConfigChangeHandler));
     d.register(Box::new(DecisionHandler));
     d
 }
@@ -372,9 +371,9 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[tokio::test]
-    async fn default_dispatcher_has_five_handlers() {
+    async fn default_dispatcher_has_three_handlers() {
         let d = build_default_dispatcher();
-        assert_eq!(d.len(), 4);
+        assert_eq!(d.len(), 3);
     }
 
     #[tokio::test]
@@ -391,14 +390,6 @@ mod tests {
         let d = build_default_dispatcher();
         let repo = MockRepo;
         let evt = make_event(EventType::Deployment);
-        d.dispatch(&evt, &repo).await.expect("dispatch should succeed");
-    }
-
-    #[tokio::test]
-    async fn default_dispatcher_routes_config_change() {
-        let d = build_default_dispatcher();
-        let repo = MockRepo;
-        let evt = make_event(EventType::ConfigChange);
         d.dispatch(&evt, &repo).await.expect("dispatch should succeed");
     }
 
