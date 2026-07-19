@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use crate::application::hooks::HookEngine;
 use crate::application::knowledge::memory::entities::{EventType, MemoryEvent};
 use crate::application::knowledge::memory::service::{DefaultMemoryService, MemoryService};
 use crate::domain::traits::GraphRepository;
@@ -31,6 +32,7 @@ pub async fn handle_event(
     project: Option<String>,
     details: String,
     graph: Option<Arc<dyn GraphRepository>>,
+    hook_engine: Option<Arc<HookEngine>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt-daemon CLI: event --type {event_type} --entity-id {entity_id} --entity-type {entity_type} --details {details}",
@@ -64,7 +66,7 @@ pub async fn handle_event(
     // Connect to Neo4j and record the event
     match graph {
         Some(graph) => {
-            let memory_svc = DefaultMemoryService::new(graph);
+            let memory_svc = DefaultMemoryService::new(graph, hook_engine);
             match memory_svc.record_event(&event).await {
                 Ok(()) => {
                     println!(

@@ -15,7 +15,7 @@ use crate::domain::traits::GraphRepository;
 
 use super::entities::{EventType, MemoryEvent};
 use super::handlers::{
-    BugFixHandler, ConfigChangeHandler, ConversationHandler,
+    ConfigChangeHandler, ConversationHandler,
     DecisionHandler, DeploymentHandler, ModificationHandler,
 };
 
@@ -114,7 +114,6 @@ pub fn build_default_dispatcher() -> EventDispatcher {
     d.register(Box::new(ModificationHandler));
     d.register(Box::new(DeploymentHandler));
     d.register(Box::new(ConfigChangeHandler));
-    d.register(Box::new(BugFixHandler));
     d.register(Box::new(DecisionHandler));
     d.register(Box::new(ConversationHandler));
     d
@@ -375,9 +374,9 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[tokio::test]
-    async fn default_dispatcher_has_six_handlers() {
+    async fn default_dispatcher_has_five_handlers() {
         let d = build_default_dispatcher();
-        assert_eq!(d.len(), 6);
+        assert_eq!(d.len(), 5);
     }
 
     #[tokio::test]

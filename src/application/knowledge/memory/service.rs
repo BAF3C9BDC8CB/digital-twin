@@ -7,6 +7,7 @@
 //! [`DefaultMemoryService`] is the canonical production implementation.
 
 use async_trait::async_trait;
+use crate::application::hooks::{HookContext, HookEngine};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 use std::sync::Arc;
@@ -85,16 +86,21 @@ pub trait MemoryService: Send + Sync {
 pub struct DefaultMemoryService {
     graph: Arc<dyn GraphRepository>,
     dispatcher: EventDispatcher,
+    hook_engine: Option<Arc<HookEngine>>,
 }
 
 impl DefaultMemoryService {
     /// Create a new [`DefaultMemoryService`] backed by the given
     /// graph repository, with all five standard event handlers
     /// registered.
-    pub fn new(graph: Arc<dyn GraphRepository>) -> Self {
+    pub fn new(
+        graph: Arc<dyn GraphRepository>,
+        hook_engine: Option<Arc<HookEngine>>,
+    ) -> Self {
         Self {
             graph,
             dispatcher: build_default_dispatcher(),
+            hook_engine,
         }
     }
 }
@@ -181,6 +187,31 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn record_event(&self, event: &MemoryEvent) -> Result<(), DtError> {
+        // 0. Route BugFix events through the hook engine if available.
+        if event.event_type == super::entities::EventType::BugFix {
+            if let Some(ref engine) = self.hook_engine {
+                let ctx = HookContext {
+                    hook_name: "bug_fix_recorded".into(),
+                    project: event.project.clone(),
+                    session_id: event.session_id.clone(),
+                    entity_id: event.entity_id.clone(),
+                    entity_type: event.entity_type.clone(),
+                    fields: super::handlers::parse_key_values(&event.details),
+                };
+                let results = engine.fire("bug_fix_recorded", ctx).await;
+                for r in &results {
+                    if !r.success {
+                        tracing::warn!(
+                            "[hook] BugFix event failed for label {}: {}",
+                            r.label,
+                            r.error.as_deref().unwrap_or("unknown"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
+        }
+
         // 1. Ensure the parent Day exists (lazy creation).
         let day_id = event
             .session_id
@@ -352,7 +383,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let day = svc.ensure_day("2026-07-09").await.expect("ensure_day");
         assert_eq!(day.day_id, "2026-07-09");
@@ -366,7 +397,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let t = chrono::Utc::now();
         let session = Session {
@@ -389,7 +420,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let evt = MemoryEvent {
             event_type: EventType::Deployment,
@@ -415,7 +446,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let evt = MemoryEvent {
             event_type: EventType::Modification,
@@ -437,7 +468,7 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo);
+        let svc = DefaultMemoryService::new(repo, None);
 
         let evt = MemoryEvent {
             event_type: EventType::Decision,

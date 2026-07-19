@@ -1349,6 +1349,7 @@ async fn main() -> anyhow::Result<()> {
                 project,
                 details,
                 graph,
+                None, // CLI mode has no hook engine
             )
             .await?;
             return Ok(());

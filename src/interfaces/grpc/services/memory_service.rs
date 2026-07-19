@@ -3,6 +3,7 @@
 //! Delegates to [`DefaultMemoryService`] to create Day → Session → Event
 //! chains in the knowledge graph.
 
+use crate::application::hooks::HookEngine;
 use crate::domain::traits::GraphRepository;
 use crate::proto::dt::core::*;
 use crate::proto::dt::common;
@@ -17,6 +18,7 @@ use tonic::Status;
 pub async fn handle_record_event(
     req: EventRequest,
     graph: Option<Arc<dyn GraphRepository>>,
+    hook_engine: Option<Arc<HookEngine>>,
 ) -> Result<common::Empty, Status> {
     let graph = graph.ok_or_else(|| {
         Status::unavailable("Neo4j graph backend not available")
@@ -52,7 +54,7 @@ pub async fn handle_record_event(
         timestamp: chrono::Utc::now(),
     };
 
-    let memory_svc = DefaultMemoryService::new(graph);
+    let memory_svc = DefaultMemoryService::new(graph, hook_engine);
     memory_svc
         .record_event(&event)
         .await
@@ -124,7 +126,7 @@ mod tests {
             project: "test".into(),
             details: "job: test; branch: main".into(),
         };
-        let result = handle_record_event(req, None).await;
+        let result = handle_record_event(req, None, None).await;
         assert!(result.is_err());
     }
 
@@ -144,7 +146,7 @@ mod tests {
             project: "test".into(),
             details: "".into(),
         };
-        let result = handle_record_event(req, Some(graph)).await;
+        let result = handle_record_event(req, Some(graph), None).await;
         assert!(result.is_err());
     }
 
@@ -164,7 +166,7 @@ mod tests {
             project: "test".into(),
             details: "job: my-job; env: test; branch: main".into(),
         };
-        let result = handle_record_event(req, Some(graph)).await;
+        let result = handle_record_event(req, Some(graph), None).await;
         assert!(result.is_ok());
         // record_event triggers writes: ensure_day (read), create_session (write),
         // handler write + link_event_to_session (2 writes) = at least 3 writes

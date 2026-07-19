@@ -9,14 +9,12 @@
 pub mod modification;
 pub mod deployment;
 pub mod config_change;
-pub mod bug_fix;
 pub mod decision;
 pub mod conversation;
 
 pub use modification::ModificationHandler;
 pub use deployment::DeploymentHandler;
 pub use config_change::ConfigChangeHandler;
-pub use bug_fix::BugFixHandler;
 pub use decision::DecisionHandler;
 pub use conversation::ConversationHandler;
 

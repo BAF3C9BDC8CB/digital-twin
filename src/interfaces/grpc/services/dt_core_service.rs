@@ -12,6 +12,7 @@
 //! | `Memorize`   | [`knowledge_service::handle_memorize`] |
 //! | `Sync`       | [`sync_service::handle_sync`] |
 
+use crate::application::hooks::HookEngine;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use crate::proto::dt::core::dt_core_server::DtCore;
 use crate::proto::dt::core::*;
@@ -30,6 +31,7 @@ pub struct DtCoreServiceImpl {
     pub graph: Option<Arc<dyn GraphRepository>>,
     pub vector: Option<Arc<dyn VectorRepository>>,
     pub embed: Option<Arc<dyn EmbedService>>,
+    pub hook_engine: Option<Arc<HookEngine>>,
 }
 
 impl DtCoreServiceImpl {
@@ -38,8 +40,9 @@ impl DtCoreServiceImpl {
         graph: Option<Arc<dyn GraphRepository>>,
         vector: Option<Arc<dyn VectorRepository>>,
         embed: Option<Arc<dyn EmbedService>>,
+        hook_engine: Option<Arc<HookEngine>>,
     ) -> Self {
-        Self { graph, vector, embed }
+        Self { graph, vector, embed, hook_engine }
     }
 }
 
@@ -83,7 +86,7 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<EventRequest>,
     ) -> Result<Response<common::Empty>, Status> {
         let req = request.into_inner();
-        let resp = memory_service::handle_record_event(req, self.graph.clone()).await?;
+        let resp = memory_service::handle_record_event(req, self.graph.clone(), self.hook_engine.clone()).await?;
         Ok(Response::new(resp))
     }
 
@@ -116,15 +119,16 @@ mod tests {
 
     #[test]
     fn service_impl_is_cloneable() {
-        let svc = DtCoreServiceImpl::new(None, None, None);
+        let svc = DtCoreServiceImpl::new(None, None, None, None);
         let _clone = svc.clone();
     }
 
     #[test]
     fn service_impl_new_accepts_options() {
-        let svc = DtCoreServiceImpl::new(None, None, None);
+        let svc = DtCoreServiceImpl::new(None, None, None, None);
         assert!(svc.graph.is_none());
         assert!(svc.vector.is_none());
         assert!(svc.embed.is_none());
+        assert!(svc.hook_engine.is_none());
     }
 }
