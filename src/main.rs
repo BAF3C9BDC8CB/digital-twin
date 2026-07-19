@@ -1044,6 +1044,41 @@ async fn main() -> anyhow::Result<()> {
                     coordinator: Some(Arc::clone(&coordinator)),
                 };
 
+                // Fire code_modified hook (replaces the old ModificationHandler).
+                if let Some(ref engine) = components.hook_engine {
+                    let mut fields = std::collections::HashMap::new();
+                    fields.insert(
+                        "file".to_string(),
+                        event.file_path.to_string_lossy().to_string(),
+                    );
+                    fields.insert(
+                        "change_type".to_string(),
+                        event.kind.as_op_type().to_string(),
+                    );
+                    fields.insert(
+                        "entity_type".to_string(),
+                        "File".to_string(),
+                    );
+                    let ctx = dt_daemon::application::hooks::HookContext {
+                        hook_name: String::new(),
+                        project: event.project_name.clone(),
+                        session_id: String::new(),
+                        entity_id: event.file_path.to_string_lossy().to_string(),
+                        entity_type: "File".into(),
+                        fields,
+                    };
+                    let results = engine.fire("code_modified", ctx).await;
+                    for r in &results {
+                        if !r.success {
+                            tracing::warn!(
+                                "[hook] code_modified failed for label {}: {}",
+                                r.label,
+                                r.error.as_deref().unwrap_or("unknown"),
+                            );
+                        }
+                    }
+                }
+
                 match runner
                     .run(&event.project_name, &event.project_root, &event.file_path, &deps)
                     .await

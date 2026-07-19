@@ -14,9 +14,7 @@ use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
 use super::entities::{EventType, MemoryEvent};
-use super::handlers::{
-    DeploymentHandler, ModificationHandler,
-};
+use super::handlers::DeploymentHandler;
 
 /// A handler that reacts to a specific event type.
 ///
@@ -110,7 +108,6 @@ impl Default for EventDispatcher {
 /// This is the recommended factory for production usage.
 pub fn build_default_dispatcher() -> EventDispatcher {
     let mut d = EventDispatcher::new();
-    d.register(Box::new(ModificationHandler));
     d.register(Box::new(DeploymentHandler));
     d
 }
@@ -370,18 +367,9 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[tokio::test]
-    async fn default_dispatcher_has_two_handlers() {
+    async fn default_dispatcher_has_one_handler() {
         let d = build_default_dispatcher();
-        assert_eq!(d.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn default_dispatcher_routes_modification() {
-        let d = build_default_dispatcher();
-        let repo = MockRepo;
-        let evt = make_event(EventType::Modification);
-        // Should not panic — the ModificationHandler will call write_query.
-        d.dispatch(&evt, &repo).await.expect("dispatch should succeed");
+        assert_eq!(d.len(), 1);
     }
 
     #[tokio::test]

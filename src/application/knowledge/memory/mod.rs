@@ -6,14 +6,15 @@
 //!
 //! # Architecture
 //!
+//! Most event types are now handled directly by [`HookEngine`] via YAML-driven
+//! hooks (see `config/event-hooks.yaml`). The dispatcher only routes
+//! Deployment events through the legacy hand-written handler.
+//!
 //! ```text
 //! service::DefaultMemoryService (trait impl)
-//!   ├── HookEngine (routes `config_changed` and other hook events)
-//!   ├── dispatcher::EventDispatcher (routes by EventType)
-//!   │     ├── handlers::ModificationHandler → (:Modification)-[:AFFECTS]->(:Method|:Class|:NacosConfig)
-//!   │     ├── handlers::DeploymentHandler   → (:Deployment)-[:DEPLOYS]->(:ServiceInstance)
-//!   │     ├── handlers::BugFixHandler       → (:BugFix)-[:FIXES]->(:Method)
-//!   │     └── handlers::DecisionHandler     → (:Decision)-[:BASED_ON]->(:Knowledge)
+//!   ├── HookEngine (routes `code_modified`, `config_changed`, etc.)
+//!   ├── dispatcher::EventDispatcher (routes by EventType — Deployment only)
+//!   │     └── handlers::DeploymentHandler → (:Deployment)-[:DEPLOYS]->(:ServiceInstance)
 //!   └── entities::MemoryEvent (payload)
 //! ```
 

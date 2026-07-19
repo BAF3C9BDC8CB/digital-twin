@@ -6,10 +6,8 @@
 //! 3. Creates relationship edges to target entities
 //! 4. Executes the write via [`GraphRepository::write_query`]
 
-pub mod modification;
 pub mod deployment;
 
-pub use modification::ModificationHandler;
 pub use deployment::DeploymentHandler;
 
 use std::collections::HashMap;

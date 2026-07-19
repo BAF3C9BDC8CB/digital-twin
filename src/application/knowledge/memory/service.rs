@@ -255,6 +255,21 @@ impl MemoryService for DefaultMemoryService {
                 }
                 return Ok(());
             }
+        } else if event.event_type == super::entities::EventType::Modification {
+            if let Some(ref engine) = self.hook_engine {
+                let ctx = build_hook_context(event);
+                let results = engine.fire("code_modified", ctx).await;
+                for r in &results {
+                    if !r.success {
+                        tracing::warn!(
+                            "[hook] Modification event failed for label {}: {}",
+                            r.label,
+                            r.error.as_deref().unwrap_or("unknown"),
+                        );
+                    }
+                }
+                return Ok(());
+            }
         }
 
         // 1. Ensure the parent Day exists (lazy creation).
@@ -506,6 +521,9 @@ mod tests {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
+        // With hook_engine = None, the else-if branch falls through to the
+        // normal path, which creates session + links event (but no handler
+        // writes since ModificationHandler was removed — handled by hooks now).
         let svc = DefaultMemoryService::new(repo, None);
 
         let evt = MemoryEvent {
@@ -520,7 +538,8 @@ mod tests {
         };
 
         svc.record_event(&evt).await.expect("record_event");
-        assert!(write.load(Ordering::SeqCst) >= 3);
+        // Without hook_engine, only create_session (1 write) + link (1 write).
+        assert!(write.load(Ordering::SeqCst) >= 2);
     }
 
     #[tokio::test]
