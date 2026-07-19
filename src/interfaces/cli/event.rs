@@ -1,99 +1,51 @@
-//! CLI handler for `dt event` — record an event to the knowledge graph.
+//! CLI handler for `dt event` — fire a named hook with a JSON context.
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! Calls `hook_engine.fire(hook_name, context)` directly instead of
+//! routing through the old MemoryService dispatcher.
 
 use std::sync::Arc;
 
-use crate::application::hooks::HookEngine;
-use crate::application::knowledge::memory::entities::{EventType, MemoryEvent};
-use crate::application::knowledge::memory::service::{DefaultMemoryService, MemoryService};
-use crate::domain::traits::GraphRepository;
+use crate::application::hooks::{HookContext, HookEngine};
 
-/// Parse an EventType from a string (case-insensitive).
-pub fn parse_event_type(s: &str) -> Option<EventType> {
-    match s.to_lowercase().as_str() {
-        "modification" => Some(EventType::Modification),
-        "deployment" => Some(EventType::Deployment),
-        "configchange" => Some(EventType::ConfigChange),
-        "bugfix" => Some(EventType::BugFix),
-        "decision" => Some(EventType::Decision),
-        "conversation" => Some(EventType::Conversation),
-        _ => None,
-    }
-}
-
-/// Handle `dt event` — records a MemoryEvent node in the KG.
+/// Handle `dt event` — fires a named hook.
 ///
-/// `graph` must be pre-connected by the caller.
+/// `hook_name` identifies the hook (e.g. `code_modified`,
+/// `jenkins_deploy_completed`). `context_json` is a JSON object with
+/// fields that the hook's side-effect templates can reference.
 pub async fn handle_event(
-    event_type: String,
-    entity_id: String,
-    entity_type: String,
-    project: Option<String>,
-    details: String,
-    graph: Option<Arc<dyn GraphRepository>>,
+    hook_name: String,
+    context_json: String,
     hook_engine: Option<Arc<HookEngine>>,
 ) -> anyhow::Result<()> {
-    tracing::info!(
-        "dt-daemon CLI: event --type {event_type} --entity-id {entity_id} --entity-type {entity_type} --details {details}",
-    );
+    tracing::info!("dt-daemon CLI: event --hook {hook_name}");
 
-    let project_name = project.as_deref().unwrap_or("unknown");
-    let session_id = format!("{}-cli", chrono::Utc::now().format("%Y-%m-%d"));
-
-    // Parse event type
-    let parsed_type = match parse_event_type(&event_type) {
-        Some(t) => t,
+    let engine = match hook_engine {
+        Some(e) => e,
         None => {
-            eprintln!(
-                "Unknown event type: {event_type}. \
-                 Expected: Modification, Deployment, ConfigChange, BugFix, Decision, Conversation"
-            );
+            eprintln!("Hook engine not available — event cannot be fired");
             return Ok(());
         }
     };
 
-    let event = MemoryEvent {
-        event_type: parsed_type,
-        entity_id: entity_id.clone(),
-        entity_type: entity_type.clone(),
-        project: project_name.to_string(),
-        details: details.clone(),
-        session_id,
-        timestamp: chrono::Utc::now(),
+    let ctx: HookContext = match serde_json::from_str(&context_json) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to parse context JSON: {e}");
+            return Ok(());
+        }
     };
 
-    // Connect to Neo4j and record the event
-    match graph {
-        Some(graph) => {
-            let memory_svc = DefaultMemoryService::new(graph, hook_engine);
-            match memory_svc.record_event(&event).await {
-                Ok(()) => {
-                    println!(
-                        "Event recorded: type={} entity_id={} entity_type={} project={}",
-                        event_type, entity_id, entity_type, project_name,
-                    );
-                    tracing::info!(
-                        "event {} → {} ({}) in project {}",
-                        event_type,
-                        entity_id,
-                        entity_type,
-                        project_name,
-                    );
-                }
-                Err(e) => {
-                    eprintln!("Event record failed: {e}");
-                }
-            }
-        }
-        None => {
-            tracing::warn!("Neo4j unavailable — event not persisted");
-            println!(
-                "Event (not persisted): type={event_type} entity_id={entity_id} \
-                 entity_type={entity_type} project={project_name}"
+    let results = engine.fire(&hook_name, ctx).await;
+    for r in &results {
+        if !r.success {
+            tracing::warn!(
+                "[hook] {hook_name} failed for label {}: {}",
+                r.label,
+                r.error.as_deref().unwrap_or("unknown"),
             );
         }
     }
 
+    println!("Event fired: hook={hook_name} results={}", results.len());
     Ok(())
 }

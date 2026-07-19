@@ -182,30 +182,19 @@ enum Commands {
         details: String,
     },
 
-    /// Record an event to the knowledge graph (Modification, Deployment, ConfigChange, etc.).
+    /// Fire a named hook with a JSON context object.
     ///
-    /// Used by the MCP Server post-execute hook and OpenCode plugin to persist
-    /// AI-action memories as Event nodes in Neo4j.
+    /// Replaces the old `--type` / `--entity-id` / `--details` interface.
+    /// The hook and its side-effect templates are configured in
+    /// `config/event-hooks.yaml`.
     Event {
-        /// Event type: Modification | Deployment | ConfigChange | BugFix | Decision | Conversation
-        #[arg(long = "type")]
-        event_type: String,
+        /// Hook name (e.g. code_modified, jenkins_deploy_completed).
+        #[arg(long = "hook")]
+        hook_name: String,
 
-        /// Unique identifier for the entity (e.g. file path, job name, config key).
-        #[arg(long = "entity-id")]
-        entity_id: String,
-
-        /// Entity type label (e.g. Method, JenkinsJob, NacosConfig, Session).
-        #[arg(long = "entity-type")]
-        entity_type: String,
-
-        /// Optional project name for scoping.
-        #[arg(long = "project")]
-        project: Option<String>,
-
-        /// Human-readable details summarising the event.
-        #[arg(long = "details")]
-        details: String,
+        /// JSON object with fields for the hook's side-effect templates.
+        #[arg(long = "context")]
+        context: String,
     },
 
     /// Learn from AI task execution — write structured knowledge into Knowledge World.
@@ -782,6 +771,25 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
         }
         Err(e) => {
             tracing::warn!("Neo4j connection failed (will use noop): {}", e);
+            None
+        }
+    }
+}
+
+/// Build a HookEngine from the Neo4j graph connection and event-hooks.yaml.
+/// Returns `None` if Neo4j is unavailable or the config file is missing.
+async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::HookEngine>> {
+    let graph = connect_graph().await?;
+    match dt_daemon::application::hooks::HookRegistry::from_file("config/event-hooks.yaml") {
+        Ok(registry) => {
+            tracing::info!("HookRegistry loaded from config/event-hooks.yaml");
+            Some(Arc::new(dt_daemon::application::hooks::HookEngine::new(
+                Arc::new(registry),
+                graph,
+            )))
+        }
+        Err(e) => {
+            tracing::warn!("failed to load config/event-hooks.yaml: {e} — hook engine disabled");
             None
         }
     }
@@ -1370,21 +1378,14 @@ async fn main() -> anyhow::Result<()> {
 
         // ---- CLI mode: dt event ----
         Some(Commands::Event {
-            event_type,
-            entity_id,
-            entity_type,
-            project,
-            details,
+            hook_name,
+            context,
         }) => {
-            let graph = connect_graph().await;
+            let hook_engine = connect_hook_engine().await;
             dt_daemon::interfaces::cli::event::handle_event(
-                event_type,
-                entity_id,
-                entity_type,
-                project,
-                details,
-                graph,
-                None, // CLI mode has no hook engine
+                hook_name,
+                context,
+                hook_engine,
             )
             .await?;
             return Ok(());

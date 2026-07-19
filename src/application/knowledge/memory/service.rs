@@ -5,6 +5,14 @@
 //! `GraphRepository` abstraction.
 //!
 //! [`DefaultMemoryService`] is the canonical production implementation.
+//!
+//! # Event routing
+//!
+//! All event types are now handled by [`HookEngine`]; `record_event`
+//! retains an `else if` chain that maps each [`EventType`] to the
+//! appropriate hook name for backward compatibility.
+
+use std::collections::HashMap;
 
 use async_trait::async_trait;
 use crate::application::hooks::{HookContext, HookEngine};
@@ -12,11 +20,29 @@ use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 use std::sync::Arc;
 
-use super::dispatcher::{
-    build_default_dispatcher, link_event_to_session, EventDispatcher,
-};
 use super::entities::{Day, MemoryEvent, Session};
-use super::handlers::{make_event_id, parse_key_values};
+
+/// Parse a `key=value` / `key: value` string into a [`HashMap`].
+///
+/// Pairs are separated by `;` or `,`. Leading/trailing whitespace is
+/// trimmed. Keys are lowercased so callers can match case-insensitively.
+pub(crate) fn parse_key_values(raw: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for part in raw.split([';', '\n', ',']) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(pos) = part.find(['=', ':']) {
+            let key = part[..pos].trim().to_lowercase();
+            let value = part[pos + 1..].trim().to_string();
+            if !key.is_empty() {
+                map.insert(key, value);
+            }
+        }
+    }
+    map
+}
 
 /// Service for managing the time dimension (Day → Session → Event).
 ///
@@ -71,7 +97,7 @@ pub trait MemoryService: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Canonical implementation of [`MemoryService`] backed by
-/// a [`GraphRepository`] and the default set of event handlers.
+/// a [`GraphRepository`] and (optionally) a [`HookEngine`].
 ///
 /// # Lifecycle
 ///
@@ -80,26 +106,23 @@ pub trait MemoryService: Send + Sync {
 /// create_session → MERGE (:Session),  MERGE (day)-[:HAS_SESSION]->(session)
 /// record_event   → 1. ensure_day (lazy)
 ///                  2. create_session (if not exists)
-///                  3. dispatch to handler → MERGE (:EventType {…})
+///                  3. route via hook engine → MERGE (:EventType {…})
 ///                  4. link (:Session)-[:HAS_EVENT]->(:EventType)
 /// ```
 pub struct DefaultMemoryService {
     graph: Arc<dyn GraphRepository>,
-    dispatcher: EventDispatcher,
     hook_engine: Option<Arc<HookEngine>>,
 }
 
 impl DefaultMemoryService {
     /// Create a new [`DefaultMemoryService`] backed by the given
-    /// graph repository, with all five standard event handlers
-    /// registered.
+    /// graph repository.
     pub fn new(
         graph: Arc<dyn GraphRepository>,
         hook_engine: Option<Arc<HookEngine>>,
     ) -> Self {
         Self {
             graph,
-            dispatcher: build_default_dispatcher(),
             hook_engine,
         }
     }
@@ -119,8 +142,6 @@ impl MemoryService for DefaultMemoryService {
         params.insert("date".into(), serde_json::Value::String(date.into()));
 
         let _result = self.graph.read_query(cypher, params).await?;
-        // Always return a Day from the given date — even if the read
-        // result is empty (MERGE guarantees the node exists).
         Ok(Day {
             day_id: date.into(),
             date: date.into(),
@@ -128,7 +149,6 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn create_session(&self, session: &Session) -> Result<(), DtError> {
-        // First ensure the parent Day exists.
         let day_id = session.session_id.split('-').take(3).collect::<Vec<_>>().join("-");
         self.ensure_day(&day_id).await?;
 
@@ -174,7 +194,6 @@ impl MemoryService for DefaultMemoryService {
                 .unwrap_or(serde_json::Value::Null),
         );
 
-        // key_decisions is stored as a JSON array string for simplicity
         let kd = serde_json::to_string(&session.key_decisions)
             .unwrap_or_else(|_| "[]".to_string());
         params.insert(
@@ -187,195 +206,69 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn record_event(&self, event: &MemoryEvent) -> Result<(), DtError> {
-        // 0. Route BugFix events through the hook engine if available.
-        if event.event_type == super::entities::EventType::BugFix {
-            if let Some(ref engine) = self.hook_engine {
-                let ctx = HookContext {
-                    hook_name: "bug_fix_recorded".into(),
-                    project: event.project.clone(),
-                    session_id: event.session_id.clone(),
-                    entity_id: event.entity_id.clone(),
-                    entity_type: event.entity_type.clone(),
-                    fields: super::handlers::parse_key_values(&event.details),
-                };
-                let results = engine.fire("bug_fix_recorded", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] BugFix event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-        } else if event.event_type == super::entities::EventType::Conversation {
-            if let Some(ref engine) = self.hook_engine {
-                let ctx = build_hook_context(event);
-                let results = engine.fire("session_ended", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] Conversation event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-        } else if event.event_type == super::entities::EventType::Decision {
-            if let Some(ref engine) = self.hook_engine {
-                let ctx = build_hook_context(event);
-                let results = engine.fire("decision_made", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] Decision event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-        } else if event.event_type == super::entities::EventType::Deployment {
-            if let Some(ref engine) = self.hook_engine {
-                let mut ctx = build_hook_context(event);
-                // Compute virtual variables that the side_effects Cypher templates need
-                let job = ctx.fields.get("job").cloned().unwrap_or_else(|| event.entity_id.clone());
-                let env = ctx.fields.get("env").cloned().unwrap_or_else(|| "test".to_string());
-                let build_number = ctx.fields.get("build_number").cloned().unwrap_or_default();
-                ctx.fields.insert("job_id".into(), format!("dt://jenkins/job/{}", job));
-                ctx.fields.insert("build_id".into(), if build_number.is_empty() {
-                    format!("dt://jenkins/job/{}/build/unknown", job)
-                } else {
-                    format!("dt://jenkins/job/{}/build/{}", job, build_number)
-                });
-                ctx.fields.insert("instance_id".into(), format!("dt://service/{}/instance/{}", job, env));
-                ctx.fields.insert("timestamp_raw".into(), event.timestamp.timestamp_millis().to_string());
-                let results = engine.fire("jenkins_deploy_completed", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] Deployment event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-        } else if event.event_type == super::entities::EventType::ConfigChange {
-            if let Some(ref engine) = self.hook_engine {
-                let ctx = build_hook_context(event);
-                let results = engine.fire("config_changed", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] ConfigChange event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
-        } else if event.event_type == super::entities::EventType::Modification {
-            if let Some(ref engine) = self.hook_engine {
-                let ctx = build_hook_context(event);
-                let results = engine.fire("code_modified", ctx).await;
-                for r in &results {
-                    if !r.success {
-                        tracing::warn!(
-                            "[hook] Modification event failed for label {}: {}",
-                            r.label,
-                            r.error.as_deref().unwrap_or("unknown"),
-                        );
-                    }
-                }
-                return Ok(());
-            }
+        // Route each event type through the hook engine.
+        let hook_name = match event.event_type {
+            super::entities::EventType::BugFix => "bug_fix_recorded",
+            super::entities::EventType::Conversation => "session_ended",
+            super::entities::EventType::Decision => "decision_made",
+            super::entities::EventType::Deployment => "jenkins_deploy_completed",
+            super::entities::EventType::ConfigChange => "config_changed",
+            super::entities::EventType::Modification => "code_modified",
+            super::entities::EventType::PodEvent => "pod_event",
+        };
+
+        let mut ctx = HookContext {
+            hook_name: hook_name.into(),
+            project: event.project.clone(),
+            session_id: event.session_id.clone(),
+            entity_id: event.entity_id.clone(),
+            entity_type: event.entity_type.clone(),
+            fields: parse_key_values(&event.details),
+        };
+
+        // Special-case: Deployment needs virtual variables for side-effect templates.
+        if event.event_type == super::entities::EventType::Deployment {
+            let job = ctx.fields.get("job").cloned().unwrap_or_else(|| event.entity_id.clone());
+            let env = ctx.fields.get("env").cloned().unwrap_or_else(|| "test".to_string());
+            let build_number = ctx.fields.get("build_number").cloned().unwrap_or_default();
+            ctx.fields.insert("job_id".into(), format!("dt://jenkins/job/{}", job));
+            ctx.fields.insert("build_id".into(), if build_number.is_empty() {
+                format!("dt://jenkins/job/{}/build/unknown", job)
+            } else {
+                format!("dt://jenkins/job/{}/build/{}", job, build_number)
+            });
+            ctx.fields.insert("instance_id".into(), format!("dt://service/{}/instance/{}", job, env));
+            ctx.fields.insert("timestamp_raw".into(), event.timestamp.timestamp_millis().to_string());
         }
 
-        // 1. Ensure the parent Day exists (lazy creation).
-        let day_id = event
-            .session_id
-            .split('-')
-            .take(3)
-            .collect::<Vec<_>>()
-            .join("-");
-        self.ensure_day(&day_id).await?;
-
-        // 2. Ensure the parent Session exists (merge on session_id).
-        let now = chrono::Utc::now();
-        let session = Session {
-            session_id: event.session_id.clone(),
-            summary: format!("Auto-created session for {}", event.event_type.as_str()),
-            key_decisions: vec![],
-            thread_id: None,
-            started_at: event.timestamp,
-            ended_at: Some(now),
-        };
-        // Try to create session; if it already exists, MERGE is no-op.
-        let _ = self.create_session(&session).await;
-
-        // 3. Dispatch to the appropriate event-type handler.
-        //    The handler creates the event node (e.g. :Modification, :Deployment).
-        self.dispatcher
-            .dispatch(event, self.graph.as_ref())
-            .await?;
-
-        // 4. Link the event node back to the Session via [:HAS_EVENT].
-        //    Build the event node ID using the same scheme as the handlers.
-        let prefix = match event.event_type {
-            super::entities::EventType::Modification => "mod",
-            super::entities::EventType::Deployment => "deploy",
-            super::entities::EventType::ConfigChange => "cfg",
-            super::entities::EventType::BugFix => "fix",
-            super::entities::EventType::Decision => "decision",
-            super::entities::EventType::PodEvent => "pod",
-            super::entities::EventType::Conversation => "conv",
-        };
-        let event_node_id = make_event_id(prefix, &event.entity_id, &event.details);
-
-        link_event_to_session(
-            self.graph.as_ref(),
-            &event.session_id,
-            &event_node_id,
-            event.event_type.clone(),
-        )
-        .await?;
+        if let Some(ref engine) = self.hook_engine {
+            let results = engine.fire(hook_name, ctx).await;
+            for r in &results {
+                if !r.success {
+                    tracing::warn!(
+                        "[hook] {} event failed for label {}: {}",
+                        hook_name,
+                        r.label,
+                        r.error.as_deref().unwrap_or("unknown"),
+                    );
+                }
+            }
+        } else {
+            tracing::warn!(
+                "No hook engine configured — event type={} not recorded",
+                event.event_type.as_str(),
+            );
+        }
 
         Ok(())
     }
 
     async fn get_session_events(&self, _session_id: &str) -> Result<Vec<MemoryEvent>, DtError> {
-        // Stub: full query implementation requires a real Neo4j connection
-        // and deserialising results back into MemoryEvent structs. For
-        // now, return an empty vec.
         Ok(vec![])
     }
 
     async fn get_timeline(&self, _days: u32) -> Result<Vec<Day>, DtError> {
-        // Stub: full query implementation requires a real Neo4j connection.
         Ok(vec![])
-    }
-}
-
-/// Convert a [`MemoryEvent`] into a [`HookContext`] for hook engine dispatch.
-///
-/// Fields are populated from `details` (key=value pairs). `hook_name` is
-/// left empty — the caller sets it when calling [`HookEngine::fire`].
-fn build_hook_context(event: &MemoryEvent) -> HookContext {
-    HookContext {
-        hook_name: String::new(),
-        project: event.project.clone(),
-        session_id: event.session_id.clone(),
-        entity_id: event.entity_id.clone(),
-        entity_type: event.entity_type.clone(),
-        fields: parse_key_values(&event.details),
     }
 }
 
@@ -391,7 +284,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// A mock graph repository that counts write_query calls.
     struct CountingRepo {
         write_count: Arc<AtomicUsize>,
         read_count: Arc<AtomicUsize>,
@@ -434,19 +326,16 @@ mod tests {
         }
     }
 
-    /// Verify the trait is object-safe (can be used as `dyn MemoryService`).
     #[test]
     fn trait_is_object_safe() {
         fn _accept(_: &dyn MemoryService) {}
     }
 
-    /// Verify all trait methods compile when referenced.
     #[test]
     fn trait_method_signatures_exist() {
         fn _assert_methods<T: MemoryService>() {}
     }
 
-    /// Quick sanity check on entity construction used in trait docs.
     #[test]
     fn example_session_construction() {
         let t = chrono::Utc::now();
@@ -490,7 +379,6 @@ mod tests {
         let day = svc.ensure_day("2026-07-09").await.expect("ensure_day");
         assert_eq!(day.day_id, "2026-07-09");
         assert_eq!(day.date, "2026-07-09");
-        // MERGE uses read_query first.
         assert!(read.load(Ordering::SeqCst) >= 1);
     }
 
@@ -512,13 +400,12 @@ mod tests {
         };
 
         svc.create_session(&session).await.expect("create_session");
-        // Should trigger: ensure_day (1 read) + create_session (1 write)
         assert!(read.load(Ordering::SeqCst) >= 1);
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
-    async fn default_memory_service_record_event_full_chain() {
+    async fn default_memory_service_record_event_no_hook() {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
@@ -535,58 +422,9 @@ mod tests {
         };
 
         svc.record_event(&evt).await.expect("record_event");
-        // Without hook_engine: ensure_day (read), create_session (write).
-        // Dispatcher is empty (all handlers migrated to hooks), so no handler write.
-        // link_event_to_session is skipped for Deployment.
-        assert!(read.load(Ordering::SeqCst) >= 1);
-        assert!(write.load(Ordering::SeqCst) >= 1);
-    }
-
-    #[tokio::test]
-    async fn default_memory_service_record_modification_event() {
-        let write = Arc::new(AtomicUsize::new(0));
-        let read = Arc::new(AtomicUsize::new(0));
-        let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        // With hook_engine = None, the else-if branch falls through to the
-        // normal path, which creates session + links event (but no handler
-        // writes since ModificationHandler was removed — handled by hooks now).
-        let svc = DefaultMemoryService::new(repo, None);
-
-        let evt = MemoryEvent {
-            event_type: EventType::Modification,
-            entity_id: "dt://entity/test/class/Foo/method/bar@10".into(),
-            entity_type: "Method".into(),
-            project: "test".into(),
-            details: "file: src/main.rs; entity_type: Method; change_type: modify; \
-                      diff_summary: test; reason: test".into(),
-            session_id: "2026-07-09-001".into(),
-            timestamp: chrono::Utc::now(),
-        };
-
-        svc.record_event(&evt).await.expect("record_event");
-        // Without hook_engine, only create_session (1 write) + link (1 write).
-        assert!(write.load(Ordering::SeqCst) >= 2);
-    }
-
-    #[tokio::test]
-    async fn default_memory_service_record_decision_event() {
-        let write = Arc::new(AtomicUsize::new(0));
-        let read = Arc::new(AtomicUsize::new(0));
-        let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
-        let svc = DefaultMemoryService::new(repo, None);
-
-        let evt = MemoryEvent {
-            event_type: EventType::Decision,
-            entity_id: "dt://decision/test/001".into(),
-            entity_type: "ArchitectureDecision".into(),
-            project: "test".into(),
-            details: "title: Test decision; choice: Option A".into(),
-            session_id: "2026-07-09-001".into(),
-            timestamp: chrono::Utc::now(),
-        };
-
-        svc.record_event(&evt).await.expect("record_event");
-        assert!(write.load(Ordering::SeqCst) >= 2);
+        // No hook engine — only a warning log, no graph writes.
+        assert_eq!(write.load(Ordering::SeqCst), 0);
+        assert_eq!(read.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
