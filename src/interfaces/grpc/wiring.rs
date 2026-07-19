@@ -12,6 +12,8 @@
 //! The dt-embed service is also connected here; if unavailable it falls
 //! back to [`NoopEmbedService`] (zero-vector embedding).
 
+use crate::application::hooks::engine::HookEngine;
+use crate::application::hooks::registry::HookRegistry;
 use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use crate::infrastructure::parser::ParserRegistry;
@@ -112,6 +114,9 @@ pub struct AppComponents {
     pub vector: Option<Arc<dyn VectorRepository>>,
     /// dt-embed gRPC service (None if unavailable — callers fall back).
     pub embed: Option<Arc<dyn EmbedService>>,
+    /// Hook engine for event-driven knowledge graph writes.
+    /// None if event-hooks.yaml is missing or malformed.
+    pub hook_engine: Option<Arc<HookEngine>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +162,26 @@ pub async fn wire() -> AppComponents {
         Arc::clone(&coordinator),
     )) as Arc<dyn BuildService>;
 
+    // ---- Hook engine (event-driven side effects) ----
+    let hook_engine = graph.as_ref().and_then(|g| {
+        match HookRegistry::from_file("config/event-hooks.yaml") {
+            Ok(registry) => {
+                tracing::info!("HookRegistry loaded from config/event-hooks.yaml");
+                let registry = Arc::new(registry);
+                Some(Arc::new(HookEngine::new(registry, g.clone())))
+            }
+            Err(e) => {
+                tracing::warn!("failed to load config/event-hooks.yaml: {e} — hook engine disabled");
+                None
+            }
+        }
+    });
+
     tracing::info!(
-        "DI assembly complete: 1 service(s) wired (graph={}, vector={})",
+        "DI assembly complete: 1 service(s) wired (graph={}, vector={}, hooks={})",
         graph.is_some(),
         vector.is_some(),
+        hook_engine.is_some(),
     );
 
     AppComponents {
@@ -169,6 +190,7 @@ pub async fn wire() -> AppComponents {
         graph,
         vector,
         embed,
+        hook_engine,
     }
 }
 
