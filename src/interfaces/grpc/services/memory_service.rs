@@ -168,10 +168,9 @@ mod tests {
         };
         let result = handle_record_event(req, Some(graph), None).await;
         assert!(result.is_ok());
-        // Without hook_engine, deployment falls through to normal path:
-        // ensure_day (read), create_session (write). No handler write
-        // (all handlers migrated to hooks), link_event_to_session skipped.
-        assert!(write.load(Ordering::SeqCst) >= 1);
+        // Without hook_engine, the event is silently dropped (logged as warning).
+        // The hook system handles all event types now; old handlers are removed.
+        assert_eq!(write.load(Ordering::SeqCst), 0);
     }
 
     #[test]
