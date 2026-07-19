@@ -92,54 +92,31 @@ dt memorize --type KnowledgeAdded \
 
 ---
 
-## ⚠️ 触发规则：AI 操作后写入知识图谱
+## ⚠️ 触发规则（已自动化）
 
-> **优先使用 MCP Tool**（`dt_memorize` / `dt_event` / `dt_build` 等），MCP 不可用时降级为 CLI。
+事件写入已由 Hook 系统自动处理，AI 不再需要手动调用 `dt event`：
 
-以下 AI 操作完成后，必须**无条件**执行对应的写入命令。不可省略，不可跳过。
+| 操作 | 自动触发的 Hook | 写入标签 |
+|------|----------------|---------|
+| 代码修改 | `code_modified`（dt build 插件） | `:Modification` |
+| Jenkins 部署 | `jenkins_deploy_completed`（jcli_build） | `:Deployment` + 更新 JenkinsJob/Build/ServiceInstance |
+| Nacos 配置变更 | `config_changed` | `:ConfigChange` |
+| 架构决策 | `decision_made`（dt memorize） | `:Decision` |
+| Bug 修复 | `bug_fix_recorded` | `:BugFix` |
+| 会话结束 | `session_ended` | `:Conversation` |
+| K8s Pod 异常 | `pod_event_occurred` | `:PodEvent` |
+| K8s 同步完成 | `k8s_synced` | `:K8sSyncEvent` |
 
-### 写 KG
-
-| # | 触发操作 | 条件 | 命令 |
-|---|---------|------|------|
-| 1 | 用户说"记忆/记一下/记住这个/记下来/记住" | 总是 | `dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"` |
-| 2 | 安装软件（apt/pip/npm/brew 等） | 总是 | `dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>, method: <安装方式>" --project "<项目>"` |
-| 3 | 修改 Nacos/Apollo/Consul 等外部配置 | 总是 | `dt event --type ConfigChange --entity-id "<data_id>" --entity-type NacosConfig --details "<改动摘要>" --project "<项目>"` |
-| - | 同步 Nacos 配置到知识图谱 | AI 判断必要时 | `dt nacos-sync --env test` 或 `dt nacos-sync --env prod` |
-| 4 | 做出架构/技术决策（选型、迁移、方案设计） | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>; scope: <影响范围>" --project "<项目>"` |
-| 5 | Jenkins 部署（`jenkins_build_job` MCP） | **所有环境** | `dt event --type Deployment --entity-id "<job_name>" --entity-type JenkinsJob --details "job: <job_name>; env: <环境>; build_number: <构建号>; branch: <分支>; version: <版本>" --project "<项目>"` |
-
-### 代码实体同步（自动）
-
-`dt build` 已由 OpenCode 插件自动触发（`tool.execute.after` 钩子拦截 `edit`/`write`），**AI 无需手动执行**。
-
-| 触发操作 | 条件 | 命令 |
-|---------|------|------|
-| 源码修改 | 自动（插件） | 无需 AI 执行 |
-| 删除文件 | 文件已删除 | `dt remove --project <项目名> --file <原相对路径>` |
-| 批量同步 / 项目首次索引 | 项目维度 | `dt build --path <项目路径> --name <项目名>`（手动触发） |
-
-### 完全不操作
-
-| 操作 | 原因 |
-|------|------|
-| Bug 修复 | 信息已 inline 在代码中 |
-| 开发/测试环境的临时部署构建 | 非生产发布，无回溯价值 |
-| 一般的 API 请求（查询类 GET） | 读操作不产生变更 |
-| 一次性对话、临时调试、常规编辑 | 无长期价值 |
-
-### 执行规则
-
-- 写入后必须回复：`📝 已将 [XXX] 记录到知识图谱`
-- 写入时优先关联已有实体，禁止创建孤立节点
-- 不执行的后果：Event 节点会变为孤立节点，后续时间线查询全部失效
+AI 只需要：
+- 执行正常的操作（修改代码、部署、变更配置等），Hook 会自动完成事件记录
+- 无需手动调用 `dt event` 或记忆命令
 
 ## Session-end Protocol
 
 用户说 "done" / "结束" 时：
 1. 列出关键发现
-2. 执行：`dt event --type Conversation --entity-id "<会话日期>" --entity-type Session --project "<项目>" --details "<关键发现摘要>"` 
-3. 回复：`📝 已将 [本次会话摘要] 记录到知识图谱`
+2. `session_ended` Hook 会自动记录会话到知识图谱
+3. 无需手动调用 `dt event`
 
 ---
 
