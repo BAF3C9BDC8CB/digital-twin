@@ -8,11 +8,9 @@
 
 pub mod modification;
 pub mod deployment;
-pub mod decision;
 
 pub use modification::ModificationHandler;
 pub use deployment::DeploymentHandler;
-pub use decision::DecisionHandler;
 
 use std::collections::HashMap;
 use sha2::{Digest, Sha256};
