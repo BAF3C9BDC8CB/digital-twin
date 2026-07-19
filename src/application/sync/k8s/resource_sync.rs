@@ -11,7 +11,6 @@
 //! | Deployment    | K8sDeployment   | always                |
 //! | Service       | K8sService      | always                |
 //! | Node (Worker) | Server          | full sync only        |
-//! | Pod           | _(not stored)_  | **never** — K8sPod ∈ Runtime |
 
 use std::collections::HashMap;
 use std::time::Instant;

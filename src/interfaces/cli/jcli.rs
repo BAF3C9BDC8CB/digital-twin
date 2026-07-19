@@ -112,7 +112,6 @@ pub async fn handle_jcli(
                             );
                             let source = JobSyncSource::new(
                                 Arc::new(client),
-                                env.clone(),
                                 Some(job_name.clone()),
                             );
                             match source.sync_job(g.as_ref()).await {

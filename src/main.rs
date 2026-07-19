@@ -530,10 +530,6 @@ enum Commands {
 
     /// Synchronize Jenkins Views, Jobs, and Builds to Knowledge Graph.
     JcSync {
-        /// Target environment (test, prod). Default: sync all.
-        #[arg(long = "env")]
-        env: Option<String>,
-
         /// Specific job name to sync. Default: sync all jobs.
         #[arg(long = "job")]
         job: Option<String>,
@@ -1633,7 +1629,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt jc-sync ----
-        Some(Commands::JcSync { env, job }) => {
+        Some(Commands::JcSync { job }) => {
             let config = load_config();
             let jenkins_creds = config.as_ref().and_then(|c| {
                 let j = &c.services.jenkins;
@@ -1648,7 +1644,7 @@ async fn main() -> anyhow::Result<()> {
                 Some((url, user, token)) => {
                     let graph = connect_graph().await;
                     dt_daemon::interfaces::cli::jenkins_sync::handle_jenkins_sync(
-                        env, job, graph, &url, &user, &token,
+                        job, graph, &url, &user, &token,
                     )
                     .await?;
                 }

@@ -266,6 +266,18 @@ impl JenkinsApiClient {
 
 // ── Structured response types for jc-sync ───────────────────────────────
 
+/// Structured Jenkins view info for sync (includes nested jobs).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JenkinsViewInfo {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub jobs: Vec<JenkinsJobInfo>,
+}
+
 /// Structured Jenkins job info for sync.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JenkinsJobInfo {
@@ -290,7 +302,11 @@ pub struct JenkinsBuildInfo {
 }
 
 impl JenkinsApiClient {
-    /// Fetch all jobs with full details (for jc-sync).
+    /// Fetch the flat list of all jobs (for jc-sync fallback).
+    ///
+    /// Some Jenkins view types (Dashboard, Nested View) omit the `jobs`
+    /// array in their response. This endpoint returns ALL jobs regardless,
+    /// ensuring comprehensive coverage.
     pub async fn list_all_jobs(&self) -> Result<Vec<JenkinsJobInfo>, DtError> {
         let json = self
             .get_json("/api/json?tree=jobs[name,url,color,description,fullName]")
@@ -312,9 +328,56 @@ impl JenkinsApiClient {
         Ok(jobs)
     }
 
+    /// Fetch all views with their nested jobs (for jc-sync).
+    ///
+    /// Views provide the CONTAINS mapping: each view's `jobs` array tells us
+    /// which jobs belong to that view. Use [`list_all_jobs`] for the complete
+    /// flat list.
+    ///
+    /// Calls `/api/json?tree=views[name,description,jobs[...]]` which returns
+    /// real Jenkins views (e.g. `JAVA`, `JAVA-TEST`, `VUE`)  with their jobs.
+    pub async fn list_views(&self) -> Result<Vec<JenkinsViewInfo>, DtError> {
+        let json = self
+            .get_json(
+                "/api/json?tree=views[name,description,jobs[name,url,color,description,fullName]]",
+            )
+            .await?;
+        let views: Vec<JenkinsViewInfo> = json["views"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| JenkinsViewInfo {
+                        name: v["name"].as_str().unwrap_or("?").to_string(),
+                        description: v["description"].as_str().unwrap_or("").to_string(),
+                        url: String::new(),
+                        jobs: v["jobs"]
+                            .as_array()
+                            .map(|jarr| {
+                                jarr.iter()
+                                    .map(|j| serde_json::from_value(j.clone()).unwrap_or_else(|_| JenkinsJobInfo {
+                                        name: j["name"].as_str().unwrap_or("?").to_string(),
+                                        url: j["url"].as_str().unwrap_or("").to_string(),
+                                        color: j["color"].as_str().unwrap_or("").to_string(),
+                                        description: j["description"].as_str().unwrap_or("").to_string(),
+                                        full_name: j["fullName"].as_str().unwrap_or("").to_string(),
+                                    }))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    }))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(views)
+    }
+
     /// Fetch all builds for a job (for jc-sync).
-    pub async fn get_all_builds(&self, _job_name: &str, full_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
-        let path = full_name.replace('/', "/job/");
+    ///
+    /// Uses `full_name` for folder-qualified path. Falls back to `job_name`
+    /// if `full_name` is empty (some Jenkins job types omit fullName).
+    pub async fn get_all_builds(&self, job_name: &str, full_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
+        let name = if full_name.is_empty() { job_name } else { full_name };
+        let path = name.replace('/', "/job/");
         let json = self
             .get_json(&format!(
                 "/job/{}/api/json?tree=builds[number,result,timestamp,duration,url]",

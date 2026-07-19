@@ -15,6 +15,7 @@ impl PropertyMapper {
 
         map.insert("_label".into(), Value::String(ctx.hook_name.clone()));
         map.insert("_created_at".into(), Value::String(now.clone()));
+        map.insert("event_type".into(), Value::String(ctx.hook_name.clone()));
 
         for prop in props {
             let value = Self::resolve_value(prop, ctx, event_id, &now);
@@ -142,5 +143,6 @@ mod tests {
 
         assert_eq!(props.get("_label").unwrap(), &Value::String("jenkins_deploy_completed".into()));
         assert!(props.contains_key("_created_at"));
+        assert_eq!(props.get("event_type").unwrap(), &Value::String("jenkins_deploy_completed".into()));
     }
 }

@@ -4,7 +4,6 @@
 //! - **K8sDeployment**: persisted in Neo4j with label `K8sDeployment`.
 //! - **K8sService**: persisted in Neo4j with label `K8sService`.
 //! - **Server** (from K8s nodes): persisted in Neo4j with label `Server`.
-//! - **K8sPod**: deliberately **NOT** stored in Neo4j — ephemeral runtime data.
 
 pub mod client;
 pub mod resource_sync;

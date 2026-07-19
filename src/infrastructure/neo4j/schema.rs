@@ -96,7 +96,6 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
     // ── Memory World ──
     "CREATE CONSTRAINT day_id_unique IF NOT EXISTS FOR (n:Day) REQUIRE n.day_id IS UNIQUE",
     "CREATE CONSTRAINT session_id_unique IF NOT EXISTS FOR (n:Session) REQUIRE n.session_id IS UNIQUE",
-    "CREATE CONSTRAINT pod_event_id_unique IF NOT EXISTS FOR (n:PodEvent) REQUIRE n.event_id IS UNIQUE",
     // ── Digital Thread ──
     "CREATE CONSTRAINT thread_id_unique IF NOT EXISTS FOR (n:Thread) REQUIRE n.thread_id IS UNIQUE",
     "CREATE CONSTRAINT requirement_id_unique IF NOT EXISTS FOR (n:Requirement) REQUIRE n.requirement_id IS UNIQUE",
@@ -312,15 +311,15 @@ mod tests {
         let report = initialize_schema(&mock).await.expect("should succeed");
 
         // 30 constraints + 1 fulltext index + 1 regular index
-        assert_eq!(report.constraints_created, 30);
+        assert_eq!(report.constraints_created, 29);
         assert_eq!(report.indexes_created, 2);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 32); // 30 constraints + 2 indexes
+        assert_eq!(write_calls.len(), 31); // 29 constraints + 2 indexes
         assert!(write_calls[0].contains("method_id_unique"));
-        assert!(write_calls[29].contains("analysis_id_unique"));
-        assert!(write_calls[30].contains("FULLTEXT INDEX"));
+        assert!(write_calls[28].contains("analysis_id_unique"));
+        assert!(write_calls[29].contains("FULLTEXT INDEX"));
     }
 
     #[tokio::test]
@@ -330,7 +329,7 @@ mod tests {
         initialize_schema(&mock).await.unwrap();
         // Second call — all statements have IF NOT EXISTS, so should succeed
         let report2 = initialize_schema(&mock).await.unwrap();
-        assert_eq!(report2.constraints_created, 30);
+        assert_eq!(report2.constraints_created, 29);
         assert_eq!(report2.indexes_created, 2);
     }
 
@@ -368,12 +367,12 @@ mod tests {
     #[test]
     fn schema_init_report_debug() {
         let report = SchemaInitReport {
-            constraints_created: 27,
+            constraints_created: 26,
             indexes_created: 1,
             elapsed_ms: 123,
         };
         let debug = format!("{report:?}");
-        assert!(debug.contains("27"));
+        assert!(debug.contains("26"));
         assert!(debug.contains("1"));
         assert!(debug.contains("123"));
     }
