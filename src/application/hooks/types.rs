@@ -21,6 +21,16 @@ pub struct EventTypeConfig {
     /// 额外的 Cypher 模板（side effects）
     #[serde(default)]
     pub side_effects: Vec<String>,
+    /// 配置段 SHA256 哈希（运行时计算，YAML 中不存）
+    /// 用于懒迁移：节点上的 _schema_hash ≠ 当前配置的 hash → 触发迁移
+    #[serde(skip)]
+    pub schema_hash: String,
+    /// 当前配置的属性名列表（副本，避免每次重新收集）
+    #[serde(skip)]
+    pub property_names: Vec<String>,
+    /// 当前配置的关系类型列表（副本，避免每次重新收集）
+    #[serde(skip)]
+    pub relationship_types: Vec<String>,
 }
 
 /// ID 生成策略

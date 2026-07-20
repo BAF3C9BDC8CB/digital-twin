@@ -52,37 +52,65 @@ impl HookEngine {
     }
 
     /// 执行单个标签配置的完整写入流程
+    ///
+    /// 包含懒迁移步骤：
+    ///   Step 0：读取节点现有的 _schema_hash
+    ///   Step 1：生成事件 ID
+    ///   Step 2：映射属性
+    ///   Step 3：写入节点 + 自动 REMOVE 废弃属性
+    ///   Step 4：写新关系 + 自动 DELETE 废弃关系
+    ///   Step 5：执行 side effects
     async fn execute_one(&self, cfg: &EventTypeConfig, ctx: &HookContext) -> WriteResult {
         let timer = Instant::now();
 
-        // 1. 生成事件 ID（纯函数）
+        // Step 0: 生成事件 ID（用于后续所有操作）
         let event_id = IdGenerator::generate(&cfg.id, ctx);
 
-        // 2. 映射属性（纯函数）
+        // Step 1: 读取节点现有 schema 状态
+        let old_state = match self.node_writer
+            .read_schema_state(&cfg.label, &cfg.id_field, &event_id)
+            .await
+        {
+            Ok(state) => state,
+            Err(e) => return WriteResult::failed(&cfg.label, &event_id, e),
+        };
+
+        // Step 2: 映射属性
         let props = PropertyMapper::map(&cfg.properties, ctx, &event_id);
 
-        // 3. 写入节点
-        if let Err(e) = self.node_writer
-            .write(&cfg.label, &cfg.id_field, &event_id, &props)
+        // Step 3: 写入节点 + 迁移废弃属性
+        let migrated = match self.node_writer
+            .write_with_migration(
+                &cfg.label, &cfg.id_field, &event_id, &props,
+                &old_state, &cfg.property_names, &cfg.schema_hash,
+            )
             .await
         {
-            return WriteResult::failed(&cfg.label, &event_id, e);
-        }
+            Ok(m) => m,
+            Err(e) => return WriteResult::failed(&cfg.label, &event_id, e),
+        };
 
-        // 4. 创建关系
+        // Step 4: 创建关系 + 删除废弃关系
         if let Err(e) = self.rel_writer
-            .write(&cfg.relationships, ctx, &event_id)
+            .write_and_cleanup(&cfg.relationships, ctx, &event_id, migrated)
             .await
         {
             return WriteResult::failed(&cfg.label, &event_id, e);
         }
 
-        // 5. 执行 side effects
+        // Step 5: 执行 side effects
         if !cfg.side_effects.is_empty() {
             let vars = self.build_side_effect_vars(ctx, &event_id);
             if let Err(e) = self.side_effector.run(&cfg.side_effects, &vars).await {
                 return WriteResult::failed(&cfg.label, &event_id, e);
             }
+        }
+
+        if migrated {
+            tracing::info!(
+                "[migrate] {} {} schema updated (hash: {})",
+                cfg.label, event_id, cfg.schema_hash,
+            );
         }
 
         WriteResult::success(&cfg.label, &event_id, timer.elapsed())
@@ -114,26 +142,53 @@ mod tests {
     use crate::domain::error::DtError;
     use crate::domain::types::HealthStatus;
     use async_trait::async_trait;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
-    struct MockRepo(Arc<AtomicUsize>);
+    /// Mock repo that tracks queries for Cypher verification
+    struct TrackedRepo {
+        queries: Arc<Mutex<Vec<String>>>,
+        write_count: Arc<AtomicUsize>,
+        /// Simulates read_schema_state returning None (new node)
+        return_empty_schema: bool,
+    }
+
+    impl TrackedRepo {
+        fn new(return_empty_schema: bool) -> Self {
+            Self {
+                queries: Arc::new(Mutex::new(Vec::new())),
+                write_count: Arc::new(AtomicUsize::new(0)),
+                return_empty_schema,
+            }
+        }
+    }
 
     #[async_trait]
-    impl crate::domain::traits::GraphRepository for MockRepo {
+    impl crate::domain::traits::GraphRepository for TrackedRepo {
         async fn read_query(
             &self,
-            _q: &str,
+            q: &str,
             _p: HashMap<String, Value>,
         ) -> Result<Value, DtError> {
+            // Track the query for verification
+            self.queries.lock().unwrap().push(q.to_string());
+
+            if self.return_empty_schema || q.contains("_schema_hash") {
+                // Simulate no existing node → no migration needed
+                return Ok(Value::Array(vec![]));
+            }
             Ok(Value::Null)
         }
 
         async fn write_query(
             &self,
-            _q: &str,
+            q: &str,
             _p: HashMap<String, Value>,
         ) -> Result<Value, DtError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.queries.lock().unwrap().push(q.to_string());
+            self.write_count.fetch_add(1, Ordering::SeqCst);
             Ok(Value::Null)
         }
 
@@ -162,10 +217,9 @@ event_types:
         std::fs::write(&path, yaml).unwrap();
 
         let registry = Arc::new(HookRegistry::from_file(&path).unwrap());
-        let counter = Arc::new(AtomicUsize::new(0));
-        let graph = Arc::new(MockRepo(counter.clone()));
-
-        let engine = HookEngine::new(registry, graph);
+        let repo = Arc::new(TrackedRepo::new(true));
+        let write_count = repo.write_count.clone();
+        let engine = HookEngine::new(registry, repo);
 
         let mut fields = HashMap::new();
         fields.insert("source".to_string(), "test".to_string());
@@ -181,7 +235,37 @@ event_types:
         let results = engine.fire("test_hook", ctx).await;
         assert_eq!(results.len(), 1);
         assert!(results[0].success);
-        assert!(counter.load(Ordering::SeqCst) > 0);
+        assert!(write_count.load(Ordering::SeqCst) > 0);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn engine_migration_removes_deprecated_properties() {
+        // Config v1: has "region" property, v2 has "zone" instead
+        let yaml = r#"
+hooks:
+  test_hook: { description: "" }
+event_types:
+  - label: MigrateTest
+    subscribe: test_hook
+    id: { prefix: mt, fields: [entity_id] }
+    id_field: mt_id
+    properties:
+      - name: zone
+        from: context.zone
+"#;
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_migration_hooks.yaml");
+        std::fs::write(&path, yaml).unwrap();
+
+        let registry = Arc::new(HookRegistry::from_file(&path).unwrap());
+        assert_eq!(registry.subscribers("test_hook").len(), 1);
+        let cfg = &registry.subscribers("test_hook")[0];
+        assert!(!cfg.schema_hash.is_empty());
+
+        // Verify the hash starts with "sch_"
+        assert!(cfg.schema_hash.starts_with("sch_"), "bad hash: {}", cfg.schema_hash);
 
         std::fs::remove_file(&path).ok();
     }

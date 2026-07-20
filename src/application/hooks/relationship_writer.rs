@@ -22,6 +22,7 @@ impl RelationshipWriter {
         Self { graph }
     }
 
+    /// 根据配置创建关系
     pub async fn write(
         &self,
         rels: &[RelationshipConfig],
@@ -51,6 +52,55 @@ impl RelationshipWriter {
             self.graph.write_query(&cypher, params).await?;
         }
         Ok(())
+    }
+
+    /// 写入新关系 + 删除废弃关系
+    ///
+    /// 当 `migrated` 为 `true`（节点发生了属性迁移）时，
+    /// 也清理事件节点上废弃的关系类型。
+    /// 只删除事件节点发出的关系，不删除指向它的关系。
+    pub async fn write_and_cleanup(
+        &self,
+        rels: &[RelationshipConfig],
+        ctx: &HookContext,
+        event_id: &str,
+        migrated: bool,
+    ) -> Result<(), DtError> {
+        // 如果发生了迁移，先删除不在当前配置中的旧关系
+        if migrated {
+            let current_types: Vec<&str> = rels.iter().map(|r| r.rel_type.as_str()).collect();
+            let event_id_field = rels.first().map(|r| r.source_field.as_str()).unwrap_or("event_id");
+
+            let mut cypher = format!(
+                "MATCH (e {{ {}: $event_id }})
+                 OPTIONAL MATCH (e)-[r]->(t)
+                 WITH e, r, t, type(r) AS rt\n",
+                event_id_field,
+            );
+
+            if current_types.is_empty() {
+                // 没有关系？删掉所有
+                cypher.push_str("DELETE r\n");
+            } else {
+                // 删掉不在当前配置中的关系类型
+                cypher.push_str("WHERE NOT rt IN $keep_types\n");
+                cypher.push_str("DELETE r\n");
+            }
+
+            let mut params: HashMap<String, Value> = HashMap::new();
+            params.insert("event_id".into(), Value::String(event_id.into()));
+            if !current_types.is_empty() {
+                let keep: Vec<Value> = current_types.iter()
+                    .map(|s| Value::String(s.to_string()))
+                    .collect();
+                params.insert("keep_types".into(), Value::Array(keep));
+            }
+
+            self.graph.write_query(&cypher, params).await?;
+        }
+
+        // 然后写入当前配置的关系
+        self.write(rels, ctx, event_id).await
     }
 }
 
