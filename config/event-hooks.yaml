@@ -1,24 +1,147 @@
-hooks:
-  code_modified:
-    description: "代码文件被修改/创建/删除"
-  jenkins_deploy_started:
-    description: "Jenkins 构建开始"
-  jenkins_deploy_completed:
-    description: "Jenkins 构建完成"
-  config_changed:
-    description: "外部配置被修改"
-  decision_made:
-    description: "架构决策被记录"
-  bug_fix_recorded:
-    description: "Bug 修复被记录"
-  session_ended:
-    description: "AI 会话结束"
-  pod_event_occurred:
-    description: "K8s Pod 出现异常"
-  k8s_synced:
-    description: "K8s 资源同步完成"
+# =============================================================================
+# event-hooks.yaml — Hook 驱动的事件标签系统配置
+# =============================================================================
+#
+# 设计原理：
+#   Hook 是关键操作节点（如"代码修改"、"Jenkins 部署完成"）的触发点。
+#   EventType 是订阅了某个 Hook 的标签配置——Hook 触发时，所有订阅的标签
+#   会被依次创建/更新到知识图谱。
+#
+# 一对多关系：
+#   一个 Hook → 多个 EventType（例如 jenkins_deploy_completed 可同时写入
+#   :Deployment 标签 + 更新 :JenkinsJob）
+#
+# 新增事件类型 = 在 event_types 下加一段配置，零代码变更。
+# =============================================================================
 
+# =============================================================================
+# Hook 定义
+# =============================================================================
+# 每个 hook 代表一个可观察的操作节点。hook 点内嵌在工具/MCP 实现中，
+# 当操作发生时自动触发，AI 不需要手动调用。
+# =============================================================================
+hooks:
+
+  # ---------------------------------------------------------------------------
+  # 代码变更
+  # ---------------------------------------------------------------------------
+  # 触发时机: AI 修改/创建/删除文件后，dt build 插件自动触发
+  # 内嵌位置: .opencode/plugins/dt-build.js (tool.execute.after 钩子)
+  # 触发方式: 自动（插件拦截 edit/write 工具调用）
+  # 携带上下文: file, entity_type, entity_id, change_type, diff_summary, reason, project
+  code_modified:
+    description: "代码文件被修改/创建/删除（dt build 插件自动触发）"
+
+  # ---------------------------------------------------------------------------
+  # Jenkins 部署
+  # ---------------------------------------------------------------------------
+  # 触发时机: Jenkins 构建生命周期中的关键节点
+  # 注意: jenkins_deploy_started 和 jenkins_deploy_completed 是独立的两个 hook，
+  #       分别代表构建开始和构建完成，可以订阅不同的标签写入逻辑
+  # ---------------------------------------------------------------------------
+
+  # 触发时机: AI 调用 jcli_build MCP 工具，Jenkins 构建刚被触发时
+  # 内嵌位置: jcli_build MCP 工具内部
+  # 触发方式: 自动（MCP 工具内部 fire）
+  # 携带上下文: job, env, branch, version, build_number, project
+  jenkins_deploy_started:
+    description: "Jenkins 构建被触发，构建开始（jcli_build MCP 自动触发）"
+
+  # 触发时机: Jenkins 构建完成（成功或失败），jcli_build 获取到构建结果后
+  # 内嵌位置: jcli_build MCP 工具内部（构建轮询完成时）
+  # 触发方式: 自动（MCP 工具内部 fire）
+  # 携带上下文: job, env, branch, version, status, build_number, project
+  # 注意: 这是最复杂的 hook —— 除了写 :Deployment 节点外，还会通过
+  #       side_effects 更新 JenkinsJob/JenkinsBuild/ServiceInstance 节点
+  #       并维护 LATEST_DEPLOY / DEPLOYED_TO / HAS_EVENT 关系
+  jenkins_deploy_completed:
+    description: "Jenkins 构建完成（成功或失败，jcli_build MCP 自动触发）"
+
+  # ---------------------------------------------------------------------------
+  # 配置变更
+  # ---------------------------------------------------------------------------
+  # 触发时机: AI 修改了 Nacos/Apollo/Consul 等外部配置后
+  # 内嵌位置: dt event CLI（--hook config_changed），需要 AI 手动调用
+  # 触发方式: 手动（AI 修改配置后执行 dt event --hook config_changed）
+  # 携带上下文: data_id, key, old_value, new_value, entity_id, project
+  # TODO: 未来改为自动触发（Nacos webhook 回调）
+  config_changed:
+    description: "外部配置（Nacos/Apollo/Consul）被修改（AI 手动触发）"
+
+  # ---------------------------------------------------------------------------
+  # 架构决策
+  # ---------------------------------------------------------------------------
+  # 触发时机: AI 或用户做出架构选型、技术方案决策时
+  # 内嵌位置: dt memorize CLI（--type Decision 时自动 fire）
+  # 触发方式: 半自动（dt memorize 内部 fire）
+  # 携带上下文: title, context, choice, rationale, alternatives, consequences, confidence
+  decision_made:
+    description: "架构决策被记录（dt memorize 自动触发）"
+
+  # ---------------------------------------------------------------------------
+  # Bug 修复
+  # ---------------------------------------------------------------------------
+  # 触发时机: AI 记录了一个 Bug 修复时
+  # 内嵌位置: dt event CLI（--hook bug_fix_recorded）
+  # 触发方式: 手动（AI 执行 dt event --hook bug_fix_recorded）
+  # 携带上下文: issue, root_cause, solution, files_changed, entity_id, project
+  bug_fix_recorded:
+    description: "Bug 修复被记录（AI 手动触发）"
+
+  # ---------------------------------------------------------------------------
+  # 会话结束
+  # ---------------------------------------------------------------------------
+  # 触发时机: AI 会话结束时（用户说 "done" / "结束"）
+  # 内嵌位置: AGENTS.md session-end protocol
+  # 触发方式: 自动（AI 遵循 session-end 协议时 fire）
+  # 携带上下文: summary, entity_id（会话日期）, project
+  session_ended:
+    description: "AI 会话结束（session-end 协议自动触发）"
+
+  # ---------------------------------------------------------------------------
+  # K8s Pod 异常
+  # ---------------------------------------------------------------------------
+  # 触发时机: K8s 监控系统检测到 Pod 异常（CrashLoopBackOff / OOMKilled / Evicted）
+  # 内嵌位置: 预留——等待 K8s 事件监控管道接入
+  # 触发方式: 自动（未来由 K8s Event Watcher 触发）
+  # 携带上下文: pod_name, namespace, reason, message, restart_count, entity_id, project
+  pod_event_occurred:
+    description: "K8s Pod 出现异常（预留，等待 K8s 事件监控接入）"
+
+  # ---------------------------------------------------------------------------
+  # K8s 同步完成
+  # ---------------------------------------------------------------------------
+  # 触发时机: dt k8s-sync 命令执行完成（Deployment/Service/Node 同步到 Neo4j 后）
+  # 内嵌位置: src/application/sync/k8s/resource_sync.rs（同步完成时 fire）
+  # 触发方式: 自动（k8s-sync 管道完成时 fire）
+  # 携带上下文: cluster, namespaces_count, deployments_count, services_count, duration_ms
+  k8s_synced:
+    description: "K8s 资源同步完成（dt k8s-sync 自动触发）"
+
+
+# =============================================================================
+# 事件标签配置
+# =============================================================================
+# 每个 event_type 定义：
+#   label      — Neo4j 节点标签名
+#   subscribe  — 订阅的 hook 名（hook 触发时自动创建此标签）
+#   id         — 事件 ID 生成策略（SHA256 确定性 ID，相同输入去重）
+#   id_field   — 节点属性中用作唯一标识的字段名
+#   properties — 属性映射规则（从 hook context 映射到节点属性）
+#   relationships — 自动创建的关系（事件节点 → 目标实体）
+#   side_effects — 额外的 Cypher 模板（仅 Deployment 等复杂场景需要）
+# =============================================================================
 event_types:
+
+  # ---------------------------------------------------------------------------
+  # :Modification — 代码修改记录
+  # ---------------------------------------------------------------------------
+  # 用途: 记录每次代码文件变更（修改/创建/删除），关联到被修改的方法/类。
+  #       50+ 节点，是当前数据量最大的事件类型（通过 dt build 自动写入）。
+  # 关系链路: (:Modification)-[:AFFECTS]->(:Method)
+  #           (:Modification)-[:BELONGS_TO]->(:Project)
+  # 归属世界: Memory World（时间线驱动，事件溯源）
+  # ---------------------------------------------------------------------------
   - label: Modification
     subscribe: code_modified
     id: { prefix: mod, fields: [entity_id, details] }
@@ -34,6 +157,20 @@ event_types:
       - { type: AFFECTS, target_label: Method, source_field: mod_id, match: { context_field: entity_id, target_field: method_id } }
       - { type: BELONGS_TO, target_label: Project, source_field: mod_id, match: { context_field: project, target_field: name } }
 
+  # ---------------------------------------------------------------------------
+  # :Deployment — 部署事件
+  # ---------------------------------------------------------------------------
+  # 用途: 记录 Jenkins 部署事件。注意：这个标签本身只记录部署事件摘要，
+  #       实际的 JenkinsJob/JenkinsBuild/ServiceInstance 更新由 side_effects 完成。
+  # side_effects 逻辑对应旧的 DeploymentHandler（~170 行 Rust 代码浓缩为 5 条 Cypher）。
+  # 关系链路:
+  #   - (:Session)-[:HAS_EVENT]->(:JenkinsBuild)
+  #   - (:JenkinsBuild)-[:DEPLOYED_TO]->(:ServiceInstance)
+  #   - (:JenkinsJob)-[:LATEST_DEPLOY]->(:ServiceInstance)
+  # 注意: 这是唯一使用 side_effects 的事件类型——大多数事件不需要。
+  #       保持 side_effects Cypher 与旧 handler 行为一致。
+  # 归属世界: Memory World
+  # ---------------------------------------------------------------------------
   - label: Deployment
     subscribe: jenkins_deploy_completed
     id: { prefix: deploy, fields: [entity_id, details] }
@@ -45,17 +182,26 @@ event_types:
       - { name: version, from: context.version }
       - { name: status, from: context.status, default: "success" }
     side_effects:
-      # 1. JenkinsJob — matches old handler ON CREATE/ON MATCH exactly
+      # 创建/更新 JenkinsJob 节点，记录最新部署信息
       - "MERGE (job:JenkinsJob {name: $job}) ON CREATE SET job.job_id = $job_id, job.full_name = $job, job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now ON MATCH SET job.latest_deploy_env = $env, job.latest_deploy_version = $version, job.latest_deployed_at = $now"
-      # 2. JenkinsBuild — ON CREATE/ON MATCH, deployed_version + timestamp, integer build.number
+      # 创建/更新 JenkinsBuild 节点（构建粒度的部署记录）
       - "MERGE (build:JenkinsBuild {build_id: $build_id}) ON CREATE SET build.number = toInteger($build_number), build.deployed_env = $env, build.deployed_at = $now, build.deployed_version = $version, build.result = $status, build.timestamp = toInteger($timestamp_raw) ON MATCH SET build.deployed_env = $env, build.deployed_at = $now, build.deployed_version = $version"
-      # 3. ServiceInstance
+      # 创建/更新 ServiceInstance 节点（环境级别的服务实例）
       - "MERGE (si:ServiceInstance {instance_id: $instance_id}) SET si.service_name = $job, si.env = $env, si.updated_at = $now"
-      # 4. LATEST_DEPLOY + DEPLOYED_TO (self-contained — re-match si and build)
+      # 维护 LATEST_DEPLOY（Job → 最新 Instance）和 DEPLOYED_TO（Build → Instance）
       - "MATCH (si:ServiceInstance {instance_id: $instance_id}) MATCH (build:JenkinsBuild {build_id: $build_id}) OPTIONAL MATCH (job:JenkinsJob {name: $job})-[old:LATEST_DEPLOY]->() DELETE old MERGE (job)-[:LATEST_DEPLOY]->(si) MERGE (build)-[:DEPLOYED_TO {env: $env, version: $version, deployed_at: $now}]->(si)"
-      # 5. Session → JenkinsBuild (replaces old handler's inline MATCH + MERGE)
+      # 关联 Session → JenkinsBuild（时间线回溯）
       - "MATCH (build:JenkinsBuild {build_id: $build_id}) MATCH (s:Session {session_id: $session_id}) MERGE (s)-[:HAS_EVENT]->(build)"
 
+  # ---------------------------------------------------------------------------
+  # :ConfigChange — 配置变更记录
+  # ---------------------------------------------------------------------------
+  # 用途: 记录 Nacos/Apollo 等外部配置的变更历史（data_id、key、old/new value）。
+  #       用于审计和回溯"谁改了什么配置、什么时候改的"。
+  # 关系链路: (:ConfigChange)-[:AFFECTS]->(:NacosConfig)
+  # 注意: old_value/new_value 应做脱敏处理，不存储明文密码。
+  # 归属世界: Memory World
+  # ---------------------------------------------------------------------------
   - label: ConfigChange
     subscribe: config_changed
     id: { prefix: cfg, fields: [entity_id, details] }
@@ -68,6 +214,15 @@ event_types:
     relationships:
       - { type: AFFECTS, target_label: NacosConfig, source_field: change_id, match: { context_field: entity_id, target_field: config_id } }
 
+  # ---------------------------------------------------------------------------
+  # :BugFix — Bug 修复记录
+  # ---------------------------------------------------------------------------
+  # 用途: 记录 Bug 修复过程（issue 编号、根因分析、解决方案、变更文件）。
+  #       用于知识沉淀——避免同一个 Bug 被反复修复。
+  # 关系链路: (:BugFix)-[:FIXES]->(:Method)
+  # 最佳实践: root_cause 应该用自然语言描述根因，solution 描述修复方案。
+  # 归属世界: Memory World
+  # ---------------------------------------------------------------------------
   - label: BugFix
     subscribe: bug_fix_recorded
     id: { prefix: fix, fields: [entity_id, details] }
@@ -80,6 +235,14 @@ event_types:
     relationships:
       - { type: FIXES, target_label: Method, source_field: fix_id, match: { context_field: entity_id, target_field: method_id } }
 
+  # ---------------------------------------------------------------------------
+  # :Decision — 架构决策记录
+  # ---------------------------------------------------------------------------
+  # 用途: 记录架构决策（ADR - Architecture Decision Record），包括背景、
+  #       候选方案、选择理由、影响范围。用于避免重复讨论同一个架构问题。
+  # 关系链路: (:Decision)-[:BASED_ON]->(:Knowledge)
+  # 归属世界: Memory World（确认后可升级为 Knowledge World）
+  # ---------------------------------------------------------------------------
   - label: Decision
     subscribe: decision_made
     id: { prefix: decision, fields: [entity_id, details] }
@@ -95,6 +258,13 @@ event_types:
     relationships:
       - { type: BASED_ON, target_label: Knowledge, source_field: decision_id, match: { context_field: knowledge_id, target_field: knowledge_id } }
 
+  # ---------------------------------------------------------------------------
+  # :Conversation — 会话摘要记录
+  # ---------------------------------------------------------------------------
+  # 用途: 记录 AI 会话结束时的主要内容摘要。不关联到具体实体，
+  #       只记录会话本身的关键信息。用于构建完整的时间线。
+  # 归属世界: Memory World（时间线维度）
+  # ---------------------------------------------------------------------------
   - label: Conversation
     subscribe: session_ended
     id: { prefix: conv, fields: [entity_id, details] }
@@ -102,6 +272,17 @@ event_types:
     properties:
       - { name: summary, from: context.summary }
 
+  # ---------------------------------------------------------------------------
+  # :PodEvent — K8s Pod 异常事件（预留）
+  # ---------------------------------------------------------------------------
+  # 用途: 记录 K8s Pod 的异常事件（CrashLoopBackOff、OOMKilled、Evicted 等）。
+  #       解决"昨天 Pod 为什么 Crash"的历史追溯需求。
+  #       注意：Pod 的正常运行时信息属于 Runtime World（不入 Neo4j），
+  #       只有异常事件才写入此标签。
+  # 关系链路: (:PodEvent)-[:AFFECTS]->(:ServiceInstance)
+  # 状态: 预留——等 K8s Event Watcher 管道接入后自动触发
+  # 归属世界: Memory World
+  # ---------------------------------------------------------------------------
   - label: PodEvent
     subscribe: pod_event_occurred
     id: { prefix: pod, fields: [entity_id, details] }
@@ -115,6 +296,13 @@ event_types:
     relationships:
       - { type: AFFECTS, target_label: ServiceInstance, source_field: event_id, match: { context_field: entity_id, target_field: instance_id } }
 
+  # ---------------------------------------------------------------------------
+  # :K8sSyncEvent — K8s 同步完成记录（预留）
+  # ---------------------------------------------------------------------------
+  # 用途: 记录每次 dt k8s-sync 的执行结果（同步了多少个 Deployment/Service、
+  #       耗时多久）。用于监控 k8s-sync 管道的健康状况。
+  # 归属世界: Memory World
+  # ---------------------------------------------------------------------------
   - label: K8sSyncEvent
     subscribe: k8s_synced
     id: { prefix: k8s, fields: [entity_id, details] }
