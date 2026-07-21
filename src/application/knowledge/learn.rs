@@ -367,7 +367,11 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
 /// - "支付平台迁移"  → "支付"
 /// - "部署服务升级"  → "部署"
 /// - "日志采集优化"  → "日志"
-fn extract_domain(task: &str) -> String {
+/// Extract a domain keyword from the task title.
+///
+/// Common Chinese domain keywords are matched first, with a fallback to
+/// the first 2 characters of the trimmed task.
+pub(crate) fn extract_domain(task: &str) -> String {
     // Common domain keywords in Chinese
     let domains = ["支付", "部署", "日志", "配置", "监控", "安全", "测试", "数据库"];
     for d in &domains {
@@ -382,7 +386,10 @@ fn extract_domain(task: &str) -> String {
 /// Convert a task title into a snake_case identifier.
 ///
 /// Strips non-alphanumeric ASCII, lowercases, joins with hyphens.
-fn to_snake(task: &str) -> String {
+/// Convert a task title into a snake_case identifier.
+///
+/// Strips non-alphanumeric ASCII, lowercases, joins with hyphens.
+pub(crate) fn to_snake(task: &str) -> String {
     let filtered: String = task
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
@@ -395,7 +402,8 @@ fn to_snake(task: &str) -> String {
 }
 
 /// Create a deterministic knowledge_id for a pattern.
-fn format_knowledge_id(project: &str, domain: &str, kind: &str, task: &str) -> String {
+/// Create a deterministic knowledge_id for a pattern.
+pub(crate) fn format_knowledge_id(project: &str, domain: &str, kind: &str, task: &str) -> String {
     format!(
         "dt://knowledge/{}/{}/{}-{}",
         project,

@@ -45,20 +45,6 @@ enum Commands {
         op_type: String,
     },
 
-    /// Start, inspect, or stop the file-system watcher daemon.
-    ///
-    /// Without flags, starts the watcher in the foreground, monitoring all
-    /// project directories defined in config.yaml.
-    Watch {
-        /// Show watcher status (PID, watched dirs, events processed).
-        #[arg(long = "status")]
-        status: bool,
-
-        /// Gracefully stop a running watcher process.
-        #[arg(long = "stop")]
-        stop: bool,
-    },
-
     /// Wipe all data from Neo4j, Qdrant, and SQLite.
     ///
     /// Requires `--confirm` to actually execute. Without it, prints a
@@ -565,6 +551,8 @@ struct ServiceConfig {
     sqlite: SqliteConfig,
     #[serde(default)]
     embed_server: EmbedServerConfig,
+    #[serde(default)]
+    reranker: RerankerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -652,7 +640,19 @@ struct EmbedServerConfig {
 }
 
 fn default_embed_url() -> String {
-    "http://[::1]:50052".to_string()
+    "http://[::1]:50051".to_string()
+}
+
+/// dt-reranker gRPC server configuration from config.yaml `services.reranker`.
+#[derive(Debug, Deserialize, Default)]
+struct RerankerConfig {
+    /// URL of the dt-reranker gRPC server.
+    #[serde(default = "default_reranker_url")]
+    url: String,
+}
+
+fn default_reranker_url() -> String {
+    "http://[::1]:50051".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -865,6 +865,36 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
     }
 }
 
+/// Build an optional KgBridge for auto-syncing nodes to Qdrant after writes.
+///
+/// Requires both `graph` and `vector`; `queue` provides priority-aware embedding.
+async fn build_kg_bridge(
+    graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
+    vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
+    queue: Option<Arc<dt_daemon::application::sync::queue::VectorQueue>>,
+) -> Option<Arc<dt_daemon::application::sync::kg_bridge::KgBridge>> {
+    let g = graph?;
+    let embed = queue.as_ref()?.embed_service().clone();
+    let v = vector.unwrap_or_else(|| {
+        Arc::new(dt_daemon::infrastructure::qdrant::repo::NoopVectorRepo)
+            as Arc<dyn dt_daemon::domain::traits::VectorRepository>
+    });
+    let bridge = dt_daemon::application::sync::kg_bridge::KgBridge::new(g, embed, v);
+    Some(Arc::new(bridge.with_queue(queue?)))
+}
+
+/// Build an optional SyncAccumulator for batch-accumulating background sync.
+async fn build_sync_acc(
+    graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
+    vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
+    queue: Option<Arc<dt_daemon::application::sync::queue::VectorQueue>>,
+) -> Option<Arc<dt_daemon::application::sync::batch::SyncAccumulator>> {
+    let bridge = build_kg_bridge(graph, vector, queue.clone()).await?;
+    Some(Arc::new(
+        dt_daemon::application::sync::batch::SyncAccumulator::spawn(bridge, queue?),
+    ))
+}
+
 /// Connect to the SQLite snapshot store (falls back to None if unavailable).
 async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::SnapshotRepository>> {
     let db_path = load_config()
@@ -958,154 +988,6 @@ async fn main() -> anyhow::Result<()> {
                 report.elapsed_ms,
             );
 
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt watch ----
-        Some(Commands::Watch { status, stop }) => {
-            let pid_file = PathBuf::from("/var/run/dt-watch.pid");
-
-            // --status
-            if status {
-                let projects = load_config()
-                    .map(|cfg| resolve_project_paths(&cfg))
-                    .unwrap_or_default();
-                let watcher =
-                    dt_daemon::application::build::watcher::FileWatcher::new(projects, pid_file);
-                let s = watcher.status();
-                println!("Watcher status:");
-                println!("  running:          {}", if s.running { "yes" } else { "no" });
-                println!("  pid:              {}", s.pid.map_or("none".into(), |p| p.to_string()));
-                println!("  watched dirs:     {}", s.watched_dirs);
-                println!("  events processed: {}", s.events_processed);
-                return Ok(());
-            }
-
-            // --stop
-            if stop {
-                let projects = load_config()
-                    .map(|cfg| resolve_project_paths(&cfg))
-                    .unwrap_or_default();
-                let watcher =
-                    dt_daemon::application::build::watcher::FileWatcher::new(projects, pid_file);
-                match watcher.stop() {
-                    Ok(()) => println!("Watcher stopped."),
-                    Err(e) => {
-                        let msg = e.to_string();
-                        eprintln!("Failed to stop watcher: {msg}");
-                        if !msg.contains("cannot read PID") {
-                            return Err(e);
-                        }
-                        println!("Watcher is not running (no PID file).");
-                    }
-                }
-                return Ok(());
-            }
-
-            // ---- Start watching (default, no flags) ----
-            let cfg = load_config().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cannot find config.yaml — specify project paths or place \
-                     config.yaml in the current directory or ~/.config/opencode/\
-                     skills/digital-twin/"
-                )
-            })?;
-
-            let projects = resolve_project_paths(&cfg);
-            if projects.is_empty() {
-                eprintln!("No projects found in config.yaml. Nothing to watch.");
-                return Ok(());
-            }
-
-            println!("dt watch: monitoring {} project(s)...", projects.len());
-            for (name, root) in &projects {
-                println!("  {name}  →  {}", root.display());
-            }
-
-            let watcher = dt_daemon::application::build::watcher::FileWatcher::new(projects, pid_file);
-
-            let components = dt_daemon::interfaces::grpc::wiring::wire().await;
-            let coordinator = Arc::clone(&components.coordinator);
-
-            let parser_registry = Arc::new(dt_daemon::infrastructure::parser::ParserRegistry::new());
-            let runner = Arc::new(dt_daemon::application::build::updater::UpdateRunner::new(parser_registry));
-
-            let graph = components.graph;
-
-            let mut rx = watcher.start()?;
-
-            tracing::info!("dt watch loop started — waiting for file changes");
-
-            while let Some(event) = rx.recv().await {
-                tracing::info!(
-                    "watch: {} {} ({})",
-                    event.kind.as_op_type(),
-                    event.file_path.display(),
-                    event.project_name,
-                );
-
-                let deps = dt_daemon::application::build::updater::UpdateDependencies {
-                    graph: graph.clone(),
-                    vector: None,
-                    snapshot: None,
-                    embed: None,
-                    coordinator: Some(Arc::clone(&coordinator)),
-                };
-
-                // Fire code_modified hook (replaces the old ModificationHandler).
-                if let Some(ref engine) = components.hook_engine {
-                    let mut fields = std::collections::HashMap::new();
-                    fields.insert(
-                        "file".to_string(),
-                        event.file_path.to_string_lossy().to_string(),
-                    );
-                    fields.insert(
-                        "change_type".to_string(),
-                        event.kind.as_op_type().to_string(),
-                    );
-                    fields.insert(
-                        "entity_type".to_string(),
-                        "File".to_string(),
-                    );
-                    let ctx = dt_daemon::application::hooks::HookContext {
-                        hook_name: String::new(),
-                        project: event.project_name.clone(),
-                        session_id: String::new(),
-                        entity_id: event.file_path.to_string_lossy().to_string(),
-                        entity_type: "File".into(),
-                        fields,
-                    };
-                    let results = engine.fire("code_modified", ctx).await;
-                    for r in &results {
-                        if !r.success {
-                            tracing::warn!(
-                                "[hook] code_modified failed for label {}: {}",
-                                r.label,
-                                r.error.as_deref().unwrap_or("unknown"),
-                            );
-                        }
-                    }
-                }
-
-                match runner
-                    .run(&event.project_name, &event.project_root, &event.file_path, &deps)
-                    .await
-                {
-                    Ok(report) => {
-                        tracing::info!(
-                            "watch update: {} methods, {} classes, {}ms",
-                            report.methods_updated,
-                            report.classes_updated,
-                            report.elapsed_ms,
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!("watch update failed for {}: {e}", event.file_path.display());
-                    }
-                }
-            }
-
-            tracing::info!("dt watch loop ended");
             return Ok(());
         }
 
@@ -1364,6 +1246,12 @@ async fn main() -> anyhow::Result<()> {
             details,
         }) => {
             let graph = connect_graph().await;
+            let embed = connect_embed().await;
+            let vector = connect_vector().await;
+            let queue = embed.map(|e| Arc::new(
+                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
+            ));
+            let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
             dt_daemon::interfaces::cli::memorize::handle_memorize(
                 knowledge_type,
                 entity_id,
@@ -1371,6 +1259,7 @@ async fn main() -> anyhow::Result<()> {
                 project,
                 details,
                 graph,
+                sync_acc,
             )
             .await?;
             return Ok(());
@@ -1382,10 +1271,18 @@ async fn main() -> anyhow::Result<()> {
             context,
         }) => {
             let hook_engine = connect_hook_engine().await;
+            let graph = connect_graph().await;
+            let embed = connect_embed().await;
+            let vector = connect_vector().await;
+            let queue = embed.map(|e| Arc::new(
+                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
+            ));
+            let kg_bridge = build_kg_bridge(graph, vector, queue).await;
             dt_daemon::interfaces::cli::event::handle_event(
                 hook_name,
                 context,
                 hook_engine,
+                kg_bridge,
             )
             .await?;
             return Ok(());
@@ -1403,6 +1300,12 @@ async fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let graph = connect_graph().await;
+            let embed = connect_embed().await;
+            let vector = connect_vector().await;
+            let queue = embed.map(|e| Arc::new(
+                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
+            ));
+            let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
             dt_daemon::interfaces::cli::learn::handle_learn(
                 task,
                 entities,
@@ -1413,6 +1316,7 @@ async fn main() -> anyhow::Result<()> {
                 success,
                 project,
                 graph,
+                sync_acc,
             )
             .await?;
             return Ok(());
@@ -1460,8 +1364,24 @@ async fn main() -> anyhow::Result<()> {
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
 
+            // When --name is given, resolve actual path from config.yaml.
+            // e.g. --name order-center → /data/aflmProjects/aflm/uvp-order-center
+            let actual_path = if let Some(ref n) = name {
+                let cfg = load_config();
+                cfg.as_ref()
+                    .and_then(|c| {
+                        resolve_project_paths(c)
+                            .into_iter()
+                            .find(|(proj_name, _)| proj_name == n)
+                            .map(|(_, proj_path)| proj_path)
+                    })
+                    .unwrap_or_else(|| path.expect("--path is required"))
+            } else {
+                path.expect("--path is required")
+            };
+
             dt_daemon::interfaces::cli::build::handle_build(
-                path.expect("--path is required"), name, file, full, graph, vector, embed, snapshot,
+                actual_path, name, file, full, graph, vector, embed, snapshot,
             )
             .await?;
             return Ok(());
@@ -1607,7 +1527,11 @@ async fn main() -> anyhow::Result<()> {
         // ---- CLI mode: dt kg-sync ----
         Some(Commands::KgSync { incremental, labels }) => {
             let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::sync::handle_kg_sync(incremental, labels, graph).await?;
+            let embed = connect_embed().await;
+            let queue = embed.map(|e| Arc::new(
+                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
+            ));
+            dt_daemon::interfaces::cli::sync::handle_kg_sync(incremental, labels, graph, queue).await?;
             return Ok(());
         }
 

@@ -7,11 +7,13 @@ use std::sync::Arc;
 use crate::application::knowledge::knowledge::service::{
     DefaultKnowledgeService, KnowledgeService,
 };
+use crate::application::sync::batch::SyncAccumulator;
 use crate::domain::traits::GraphRepository;
 
 /// Handle `dt memorize` — write a knowledge entry (Knowledge, Experience, Concept, Domain, Playbook).
 ///
 /// `graph` must be pre-connected by the caller.
+/// `sync_acc` enqueues nodes for background (non-blocking) sync to Qdrant.
 pub async fn handle_memorize(
     knowledge_type: String,
     entity_id: String,
@@ -19,6 +21,7 @@ pub async fn handle_memorize(
     project: Option<String>,
     details: String,
     graph: Option<Arc<dyn GraphRepository>>,
+    sync_acc: Option<Arc<SyncAccumulator>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt-daemon CLI: memorize --type {knowledge_type} --entity-id {entity_id} --details {details}",
@@ -160,8 +163,47 @@ pub async fn handle_memorize(
                  Expected one of: Decision, KnowledgeAdded, Environment, \
                  Dependencies, Experience, Concept, Domain, Playbook"
             );
+            return Ok(());
         }
     }
 
+    // ── Auto-sync to Qdrant ──────────────────────────────────────────
+    auto_sync_kg(&knowledge_type, &entity_id, sync_acc).await;
+
     Ok(())
+}
+
+/// Map a `knowledge_type` to its Neo4j label + id-property key, then
+/// enqueue the newly-written node for background sync to Qdrant.
+///
+/// This returns immediately — the actual embed + upsert happens in a
+/// background worker that accumulates batches for GPU efficiency.
+///
+/// Flushes the queue before returning so the sync completes within the
+/// CLI process lifetime.
+async fn auto_sync_kg(
+    knowledge_type: &str,
+    entity_id: &str,
+    acc: Option<Arc<SyncAccumulator>>,
+) {
+    let acc = match acc {
+        Some(a) => a,
+        None => return,
+    };
+
+    let (label, key) = match knowledge_type.to_lowercase().as_str() {
+        "decision" | "knowledgeadded" | "environment" | "dependencies" => {
+            ("Knowledge", "knowledge_id")
+        }
+        "experience" => ("Experience", "experience_id"),
+        "concept" => ("Concept", "concept_id"),
+        "domain" => ("Domain", "domain_id"),
+        "playbook" | "pattern" | "patch" | "orchestrator" => {
+            ("Playbook", "playbook_id")
+        }
+        _ => return,
+    };
+
+    acc.enqueue(label, key, entity_id);
+    acc.flush().await;
 }

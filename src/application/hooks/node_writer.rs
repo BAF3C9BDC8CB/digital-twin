@@ -152,6 +152,11 @@ impl NodeWriter {
         let props_json = serde_json::to_string(current_prop_names).unwrap_or_default();
         params.insert("schema_props".into(), Value::String(props_json));
 
+        // SET _kg_synced_at = NULL — marks node for re-sync to Qdrant
+        // on the next incremental kg-sync (which is triggered immediately
+        // after the hook fires).
+        cypher.push_str("SET e._kg_synced_at = NULL\n");
+
         // REMOVE 废弃属性
         if has_migration {
             let removes: Vec<String> = deprecated.iter()

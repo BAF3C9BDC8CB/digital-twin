@@ -150,6 +150,7 @@ pub async fn handle_kg_sync(
     incremental: bool,
     labels: Option<String>,
     graph: Option<Arc<dyn GraphRepository>>,
+    queue: Option<Arc<crate::application::sync::queue::VectorQueue>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt-daemon CLI: kg-sync --incremental {incremental} --labels {:?}",
@@ -162,36 +163,57 @@ pub async fn handle_kg_sync(
     }
 
     if let Some(graph) = graph {
-        // Connect to real embed service (BGE-M3 gRPC)
-        let embed: Arc<dyn EmbedService> = match crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50052").await {
-            Ok(svc) => {
-                tracing::info!("dt-embed connected for kg-sync");
-                Arc::new(svc)
-            }
-            Err(e) => {
-                tracing::warn!("dt-embed unavailable for kg-sync: {e} — using NoopEmbedService");
-                Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
-            }
+        // Use VectorQueue if available, else connect directly.
+        let (embed, vector) = if let Some(ref q) = queue {
+            let v: Arc<dyn VectorRepository> = {
+                let qdrant_url = std::env::var("QDRANT_URL")
+                    .unwrap_or_else(|_| "http://localhost:6334".to_string());
+                match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {
+                    Ok(client) => {
+                        tracing::info!("Qdrant connected for kg-sync");
+                        Arc::new(crate::infrastructure::qdrant::QdrantRepo::new(client))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Qdrant unavailable for kg-sync: {e}");
+                        Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
+                    }
+                }
+            };
+            (q.embed_service().clone(), v)
+        } else {
+            let embed: Arc<dyn EmbedService> = match crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50051").await {
+                Ok(svc) => {
+                    tracing::info!("dt-embed connected for kg-sync");
+                    Arc::new(svc)
+                }
+                Err(e) => {
+                    tracing::warn!("dt-embed unavailable for kg-sync: {e}");
+                    Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
+                }
+            };
+            let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
+            let vector: Arc<dyn VectorRepository> = match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {
+                Ok(client) => {
+                    tracing::info!("Qdrant connected for kg-sync");
+                    Arc::new(crate::infrastructure::qdrant::QdrantRepo::new(client))
+                }
+                Err(e) => {
+                    tracing::warn!("Qdrant unavailable for kg-sync: {e}");
+                    Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
+                }
+            };
+            (embed, vector)
         };
 
-        // Connect to real Qdrant vector store
-        let vector: Arc<dyn VectorRepository> = match crate::infrastructure::qdrant::QdrantClient::connect("http://localhost:6334").await {
-            Ok(client) => {
-                tracing::info!("Qdrant connected for kg-sync");
-                Arc::new(crate::infrastructure::qdrant::QdrantRepo::new(client))
-            }
-            Err(e) => {
-                tracing::warn!("Qdrant unavailable for kg-sync: {e} — using NoopVectorRepo");
-                Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
-            }
-        };
-
-        let bridge =
+        let mut bridge =
             crate::application::sync::kg_bridge::KgBridge::new(
                 graph.clone(),
                 embed,
                 vector,
             );
+        if let Some(q) = queue {
+            bridge = bridge.with_queue(q);
+        }
 
         let report = if incremental {
             bridge.sync_incremental().await?

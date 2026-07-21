@@ -47,8 +47,13 @@ const KG_COLLECTION: &str = "kg_nodes";
 /// Default vector dimension (BGE-M3 = 1024).
 const VECTOR_DIM: u32 = 1024;
 
-/// Batch size for embedding + upsert — balances throughput with memory.
-const BATCH_SIZE: usize = 64;
+/// Batch size for embedding + upsert — balances throughput with GPU memory.
+/// fp16 BGE-M3 ~1.2 GB + 128×512×1024 activations ~128 MB/batch.
+const BATCH_SIZE: usize = 128;
+
+/// Number of concurrent batches for pipelined embed→upsert.
+/// 2 concurrent on 8GB GPU is safe with fp16.
+const CONCURRENCY: usize = 2;
 
 /// V2 business labels that are synced to Qdrant for semantic search.
 ///
@@ -81,6 +86,7 @@ pub const BUSINESS_LABELS: &[&str] = &[
     "Document",
     "Endpoint",
     "ConfigKey",
+    "ConfigSection",
     "Table",
     // -- Events --
     "ConfigChange",
@@ -127,6 +133,9 @@ pub struct KgBridge {
     graph: Arc<dyn GraphRepository>,
     embed: Arc<dyn EmbedService>,
     vector: Arc<dyn VectorRepository>,
+    /// Optional global queue for priority-aware embedding.
+    /// When present, `process_batch` routes through the queue (LOW lane).
+    queue: Option<Arc<super::queue::VectorQueue>>,
 }
 
 impl KgBridge {
@@ -140,7 +149,17 @@ impl KgBridge {
             graph,
             embed,
             vector,
+            queue: None,
         }
+    }
+
+    /// Attach a global VectorQueue for priority-aware embedding.
+    ///
+    /// When set, `process_batch` routes embed calls through the queue's
+    /// LOW-priority lane so background sync yields to user searches.
+    pub fn with_queue(mut self, queue: Arc<super::queue::VectorQueue>) -> Self {
+        self.queue = Some(queue);
+        self
     }
 
     // ------------------------------------------------------------------
@@ -163,6 +182,96 @@ impl KgBridge {
     }
 
     // ------------------------------------------------------------------
+    // Single-node sync — for auto-sync after write
+    // ------------------------------------------------------------------
+
+    /// Sync a single KG node to Qdrant, looked up by (label, property_key, value).
+    ///
+    /// This is used for **auto-sync after write**: after a node is created or
+    /// mutated via `dt memorize` / `dt learn` / `dt event`, this method fetches
+    /// the node from Neo4j and syncs it into Qdrant immediately — so the vector
+    /// index is always current without needing a manual `dt kg-sync`.
+    ///
+    /// If the node isn't found (e.g. the label isn't in [`BUSINESS_LABELS`]),
+    /// it silently succeeds — not every Neo4j node needs to be in Qdrant.
+    ///
+    /// # Arguments
+    /// - `label` — Neo4j label (e.g. `"Knowledge"`, `"Experience"`, `"Decision"`).
+    /// - `prop_key` — the property used to look up the node (e.g. `"knowledge_id"`).
+    /// - `prop_value` — the property value.
+    pub async fn sync_node_by_property(
+        &self,
+        label: &str,
+        prop_key: &str,
+        prop_value: &str,
+    ) -> Result<(), DtError> {
+        // Only sync business-label nodes.
+        if !BUSINESS_LABELS.contains(&label) {
+            tracing::debug!("[kg-sync] skip non-business label: {label}");
+            return Ok(());
+        }
+
+        let cypher = format!(
+            "MATCH (n:{label} {{{prop_key}: $value}}) \
+             RETURN n, elementId(n) AS eid, labels(n) AS lbls"
+        );
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "value".to_string(),
+            serde_json::Value::String(prop_value.to_string()),
+        );
+
+        let result = self.graph.read_query(&cypher, params).await?;
+        let nodes = parse_neo4j_rows(&result)?;
+
+        if nodes.is_empty() {
+            tracing::debug!(
+                "[kg-sync] node not found: label={label} {prop_key}={prop_value}"
+            );
+            return Ok(());
+        }
+
+        self.process_batch(&nodes).await?;
+
+        tracing::debug!(
+            "[kg-sync] auto-synced 1 node: label={label} {prop_key}={prop_value}",
+        );
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Internal (exposed for BatchAccumulator)
+    // ------------------------------------------------------------------
+
+    /// Fetch a single business-label node from Neo4j by (label, key, value).
+    ///
+    /// Returns `None` if the node isn't found or isn't a business label.
+    pub(crate) async fn fetch_node(
+        &self,
+        label: &str,
+        prop_key: &str,
+        prop_value: &str,
+    ) -> Result<Option<KgNode>, DtError> {
+        if !BUSINESS_LABELS.contains(&label) {
+            return Ok(None);
+        }
+
+        let cypher = format!(
+            "MATCH (n:{label} {{{prop_key}: $value}}) \
+             RETURN n, elementId(n) AS eid, labels(n) AS lbls"
+        );
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "value".to_string(),
+            serde_json::Value::String(prop_value.to_string()),
+        );
+
+        let result = self.graph.read_query(&cypher, params).await?;
+        let mut nodes = parse_neo4j_rows(&result)?;
+        Ok(nodes.pop())
+    }
+
+    // ------------------------------------------------------------------
     // Implementation
     // ------------------------------------------------------------------
 
@@ -171,7 +280,7 @@ impl KgBridge {
         let start = Instant::now();
         let mode = if incremental { "incremental" } else { "full" };
 
-        tracing::info!("[kg-sync] starting {} sync", mode);
+        tracing::info!("[kg-sync] starting {} sync (BATCH_SIZE={BATCH_SIZE}, CONCURRENCY={CONCURRENCY})", mode);
 
         // 1.  Ensure the Qdrant collection exists.
         self.vector
@@ -190,20 +299,60 @@ impl KgBridge {
         }
 
         let total = nodes.len();
-        tracing::info!("[kg-sync] fetched {total} nodes to sync");
+        tracing::info!("[kg-sync] fetched {total} nodes");
 
         let mut synced: usize = 0;
         let mut failed: usize = 0;
         let mut errors: Vec<String> = Vec::new();
 
-        // 3.  Process in batches.
-        for chunk in nodes.chunks(BATCH_SIZE) {
-            match self.process_batch(chunk).await {
-                Ok(count) => synced += count,
-                Err(e) => {
-                    failed += chunk.len();
-                    errors.push(format!("batch error: {e}"));
-                    tracing::warn!("[kg-sync] batch failed ({} nodes): {e}", chunk.len());
+        // 3.  Process in batches with concurrent pipelining (if >1 batch).
+        if total <= BATCH_SIZE || CONCURRENCY < 2 {
+            // Single batch or no concurrency — sequential.
+            for chunk in nodes.chunks(BATCH_SIZE) {
+                match self.process_batch(chunk).await {
+                    Ok(count) => synced += count,
+                    Err(e) => {
+                        failed += chunk.len();
+                        errors.push(format!("batch error: {e}"));
+                    }
+                }
+            }
+        } else {
+            // Multiple batches — pipelined concurrency.
+            use futures::stream::{self, StreamExt};
+
+            let embed = self.embed.clone();
+            let vector = self.vector.clone();
+            let graph = self.graph.clone();
+
+            let chunks: Vec<Vec<KgNode>> = nodes
+                .chunks(BATCH_SIZE)
+                .map(|c| c.to_vec())
+                .collect();
+
+            tracing::info!(
+                "[kg-sync] pipelining {} batches x {} nodes, {} concurrent",
+                chunks.len(), BATCH_SIZE, CONCURRENCY,
+            );
+
+            let results: Vec<Result<usize, DtError>> = stream::iter(chunks)
+                .map(move |chunk| {
+                    let e = embed.clone();
+                    let v = vector.clone();
+                    let g = graph.clone();
+                    async move { process_batch_owned(e, v, g, chunk).await }
+                })
+                .buffer_unordered(CONCURRENCY)
+                .collect()
+                .await;
+
+            for result in results {
+                match result {
+                    Ok(count) => synced += count,
+                    Err(e) => {
+                        failed += BATCH_SIZE;
+                        errors.push(format!("batch error: {e}"));
+                    }
                 }
             }
         }
@@ -211,7 +360,7 @@ impl KgBridge {
         let elapsed = start.elapsed().as_millis() as u64;
 
         tracing::info!(
-            "[kg-sync] complete — {synced}/{total} synced, {failed} failed ({elapsed}ms)"
+            "[kg-sync] complete — {synced}/{total} synced, {failed} failed ({elapsed}ms)",
         );
 
         Ok(SyncReport {
@@ -229,7 +378,7 @@ impl KgBridge {
     }
 
     /// Process a single batch: embed → upsert → mark synced.
-    async fn process_batch(&self, chunk: &[KgNode]) -> Result<usize, DtError> {
+    pub(crate) async fn process_batch(&self, chunk: &[KgNode]) -> Result<usize, DtError> {
         // (a) Build search texts from node properties.
         let texts: Vec<String> = chunk.iter().map(build_search_text).collect();
 
@@ -297,6 +446,35 @@ impl KgBridge {
     }
 }
 
+/// Owned version of process_batch for use in concurrent streams.
+pub(crate) async fn process_batch_owned(
+    embed: Arc<dyn EmbedService>,
+    vector: Arc<dyn VectorRepository>,
+    graph: Arc<dyn GraphRepository>,
+    chunk: Vec<KgNode>,
+) -> Result<usize, DtError> {
+    let texts: Vec<String> = chunk.iter().map(build_search_text).collect();
+    let vectors = embed.embed_batch(&texts).await?;
+    let points: Vec<serde_json::Value> = chunk
+        .iter()
+        .zip(vectors.iter())
+        .map(|(node, vec)| build_qdrant_point(node, vec))
+        .collect();
+    vector.upsert(KG_COLLECTION, points).await?;
+    let eids: Vec<&str> = chunk.iter().map(|n| n.element_id.as_str()).collect();
+    let mut params = HashMap::new();
+    params.insert("eids".to_string(), serde_json::json!(eids));
+    graph
+        .write_query(
+            "UNWIND $eids AS eid \
+             MATCH (n) WHERE elementId(n) = eid \
+             SET n._kg_synced_at = datetime()",
+            params,
+        )
+        .await?;
+    Ok(chunk.len())
+}
+
 // ---------------------------------------------------------------------------
 // Search text construction — per label type
 // ---------------------------------------------------------------------------
@@ -343,7 +521,8 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
         // ── Documents & data ───────────────────────────────────────
         "Document" => concat_props(props, &["title", "content", "source_file", "description"]),
         "Endpoint" => concat_props(props, &["path", "method", "controller", "description", "project"]),
-        "ConfigKey" => concat_props(props, &["key", "value", "data_id", "namespace", "description"]),
+        "ConfigKey" => concat_props(props, &["name", "value", "data_id", "namespace", "description"]),
+        "ConfigSection" => concat_props(props, &["section_id", "name", "summary", "namespace", "data_id", "config_type"]),
         "Table" => concat_props(props, &["table_name", "db_type", "description", "columns"]),
 
         // ── Events ─────────────────────────────────────────────────
