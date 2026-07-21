@@ -577,6 +577,25 @@ impl SyncSource for ConfigSyncSource {
             tracing::debug!("[nacos/config] syncing namespace: {ns_name}");
             namespaces += 1;
 
+            // 2. MERGE NacosNamespace
+            let ns_node_id = format!("dt://nacos/ns/{}", ns_id);
+            let ns_cypher = r#"
+MERGE (n:NacosNamespace {namespace_id: $ns_node_id})
+SET n.namespace = $ns_name,
+    n.description = $ns_name,
+    n.updated_at = $ts
+"#;
+            graph
+                .write_query(
+                    ns_cypher,
+                    params(&[
+                        ("ns_node_id", serde_json::json!(&ns_node_id)),
+                        ("ns_name", serde_json::json!(ns_name)),
+                        ("ts", serde_json::json!(&ts)),
+                    ]),
+                )
+                .await?;
+
             let mut page: i64 = 1;
             let page_size: i64 = 100;
             let mut fetched: i64 = 0;
@@ -651,6 +670,18 @@ ON MATCH SET
                             "MATCH (g:NacosGroup {name: $group}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (c)-[:BELONGS_TO]->(g)",
                             params(&[
                                 ("group", serde_json::json!(&cfg_item.group)),
+                                ("config_id", serde_json::json!(&config_id)),
+                            ]),
+                        )
+                        .await?;
+                    links += 1;
+
+                    // Link NacosConfig → NacosNamespace (IN_NAMESPACE)
+                    graph
+                        .write_query(
+                            "MATCH (ns:NacosNamespace {namespace_id: $ns_node_id}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (c)-[:IN_NAMESPACE]->(ns)",
+                            params(&[
+                                ("ns_node_id", serde_json::json!(&ns_node_id)),
                                 ("config_id", serde_json::json!(&config_id)),
                             ]),
                         )

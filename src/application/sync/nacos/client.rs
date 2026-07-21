@@ -86,6 +86,33 @@ pub struct ServiceItem {
     pub healthy_instance_count: i64,
 }
 
+/// Wrapper returned by `/v1/ns/catalog/instances`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstanceListResponse {
+    pub count: Option<i64>,
+    pub list: Option<Vec<InstanceItem>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstanceItem {
+    #[serde(rename = "instanceId")]
+    pub instance_id: String,
+    pub ip: String,
+    pub port: i64,
+    #[serde(default)]
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    #[serde(default)]
+    pub ephemeral: bool,
+    #[serde(rename = "clusterName")]
+    pub cluster_name: Option<String>,
+    #[serde(rename = "serviceName")]
+    pub service_name: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
 // ---------------------------------------------------------------------------
 // NacosClient
 // ---------------------------------------------------------------------------
@@ -207,6 +234,35 @@ impl NacosClient {
             Ok(None)
         } else {
             Ok(Some(body))
+        }
+    }
+
+    /// List instances of a specific service in a namespace.
+    pub async fn list_instances(
+        &self,
+        service_name: &str,
+        namespace_id: &str,
+    ) -> Result<Option<InstanceListResponse>, DtError> {
+        let url = format!(
+            "{}/v1/ns/catalog/instances?serviceName={}&namespaceId={}&clusterName=DEFAULT&pageNo=1&pageSize=200",
+            self.base_url,
+            urlencode(service_name),
+            namespace_id
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| DtError::Network(e.to_string()))?;
+        let body: InstanceListResponse = resp
+            .json()
+            .await
+            .map_err(|e| DtError::Network(format!("parse instance list: {e}")))?;
+
+        match &body.list {
+            Some(list) if !list.is_empty() => Ok(Some(body)),
+            _ => Ok(None),
         }
     }
 }

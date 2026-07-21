@@ -79,6 +79,20 @@ impl SyncSource for ServiceSyncSource {
 
             namespaces += 1;
 
+            // 2. MERGE NacosNamespace
+            let ns_node_id = format!("dt://nacos/ns/{}", ns_id);
+            graph
+                .write_query(
+                    r#"MERGE (n:NacosNamespace {namespace_id: $ns_node_id})
+SET n.namespace = $ns_name, n.description = $ns_name, n.updated_at = $ts"#,
+                    params(&[
+                        ("ns_node_id", serde_json::json!(&ns_node_id)),
+                        ("ns_name", serde_json::json!(ns_name)),
+                        ("ts", serde_json::json!(&ts)),
+                    ]),
+                )
+                .await?;
+
             for svc_item in &svc_list.service_list {
                 let service_id = format!("dt://nacos/{}/{}", ns_id, svc_item.name);
 
@@ -146,6 +160,66 @@ MERGE (s)-[:REGISTERED_IN]->(ns)
                     )
                     .await?;
                 links += 1;
+
+                // 6. Link NacosService → NacosNamespace (IN_NAMESPACE)
+                graph
+                    .write_query(
+                        "MATCH (svc:NacosService {service_id: $service_id}) MATCH (ns:NacosNamespace {namespace_id: $ns_node_id}) MERGE (svc)-[:IN_NAMESPACE]->(ns)",
+                        params(&[
+                            ("service_id", serde_json::json!(&service_id)),
+                            ("ns_node_id", serde_json::json!(&ns_node_id)),
+                        ]),
+                    )
+                    .await?;
+                links += 1;
+
+                // 7. Fetch and MERGE NacosInstance nodes
+                if let Ok(Some(inst_resp)) = self.client.list_instances(&svc_item.name, ns_id).await {
+                    if let Some(instances) = &inst_resp.list {
+                        for inst in instances {
+                            let instance_id = format!("dt://nacos/{}/{}/{}",
+                                ns_id, svc_item.name, inst.instance_id);
+                            graph
+                                .write_query(
+                                    r#"MERGE (i:NacosInstance {instance_id: $instance_id})
+SET i.service_name = $svc_name,
+    i.ip = $ip,
+    i.port = $port,
+    i.namespace = $ns_name,
+    i.healthy = $healthy,
+    i.enabled = $enabled,
+    i.weight = $weight,
+    i.cluster_name = $cluster,
+    i.updated_at = $ts"#,
+                                    params(&[
+                                        ("instance_id", serde_json::json!(&instance_id)),
+                                        ("svc_name", serde_json::json!(&svc_item.name)),
+                                        ("ip", serde_json::json!(&inst.ip)),
+                                        ("port", serde_json::json!(inst.port)),
+                                        ("ns_name", serde_json::json!(ns_name)),
+                                        ("healthy", serde_json::json!(inst.healthy)),
+                                        ("enabled", serde_json::json!(inst.enabled)),
+                                        ("weight", serde_json::json!(inst.weight)),
+                                        ("cluster", serde_json::json!(inst.cluster_name)),
+                                        ("ts", serde_json::json!(&ts)),
+                                    ]),
+                                )
+                                .await?;
+
+                            // Link NacosInstance → NacosService (INSTANCE_OF)
+                            graph
+                                .write_query(
+                                    "MATCH (i:NacosInstance {instance_id: $instance_id}) MATCH (svc:NacosService {service_id: $service_id}) MERGE (i)-[:INSTANCE_OF]->(svc)",
+                                    params(&[
+                                        ("instance_id", serde_json::json!(&instance_id)),
+                                        ("service_id", serde_json::json!(&service_id)),
+                                    ]),
+                                )
+                                .await?;
+                            links += 2;
+                        }
+                    }
+                }
 
                 services_total += 1;
             }
