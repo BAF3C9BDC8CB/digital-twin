@@ -469,74 +469,76 @@ async fn run_cross_linking(
     namespaces: &[String],
 ) -> Result<(), DtError> {
     for ns in namespaces {
-        let env_name = if ns == "newoffen" { "prod" } else { "test" };
-
-        // Environment → Namespace
-        let env_params: HashMap<String, serde_json::Value> = [
-            ("env".to_string(), serde_json::Value::String(env_name.to_string())),
-            ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
-        ]
-        .into_iter()
-        .collect();
-
+        // ── K8sService → NacosService (name match) ──
         let _ = graph
             .write_query(
                 r#"
-                MATCH (env:Environment {name: $env})
-                MATCH (ns:Namespace {name: $k8s_ns})
-                MERGE (env)-[:DEPLOYS_TO]->(ns)
-                "#,
-                env_params,
-            )
-            .await;
-
-        // NacosService → K8sService by name match
-        let svc_params: HashMap<String, serde_json::Value> = [
-            ("env".to_string(), serde_json::Value::String(env_name.to_string())),
-            ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
-        ]
-        .into_iter()
-        .collect();
-
-        let _ = graph
-            .write_query(
-                r#"
-                MATCH (env:Environment {name: $env})-[:HAS_NAMESPACE]->(nacns:NacosNamespace)
-                MATCH (kns:Namespace {name: $k8s_ns})
-                MATCH (nacns)-[:REGISTERS]->(s:NacosService)
-                MATCH (kns)-[:HAS_SERVICE]->(svc:K8sService)
-                WHERE svc.name = s.name
-                   OR (svc.name STARTS WITH s.name
+                MATCH (svc:K8sService {namespace: $k8s_ns})
+                MATCH (ns:NacosService)
+                WHERE svc.name = ns.name
+                   OR (svc.name STARTS WITH ns.name
                        AND (svc.name ENDS WITH '-stable' OR svc.name ENDS WITH '-svc'))
-                MERGE (s)-[:EXPOSED_BY]->(svc)
+                MERGE (svc)-[:EXPOSES]->(ns)
                 "#,
-                svc_params,
+                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
+                    .into_iter()
+                    .collect(),
             )
             .await;
 
-        // K8sDeployment → NacosConfig by name prefix match
-        let cfg_params: HashMap<String, serde_json::Value> = [
-            ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
-            ("env".to_string(), serde_json::Value::String(env_name.to_string())),
-        ]
-        .into_iter()
-        .collect();
-
+        // ── K8sDeployment → NacosConfig (name prefix match) ──
         let _ = graph
             .write_query(
                 r#"
                 MATCH (d:K8sDeployment {namespace: $k8s_ns})
-                MATCH (env:Environment {name: $env})-[:HAS_NAMESPACE]->(nacns:NacosNamespace)
-                MATCH (nacns)-[:CONTAINS]->(c:NacosConfig)
+                MATCH (c:NacosConfig)
                 WITH d, c,
                     replace(replace(d.name, '-stable', ''), '-svc', '') AS dep_base,
                     split(c.data_id, '.')[0] AS cfg_raw
                 WITH d, c, dep_base,
                     replace(replace(replace(cfg_raw, '-prod', ''), '-test', ''), '_test', '') AS cfg_base
-                WHERE dep_base = cfg_base
+                WHERE dep_base = cfg_base OR dep_base CONTAINS cfg_base OR cfg_base CONTAINS dep_base
                 MERGE (d)-[:CONFIGURED_BY]->(c)
                 "#,
-                cfg_params,
+                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
+                    .into_iter()
+                    .collect(),
+            )
+            .await;
+
+        // ── K8sDeployment → NacosService (name match) ──
+        let _ = graph
+            .write_query(
+                r#"
+                MATCH (d:K8sDeployment {namespace: $k8s_ns})
+                MATCH (ns:NacosService)
+                WHERE d.name = ns.name
+                   OR (d.name STARTS WITH ns.name
+                       AND (d.name ENDS WITH '-stable' OR d.name ENDS WITH '-svc'))
+                MERGE (d)-[:DEPLOYS]->(ns)
+                "#,
+                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
+                    .into_iter()
+                    .collect(),
+            )
+            .await;
+
+        // ── K8s Namespace → NacosNamespace (env match) ──
+        let env_name = if ns == "newoffen" { "prod" } else { "test" };
+        let _ = graph
+            .write_query(
+                r#"
+                MATCH (kns:Namespace {name: $k8s_ns})
+                MATCH (nns:NacosNamespace)
+                WHERE nns.namespace CONTAINS $env OR nns.description CONTAINS $env
+                MERGE (kns)-[:MAPS_TO]->(nns)
+                "#,
+                [
+                    ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
+                    ("env".to_string(), serde_json::Value::String(env_name.to_string())),
+                ]
+                    .into_iter()
+                    .collect(),
             )
             .await;
     }
