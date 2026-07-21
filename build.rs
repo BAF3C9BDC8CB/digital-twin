@@ -8,11 +8,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "common.proto",
         "dt_core.proto",
         "embed.proto",
+        "inference.proto",
         "plugin_k8s.proto",
         "plugin_svc.proto",
         "plugin_jenkins.proto",
         "metrics.proto",
         "log.proto",
+        "reranker.proto",
     ]
     .iter()
     .map(|f| proto_dir.join(f))
