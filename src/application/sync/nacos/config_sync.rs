@@ -18,6 +18,7 @@ use std::sync::LazyLock;
 
 use super::client::NacosClient;
 use crate::application::sync::traits::{SyncReport, SyncSource};
+use crate::shared::chunker::{chunk_config_by_sections, chunk_config_adaptive, parse_kv_line, ChunkConfig};
 
 // ---------------------------------------------------------------------------
 // Convenience: build a Cypher params HashMap
@@ -129,23 +130,6 @@ fn extract_yaml_keys(namespace: &str, content: &str) -> Vec<ConfigKeyEntry> {
     keys
 }
 
-fn parse_kv_line(line: &str) -> Option<(&str, &str)> {
-    if let Some(pos) = line.find('=') {
-        let key = line[..pos].trim();
-        let value = line[pos + 1..].trim();
-        if !key.is_empty() {
-            return Some((key, value));
-        }
-    }
-    if let Some(pos) = line.find(':') {
-        let key = line[..pos].trim();
-        let value = line[pos + 1..].trim().trim_matches('"').trim_matches('\'');
-        if !key.is_empty() && !value.contains(':') {
-            return Some((key, value));
-        }
-    }
-    None
-}
 
 fn classify_key(key: &str) -> String {
     let lower = key.to_lowercase();
@@ -419,6 +403,125 @@ impl ConfigVectorizer {
 }
 
 // ---------------------------------------------------------------------------
+// ConfigChunkVectorizer — adaptive chunk → vector embedding
+// ---------------------------------------------------------------------------
+
+/// A chunk to be vectorised — section name and its key-value pairs.
+#[derive(Debug, Clone)]
+pub struct ChunkToVectorize {
+    pub section_name: String,
+    pub key_values: Vec<(String, String)>,
+}
+
+/// Vectorises config chunks into the dedicated `config_chunks` Qdrant
+/// collection (dim=1024, BGE-M3).
+///
+/// Each chunk contains all key-value pairs from one adaptive section,
+/// formatted as `key=value\n...` text for embedding.
+pub struct ConfigChunkVectorizer {
+    embed: Arc<dyn EmbedService>,
+    vector: Arc<dyn VectorRepository>,
+}
+
+impl ConfigChunkVectorizer {
+    pub const COLLECTION: &str = "config_chunks";
+    pub const VECTOR_DIM: u32 = 1024;
+
+    pub fn new(embed: Arc<dyn EmbedService>, vector: Arc<dyn VectorRepository>) -> Self {
+        Self { embed, vector }
+    }
+
+    /// Vectorise one or more config chunks for a given config file.
+    pub async fn vectorize_chunks(
+        &self,
+        chunks: &[ChunkToVectorize],
+        namespace: &str,
+        data_id: &str,
+        group: &str,
+        config_type: &str,
+        environment: Option<&str>,
+    ) -> Result<usize, DtError> {
+        if chunks.is_empty() {
+            return Ok(0);
+        }
+
+        self.vector
+            .ensure_collection(Self::COLLECTION, Self::VECTOR_DIM)
+            .await?;
+
+        // Build full text for each chunk: section_name + all key=value lines
+        let texts: Vec<String> = chunks
+            .iter()
+            .map(|c| {
+                let mut t = c.section_name.clone();
+                for (k, v) in &c.key_values {
+                    t.push('\n');
+                    t.push_str(&format!("{}={}", k, v));
+                }
+                t
+            })
+            .collect();
+
+        let vectors = self.embed.embed_batch(&texts).await?;
+
+        let points: Vec<serde_json::Value> = chunks
+            .iter()
+            .zip(vectors.iter())
+            .map(|(chunk, vec)| {
+                let id = format!("dt://nacos/{}/{}#{}", namespace, data_id, chunk.section_name);
+                serde_json::json!({
+                    "id": id,
+                    "vector": vec,
+                    "payload": {
+                        "section_name": chunk.section_name,
+                        "namespace": namespace,
+                        "data_id": data_id,
+                        "group": group,
+                        "config_type": config_type,
+                        "text": build_chunk_text(chunk),
+                        "source_type": "config_chunk",
+                        "key_count": chunk.key_values.len(),
+                        "environment": environment.unwrap_or(""),
+                    }
+                })
+            })
+            .collect();
+
+        self.vector.upsert(Self::COLLECTION, points).await?;
+        Ok(chunks.len())
+    }
+
+    /// Delete stale chunk vectors for a config file before re-upserting.
+    pub async fn delete_by_data_id(
+        &self,
+        namespace: &str,
+        data_id: &str,
+    ) -> Result<(), DtError> {
+        self.vector
+            .delete_by_filter(
+                Self::COLLECTION,
+                serde_json::json!({
+                    "must": [
+                        {"key": "namespace", "match": {"value": namespace}},
+                        {"key": "data_id", "match": {"value": data_id}},
+                    ]
+                }),
+            )
+            .await
+    }
+}
+
+/// Build the chunk text used for embedding.
+pub fn build_chunk_text(chunk: &ChunkToVectorize) -> String {
+    let mut text = chunk.section_name.clone();
+    for (k, v) in &chunk.key_values {
+        text.push('\n');
+        text.push_str(&format!("{}={}", k, v));
+    }
+    text
+}
+
+// ---------------------------------------------------------------------------
 // ConfigSyncSource
 // ---------------------------------------------------------------------------
 
@@ -584,6 +687,96 @@ ON MATCH SET
                                         ("name", serde_json::json!(&key_entry.name)),
                                         ("ns", serde_json::json!(&key_entry.namespace)),
                                         ("config_id", serde_json::json!(&config_id)),
+                                    ]),
+                                )
+                                .await?;
+                            links += 1;
+                        }
+                    }
+
+                    // --- ConfigSection 提取与写入 (复用 chunker) ---
+                    if !content.is_empty() {
+                        let chunk_config = ChunkConfig::default();
+                        let is_yaml = config_type == "yaml" || config_type == "yml";
+                        let sections =
+                            chunk_config_by_sections(&content, &config_id, &chunk_config, is_yaml);
+
+                        for (section_name, sec_chunks) in &sections {
+                            let section_id =
+                                format!("{}#{}", config_id, section_name.replace('.', "_"));
+
+                            // Build a concise summary from leaf key=value entries only
+                            // Skips structural lines (keys with no value on the same line)
+                            let summary = {
+                                let text: Vec<&str> =
+                                    sec_chunks.iter().map(|c| c.text.as_str()).collect();
+                                let combined = text.join("\n");
+                                let pairs: Vec<String> = combined
+                                    .lines()
+                                    .filter_map(|l| {
+                                        let trimmed = l.trim();
+                                        // Skip structural lines: empty, comment, or key: (no value)
+                                        if trimmed.is_empty()
+                                            || trimmed.starts_with('#')
+                                            || trimmed.ends_with(':')
+                                        {
+                                            return None;
+                                        }
+                                        // Normalise "key: value" → "key=value"
+                                        if let Some(pos) = trimmed.find(':') {
+                                            let k = trimmed[..pos].trim();
+                                            let v = trimmed[pos + 1..].trim();
+                                            if !v.is_empty() && !v.contains(':') {
+                                                return Some(format!("{}={}", k, v));
+                                            }
+                                        }
+                                        // Already "key=value" format
+                                        if let Some(pos) = trimmed.find('=') {
+                                            let k = trimmed[..pos].trim();
+                                            let v = trimmed[pos + 1..].trim();
+                                            if !v.is_empty() {
+                                                return Some(format!("{}={}", k, v));
+                                            }
+                                        }
+                                        None
+                                    })
+                                    .take(10) // limit to 10 pairs to keep summary concise
+                                    .collect();
+                                if pairs.is_empty() {
+                                    format!("{}: (structural keys only)", section_name)
+                                } else {
+                                    format!("{}: {}", section_name, pairs.join(", "))
+                                }
+                            };
+
+                            // MERGE ConfigSection node
+                            graph
+                                .write_query(
+                                    r#"MERGE (s:ConfigSection {section_id: $section_id})
+ON CREATE SET s.name = $name, s.summary = $summary, s.namespace = $ns,
+              s.data_id = $data_id, s.config_type = $config_type, s.updated_at = $ts
+ON MATCH SET s.summary = $summary, s.updated_at = $ts"#,
+                                    params(&[
+                                        ("section_id", serde_json::json!(&section_id)),
+                                        ("name", serde_json::json!(section_name)),
+                                        ("summary", serde_json::json!(&summary)),
+                                        ("ns", serde_json::json!(ns_name)),
+                                        ("data_id", serde_json::json!(&cfg_item.data_id)),
+                                        ("config_type", serde_json::json!(&config_type)),
+                                        ("ts", serde_json::json!(&ts)),
+                                    ]),
+                                )
+                                .await?;
+
+                            // Link NacosConfig → ConfigSection
+                            graph
+                                .write_query(
+                                    "MATCH (c:NacosConfig {config_id: $config_id})
+                                     MATCH (s:ConfigSection {section_id: $section_id})
+                                     MERGE (c)-[:HAS_SECTION]->(s)",
+                                    params(&[
+                                        ("config_id", serde_json::json!(&config_id)),
+                                        ("section_id", serde_json::json!(&section_id)),
                                     ]),
                                 )
                                 .await?;
@@ -954,5 +1147,112 @@ mod tests {
         assert_eq!(e.key, "server.port");
         assert_eq!(e.value, "8080");
         assert_eq!(e.entity_id, "dt://nacos/test/app.properties/server.port");
+    }
+
+    // -------------------------------------------------------------------
+    // ConfigChunkVectorizer tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn build_chunk_text_formats_correctly() {
+        let chunk = ChunkToVectorize {
+            section_name: "spring.datasource".into(),
+            key_values: vec![
+                ("spring.datasource.url".into(), "jdbc:mysql://localhost/db".into()),
+                ("spring.datasource.username".into(), "admin".into()),
+            ],
+        };
+        let text = build_chunk_text(&chunk);
+        assert!(text.starts_with("spring.datasource\n"));
+        assert!(text.contains("spring.datasource.url=jdbc:mysql://localhost/db"));
+        assert!(text.contains("spring.datasource.username=admin"));
+    }
+
+    #[tokio::test]
+    async fn chunk_vectorizer_empty_returns_zero() {
+        let embed = Arc::new(MockEmbed);
+        let vector = Arc::new(MockVector::new());
+        let cv = ConfigChunkVectorizer::new(embed, vector);
+        let count = cv
+            .vectorize_chunks(&[], "test", "app.yaml", "DEFAULT", "yaml", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn chunk_vectorizer_upserts_to_config_chunks() {
+        let embed = Arc::new(MockEmbed);
+        let vector = Arc::new(MockVector::new());
+        let cv = ConfigChunkVectorizer::new(embed, vector.clone());
+
+        let chunks = vec![ChunkToVectorize {
+            section_name: "spring.datasource".into(),
+            key_values: vec![
+                ("spring.datasource.url".into(), "jdbc:mysql://localhost/db".into()),
+                ("spring.datasource.username".into(), "admin".into()),
+            ],
+        }];
+
+        let count = cv
+            .vectorize_chunks(&chunks, "prod", "app.properties", "DEFAULT", "properties", Some("test"))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let upserted = vector.upserted.lock().unwrap();
+        assert_eq!(upserted.len(), 1);
+        assert_eq!(upserted[0]["payload"]["section_name"], "spring.datasource");
+        assert_eq!(upserted[0]["payload"]["key_count"], 2);
+        assert_eq!(upserted[0]["payload"]["source_type"], "config_chunk");
+        assert_eq!(upserted[0]["payload"]["environment"], "test");
+        assert!(upserted[0]["payload"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("spring.datasource.url=jdbc:mysql://localhost/db"));
+    }
+
+    #[tokio::test]
+    async fn chunk_vectorizer_delete_by_data_id() {
+        let embed = Arc::new(MockEmbed);
+        let vector = Arc::new(MockVector::new());
+        let cv = ConfigChunkVectorizer::new(embed, vector);
+        // Just verify it doesn't panic — mock delete_by_filter returns Ok
+        cv.delete_by_data_id("test", "app.yaml").await.unwrap();
+    }
+
+    /// Integration: adaptive chunk → vectorize for a YAML snippet.
+    #[test]
+    fn adaptive_chunk_to_chunk_vectorize_integration() {
+        let yaml = "\
+spring:\n  datasource:\n    url: jdbc:mysql://localhost/db\n    username: admin\n\
+  redis:\n    host: 127.0.0.1\n    port: 6379";
+
+        let sections = chunk_config_adaptive(yaml, true);
+        eprintln!("Adaptive sections: {:?}", sections.iter().map(|(n,_)| n.as_str()).collect::<Vec<_>>());
+        assert!(!sections.is_empty(), "expected at least 1 section");
+
+        // Verify druid-style grouping works on chunk text
+        for (name, pairs) in &sections {
+            assert!(!name.is_empty());
+            assert!(!pairs.is_empty());
+        }
+    }
+
+    /// Integration: properties adaptive chunk → vectorize
+    #[test]
+    fn adaptive_props_chunk_to_vectorize_integration() {
+        let props = "\
+spring.datasource.url=jdbc:mysql://localhost/db\n\
+spring.datasource.username=admin\n\
+spring.datasource.password=secret\n\
+spring.redis.host=127.0.0.1\n\
+spring.redis.port=6379";
+
+        let sections = chunk_config_adaptive(props, false);
+        eprintln!("Props sections: {:?}", sections.iter().map(|(n,_)| n.as_str()).collect::<Vec<_>>());
+        assert!(sections.len() >= 2, "expected >=2 sections, got {}", sections.len());
+        assert!(sections.iter().any(|(n,_)| n == "spring.datasource"));
+        assert!(sections.iter().any(|(n,_)| n == "spring.redis"));
     }
 }

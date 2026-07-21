@@ -181,6 +181,182 @@ impl KgBridge {
         self.sync_impl(true).await
     }
 
+    /// Detect whether config content is YAML by filename extension or content.
+    fn detect_is_yaml(data_id: &str, config_type: &str, content: &str) -> bool {
+        if config_type == "yaml" || config_type == "yml" {
+            return true;
+        }
+        if config_type == "properties" || config_type == "json" || config_type == "xml" {
+            return false;
+        }
+        // Detect from filename
+        let lower = data_id.to_lowercase();
+        if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+            return true;
+        }
+        if lower.ends_with(".properties") || lower.ends_with(".json") || lower.ends_with(".xml") {
+            return false;
+        }
+        // Content-based detection: YAML has top-level "key:" lines
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') { continue; }
+            if trimmed.contains(':') && !trimmed.contains('=') {
+                return true;
+            }
+            break;
+        }
+        false
+    }
+
+    /// Reconstruct config text in original format.
+    fn reconstruct_text(name: &str, pairs: &[(String, String)], is_yaml: bool) -> String {
+        if !is_yaml {
+            let mut t = name.to_string();
+            for (k, v) in pairs {
+                t.push('\n');
+                t.push_str(&format!("{}={}", k, v));
+            }
+            return t;
+        }
+        // YAML: reconstruct indented tree from dotted keys
+        let prefix = name.to_string();
+        let prefix_parts: Vec<&str> = prefix.split('.').collect();
+        let prefix_depth = prefix_parts.len();
+
+        let mut text = String::new();
+        for (i, part) in prefix_parts.iter().enumerate() {
+            let indent = "  ".repeat(i);
+            text.push_str(&format!("{}{}:\n", indent, part));
+        }
+
+        let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (k, v) in pairs {
+            let full_parts: Vec<&str> = k.split('.').collect();
+            if full_parts.len() <= prefix_depth { continue; }
+            let rel_parts = &full_parts[prefix_depth..];
+            // Output intermediate keys (track to avoid duplicates)
+            let mut cur_path = String::new();
+            for (i, part) in rel_parts.iter().enumerate() {
+                if !cur_path.is_empty() { cur_path.push('.'); }
+                cur_path.push_str(part);
+                let depth = prefix_depth + i;
+                let indent = "  ".repeat(depth);
+                let is_last = i == rel_parts.len() - 1;
+                if is_last {
+                    text.push_str(&format!("{}{}: {}\n", indent, part, v));
+                } else if !seen_paths.contains(&cur_path) {
+                    seen_paths.insert(cur_path.clone());
+                    text.push_str(&format!("{}{}:\n", indent, part));
+                }
+            }
+        }
+        text.trim_end().to_string()
+    }
+
+    /// Sync adaptive config chunks from Neo4j ConfigSection + ConfigKey
+    /// nodes into the Qdrant `config_chunks` collection.
+    ///
+    /// Uses `chunk_config_adaptive` from the Nacos config content stored in
+    /// NacosConfig nodes, embeds each chunk via BGE-M3, and upserts into Qdrant.
+    pub async fn sync_config_chunks(&self) -> Result<SyncReport, DtError> {
+        let start = Instant::now();
+
+        // Fetch NacosConfig nodes with their content
+        let cypher = r#"
+            MATCH (c:NacosConfig)
+            WHERE c.content IS NOT NULL AND c.content <> ''
+            RETURN c.config_id AS config_id, c.data_id AS data_id,
+                   c.group AS group, c.type AS type,
+                   c.content AS content, c.namespace AS namespace
+        "#;
+        let result = self.graph.read_query(cypher, HashMap::new()).await?;
+        let configs = result.as_array().cloned().unwrap_or_default();
+
+        let total = configs.len();
+        if total == 0 {
+            return Ok(SyncReport::skipped("config_chunks"));
+        }
+
+        tracing::info!("[config_chunks] chunking and vectorising {} configs", total);
+
+        let mut chunk_count = 0usize;
+        let collection = "config_chunks";
+        self.vector.ensure_collection(collection, 1024).await?;
+
+        // Use chunk_config_adaptive from our chunker module
+        use crate::shared::chunker::chunk_config_adaptive;
+
+        for cfg in &configs {
+            let content = cfg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let config_id = cfg.get("config_id").and_then(|v| v.as_str()).unwrap_or("");
+            let data_id = cfg.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
+            let group = cfg.get("group").and_then(|v| v.as_str()).unwrap_or("DEFAULT_GROUP");
+            let config_type = cfg.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let namespace = cfg.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+
+            if content.is_empty() { continue; }
+
+            let is_yaml = Self::detect_is_yaml(data_id, config_type, content);
+            let sections = chunk_config_adaptive(content, is_yaml);
+            if sections.is_empty() { continue; }
+
+            // Build chunk texts and embed
+            let texts: Vec<String> = sections.iter().map(|(name, pairs)| {
+                Self::reconstruct_text(name, pairs, is_yaml)
+            }).collect();
+
+            let vectors = match self.embed.embed_batch(&texts).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("[config_chunks] embed failed for {}: {}", data_id, e);
+                    continue;
+                }
+            };
+
+            // Build Qdrant points
+            let points: Vec<serde_json::Value> = sections.iter().zip(vectors.iter())
+                .map(|((section_name, pairs), vec)| {
+                    let text = Self::reconstruct_text(section_name, pairs, is_yaml);
+                    serde_json::json!({
+                        "id": format!("{}#{}", config_id, section_name),
+                        "vector": vec,
+                        "payload": {
+                            "section_name": section_name,
+                            "namespace": namespace,
+                            "data_id": data_id,
+                            "group": group,
+                            "config_type": config_type,
+                            "text": text,
+                            "source_type": "config_chunk",
+                            "key_count": pairs.len(),
+                        }
+                    })
+                })
+                .collect();
+
+            if let Err(e) = self.vector.upsert(collection, points.clone()).await {
+                tracing::warn!("[config_chunks] upsert failed for {}: {}", data_id, e);
+            } else {
+                chunk_count += points.len();
+            }
+        }
+
+        let elapsed = start.elapsed();
+        tracing::info!(
+            "[config_chunks] done: {} chunks from {} configs ({:.1}s)",
+            chunk_count, total, elapsed.as_secs_f64()
+        );
+
+        Ok(SyncReport {
+            source: "config_chunks".into(),
+            items_fetched: total,
+            items_created: chunk_count,
+            elapsed_ms: elapsed.as_millis() as u64,
+            ..Default::default()
+        })
+    }
+
     // ------------------------------------------------------------------
     // Single-node sync — for auto-sync after write
     // ------------------------------------------------------------------

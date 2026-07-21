@@ -28,7 +28,7 @@ use std::time::Instant;
 /// # Usage
 ///
 /// ```ignore
-/// let svc = GrpcEmbedService::connect("http://[::1]:50052").await?;
+/// let svc = GrpcEmbedService::connect("http://[::1]:50051").await?;
 /// let vecs = svc.embed_batch(&["fn test() {}".to_string()]).await?;
 /// ```
 pub struct GrpcEmbedService {
@@ -38,7 +38,7 @@ pub struct GrpcEmbedService {
 }
 
 impl GrpcEmbedService {
-    /// Connect to the dt-embed gRPC server at `addr` (e.g. `http://[::1]:50052`).
+    /// Connect to the dt-embed gRPC server at `addr` (e.g. `http://[::1]:50051`).
     pub async fn connect(addr: &str) -> Result<Self, DtError> {
         let endpoint = tonic::transport::Endpoint::from_shared(addr.to_string())
             .map_err(|e| DtError::Repository(format!("embed channel: {e}")))?;
@@ -163,7 +163,7 @@ pub struct NoopEmbedService {
 
 impl NoopEmbedService {
     /// Create a no-op service returning `dim`-dimensional zero vectors
-    /// (default 384 for BGE-M3 compatibility).
+    /// (default 1024 for BGE-M3 compatibility).
     pub fn new(dim: u32) -> Self {
         Self { dim }
     }
@@ -171,7 +171,7 @@ impl NoopEmbedService {
 
 impl Default for NoopEmbedService {
     fn default() -> Self {
-        Self { dim: 384 }
+        Self { dim: 1024 }
     }
 }
 
@@ -196,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn embed_client_returns_vectors() {
-        let client = EmbedClient::new("http://localhost:50052".into());
+        let client = EmbedClient::new("http://localhost:50051".into());
         let texts = vec!["hello".to_string(), "world".to_string()];
         let result = client.embed(texts, None).await.unwrap();
         assert_eq!(result.len(), 2);
@@ -205,14 +205,14 @@ mod tests {
 
     #[tokio::test]
     async fn embed_client_empty_input() {
-        let client = EmbedClient::new("http://localhost:50052".into());
+        let client = EmbedClient::new("http://localhost:50051".into());
         let result = client.embed(vec![], None).await.unwrap();
         assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn embed_batch_trait_method() {
-        let client = EmbedClient::new("http://localhost:50052".into());
+        let client = EmbedClient::new("http://localhost:50051".into());
         let texts = vec!["fn test() {}".to_string()];
         let result = client.embed_batch(&texts).await.unwrap();
         assert_eq!(result.len(), 1);

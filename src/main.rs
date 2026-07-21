@@ -5,8 +5,8 @@
 //! The daemon binary operates in one of three modes:
 //!
 //! 1. **Server mode** (default) — starts the gRPC server.
-//! 2. **CLI mode** — when invoked with a recognised subcommand (e.g. `update`,
-//!    `watch`), executes the command and exits.
+//! 2. **CLI mode** — when invoked with a recognised subcommand (e.g. `build`,
+//!    `search`), executes the command and exits.
 
 use clap::{Parser, Subcommand};
 use dt_daemon::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
@@ -26,25 +26,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Single-file incremental update into the knowledge graph.
-    Update {
-        /// Absolute path to the file to update.
-        #[arg(long = "file")]
-        file: PathBuf,
-
-        /// Project name (required).
-        #[arg(long = "project", short = 'p')]
-        project: String,
-
-        /// Project root directory (for computing relative paths).
-        #[arg(long = "root")]
-        root: Option<PathBuf>,
-
-        /// Operation type: create, modify, or delete.
-        #[arg(long = "type", default_value = "modify")]
-        op_type: String,
-    },
-
     /// Wipe all data from Neo4j, Qdrant, and SQLite.
     ///
     /// Requires `--confirm` to actually execute. Without it, prints a
@@ -81,7 +62,7 @@ enum Commands {
         dry_run: bool,
 
         /// Execute the cleanup (otherwise defaults to dry-run).
-        #[arg(long = "execute")]
+        #[arg(long = "exec")]
         execute: bool,
 
         /// Specific targets to clean (comma-separated).
@@ -92,43 +73,26 @@ enum Commands {
 
     /// System backup — tiered backup of Neo4j, Qdrant, and SQLite.
     ///
-    /// Default action is `backup` (create a new backup).
-    /// Use `--action restore --date <YYYY-MM-DD>` to restore.
-    /// Use `--action list` to list available backups.
-    /// Use `--action verify --date <YYYY-MM-DD>` to verify checksums.
+    /// Default (no subcommand) creates a new backup.
+    /// Subcommands: list, restore <date>, verify <date>.
     Backup {
-        /// Action: backup, restore, list, or verify.
-        #[arg(long = "action", default_value = "backup")]
-        action: String,
-
-        /// Date for restore/verify (format: YYYY-MM-DD).
-        #[arg(long = "date")]
-        date: Option<String>,
-
-        /// List available backups (shortcut for --action list).
-        #[arg(long = "list")]
-        list: bool,
-
-        /// Restore from backup by date (shortcut for --action restore).
-        #[arg(long = "restore")]
-        restore: Option<String>,
-
-        /// Verify backup by date (shortcut for --action verify).
-        #[arg(long = "verify")]
-        verify: Option<String>,
+        #[command(subcommand)]
+        action: Option<BackupAction>,
     },
 
     /// Memory World archiving — archive events beyond retention to compressed files.
     ///
-    /// Defaults to dry-run preview. Use `--before <date>` to set the cutoff.
+    /// `dt archive` — dry-run preview.
+    /// `dt archive <YYYY-MM-DD>` — archive events before this date.
+    /// `dt archive --exec <YYYY-MM-DD>` — execute (without --exec, runs dry-run).
+    /// `dt archive --list` — list existing archive files.
     Archive {
         /// Cutoff date — archive events before this date (format: YYYY-MM-DD).
-        #[arg(long = "before")]
         before: Option<String>,
 
-        /// Preview only — show what would be archived without executing.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
+        /// Execute the archive (otherwise runs dry-run preview).
+        #[arg(long = "exec")]
+        execute: bool,
 
         /// List existing archive files.
         #[arg(long = "list")]
@@ -146,14 +110,17 @@ enum Commands {
     ///
     /// Used by `dt memorize` and the MCP tool `dt_memorize` to persist
     /// structured knowledge into the Knowledge World subgraph.
+    ///
+    /// Usage: dt memorize <type> <entity-id> <details> [--project <name>]
     Memorize {
         /// Knowledge type: Decision | KnowledgeAdded | Environment | Dependencies.
-        #[arg(long = "type")]
         knowledge_type: String,
 
         /// Unique identifier for the entity.
-        #[arg(long = "entity-id")]
         entity_id: String,
+
+        /// Human-readable details in key: value format (semicolon-separated).
+        details: String,
 
         /// Entity type label (e.g. ArchitectureDecision, Knowledge, Experience).
         #[arg(long = "entity-type")]
@@ -162,10 +129,6 @@ enum Commands {
         /// Optional project name for scoping.
         #[arg(long = "project")]
         project: Option<String>,
-
-        /// Human-readable details in key: value format (semicolon-separated).
-        #[arg(long = "details")]
-        details: String,
     },
 
     /// Fire a named hook with a JSON context object.
@@ -173,13 +136,13 @@ enum Commands {
     /// Replaces the old `--type` / `--entity-id` / `--details` interface.
     /// The hook and its side-effect templates are configured in
     /// `config/event-hooks.yaml`.
+    ///
+    /// Usage: dt event <hook> '<json>'
     Event {
         /// Hook name (e.g. code_modified, jenkins_deploy_completed).
-        #[arg(long = "hook")]
         hook_name: String,
 
         /// JSON object with fields for the hook's side-effect templates.
-        #[arg(long = "context")]
         context: String,
     },
 
@@ -188,9 +151,10 @@ enum Commands {
     /// Accepts task name, entities, patterns, pitfalls, decisions, and
     /// success/failure flags.  Synthesises Knowledge, Experience, and Playbook
     /// nodes and updates Playbook success/failure counters.
+    ///
+    /// Usage: dt learn <task> [--pattern ...] [--pitfalls ...] [--project ...]
     Learn {
         /// Task title or description (e.g. "支付平台迁移").
-        #[arg(long = "task")]
         task: String,
 
         /// Comma-separated list of affected entities (files, classes, services).
@@ -223,32 +187,35 @@ enum Commands {
     },
 
     /// Build (index) a project into the knowledge graph.
+    ///
+    /// `dt build` — build all projects from config.yaml (default).
+    /// `dt build --path <path>` — build a project by root path.
+    /// `dt build --name <name>` — build a project by name in config.yaml.
+    /// `dt build --file <file>` — single file incremental update.
+    /// `dt build --full` — full rebuild (can combine with --path/--name/--file).
     Build {
         /// Project root path.
         #[arg(long = "path")]
         path: Option<PathBuf>,
 
-        /// Project name (required).
+        /// Project name (from config.yaml).
         #[arg(long = "name", short = 'n')]
         name: Option<String>,
 
-        /// Single file path (for dt update usage via build).
+        /// Single file path (for incremental single-file update).
         #[arg(long = "file")]
         file: Option<PathBuf>,
 
         /// Full rebuild — bypass incremental snapshots.
         #[arg(long = "full")]
         full: bool,
-
-        /// Build ALL projects from config.yaml.
-        #[arg(long = "all")]
-        all: bool,
     },
 
     /// Semantic code search across worlds.
+    ///
+    /// Usage: dt search <query> [--world code|knowledge|doc|all] [--limit 10]
     Search {
         /// Search query string.
-        #[arg(long = "query", short = 'q')]
         query: String,
 
         /// Which world to search: code, knowledge, doc, all.
@@ -269,6 +236,8 @@ enum Commands {
     },
 
     /// Semantic search of KG nodes via Qdrant vector store.
+    ///
+    /// Usage: dt search-kg <query> [--limit 10]
     SearchKg {
         /// Search query string (positional).
         query: String,
@@ -279,9 +248,10 @@ enum Commands {
     },
 
     /// Build aggregated six-world context for a task.
+    ///
+    /// Usage: dt context <task> [--worlds ...] [--max-tokens ...]
     Context {
         /// Task description.
-        #[arg(long = "task", short = 't')]
         task: String,
 
         /// Worlds to query (comma-separated).
@@ -298,9 +268,10 @@ enum Commands {
     },
 
     /// Generate execution plan by matching playbooks.
+    ///
+    /// Usage: dt plan <task> [--context ...] [--thread-id ...]
     Plan {
         /// Task description.
-        #[arg(long = "task", short = 't')]
         task: String,
 
         /// Optional context from dt_context output.
@@ -313,9 +284,10 @@ enum Commands {
     },
 
     /// Query domain knowledge model subgraph.
+    ///
+    /// Usage: dt domain <name> [--depth 2] [--include-code]
     Domain {
         /// Domain name (e.g. "支付", "部署").
-        #[arg(long = "name", short = 'd')]
         name: String,
 
         /// Traversal depth.
@@ -328,9 +300,10 @@ enum Commands {
     },
 
     /// Retrieve similar historical tasks from Memory World.
+    ///
+    /// Usage: dt history <task> [--domain ...] [--days 90] [--limit 5]
     History {
         /// Task description for similarity matching.
-        #[arg(long = "task", short = 't')]
         task: String,
 
         /// Domain filter.
@@ -347,9 +320,10 @@ enum Commands {
     },
 
     /// Analyze call-chain and dependency impact.
+    ///
+    /// Usage: dt dependency <target> [--direction both] [--depth 2] [--type all]
     Dependency {
         /// Target entity (method name, class name, service name).
-        #[arg(long = "target", short = 't')]
         target: String,
 
         /// Direction: upstream, downstream, both.
@@ -366,9 +340,11 @@ enum Commands {
     },
 
     /// Verify consistency after code changes.
+    ///
+    /// Usage: dt verify <files> [--check-config] [--check-db] [--check-api]
     Verify {
-        /// Changed file paths.
-        #[arg(long = "files", value_delimiter = ',')]
+        /// Changed file paths (comma-separated).
+        #[arg(value_delimiter = ',')]
         files: Vec<String>,
 
         /// Check Nacos config consistency.
@@ -400,9 +376,11 @@ enum Commands {
     },
 
     /// Synchronize Nacos configuration to Knowledge Graph.
+    ///
+    /// Usage: dt nacos-sync [test|prod]
     NacosSync {
-        /// Target environment.
-        #[arg(long = "env", default_value = "test")]
+        /// Target environment (default: test).
+        #[arg(default_value = "test")]
         env: String,
     },
 
@@ -414,41 +392,30 @@ enum Commands {
     },
 
     /// Synchronize KG nodes to Qdrant vector store.
+    ///
+    /// Default: incremental (only new/unsynchronized nodes).
+    /// Use --full for complete rebuild.
     KgSync {
-        /// Incremental mode — only unsynchronized nodes.
-        #[arg(long = "incremental")]
-        incremental: bool,
+        /// Full rebuild — sync all nodes (bypass incremental).
+        #[arg(long = "full")]
+        full: bool,
 
         /// Specific labels (comma-separated).
         #[arg(long = "labels")]
         labels: Option<String>,
+
+        /// Sync adaptive config chunks to Qdrant config_chunks collection.
+        #[arg(long = "config-chunks")]
+        config_chunks: bool,
     },
 
     /// Manage Digital Thread lifecycle.
+    ///
+    /// Subcommands: list, get <id>, create <name>, close <id>,
+    ///              add-session <thread-id> <session-id>, add-decision <thread-id> <decision-id>
     Thread {
-        /// Action: create, add-session, add-decision, get, list, close.
-        #[arg(long = "action", default_value = "list")]
-        action: String,
-
-        /// Thread name (for create).
-        #[arg(long = "name")]
-        name: Option<String>,
-
-        /// Thread description (for create).
-        #[arg(long = "description")]
-        description: Option<String>,
-
-        /// Thread ID (for add-session, add-decision, get, close).
-        #[arg(long = "thread-id")]
-        thread_id: Option<String>,
-
-        /// Session ID (for add-session).
-        #[arg(long = "session-id")]
-        session_id: Option<String>,
-
-        /// Decision ID (for add-decision).
-        #[arg(long = "decision-id")]
-        decision_id: Option<String>,
+        #[command(subcommand)]
+        action: Option<ThreadAction>,
     },
 
     /// Kubernetes operations: pods, logs, download, status (via kublog).
@@ -522,6 +489,62 @@ enum Commands {
 enum SchemaAction {
     /// Initialize V2 schema — create all uniqueness constraints and full-text indexes.
     Init,
+}
+
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Create a new backup (default).
+    Create,
+    /// List available backups.
+    List,
+    /// Restore from a backup by date (YYYY-MM-DD).
+    Restore {
+        /// Backup date (format: YYYY-MM-DD).
+        date: String,
+    },
+    /// Verify backup integrity by date (YYYY-MM-DD).
+    Verify {
+        /// Backup date (format: YYYY-MM-DD).
+        date: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ThreadAction {
+    /// List all threads.
+    List,
+    /// Get thread details by ID.
+    Get {
+        /// Thread ID.
+        thread_id: String,
+    },
+    /// Create a new thread.
+    Create {
+        /// Thread name.
+        name: String,
+        /// Thread description.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Close a thread.
+    Close {
+        /// Thread ID.
+        thread_id: String,
+    },
+    /// Add a session to a thread.
+    AddSession {
+        /// Thread ID.
+        thread_id: String,
+        /// Session ID.
+        session_id: String,
+    },
+    /// Add a decision to a thread.
+    AddDecision {
+        /// Thread ID.
+        thread_id: String,
+        /// Decision ID.
+        decision_id: String,
+    },
 }
 
 // ---- Config loading ----
@@ -945,52 +968,6 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        // ---- CLI mode: dt update ----
-        Some(Commands::Update { file, project, root, op_type }) => {
-            tracing::info!(
-                "dt-daemon CLI: update --file {} --project {} --type {}",
-                file.display(),
-                project,
-                op_type,
-            );
-
-            let root = root.unwrap_or_else(|| {
-                file.parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."))
-            });
-
-            let components = dt_daemon::interfaces::grpc::wiring::wire().await;
-            let coordinator = Arc::clone(&components.coordinator);
-
-            let parser_registry = Arc::new(dt_daemon::infrastructure::parser::ParserRegistry::new());
-            let runner = dt_daemon::application::build::updater::UpdateRunner::new(parser_registry);
-
-            let graph = components.graph;
-
-            let deps = dt_daemon::application::build::updater::UpdateDependencies {
-                graph,
-                vector: None,
-                snapshot: None,
-                embed: None,
-                coordinator: Some(coordinator),
-            };
-
-            let report = runner.run(&project, &root, &file, &deps).await?;
-
-            println!(
-                "Update report: file={}, project={}, methods={}, classes={}, calls={}, {}ms",
-                report.file,
-                report.project,
-                report.methods_updated,
-                report.classes_updated,
-                report.calls_rebuilt,
-                report.elapsed_ms,
-            );
-
-            return Ok(());
-        }
-
         // ---- CLI mode: dt clean ----
         Some(Commands::Clean { confirm, dry_run, targets }) => {
             if targets.iter().any(|t| t == "reasoning") {
@@ -1014,7 +991,7 @@ async fn main() -> anyhow::Result<()> {
             if targets.iter().any(|t| t == "all") {
                 if is_dry_run {
                     println!("=== dt cleanup --targets all (dry-run) ===");
-                    println!("  Use --execute to perform actual cleanup.");
+                    println!("  Use --exec to perform actual cleanup.");
                     println!();
                 }
                 dt_daemon::interfaces::cli::cleanup::run_cleanup_all(is_dry_run).await?;
@@ -1049,21 +1026,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt backup ----
-        Some(Commands::Backup { action, date, list: list_flag, restore, verify }) => {
-            let effective_action = if list_flag {
-                "list"
-            } else if restore.is_some() {
-                "restore"
-            } else if verify.is_some() {
-                "verify"
-            } else {
-                action.as_str()
-            };
-
-            let effective_date = restore.as_deref().or(verify.as_deref()).or(date.as_deref());
-
-            match effective_action {
-                "backup" => {
+        Some(Commands::Backup { action }) => {
+            match action.unwrap_or(BackupAction::Create) {
+                BackupAction::Create => {
                     println!("=== dt backup ===");
                     let report = dt_daemon::interfaces::cli::backup::create_backup().await?;
                     println!();
@@ -1089,17 +1054,8 @@ async fn main() -> anyhow::Result<()> {
                         report.duration_seconds,
                     );
                 }
-                "restore" => {
-                    let d = effective_date.unwrap_or_else(|| {
-                        eprintln!("error: --date is required for restore");
-                        std::process::exit(1);
-                    });
-                    println!("=== dt backup --restore {d} ===");
-                    dt_daemon::interfaces::cli::backup::restore_backup(d).await?;
-                    println!("Restore complete.");
-                }
-                "list" => {
-                    println!("=== dt backup --list ===");
+                BackupAction::List => {
+                    println!("=== dt backup list ===");
                     let entries = dt_daemon::interfaces::cli::backup::list_backups().await?;
 
                     if entries.is_empty() {
@@ -1125,13 +1081,14 @@ async fn main() -> anyhow::Result<()> {
                         println!("Total: {} backup(s)", entries.len());
                     }
                 }
-                "verify" => {
-                    let d = effective_date.unwrap_or_else(|| {
-                        eprintln!("error: --date is required for verify");
-                        std::process::exit(1);
-                    });
-                    println!("=== dt backup --verify {d} ===");
-                    let report = dt_daemon::interfaces::cli::backup::verify_backup_files(d).await?;
+                BackupAction::Restore { date } => {
+                    println!("=== dt backup restore {date} ===");
+                    dt_daemon::interfaces::cli::backup::restore_backup(&date).await?;
+                    println!("Restore complete.");
+                }
+                BackupAction::Verify { date } => {
+                    println!("=== dt backup verify {date} ===");
+                    let report = dt_daemon::interfaces::cli::backup::verify_backup_files(&date).await?;
 
                     println!();
                     if report.all_valid {
@@ -1154,19 +1111,13 @@ async fn main() -> anyhow::Result<()> {
                         report.duration_seconds,
                     );
                 }
-                other => {
-                    eprintln!(
-                        "Unknown backup action: {other}. \
-                         Supported: backup, restore, list, verify"
-                    );
-                }
             }
 
             return Ok(());
         }
 
         // ---- CLI mode: dt archive ----
-        Some(Commands::Archive { before, dry_run, list: list_flag }) => {
+        Some(Commands::Archive { before, execute, list: list_flag }) => {
             if list_flag {
                 println!("=== dt archive --list ===");
                 let entries = dt_daemon::interfaces::cli::archive::list_archives().await?;
@@ -1197,6 +1148,7 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
+            let dry_run = !execute;
             let report = dt_daemon::interfaces::cli::archive::run_archive(before.as_deref(), dry_run).await?;
 
             if !dry_run {
@@ -1241,9 +1193,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Memorize {
             knowledge_type,
             entity_id,
+            details,
             entity_type,
             project,
-            details,
         }) => {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
@@ -1323,13 +1275,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full, all }) => {
-            if all {
-                if path.is_some() || name.is_some() || file.is_some() {
-                    eprintln!("error: --all cannot be combined with --path/--name/--file");
-                    std::process::exit(1);
-                }
-
+        Some(Commands::Build { path, name, file, full }) => {
+            // No args at all → build all projects from config.yaml
+            if path.is_none() && name.is_none() && file.is_none() {
                 let neo4j = connect_neo4j().await;
                 let graph: Option<Arc<dyn GraphRepository>> =
                     neo4j.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
@@ -1525,21 +1473,31 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt kg-sync ----
-        Some(Commands::KgSync { incremental, labels }) => {
+        Some(Commands::KgSync { full, labels, config_chunks }) => {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let queue = embed.map(|e| Arc::new(
                 dt_daemon::application::sync::queue::VectorQueue::spawn(e),
             ));
-            dt_daemon::interfaces::cli::sync::handle_kg_sync(incremental, labels, graph, queue).await?;
+            let incremental = !full;
+            dt_daemon::interfaces::cli::sync::handle_kg_sync(incremental, labels, config_chunks, graph, queue).await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt thread ----
-        Some(Commands::Thread { action, name, description, thread_id, session_id, decision_id }) => {
+        Some(Commands::Thread { action }) => {
             let graph = connect_graph().await;
+            let (action_str, name, description, thread_id, session_id, decision_id) =
+                match action.unwrap_or(ThreadAction::List) {
+                    ThreadAction::List => ("list".into(), None, None, None, None, None),
+                    ThreadAction::Get { thread_id } => ("get".into(), None, None, Some(thread_id), None, None),
+                    ThreadAction::Create { name, description } => ("create".into(), Some(name), description, None, None, None),
+                    ThreadAction::Close { thread_id } => ("close".into(), None, None, Some(thread_id), None, None),
+                    ThreadAction::AddSession { thread_id, session_id } => ("add-session".into(), None, None, Some(thread_id), Some(session_id), None),
+                    ThreadAction::AddDecision { thread_id, decision_id } => ("add-decision".into(), None, None, Some(thread_id), None, Some(decision_id)),
+                };
             dt_daemon::interfaces::cli::thread::handle_thread(
-                action, name, description, thread_id, session_id, decision_id, graph,
+                action_str, name, description, thread_id, session_id, decision_id, graph,
             )
             .await?;
             return Ok(());
@@ -1620,7 +1578,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Daemon { action }) => {
             match action.as_str() {
                 "status" => {
-                    tracing::info!("dt-daemon CLI: daemon --status");
+                    tracing::info!("dt-daemon CLI: daemon status");
                     let neo4j = connect_neo4j().await;
                     let qdrant = connect_vector().await;
                     let snapshot = connect_snapshot().await;

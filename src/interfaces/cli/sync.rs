@@ -149,6 +149,7 @@ pub async fn handle_k8s_sync(
 pub async fn handle_kg_sync(
     incremental: bool,
     labels: Option<String>,
+    config_chunks: bool,
     graph: Option<Arc<dyn GraphRepository>>,
     queue: Option<Arc<crate::application::sync::queue::VectorQueue>>,
 ) -> anyhow::Result<()> {
@@ -213,6 +214,17 @@ pub async fn handle_kg_sync(
             );
         if let Some(q) = queue {
             bridge = bridge.with_queue(q);
+        }
+
+        // Sync config chunks if requested
+        if config_chunks {
+            println!("Syncing config chunks...");
+            let report = bridge.sync_config_chunks().await?;
+            println!(
+                "Config chunks: {} synced, {}ms",
+                report.items_created, report.elapsed_ms,
+            );
+            return Ok(());
         }
 
         let report = if incremental {
