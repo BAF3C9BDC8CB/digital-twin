@@ -19,3 +19,23 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ML models (large files — cached via HuggingFace, not in repo)
+services/embed-server/models/
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.h5
+
+# Runtime sessions & plans
+.weave/runtime/
+.weave/learnings/
+.weave/plans/
+
+# Node modules
+.opencode/node_modules/
+
+# Logs
+*.log
+/tmp/
