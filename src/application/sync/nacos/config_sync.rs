@@ -837,6 +837,18 @@ ON MATCH SET d.updated_at = $ts"#,
                                 )
                                 .await?;
                             links += 1;
+
+                            // Link Database → NacosConfig (DETECTED_IN)
+                            graph
+                                .write_query(
+                                    "MATCH (d:Database {database_id: $db_id}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (d)-[:DETECTED_IN]->(c)",
+                                    params(&[
+                                        ("db_id", serde_json::json!(&db_id)),
+                                        ("config_id", serde_json::json!(&config_id)),
+                                    ]),
+                                )
+                                .await?;
+                            links += 1;
                         }
                     }
 
