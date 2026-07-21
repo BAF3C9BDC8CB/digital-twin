@@ -35,6 +35,7 @@ services/embed-server/models/
 
 # Node modules
 .opencode/node_modules/
+.opencode/
 
 # Logs
 *.log
