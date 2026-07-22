@@ -150,11 +150,35 @@ impl K8sResourceSync {
             summaries.push(summary);
         }
 
-        // ── Nodes → Servers (full sync only) ──
+        // ── Nodes → Servers (from pods via nodeName + hostIP) ──
         if self.limit.is_none() {
             let start = Instant::now();
-            let nodes = client.fetch_nodes().await;
-            let summary = sync_servers(graph, &nodes, &coordinator, start).await?;
+            let mut node_map: std::collections::HashMap<String, (String, String)> =
+                std::collections::HashMap::new();
+            for ns in &namespaces {
+                let pods = client.fetch_pods(ns).await;
+                for pod in pods {
+                    let node = pod.spec.node_name.unwrap_or_default();
+                    let ip = pod.status.host_ip.unwrap_or_default();
+                    if !node.is_empty() && !ip.is_empty() {
+                        node_map.entry(node.clone()).or_insert((node, ip));
+                    }
+                }
+            }
+            let servers: Vec<K8sServer> = node_map
+                .into_values()
+                .map(|(name, ip)| K8sServer {
+                    server_id: K8sServer::make_server_id(&name),
+                    name: name.clone(),
+                    hostname: ip,
+                    service_type: "kubernetes_node".into(),
+                    cpu_cores: String::new(),
+                    memory_gb: String::new(),
+                    url: String::new(),
+                    description: format!("K8s node {}", name),
+                })
+                .collect();
+            let summary = sync_servers(graph, &servers, &coordinator, start).await?;
             summaries.push(summary);
         }
 
@@ -361,7 +385,7 @@ async fn sync_services(
 
 async fn sync_servers(
     graph: &dyn GraphRepository,
-    items: &[NodeItem],
+    items: &[K8sServer],
     _coordinator: &WriteCoordinator,
     start: Instant,
 ) -> Result<K8sSyncSummary, DtError> {
@@ -369,44 +393,14 @@ async fn sync_servers(
     let mut written = 0usize;
     let mut errors: Vec<String> = Vec::new();
 
-    for node in items {
-        let name = &node.metadata.name;
-        let server_id = K8sServer::make_server_id(name);
-        let cpu = node
-            .status
-            .capacity
-            .as_ref()
-            .and_then(|c| c.cpu.as_deref())
-            .unwrap_or("")
-            .to_string();
-        let memory = node
-            .status
-            .capacity
-            .as_ref()
-            .and_then(|c| c.memory.as_deref())
-            .unwrap_or("")
-            .to_string();
-
-        let hostname = node
-            .status
-            .addresses
-            .as_ref()
-            .and_then(|addrs| {
-                addrs
-                    .iter()
-                    .find(|a| a.addr_type.as_deref() == Some("InternalIP"))
-                    .and_then(|a| a.address.as_deref())
-            })
-            .unwrap_or(name)
-            .to_string();
-
+    for srv in items {
         let params: HashMap<String, serde_json::Value> = [
-            ("server_id".to_string(), serde_json::Value::String(server_id)),
-            ("name".to_string(), serde_json::Value::String(name.clone())),
-            ("hostname".to_string(), serde_json::Value::String(hostname)),
-            ("service_type".to_string(), serde_json::Value::String("kubernetes_node".to_string())),
-            ("cpu_cores".to_string(), serde_json::Value::String(cpu)),
-            ("memory_gb".to_string(), serde_json::Value::String(memory)),
+            ("server_id".to_string(), serde_json::Value::String(srv.server_id.clone())),
+            ("name".to_string(), serde_json::Value::String(srv.name.clone())),
+            ("hostname".to_string(), serde_json::Value::String(srv.hostname.clone())),
+            ("service_type".to_string(), serde_json::Value::String(srv.service_type.clone())),
+            ("cpu_cores".to_string(), serde_json::Value::String(srv.cpu_cores.clone())),
+            ("memory_gb".to_string(), serde_json::Value::String(srv.memory_gb.clone())),
         ]
         .into_iter()
         .collect();
@@ -428,7 +422,7 @@ async fn sync_servers(
                 written += 1;
             }
             Err(e) => {
-                errors.push(format!("server {}: {e}", name));
+                errors.push(format!("server {}: {e}", srv.name));
             }
         };
     }
@@ -537,6 +531,20 @@ async fn run_cross_linking(
                     ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
                     ("env".to_string(), serde_json::Value::String(env_name.to_string())),
                 ]
+                    .into_iter()
+                    .collect(),
+            )
+            .await;
+
+        // ── Server → Namespace(K8s) (NODE_IN) ──
+        let _ = graph
+            .write_query(
+                r#"
+                MATCH (s:Server)
+                MATCH (ns:Namespace {name: $k8s_ns})
+                MERGE (s)-[:NODE_IN]->(ns)
+                "#,
+                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
                     .into_iter()
                     .collect(),
             )
