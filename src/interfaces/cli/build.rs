@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::types::BatchConfig;
 use crate::application::search::fusion::RankedItem;
 
 /// Handle `dt build` — index a project into the knowledge graph.
@@ -23,6 +24,7 @@ pub async fn handle_build(
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
+    batch_config: BatchConfig,
 ) -> anyhow::Result<()> {
     // Determine project name
     let project_name = name.unwrap_or_else(|| {
@@ -59,6 +61,7 @@ pub async fn handle_build(
         vector,
         snapshot,
         embed,
+        batch_config: Some(batch_config),
     };
 
     cmd.run(deps).await?;
@@ -78,6 +81,7 @@ pub async fn handle_build_all(
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
+    batch_config: BatchConfig,
 ) -> anyhow::Result<()> {
     let total = projects.len();
     let mut succeeded = 0u32;
@@ -98,6 +102,7 @@ pub async fn handle_build_all(
             vector.clone(),
             embed.clone(),
             snapshot.clone(),
+            batch_config.clone(),
         )
         .await
         {

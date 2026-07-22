@@ -10,7 +10,7 @@
 
 use clap::{Parser, Subcommand};
 use dt_daemon::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
-use dt_daemon::domain::types::AppConfig;
+use dt_daemon::domain::types::{AppConfig, BatchConfig};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -556,6 +556,8 @@ struct DaemonConfig {
     projects: Vec<ProjectGroup>,
     #[serde(default)]
     services: ServiceConfig,
+    #[serde(default)]
+    batch: BatchConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -685,36 +687,28 @@ struct ProjectGroup {
     items: Vec<serde_yaml::Value>,
 }
 
-/// Attempt to find and load the project configuration file.
-///
-/// Search order:
-/// 1. `./config.yaml` (working directory)
-/// 2. `~/.config/opencode/skills/digital-twin/config.yaml`
+/// Load configuration from `~/.config/digital-twin/config.yaml`.
 fn load_config() -> Option<DaemonConfig> {
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("./config.yaml")];
-    if let Some(p) = dirs_like_home_config(".config/opencode/skills/digital-twin/config.yaml") {
-        candidates.push(p);
+    let path = dirs_like_home_config(".config/digital-twin/config.yaml")?;
+    if !path.exists() {
+        return None;
     }
-
-    for path in &candidates {
-        if path.exists() {
-            match std::fs::read_to_string(path) {
-                Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
-                    Ok(cfg) => {
-                        tracing::info!("loaded config from {}", path.display());
-                        return Some(cfg);
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to parse {}: {e}", path.display());
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("failed to read {}: {e}", path.display());
-                }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
+            Ok(cfg) => {
+                tracing::info!("loaded config from {}", path.display());
+                Some(cfg)
             }
+            Err(e) => {
+                tracing::warn!("failed to parse {}: {e}", path.display());
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("failed to read {}: {e}", path.display());
+            None
         }
     }
-    None
 }
 
 /// Resolve `~/.config/...` without pulling in the `dirs` crate.
@@ -799,20 +793,21 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     }
 }
 
-/// Build a HookEngine from the Memgraph graph connection and event-hooks.yaml.
+/// Build a HookEngine from `~/.config/digital-twin/event-hooks.yaml`.
 /// Returns `None` if Memgraph is unavailable or the config file is missing.
 async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::HookEngine>> {
     let graph = connect_graph().await?;
-    match dt_daemon::application::hooks::HookRegistry::from_file("config/event-hooks.yaml") {
+    let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
+    match dt_daemon::application::hooks::HookRegistry::from_file(&path) {
         Ok(registry) => {
-            tracing::info!("HookRegistry loaded from config/event-hooks.yaml");
+            tracing::info!("HookRegistry loaded from {}", path.display());
             Some(Arc::new(dt_daemon::application::hooks::HookEngine::new(
                 Arc::new(registry),
                 graph,
             )))
         }
         Err(e) => {
-            tracing::warn!("failed to load config/event-hooks.yaml: {e} — hook engine disabled");
+            tracing::warn!("failed to load {}: {e}", path.display());
             None
         }
     }
@@ -1297,8 +1292,9 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
 
+                let batch_config = cfg.batch.clone();
                 dt_daemon::interfaces::cli::build::handle_build_all(
-                    projects, full, graph, vector, embed, snapshot,
+                    projects, full, graph, vector, embed, snapshot, batch_config,
                 )
                 .await?;
                 return Ok(());
@@ -1328,8 +1324,12 @@ async fn main() -> anyhow::Result<()> {
                 path.expect("--path is required")
             };
 
+            let batch_config = load_config()
+                .map(|c| c.batch)
+                .unwrap_or_default();
+
             dt_daemon::interfaces::cli::build::handle_build(
-                actual_path, name, file, full, graph, vector, embed, snapshot,
+                actual_path, name, file, full, graph, vector, embed, snapshot, batch_config,
             )
             .await?;
             return Ok(());

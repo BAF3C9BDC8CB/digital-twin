@@ -15,7 +15,7 @@
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
-use crate::domain::types::{BuildReport, FileSnapshot, ScanConfig};
+use crate::domain::types::{BatchConfig, BuildReport, FileSnapshot, ScanConfig};
 use futures::stream::{self, StreamExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -53,12 +53,13 @@ pub struct DocumentItem {
 /// The pipeline template that orchestrates the build flow.
 pub struct PipelineTemplate {
     parser_registry: Arc<ParserRegistry>,
+    batch_config: BatchConfig,
 }
 
 impl PipelineTemplate {
     /// Create a new pipeline template with the given parser registry.
-    pub fn new(parser_registry: Arc<ParserRegistry>) -> Self {
-        Self { parser_registry }
+    pub fn new(parser_registry: Arc<ParserRegistry>, batch_config: BatchConfig) -> Self {
+        Self { parser_registry, batch_config }
     }
 
     /// Execute the full build pipeline.
@@ -168,13 +169,11 @@ impl PipelineTemplate {
                 .map(|m| format!("{} {}", m.signature, m.comment))
                 .collect();
             if !texts.is_empty() {
-                // Embedded in batches of 512 (512 × ~500 bytes ≈ 256 KB, well under gRPC 4 MB limit).
-                // 8 concurrent gRPC streams for maximum throughput.
-                const EMBED_BATCH: usize = 512;
-                const CONCURRENT: usize = 3;
+                let embed_batch = self.batch_config.embed;
+                let concurrent = self.batch_config.embed_concurrency;
 
-                let chunk_pairs: Vec<(Vec<String>, Vec<crate::domain::types::MethodBlock>)> = texts.chunks(EMBED_BATCH)
-                    .zip(extraction.methods.chunks(EMBED_BATCH))
+                let chunk_pairs: Vec<(Vec<String>, Vec<crate::domain::types::MethodBlock>)> = texts.chunks(embed_batch)
+                    .zip(extraction.methods.chunks(embed_batch))
                     .map(|(t, m)| (t.to_vec(), m.to_vec()))
                     .collect();
 
@@ -210,7 +209,7 @@ impl PipelineTemplate {
                             Ok(points)
                         }
                     })
-                    .buffer_unordered(CONCURRENT)
+                    .buffer_unordered(concurrent)
                     .collect()
                     .await;
 
@@ -221,11 +220,11 @@ impl PipelineTemplate {
 
                 vector_repo.ensure_collection(&format!("{}_methods", project), 1024).await?;
                 // Upsert in batches to avoid Qdrant timeouts with large payloads
-                const UPSERT_BATCH: usize = 1000;
-                for chunk in all_points.chunks(UPSERT_BATCH) {
+                let upsert_batch = self.batch_config.upsert;
+                for chunk in all_points.chunks(upsert_batch) {
                     vector_repo.upsert(&format!("{}_methods", project), chunk.to_vec()).await?;
                 }
-                tracing::info!("upserted {} vectors to Qdrant ({} concurrent batches)", extraction.methods.len(), (extraction.methods.len() + EMBED_BATCH - 1) / EMBED_BATCH);
+                tracing::info!("upserted {} vectors to Qdrant ({} concurrent batches)", extraction.methods.len(), (extraction.methods.len() + embed_batch - 1) / embed_batch);
             }
         }
 
@@ -389,6 +388,9 @@ impl PipelineTemplate {
     ) -> Result<(), DtError> {
         use std::collections::HashMap;
 
+        let batch = self.batch_config.clone();
+        let unwind = batch.unwind;
+
         // ---- Step 0: Ensure Project node exists ----
         {
             let lang = extraction.methods.first()
@@ -419,7 +421,7 @@ impl PipelineTemplate {
             let modules = &extraction.modules;
 
             let write_methods = async {
-                for chunk in methods.chunks(200) {
+                for chunk in methods.chunks(unwind) {
                     let methods_json: Vec<serde_json::Value> = chunk.iter().map(|m| serde_json::json!({
                         "method_id": m.method_id, "project": m.project, "file_path": m.file_path,
                         "language": m.language, "package_or_module": m.package_or_module,
@@ -451,7 +453,7 @@ impl PipelineTemplate {
             };
 
             let write_classes = async {
-                for chunk in classes.chunks(100) {
+                for chunk in classes.chunks(unwind) {
                     let classes_json: Vec<serde_json::Value> = chunk.iter().map(|c| serde_json::json!({
                         "class_id": c.class_id, "name": c.name, "kind": c.kind.as_str(),
                         "file_path": c.file_path, "package_or_module": c.package_or_module,
@@ -477,7 +479,7 @@ impl PipelineTemplate {
             };
 
             let write_modules = async {
-                for chunk in modules.chunks(100) {
+                for chunk in modules.chunks(unwind) {
                     let modules_json: Vec<serde_json::Value> = chunk.iter().map(|m| serde_json::json!({
                         "module_id": m.module_id, "name": m.name, "project": m.project,
                     })).collect();
@@ -858,13 +860,13 @@ impl PipelineTemplate {
             // keeps each gRPC call well under 4 MB. 8 concurrent streams for throughput.
             if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
                 if !chunks.is_empty() {
-                    const DOC_EMBED_BATCH: usize = 256;
-                    const DOC_CONCURRENT: usize = 2;
+                    let doc_embed_batch = self.batch_config.embed;
+                    let doc_concurrent = self.batch_config.embed_concurrency;
                     let collection = format!("{project}_semantic");
                     vector_repo.ensure_collection(&collection, 1024).await?;
 
                     let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> = chunks
-                        .chunks(DOC_EMBED_BATCH)
+                        .chunks(doc_embed_batch)
                         .map(|c| c.to_vec())
                         .collect();
 
@@ -889,7 +891,7 @@ impl PipelineTemplate {
                                     Ok(points)
                                 }
                             })
-                            .buffer_unordered(DOC_CONCURRENT)
+                            .buffer_unordered(doc_concurrent)
                             .collect()
                             .await;
 
@@ -899,8 +901,8 @@ impl PipelineTemplate {
                         all_points.extend(result?);
                     }
                     if !all_points.is_empty() {
-                        const DOC_UPSERT_BATCH: usize = 500;
-                        for chunk in all_points.chunks(DOC_UPSERT_BATCH) {
+                        let doc_upsert_batch = self.batch_config.upsert;
+                        for chunk in all_points.chunks(doc_upsert_batch) {
                             vector_repo.upsert(&collection, chunk.to_vec()).await
                                 .map_err(|e| DtError::Repository(format!("upsert: {}", e)))?;
                         }
@@ -1075,6 +1077,6 @@ mod tests {
     #[test]
     fn pipeline_can_be_created() {
         let registry = Arc::new(ParserRegistry::new());
-        let _pipeline = PipelineTemplate::new(registry);
+        let _pipeline = PipelineTemplate::new(registry, BatchConfig::default());
     }
 }

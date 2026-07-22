@@ -1,0 +1,39 @@
+# Digital Twin Configuration
+# Copy this to config.yaml and customize
+
+server:
+  hostname: my-server
+
+services:
+  embed_server:
+    url: http://localhost:8001
+    dim: 1024
+    model: BAAI/bge-m3
+  graph:
+    url: bolt://localhost:7688
+    user: memgraph
+    password: ""
+  qdrant:
+    url: http://localhost:6333
+
+security:
+  tls:
+    ca_cert: "/etc/dt/ca.pem"
+    server_cert: "/etc/dt/server.pem"
+    server_key: "/etc/dt/server.key"
+  jwt_secret: "env:DT_JWT_SECRET"
+  allow_plain_passwords: false
+
+snapshot_dir: /var/lib/digital-twin/snapshots
+
+# Optional: batch processing sizes for build pipeline
+# batch:
+#   unwind: 200
+#   embed: 512
+#   upsert: 1000
+#   embed_concurrency: 3
+
+# Optional: register projects
+# projects:
+#   - name: my-project
+#     path: /path/to/project

@@ -6,6 +6,7 @@
 use clap::Parser;
 use crate::domain::error::DtError;
 use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::types::BatchConfig;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -45,6 +46,7 @@ pub struct BuildDependencies {
     pub vector: Option<Arc<dyn VectorRepository>>,
     pub snapshot: Option<Arc<dyn SnapshotRepository>>,
     pub embed: Option<Arc<dyn EmbedService>>,
+    pub batch_config: Option<BatchConfig>,
 }
 
 impl BuildCommand {
@@ -60,6 +62,7 @@ impl BuildCommand {
         }
 
         let registry = Arc::new(ParserRegistry::new());
+        let batch = deps.batch_config.unwrap_or_default();
         let service = BuildServiceImpl::new(
             registry,
             deps.graph,
@@ -67,6 +70,7 @@ impl BuildCommand {
             deps.snapshot,
             deps.embed,
             self.full,
+            batch,
         );
 
         let report = service.build(&self.project_name, &self.project_path).await?;

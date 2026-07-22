@@ -6,6 +6,7 @@
 use crate::domain::traits::{
     BuildService, EmbedService, GraphRepository, VectorRepository,
 };
+use crate::domain::types::BatchConfig;
 use crate::proto::dt::core::*;
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,6 +52,7 @@ pub async fn handle_build(
         None, // snapshot — not required for gRPC build
         None, // embed — using noop
         false, // gRPC builds default to incremental
+        BatchConfig::default(),
     );
 
     match service.build(&project_name, &project_path).await {

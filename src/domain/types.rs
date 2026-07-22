@@ -80,6 +80,48 @@ impl Default for AppConfig {
     }
 }
 
+/// Batch processing sizes for build pipeline and upsert operations.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BatchConfig {
+    /// Number of items per UNWIND batch when writing nodes to Memgraph.
+    /// Applies to Method, Class, and Module nodes uniformly.
+    #[serde(default = "default_unwind_batch")]
+    pub unwind: usize,
+    /// Number of text items per embedding gRPC call.
+    #[serde(default = "default_embed_batch")]
+    pub embed: usize,
+    /// Number of vector points per Qdrant upsert call.
+    #[serde(default = "default_upsert_batch")]
+    pub upsert: usize,
+    /// Number of concurrent embedding gRPC streams.
+    #[serde(default = "default_embed_concurrency")]
+    pub embed_concurrency: usize,
+}
+
+const fn default_unwind_batch() -> usize {
+    200
+}
+const fn default_embed_batch() -> usize {
+    512
+}
+const fn default_upsert_batch() -> usize {
+    1000
+}
+const fn default_embed_concurrency() -> usize {
+    3
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            unwind: default_unwind_batch(),
+            embed: default_embed_batch(),
+            upsert: default_upsert_batch(),
+            embed_concurrency: default_embed_concurrency(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------

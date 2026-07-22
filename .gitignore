@@ -10,8 +10,9 @@ venv/
 # OS
 .DS_Store
 
-# Personal configuration (use config.yaml.example as template)
+# Personal configuration (use config/*.example as template)
 config.yaml
+config/config.yaml
 Thumbs.db
 
 # IDE

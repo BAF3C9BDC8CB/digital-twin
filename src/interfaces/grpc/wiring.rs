@@ -15,6 +15,7 @@
 use crate::application::hooks::engine::HookEngine;
 use crate::application::hooks::registry::HookRegistry;
 use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::types::BatchConfig;
 use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::embedder::GrpcEmbedService;
@@ -147,6 +148,7 @@ pub async fn wire() -> AppComponents {
     let parser_registry = Arc::new(ParserRegistry::new());
 
     // ---- Build service (inner, un-coordinated) ----
+    let batch_config = BatchConfig::default();
     let build_inner = Arc::new(BuildServiceImpl::new(
         parser_registry,
         graph.clone(),
@@ -154,6 +156,7 @@ pub async fn wire() -> AppComponents {
         snapshot,
         embed.clone(),
         false, // gRPC builds default to incremental
+        batch_config,
     ));
 
     // ---- Wrap with WriteCoordinator ----
@@ -164,14 +167,15 @@ pub async fn wire() -> AppComponents {
 
     // ---- Hook engine (event-driven side effects) ----
     let hook_engine = graph.as_ref().and_then(|g| {
-        match HookRegistry::from_file("config/event-hooks.yaml") {
+        let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
+        match HookRegistry::from_file(&path) {
             Ok(registry) => {
-                tracing::info!("HookRegistry loaded from config/event-hooks.yaml");
+                tracing::info!("HookRegistry loaded from {}", path.display());
                 let registry = Arc::new(registry);
                 Some(Arc::new(HookEngine::new(registry, g.clone())))
             }
             Err(e) => {
-                tracing::warn!("failed to load config/event-hooks.yaml: {e} — hook engine disabled");
+                tracing::warn!("failed to load {}: {e}", path.display());
                 None
             }
         }
@@ -198,32 +202,28 @@ pub async fn wire() -> AppComponents {
 // config helpers (mirrors main.rs)
 // ---------------------------------------------------------------------------
 
-/// Attempt to load config.yaml from standard search paths.
+/// Load configuration from `~/.config/digital-twin/config.yaml`.
 fn load_config() -> Option<DaemonConfig> {
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("./config.yaml")];
-    if let Some(p) = dirs_like_home_config(".config/opencode/skills/digital-twin/config.yaml") {
-        candidates.push(p);
+    let path = dirs_like_home_config(".config/digital-twin/config.yaml")?;
+    if !path.exists() {
+        return None;
     }
-
-    for path in &candidates {
-        if path.exists() {
-            match std::fs::read_to_string(path) {
-                Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
-                    Ok(cfg) => {
-                        tracing::info!("loaded config from {}", path.display());
-                        return Some(cfg);
-                    }
-                    Err(e) => {
-                        tracing::warn!("failed to parse {}: {e}", path.display());
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!("failed to read {}: {e}", path.display());
-                }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
+            Ok(cfg) => {
+                tracing::info!("loaded config from {}", path.display());
+                Some(cfg)
             }
+            Err(e) => {
+                tracing::warn!("failed to parse {}: {e}", path.display());
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("failed to read {}: {e}", path.display());
+            None
         }
     }
-    None
 }
 
 /// Resolve `~/.config/...` without pulling in the `dirs` crate.

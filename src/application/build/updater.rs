@@ -23,6 +23,7 @@
 use clap::Parser;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::types::BatchConfig;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -118,6 +119,7 @@ impl UpdateRunner {
         root: &Path,
         file_path: &Path,
         deps: &UpdateDependencies,
+        batch: &BatchConfig,
     ) -> Result<UpdateReport, DtError> {
         let start = Instant::now();
 
@@ -177,16 +179,16 @@ impl UpdateRunner {
         // ---- Step 5: Write graph (methods, classes, relationships) ----
         if let Some(graph) = &deps.graph {
             // 5a. Write methods
-            write_methods(graph, &parse_result.methods).await;
+            write_methods(graph, &parse_result.methods, batch).await;
 
             // 5b. Write classes
-            write_classes(graph, &parse_result.classes).await;
+            write_classes(graph, &parse_result.classes, batch).await;
 
             // 5c. Write CONTAINS relationships
             write_contains_relationships(graph, &parse_result.classes).await;
 
             // 5d. Write module nodes
-            write_modules_for_file(graph, project, &parse_result.methods, &parse_result.classes)
+            write_modules_for_file(graph, project, &parse_result.methods, &parse_result.classes, batch)
                 .await;
         }
 
@@ -280,10 +282,10 @@ async fn delete_by_file_path(
 // ---------------------------------------------------------------------------
 
 /// Write (MERGE) method nodes in batches of 200.
-async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domain::types::MethodBlock]) {
+async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domain::types::MethodBlock], batch: &BatchConfig) {
     use std::collections::HashMap;
 
-    for chunk in methods.chunks(200) {
+    for chunk in methods.chunks(batch.unwind) {
         let methods_json: Vec<serde_json::Value> = chunk
             .iter()
             .map(|m| {
@@ -336,10 +338,10 @@ async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domai
 }
 
 /// Write (MERGE) class nodes in batches of 100.
-async fn write_classes(graph: &Arc<dyn GraphRepository>, classes: &[crate::domain::types::ClassBlock]) {
+async fn write_classes(graph: &Arc<dyn GraphRepository>, classes: &[crate::domain::types::ClassBlock], batch: &BatchConfig) {
     use std::collections::HashMap;
 
-    for chunk in classes.chunks(100) {
+    for chunk in classes.chunks(batch.unwind) {
         let classes_json: Vec<serde_json::Value> = chunk
             .iter()
             .map(|c| {
@@ -415,6 +417,7 @@ async fn write_modules_for_file(
     project: &str,
     methods: &[crate::domain::types::MethodBlock],
     classes: &[crate::domain::types::ClassBlock],
+    batch: &BatchConfig,
 ) {
     use std::collections::{HashMap, HashSet};
 
@@ -439,7 +442,7 @@ async fn write_modules_for_file(
         })
         .collect();
 
-    for chunk in modules.chunks(100) {
+    for chunk in modules.chunks(batch.unwind) {
         let modules_json: Vec<serde_json::Value> = chunk
             .iter()
             .map(|m| {
@@ -645,8 +648,9 @@ mod tests {
             coordinator: None,
         };
 
+        let batch = BatchConfig::default();
         let report = runner
-            .run("test", dir.path(), &file, &deps)
+            .run("test", dir.path(), &file, &deps, &batch)
             .await
             .unwrap();
 
