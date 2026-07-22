@@ -556,9 +556,212 @@ dt build --project my-microservices
 
 ---
 
-## 八、HanLP 自定义 NER 与微服务调用链
+## 八、性能架构：阶段批量 + 消息队列
 
-### 8.1 两层互补
+### 8.1 问题：逐文件管线的 GPU 浪费
+
+七节中的执行模型是**每个文件顺序走完所有处理器**。这导致 GPU 大量空闲：
+
+```
+时间线（逐文件管线，GPU 浪费严重）：
+────────────────────────────────────────────────────────────
+文件1:  [tree_sitter(C)] ═══════ GPU空闲 ═══════ [hanlp(G)] ═══ GPU空闲 ═══ [llm(G)] ═══ [store(C)]
+文件2:                                       wait              [hanlp(G)] ═══ GPU空闲 ═══ [llm(G)] ...
+文件3:                                                         wait              [hanlp(G)] ...
+────────────────────────────────────────────────────────────
+
+GPU 利用率: ██░░░░░░░░░░░░░░ (约 15%)
+C=CPU, G=GPU, ═══ = GPU 等待切换模型
+```
+
+每次切换处理器、每次切换文件，GPU 都在等。
+
+### 8.2 方案：阶段批量执行 + 消息队列
+
+将执行模型从"文件流水线"改为"阶段批量"：
+
+```
+时间线（阶段批量，GPU 持续满载）：
+────────────────────────────────────────────────────────────
+
+Phase 1: tree_sitter (CPU 并行，无 GPU)
+  [File1 █] [File2 █] [File3 █] ... [File250 █]  →  所有结果写入上下文
+
+Phase 2: chunk (CPU 并行，无 GPU)  
+  [File1 █] [File2 █] [File3 █] ... [File250 █]
+
+        ┌─────────────── 消息队列 ───────────────┐
+        │  {file_id, text, tree_sitter_output, chunks}  │
+        └──────────────────────────────────────────┘
+
+Phase 3: hanlp (GPU 批量推理，持续满载)
+  ┌─────────────────────────────────────────┐
+  │  GPU 加载 HanLP 模型（一次）              │
+  │  batch_size=16, 持续灌入队列消息           │
+  │  ████████████████████████████  GPU 满载  │
+  └─────────────────────────────────────────┘
+
+        ┌─────────────── 消息队列 ───────────────┐
+        │  {file_id, + hanlp_output}             │
+        └──────────────────────────────────────────┘
+
+Phase 4: llm (GPU 批量推理，持续满载)
+  ┌─────────────────────────────────────────┐
+  │  卸载 HanLP → 加载 qwen3-4b（一次）       │
+  │  batch_size=8, 持续灌入队列消息            │
+  │  ████████████████████████████████  GPU 满载│
+  └─────────────────────────────────────────┘
+
+Phase 5: store (CPU 并行，无 GPU)
+  [File1 █] [File2 █] [File3 █] ... [File250 █]
+
+────────────────────────────────────────────────────────────
+GPU 利用率: ████████████████████ (Phases 3+4 期间 ~90%)
+```
+
+### 8.3 消息队列设计
+
+参照现有 embed 服务的模式，使用**内存队列**（单进程场景）或 **Redis Stream**（多进程/分布式场景）：
+
+```rust
+use tokio::sync::mpsc;
+
+// 阶段间消息
+struct StageMessage {
+    file_id: String,
+    file_path: String,
+    context: PipelineContext,      // 累积的前置处理器输出
+}
+
+// 阶段间通道
+struct StagePipe {
+    rx: mpsc::Receiver<StageMessage>,
+    tx: mpsc::Sender<StageMessage>,
+}
+
+// 每个 GPU 阶段 = 消费者协程
+async fn gpu_stage_worker<T: GpuProcessor>(
+    mut rx: mpsc::Receiver<StageMessage>,
+    tx_next: mpsc::Sender<StageMessage>,
+    processor: T,
+    batch_size: usize,
+) {
+    let mut batch = Vec::with_capacity(batch_size);
+
+    while let Some(msg) = rx.recv().await {
+        batch.push(msg);
+
+        if batch.len() >= batch_size {
+            // GPU 批量推理 — 模型已加载，持续推理
+            let results = processor.process_batch(&batch).await;
+
+            for (msg, result) in batch.drain(..).zip(results) {
+                let mut ctx = msg.context;
+                ctx.add(processor.name(), result);
+                tx_next.send(StageMessage { context: ctx, ..msg }).await.ok();
+            }
+        }
+    }
+
+    // 处理剩余批次
+    if !batch.is_empty() {
+        let results = processor.process_batch(&batch).await;
+        for (msg, result) in batch.drain(..).zip(results) {
+            let mut ctx = msg.context;
+            ctx.add(processor.name(), result);
+            tx_next.send(StageMessage { context: ctx, ..msg }).await.ok();
+        }
+    }
+}
+```
+
+### 8.4 阶段并行策略
+
+| 阶段 | 处理器 | 并行度 | 策略 |
+|------|--------|--------|------|
+| Phase 1 | tree_sitter | CPU 核心数 | `tokio::task::spawn` 并行，无状态 |
+| Phase 2 | chunk | CPU 核心数 | 同上 |
+| Phase 3 | hanlp | GPU batch | 单消费者 + batch_size=16，GPU 满载 |
+| Phase 4 | llm | GPU batch | 单消费者 + batch_size=8，GPU 满载 |
+| Phase 5 | store | CPU 核心数 | 并行写入，注意 Memgraph 连接池 |
+
+### 8.5 GPU 显存管理
+
+RTX 3060 12GB 的显存分配策略：
+
+```
+Phase 3 开始：加载 HanLP transformer 模型
+  ├── HanLP 模型: ~1.5GB
+  ├── 推理中间张量: ~2GB (batch_size=16)
+  └── 剩余: ~8.5GB 空闲
+
+Phase 3 → 4 切换：
+  ├── 卸载 HanLP 模型 (释放 1.5GB)
+  ├── 加载 qwen3-4b INT4: ~3.5GB
+  ├── KV Cache: ~2GB (batch_size=8, max_tokens=4096)
+  └── 剩余: ~6GB 空闲 — 可增大 batch_size 或加载更大模型
+
+单 GPU 同时跑两个模型（如果显存够）：
+  HanLP (~1.5G) + qwen3-4b INT4 (~3.5G) + 中间张量(~4G) = ~9GB
+  → RTX 3060 12GB 可以同时驻留，无需切换，但仍建议串行以避免推理干扰
+```
+
+### 8.6 增量处理与缓存
+
+避免每次 `dt build` 都重新分析所有文件：
+
+```
+增量策略                   缓存策略
+─────────                  ─────────
+1. hash 检测（现有）       1. 处理器输出缓存
+   SHA256 比对 → 仅处理      key = file_hash + processor_name + config_hash
+   变更文件                   value = ProcessorOutput (JSON)
+                           存储 = SQLite（现有快照表）或文件缓存
+
+2. 阶段级跳过              2. Prompt 模板缓存
+   如果 tree_sitter 输出      模板预编译，变量替换用模板引擎
+   未变 → 跳过 Phase 1
+                           3. LLM 输出缓存
+3. 跨文件去重                 相同代码模式（如标准 CRUD Controller）
+   相同签名的类/方法           → 缓存 LLM 结果，直接复用
+   共享分析结果
+```
+
+### 8.7 资源调度优先级
+
+```
+dt build 执行中：
+  ├── 文件扫描/hash 检测 (CPU, 最高优先级 — 确定变更范围)
+  ├── tree_sitter 并行 (CPU, 高优先级)
+  ├── chunk 并行 (CPU, 高优先级)
+  ├── hanlp 批量 (GPU, 正常优先级 — 可被 embed 服务抢占)
+  ├── llm 批量 (GPU, 正常优先级)
+  └── store 写入 (CPU, 低优先级 — 可延迟)
+
+与其他 GPU 服务（embed）的协调：
+  - embed 服务优先级 > 管线 GPU 阶段
+  - 管线感知 embed 是否活跃，自动降速或暂停
+  - 可通过配置控制 GPU 占用上限
+```
+
+### 8.8 修正后的性能预估
+
+基于阶段批量 + 队列模型，RTX 3060 处理 200 Java + 50 文档：
+
+| 阶段 | 并行方式 | 耗时 |
+|------|---------|------|
+| Phase 1: tree_sitter | CPU 8核并行 | < 3s |
+| Phase 2: chunk | CPU 8核并行 | < 1s |
+| Phase 3: hanlp | GPU batch=16 | ~30s |
+| Phase 4: llm | GPU batch=8 | ~6min |
+| Phase 5: store | CPU 并行 | < 10s |
+| **总计** | | **~7 分钟**（比逐文件管线快 40%） |
+
+---
+
+## 九、HanLP 自定义 NER 与微服务调用链
+
+### 9.1 两层互补
 
 | | tree-sitter + 正则 | HanLP 自定义 NER |
 |---|---|---|
@@ -625,7 +828,7 @@ Java 源码
 
 ---
 
-## 九、配置全景
+## 十、配置全景
 
 用户可见的配置结构：
 
@@ -686,7 +889,7 @@ pipeline:
 
 ---
 
-## 十、代码结构
+## 十一、代码结构
 
 ### 新增模块
 
@@ -763,7 +966,7 @@ pub async fn execute(config: BuildConfig) -> Result<()> {
 
 ---
 
-## 十一、降级与容错
+## 十二、降级与容错
 
 ### 优雅降级策略
 
@@ -796,31 +999,17 @@ dependencies: []
 
 ---
 
-## 十二、性能预估
-
-基于 RTX 3060 (12GB VRAM)，处理一个中等规模 Spring Cloud 项目（~200 个 Java 文件 + 50 个文档）：
-
-| 阶段 | 处理器 | 单文件耗时 | 200文件并行 |
-|------|--------|-----------|------------|
-| tree_sitter | Rust 直接调用 | < 10ms | < 2s |
-| chunk | Rust 直接调用 | < 5ms | < 1s |
-| HanLP | GPU 推理 | ~200ms/文件 | ~40s (串行) |
-| LLM (qwen3-4b + INT4) | GPU 推理 | ~3-5s/文件 | ~10min (batch=8) |
-| Store | Memgraph + Qdrant | < 50ms | < 10s |
-
-**总计：约 10-15 分钟处理一个完整微服务项目**（主要是 LLM 推理时间，可通过增大 batch_size 优化）。
-
----
-
 ## 十三、实施计划
 
-### 第一阶段：核心引擎 + 代码管线（2-3周）
+### 第一阶段：核心引擎 + 阶段批量执行（2-3周）
 
 - [ ] `ProcessorEngine` + `PipelineContext` + `Processor` trait
 - [ ] 处理器注册表加载（从 YAML）
+- [ ] **阶段批量执行引擎**：消息队列通道 + GPU worker 协程
 - [ ] tree_sitter 处理器（封装现有逻辑）
 - [ ] store 处理器（封装现有写入逻辑）
-- [ ] 验证：Java 项目的语法实体正确入库
+- [ ] **增量缓存**：SHA256 hash 检测 + 处理器输出缓存
+- [ ] 验证：Java 项目的语法实体正确入库，GPU 利用率和性能基准
 
 ### 第二阶段：HanLP + LLM 集成（2-3周）
 
@@ -853,3 +1042,6 @@ dependencies: []
 | GPU 显存不足同时加载 HanLP + LLM | 串行加载：HanLP 跑完后释放，再加载 LLM |
 | 大量文件时 LLM 推理耗时长 | 批处理 + 增量（仅处理变更文件）+ batch_size 调优 |
 | Prompt 质量依赖人工调优 | 提供默认 Prompt，输出带 schema 校验，不合格自动重试 |
+| 消息队列积压导致内存增长 | 背压机制：当前阶段消费者跟不上时暂停上游生产者 |
+| LLM 推理与 embed 服务争抢 GPU | 优先级调度：embed 优先，管线可降速；或配置 GPU 占用时间窗口 |
+| 增量缓存失效（配置变更导致） | 缓存 key 包含 processor config hash，配置变更自动失效 |
