@@ -12,7 +12,7 @@
 
 ## 一、Reality World（事实世界）
 
-**存储：Neo4j**  
+**存储：Memgraph**  
 **特征：客观存在，可被自动发现**
 
 ### 1.1 Code Entity（代码实体）
@@ -247,7 +247,7 @@
   version       String   当前部署版本                   "v2.3.1"
   replica_count Integer  副本数                        2
 
-  // ─── Runtime 瞬态注入字段（每次请求实时拉取，不入 Neo4j） ───
+  // ─── Runtime 瞬态注入字段（每次请求实时拉取，不入 Memgraph） ───
   pods            Array(瞬态注入)   Pod 列表 (name, ip, phase, restarts, node, cpu, memory)
   cpu_usage       String (瞬态注入)  CPU 使用量 (聚合)       "250m"
   memory_usage    String (瞬态注入)  内存使用量 (聚合)        "512Mi"
@@ -255,7 +255,7 @@
   heap_used       String (瞬态注入)  JVM Heap                "256MB / 512MB"
   thread_count    Integer(瞬态注入)  活跃线程数              42
 
-  // 注意：pods[] 从 K8s API 实时拉取（GET /pods），不在 Neo4j 持久化
+  // 注意：pods[] 从 K8s API 实时拉取（GET /pods），不在 Memgraph 持久化
   // Pod 的历史问题（哪天哪个 Pod 崩溃了）→ Memory World 事件记录（Phase 2+）
 
 关系:
@@ -266,7 +266,7 @@
 
 **设计说明：** Service 是跨环境的稳定标识（service_id 不含 env），ServiceInstance 承载每个环境的具体部署信息。好处：
 - 同一个服务名在不同环境有不同的 host/port/deployment，天然支持
-- Runtime 实时指标（CPU/Mem/Uptime）作为缓存字段挂到 ServiceInstance 上，不被 Neo4j 持久化
+- Runtime 实时指标（CPU/Mem/Uptime）作为缓存字段挂到 ServiceInstance 上，不被 Memgraph 持久化
   ⚠️ 注意：此处"缓存"是指 Context Builder 组装上下文时的瞬态注入字段，不持久化，TTL 由请求生命周期决定。
 - Context Builder 组装上下文时，从 K8s API 实时拉取 Runtime 数据，注入到 ServiceInstance 的瞬态字段中
 
@@ -291,17 +291,17 @@
 
 ### 1.8 K8sPod（已移除）
 
-> **设计决策**：K8sPod **不属于 Reality World**。Pod 是 K8s 的运行时概念——每次部署、重启、调度都产生新 Pod。将 Pod 持久化到 Neo4j 会导致：脏数据（Pod 已终止但节点还在）、生命周期管理负担、无谓的写入开销。
+> **设计决策**：K8sPod **不属于 Reality World**。Pod 是 K8s 的运行时概念——每次部署、重启、调度都产生新 Pod。将 Pod 持久化到 Memgraph 会导致：脏数据（Pod 已终止但节点还在）、生命周期管理负担、无谓的写入开销。
 >
 > Pod 的全部信息（name、ip、phase、restarts、node、cpu、memory）属于 **Runtime World**，由 Context Builder 实时查询 K8s API 获取，注入到 `ServiceInstance.pods[]` 瞬态字段中。
 >
-> K8sDeployment 是 Reality 中唯一的 K8s 实体——它足够稳定，仅在部署时变化。K8sDeployment 不再有 `[:HAS_POD]` 关系（Pod 不入 Neo4j）。
+> K8sDeployment 是 Reality 中唯一的 K8s 实体——它足够稳定，仅在部署时变化。K8sDeployment 不再有 `[:HAS_POD]` 关系（Pod 不入 Memgraph）。
 
 ---
 
 ## 二、Knowledge World（知识世界）
 
-**存储：Neo4j**  
+**存储：Memgraph**  
 **特征：概念、模式、经验，人类整理或 AI 沉淀**
 
 ### 2.1 Knowledge（知识条目）
@@ -433,7 +433,7 @@
 
 ## 三、Memory World（记忆世界）
 
-**存储：Neo4j（只增不删，事件溯源。TTL 365 天后归档 → /var/lib/dt/archive/）**  
+**存储：Memgraph（只增不删，事件溯源。TTL 365 天后归档 → /var/lib/dt/archive/）**  
 **特征：时间线驱动，完整审计日志**
 
 ### 3.1 Day（天）
@@ -484,7 +484,7 @@
   timestamp    DateTime
 关系:
   (:Modification)-[:BELONGS_TO]->(:Thread)    // 所属主线
-  (:Modification)-[:AFFECTS]->(:Method)     // 影响的实体（Neo4j 节点）
+  (:Modification)-[:AFFECTS]->(:Method)     // 影响的实体（Memgraph 节点）
   (:Modification)-[:AFFECTS]->(:Class)
   (:Modification)-[:AFFECTS]->(:NacosConfig)
 ```
@@ -584,7 +584,7 @@
   (:PodEvent)-[:RELATED_TO]->(:Deployment)     // 关联的部署事件（如有）
 ```
 
-> **设计说明**：Pod 的全部运行时信息（name, ip, phase, restarts, cpu, memory）属于 Runtime World，不入 Neo4j。但当 Pod 出现异常时（如 CrashLoopBackOff、OOMKilled），通过 K8s 监控自动生成 PodEvent 事件节点，关联到对应 Session 或 Thread。这解决了"昨天 Pod 为什么 Crash"的历史追溯需求，同时不污染 Reality 数据。
+> **设计说明**：Pod 的全部运行时信息（name, ip, phase, restarts, cpu, memory）属于 Runtime World，不入 Memgraph。但当 Pod 出现异常时（如 CrashLoopBackOff、OOMKilled），通过 K8s 监控自动生成 PodEvent 事件节点，关联到对应 Session 或 Thread。这解决了"昨天 Pod 为什么 Crash"的历史追溯需求，同时不污染 Reality 数据。
 
 ---
 
@@ -599,7 +599,7 @@
 Qdrant Collection: {project}_methods_{model_version}
 向量模型: BGE-M3 (1024 维)
 Payload:
-  entity_id    String   对应 Neo4j 节点 ID（Method.method_id）
+  entity_id    String   对应 Memgraph 节点 ID（Method.method_id）
   name         String   方法名
   signature    String   方法签名
   class_name   String   所属类名
@@ -617,7 +617,7 @@ Payload:
 Qdrant Collection: {project}_semantic_{model_version}
 向量模型: BGE-M3 (1024 维)
 Payload:
-  entity_id    String   对应 Neo4j 节点 ID（Document.doc_id）
+  entity_id    String   对应 Memgraph 节点 ID（Document.doc_id）
   chunk_id     String   分块 ID   "{doc_id}#chunk{index}"
   text         String   分块文本
   doc_name     String   文档名
@@ -632,7 +632,7 @@ Payload:
 ```
 向量模型: BGE-M3 (1024 维)
 Payload:
-  entity_id    String   对应 Neo4j 节点 ID（ConfigKey 或 NacosConfig）
+  entity_id    String   对应 Memgraph 节点 ID（ConfigKey 或 NacosConfig）
   key          String   配置键名
   value        String   配置值（脱敏后文本）
   namespace    String   Nacos namespace
@@ -644,7 +644,7 @@ Payload:
 ```
 向量模型: BGE-M3 (1024 维)
 Payload:
-  entity_id    String   对应 Neo4j 节点 ID（Endpoint.endpoint_id）
+  entity_id    String   对应 Memgraph 节点 ID（Endpoint.endpoint_id）
   method       String   HTTP 方法
   path         String   API 路径
   description  String   接口描述
@@ -657,7 +657,7 @@ Payload:
 ```
 向量模型: BGE-M3 (1024 维)
 Payload:
-  entity_id    String   对应 Neo4j 节点 ID（Experience.experience_id）
+  entity_id    String   对应 Memgraph 节点 ID（Experience.experience_id）
   title        String   标题
   summary      String   摘要
   content      String   详细内容
@@ -681,13 +681,13 @@ Payload:
 
 ## 五、Runtime World（实时世界）
 
-**存储：不入 Neo4j，Context Builder 实时查询后注入 ServiceInstance 瞬态字段**  
+**存储：不入 Memgraph，Context Builder 实时查询后注入 ServiceInstance 瞬态字段**  
 **特征：瞬时状态，每次 dt_context 请求重新拉取**
 
 ### Reality vs Runtime 分界
 
 ```
-Reality (Neo4j, k8s-sync 每小时)     Runtime (瞬态注入, 每次 dt_context 实时拉取)
+Reality (Memgraph, k8s-sync 每小时)     Runtime (瞬态注入, 每次 dt_context 实时拉取)
 ────────────────────────────         ────────────────────────────────────────
 (:K8sDeployment)                     ServiceInstance.pods[]:
   name: "aflm-pay"                     [{name, ip, phase, restarts, node,
@@ -697,8 +697,8 @@ Reality (Neo4j, k8s-sync 每小时)     Runtime (瞬态注入, 每次 dt_context
 (:ServiceInstance)                     cpu_usage, memory_usage
   host: "10.0.1.50"                    uptime, heap_used, thread_count
   port: 8080
-  version: "v2.3.1"                  所有 Pod 信息不入 Neo4j
-                                      所有 Metrics 不入 Neo4j
+  version: "v2.3.1"                  所有 Pod 信息不入 Memgraph
+                                      所有 Metrics 不入 Memgraph
 k8s-sync 无需管理 Pod 生命周期          每次查询都是最新数据
 ```
 
@@ -727,7 +727,7 @@ k8s-sync 无需管理 Pod 生命周期          每次查询都是最新数据
 注入目标: ServiceInstance 瞬态注入字段
 
 Context Builder 查询流程:
-  1. 从 Neo4j 获取 ServiceInstance（含 DEPLOYED_AS→K8sDeployment）
+  1. 从 Memgraph 获取 ServiceInstance（含 DEPLOYED_AS→K8sDeployment）
   2. 通过 K8sDeployment.name 查询 K8s API:
      GET /api/v1/namespaces/{ns}/pods?labelSelector=app={name}
      → 填充 ServiceInstance.pods[]
@@ -739,7 +739,7 @@ Context Builder 查询流程:
   5. 查询本地服务状态 (开发环境):
      svc status → uptime, pid
    6. 注入到 ServiceInstance 瞬态字段
-   7. 有效期: 当前请求（每次 dt_context 实时拉取，不入 Neo4j）
+   7. 有效期: 当前请求（每次 dt_context 实时拉取，不入 Memgraph）
 ```
 
 ### 5.3 Pod Logs（Pod 日志）
@@ -778,7 +778,7 @@ Context Builder 查询流程:
 
 ## 六、Reasoning World（推理世界）
 
-**存储：Neo4j（会话级）**  
+**存储：Memgraph（会话级）**  
 **特征：AI 生成，验证后可升级为 Knowledge**
 
 ### 6.1 Observation（观察/模式发现）
@@ -838,7 +838,7 @@ Reasoning.Decision = 推理中的决策（可能未确认）
 
 ## 七、Digital Thread（数字主线）
 
-**存储：Neo4j**  
+**存储：Memgraph**  
 **特征：跨六世界的横切层，串联业务演化链**
 
 ```
@@ -917,7 +917,7 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 ┌────────────┬──────────────────────────────────────────────────┐
 │   存储层    │                    内容                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ Neo4j      │ Reality: Code(Method/Class/Module) +             │
+│ Memgraph      │ Reality: Code(Method/Class/Module) +             │
 │            │   Server + Database + Table +                    │
 │            │   Config(NacosConfig/ConfigKey) +                │
 │            │   API(Endpoint) + Document +                     │
@@ -932,9 +932,9 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 │            │ Thread: Thread + Requirement                     │
 ├────────────┼──────────────────────────────────────────────────┤
 │ Qdrant     │ Semantic: Code/Doc/Config/API/Exp/Log vectors    │
-│            │ 通过 entity_id 反查 Neo4j                          │
+│            │ 通过 entity_id 反查 Memgraph                          │
 ├────────────┼──────────────────────────────────────────────────┤
-│ 文件系统    │ Backup: Neo4j dump + Qdrant snapshot + SQLite cp  │
+│ 文件系统    │ Backup: Memgraph dump + Qdrant snapshot + SQLite cp  │
 │            │ 位置: /var/lib/dt/backups/{date}/                  │
 │            │ Archive: Memory.Event JSON export (.json.gz)        │
 │            │ 位置: /var/lib/dt/archive/{date_range}.json.gz     │
@@ -944,7 +944,7 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 │            │ + cpu_usage, memory_usage, uptime,                │
 │            │ heap_used, thread_count                           │
 │            │ Context Builder 实时查询 K8s API / Actuator       │
-│            │ 有效期为当前请求，不入 Neo4j                        │
+│            │ 有效期为当前请求，不入 Memgraph                        │
 └────────────┴──────────────────────────────────────────────────┘
 ```
 
@@ -957,7 +957,7 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 | 你要做什么 | 改动文件 | 改动量 | 示例 |
 |-----------|---------|--------|------|
 | 实体新增属性 | `dt-common/src/types.rs` | 1 行 field | Service 加 `team: String` |
-| 新增数据保留规则 | `dt-storage/src/neo4j/schema.rs` TTL 表 | ~5 行 YAML | Event 365 天 TTL |
+| 新增数据保留规则 | `dt-storage/src/memgraph/schema.rs` TTL 表 | ~5 行 YAML | Event 365 天 TTL |
 | 新增子实体 | types.rs + repo trait + repo impl | ~40 行 | Service → +ServiceInstance |
 | 新增独立实体 | types.rs + repo trait + repo impl + schema init | ~60 行 | 新增 Environment 实体 |
 | 新增关系 | repo trait + repo impl | ~15 行 Cypher | RUNS_AS: Instance→Pod |
@@ -967,10 +967,10 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 
 ### 原则
 
-1. **Neo4j schemaless** — 加属性不需要 migration，加标签不需要 schema change（但需在 `schema init` 中加约束索引）
+1. **Memgraph schemaless** — 加属性不需要 migration，加标签不需要 schema change（但需在 `schema init` 中加约束索引）
 2. **trait 先行** — 先在 `dt-common/src/traits.rs` 中定义接口，再在 `dt-storage` 中实现
 3. **ServiceInstance 是扩展枢纽** — 任何与环境相关的字段都挂在 ServiceInstance，不污染 Service
-4. **瞬态字段不入 Neo4j** — Runtime 数据标记为 `(瞬态注入)`，由 Context Builder 实时注入
+4. **瞬态字段不入 Memgraph** — Runtime 数据标记为 `(瞬态注入)`，由 Context Builder 实时注入
 5. **关系命名规范** — 全大写动词：`HAS_INSTANCE`, `DEPLOYED_AS`, `CONFIGURED_BY`
 
 ### 完整示例：新增 Environment 实体
@@ -989,7 +989,7 @@ HAS_PLAYBOOK      Thread            Playbook          主线关联的执行手�
 步骤 2: traits.rs
   async fn upsert_environment(&self, env: &Environment) -> Result<()>;
 
-步骤 3: neo4j/repo.rs
+步骤 3: memgraph/repo.rs
   MERGE (e:Environment {env_id: $id})
   SET e.name = $name, e.code = $code, e.description = $desc
 

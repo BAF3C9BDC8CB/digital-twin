@@ -45,7 +45,7 @@ pub struct Session {
 
 /// All event types supported by the memory system.
 ///
-/// Each event type maps to its own Neo4j label
+/// Each event type maps to its own graph label
 /// (e.g. `EventType::Modification` → `:Modification` label).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {

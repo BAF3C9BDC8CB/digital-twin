@@ -2,7 +2,7 @@
 
 ## 概述
 
-新增 `dt jc-sync` 命令，将 Jenkins 的 View、Job 及构建历史同步到知识图谱（Neo4j），复用现有 `JenkinsApiClient` 和 `SyncSource` 架构。
+新增 `dt jc-sync` 命令，将 Jenkins 的 View、Job 及构建历史同步到知识图谱（Memgraph），复用现有 `JenkinsApiClient` 和 `SyncSource` 架构。
 
 ## 命令接口
 
@@ -97,7 +97,7 @@ src/interfaces/cli/jenkins_sync.rs  — CLI handler
 | 文件 | 变更 |
 |------|------|
 | `src/application/sync/mod.rs` | 添加 `pub mod jenkins;` |
-| `src/infrastructure/neo4j/schema.rs` | 添加 3 个 Jenkins 约束 + 全文索引标签 |
+| `src/infrastructure/memgraph/schema.rs` | 添加 3 个 Jenkins 约束 + 全文索引标签 |
 | `src/interfaces/cli/mod.rs` | 添加 `pub mod jenkins_sync;` |
 | `src/main.rs` | 添加 `JcSync` 命令变体 + match handler |
 | `src/application/plugins/jenkins/client.rs` | 新增结构化 API 方法 |

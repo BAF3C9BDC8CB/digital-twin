@@ -4,3 +4,4 @@ pub mod context;
 pub mod hooks;
 pub mod knowledge;
 pub mod plugins;
+pub mod search;

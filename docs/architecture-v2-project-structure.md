@@ -54,7 +54,7 @@ engine-rust/ (单体 crate, 34 文件)
 ├──────────────────────────────────────────────────────────────┤
 │  Infrastructure Layer (基础设施层)                             │
 │  Repository 实现、外部 API Client、文件系统                     │
-│  dt-storage: Neo4jRepo, QdrantRepo, SqliteRepo                │
+│  dt-storage: MemgraphRepo, QdrantRepo, SqliteRepo                │
 │  dt-sync: NacosClient, K8sClient                              │
 │  dt-log: LogService, formatter                                │
 └──────────────────────────────────────────────────────────────┘
@@ -119,13 +119,13 @@ digital-twin-v2/
 │   │       └── init.rs                 # tracing-subscriber 初始化
 │   │
 │   ├── dt-storage/                     # Repository 实现层
-│   │   ├── Cargo.toml                  # [dependencies] neo4rs, tonic(qdrant), rusqlite
+│   │   ├── Cargo.toml                  # [dependencies] bolt-driver, tonic(qdrant), rusqlite
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── neo4j/
+│   │       ├── memgraph/
 │   │       │   ├── mod.rs
-│   │       │   ├── client.rs           # Neo4j Bolt 连接池
-│   │       │   ├── repo.rs             # impl GraphRepository for Neo4jRepository
+│   │       │   ├── client.rs           # Memgraph Bolt 连接池
+│   │       │   ├── repo.rs             # impl GraphRepository for MemgraphRepository
 │   │       │   ├── queries.rs          # Cypher 模板常量
 │   │       │   └── schema.rs           # V2 Schema 初始化
 │   │       ├── qdrant/
@@ -252,7 +252,7 @@ digital-twin-v2/
 │   │   ├── Cargo.toml
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── neo4j.rs                # neo4j-admin dump/restore 封装
+│   │       ├── memgraph.rs                # memgraph-admin dump/restore 封装
 │   │       ├── qdrant.rs               # Qdrant snapshot API
 │   │       ├── sqlite.rs               # SQLite 文件备份
 │   │       └── verify.rs               # SHA256 checksum 验证
@@ -528,7 +528,7 @@ ContextPipeline::execute(task)
                     │ implements
          ┌──────────▼──────────────────┐
          │   Infrastructure Layer      │
-         │   Neo4jRepository (Bolt)    │
+         │   MemgraphRepository (Bolt)    │
          │   QdrantRepository (gRPC)   │
          │   SqliteRepository (local)  │
          └─────────────────────────────┘
@@ -554,7 +554,7 @@ pub struct AppComponents {
 
 pub async fn wire(config: &AppConfig) -> Result<AppComponents> {
     // 1. 基础设施层
-    let graph = Arc::new(Neo4jRepository::connect(&config.neo4j).await?);
+    let graph = Arc::new(MemgraphRepository::connect(&config.memgraph).await?);
     let vector = Arc::new(QdrantRepository::connect(&config.qdrant).await?);
     let snapshot = Arc::new(SqliteRepository::open(&config.snapshot_path)?);
     let embed = Arc::new(GrpcEmbedService::connect(&config.embed).await?);
@@ -600,7 +600,7 @@ pub async fn wire(config: &AppConfig) -> Result<AppComponents> {
                           dt-storage
                           /    |    \
                          /     |     \
-                   dt-common  dt-log  (neo4rs, tonic, rusqlite)
+                    dt-common  dt-log  (bolt-driver, tonic, rusqlite)
 ```
 
 ---
@@ -612,7 +612,7 @@ pub async fn wire(config: &AppConfig) -> Result<AppComponents> {
 | `models.rs` (24行) | `dt-common/src/types.rs` | 扩展为完整实体定义 |
 | `error.rs` | `dt-common/src/error.rs` | DtError 层级化 |
 | `config.rs` (531行 God File) | `dt-daemon/src/config.rs` | 仅保留加载逻辑，拆出 ScannerConfig |
-| `client/neo4j.rs` (266行) | `dt-storage/src/neo4j/` | HTTP→Bolt + trait 实现 + 分文件 |
+| `client/memgraph.rs` (266行) | `dt-storage/src/memgraph/` | HTTP→Bolt + trait 实现 + 分文件 |
 | `client/qdrant.rs` (152行) | `dt-storage/src/qdrant/` | HTTP→gRPC + trait 实现 + 分文件 |
 | `client/embed.rs` (140行) | `dt-pipeline/src/embedder.rs` | 封装为 trait + gRPC client |
 | `index/build.rs` (192行) | `dt-pipeline/src/pipeline.rs` + `strategy/incremental.rs` | Template Method |

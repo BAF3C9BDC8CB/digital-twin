@@ -3,7 +3,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! let s = SecretString::from_config("env:NEO4J_PASSWORD");
+//! let s = SecretString::from_config("env:MEMGRAPH_PASSWORD");
 //! let pw = s.resolve()?;
 //! println!("{:?}", s);  // "***"
 //! ```
@@ -15,8 +15,8 @@ use crate::domain::error::DtError;
 
 /// Sensitive configuration value with three source backends.
 ///
-/// - `Env("NEO4J_PASSWORD")`: read from environment variable
-/// - `Vault("secret/neo4j")`: read from a secret manager (future)
+/// - `Env("MEMGRAPH_PASSWORD")`: read from environment variable
+/// - `Vault("secret/memgraph")`: read from a secret manager (future)
 /// - `Plain("my-password")`: plain text (dev only; refused in production)
 ///
 /// The `Debug` and `Display` implementations output `"***"` so that
@@ -99,14 +99,14 @@ mod tests {
 
     #[test]
     fn from_config_env_prefix() {
-        let s = SecretString::from_config("env:NEO4J_PASSWORD");
-        assert!(matches!(s, SecretString::Env(ref v) if v == "NEO4J_PASSWORD"));
+        let s = SecretString::from_config("env:MEMGRAPH_PASSWORD");
+        assert!(matches!(s, SecretString::Env(ref v) if v == "MEMGRAPH_PASSWORD"));
     }
 
     #[test]
     fn from_config_vault_prefix() {
-        let s = SecretString::from_config("vault:secret/neo4j");
-        assert!(matches!(s, SecretString::Vault(ref v) if v == "secret/neo4j"));
+        let s = SecretString::from_config("vault:secret/memgraph");
+        assert!(matches!(s, SecretString::Vault(ref v) if v == "secret/memgraph"));
     }
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn vault_resolve_is_error() {
-        let s = SecretString::from_config("vault:secret/neo4j");
+        let s = SecretString::from_config("vault:secret/memgraph");
         assert!(s.resolve().is_err());
     }
 

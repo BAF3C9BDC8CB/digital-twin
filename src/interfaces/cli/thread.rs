@@ -80,8 +80,8 @@ pub async fn handle_thread(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot manage threads");
-            println!("Thread: action={action} (Neo4j unavailable)");
+            eprintln!("Graph database unavailable — cannot manage threads");
+            println!("Thread: action={action} (graph database unavailable)");
         }
     }
 

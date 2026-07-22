@@ -35,33 +35,33 @@
 
 这套标签体系遵循 **六世界架构**（参见 [`docs/architecture-v2-data-schema.md`](./docs/architecture-v2-data-schema.md)）：
 
-**1. Reality World（事实世界）** — Neo4j
+**1. Reality World（事实世界）** — Memgraph
 - **特征**：客观存在，自动发现
 - **标签**：`Method`, `Class`, `Module`, `Service`, `ServiceInstance`, `NacosConfig`, `ConfigKey`, `Server`, `Database`, `Table`, `Endpoint`, `K8sDeployment`, `NacosService`, `NacosGroup`, `NacosInstance`, `Environment`, `KubernetesCluster`
-- **原则**：只存稳定的、可被工具自动扫描到的实体。K8s Pod 这种瞬态实体不入 Neo4j（属于 Runtime World）
+- **原则**：只存稳定的、可被工具自动扫描到的实体。K8s Pod 这种瞬态实体不入 Memgraph（属于 Runtime World）
 
-**2. Knowledge World（知识世界）** — Neo4j
+**2. Knowledge World（知识世界）** — Memgraph
 - **特征**：概念、模式、经验，人工整理或 AI 沉淀
 - **标签**：`Knowledge`, `KnowledgeVersion`, `Playbook`, `Experience`, `Concept`, `Domain`
 - **原则**：置信度体系（AI 生成 0.3~0.7，人工确认为 1.0），可版本追溯
 
-**3. Memory World（记忆世界）** — Neo4j
+**3. Memory World（记忆世界）** — Memgraph
 - **特征**：时间线驱动，只增不删，完整审计日志
 - **标签**：`Day`, `Session`, `Modification`, `Deployment`, `ConfigChange`, `BugFix`, `Decision`, `PodEvent`, `Event`
 - **原则**：事件溯源，365 天 TTL 后归档到文件系统
 
-**4. Semantic World（语义世界）** — Qdrant（不是 Neo4j 标签）
+**4. Semantic World（语义世界）** — Qdrant（不是 Memgraph 标签）
 - 向量化文本，供相似度检索
 
-**5. Runtime World（运行时世界）** — 不入 Neo4j
+**5. Runtime World（运行时世界）** — 不入 Memgraph
 - Pod 列表、CPU/Mem、uptime 等实时数据，Context Builder 每次实时拉取后注入瞬态字段
 
-**6. Reasoning World（推理世界）** — Neo4j
+**6. Reasoning World（推理世界）** — Memgraph
 - **特征**：AI 生成，验证后可升级为 Knowledge
 - **标签**：`Observation`, `Analysis`
 - **原则**：推理结果可升级，避免污染正式知识
 
-**7. Digital Thread（数字主线）** — Neo4j
+**7. Digital Thread（数字主线）** — Memgraph
 - **标签**：`Thread`, `Requirement`
 - **原则**：横切六世界，串联业务演化
 
@@ -71,10 +71,10 @@
 
 | 决策 | 说明 |
 |------|------|
-| **Neo4j schemaless** | 加属性不需要 migration，加标签不需要 schema change |
+| **Memgraph schemaless** | 加属性不需要 migration，加标签不需要 schema change |
 | **Service / ServiceInstance 分离** | Service 是跨环境稳定标识，ServiceInstance 承载每个环境的具体部署信息 |
 | **K8sDeployment ≠ Deployment** | K8sDeployment = K8s 资源（Reality），Deployment = 部署事件记录（Memory）——后者的标签已废弃 |
-| **Pod 不入 Neo4j** | Pod 是运行时概念，全部属于 Runtime World，实时拉取 |
+| **Pod 不入 Memgraph** | Pod 是运行时概念，全部属于 Runtime World，实时拉取 |
 | **瞬态字段机制** | ServiceInstance 的 cpu/mem/uptime 等标记为瞬态注入，Context Builder 每次请求实时填充 |
 | **关系全大写动词** | `HAS_INSTANCE`, `DEPLOYED_AS`, `CONFIGURED_BY`, `BELONGS_TO` |
 

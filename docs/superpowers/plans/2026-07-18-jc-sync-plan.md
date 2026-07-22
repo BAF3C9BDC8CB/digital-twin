@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `dt jc-sync` command that syncs Jenkins Views, Jobs, and build history into the Neo4j knowledge graph.
+**Goal:** Add `dt jc-sync` command that syncs Jenkins Views, Jobs, and build history into the Memgraph knowledge graph.
 
 **Architecture:** Follows the existing `nacos-sync` pattern: a `SyncSource` trait implementation (`JobSyncSource`) that fetches data via the existing `JenkinsApiClient` and writes to KG via `GraphRepository`. CLI handler in `src/interfaces/cli/jenkins_sync.rs`. Command registered in `main.rs` Commands enum.
 
-**Tech Stack:** Rust, reqwest (Jenkins HTTP API), Neo4j (bolt), serde_json
+**Tech Stack:** Rust, reqwest (Jenkins HTTP API), Memgraph (bolt), serde_json
 
 ## Global Constraints
 
@@ -32,7 +32,7 @@
 |------|--------|
 | `src/application/plugins/jenkins/client.rs` | Add `list_all_jobs()` and `get_all_builds()` structured methods |
 | `src/application/sync/mod.rs` | Add `pub mod jenkins;` |
-| `src/infrastructure/neo4j/schema.rs` | Add 3 Jenkins constraints + fulltext labels |
+| `src/infrastructure/memgraph/schema.rs` | Add 3 Jenkins constraints + fulltext labels |
 | `src/interfaces/cli/mod.rs` | Add `pub mod jenkins_sync;` |
 | `src/main.rs` | Add `JcSync` command variant + handler |
 
@@ -204,7 +204,7 @@ use crate::application::sync::traits::{SyncReport, SyncSource};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
-/// Synchronise Jenkins Views, Jobs, and Builds into Neo4j.
+/// Synchronise Jenkins Views, Jobs, and Builds into Memgraph.
 pub struct JobSyncSource {
     client: Arc<JenkinsApiClient>,
     env_name: String,
@@ -615,7 +615,7 @@ pub async fn handle_jenkins_sync(
                 }
             }
             None => {
-                eprintln!("  ✗ Neo4j unavailable — skipping");
+                eprintln!("  ✗ Memgraph unavailable — skipping");
             }
         }
     }
@@ -728,10 +728,10 @@ git commit -m "feat(jenkins): register dt jc-sync command"
 
 ---
 
-### Task 5: Add Neo4j schema constraints for Jenkins
+### Task 5: Add Memgraph schema constraints for Jenkins
 
 **Files:**
-- Modify: `src/infrastructure/neo4j/schema.rs`
+- Modify: `src/infrastructure/memgraph/schema.rs`
 
 - [ ] **Step 1: Add 3 Jenkins constraints to `CONSTRAINT_STATEMENTS`**
 
@@ -772,7 +772,7 @@ And in `init_schema_is_idempotent_via_if_not_exists` (line 328):
 
 ```bash
 cargo build 2>&1 | head -20
-cargo test --lib infrastructure::neo4j::schema::tests 2>&1 | tail -15
+cargo test --lib infrastructure::memgraph::schema::tests 2>&1 | tail -15
 ```
 
 Expected: Tests pass with updated assertion counts.
@@ -780,8 +780,8 @@ Expected: Tests pass with updated assertion counts.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/infrastructure/neo4j/schema.rs
-git commit -m "feat(neo4j): add Jenkins constraints and fulltext index labels"
+git add src/infrastructure/memgraph/schema.rs
+git commit -m "feat(memgraph): add Jenkins constraints and fulltext index labels"
 ```
 
 ---

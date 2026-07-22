@@ -1,7 +1,7 @@
 //! Update command — single-file real-time incremental update.
 //!
 //! Implements `dt update --file <path>`: deletes old entities for a file,
-//! re-parses it, writes new entities to Neo4j, and rebuilds call edges.
+//! re-parses it, writes new entities to the graph database, and rebuilds call edges.
 //!
 //! # Idempotency
 //!
@@ -636,7 +636,7 @@ mod tests {
         let file = dir.path().join("main.rs");
         std::fs::write(&file, "fn main() {}").unwrap();
 
-        let graph: Arc<dyn GraphRepository> = Arc::new(crate::infrastructure::neo4j::NoopGraphRepo);
+        let graph: Arc<dyn GraphRepository> = Arc::new(crate::infrastructure::memgraph::NoopGraphRepo);
         let deps = UpdateDependencies {
             graph: Some(graph),
             vector: None,

@@ -1,7 +1,7 @@
 //! Sync service — orchestration layer for external system synchronisation.
 //!
 //! Provides the [`SyncService`] trait and a concrete [`NacosSyncService`]
-//! that coordinates config and service sync from Nacos into Neo4j.
+//! that coordinates config and service sync from Nacos into Memgraph.
 //!
 //! # WriteCoordinator integration
 //!
@@ -77,7 +77,7 @@ pub trait SyncService: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Concrete [`SyncService`] that syncs Nacos configuration and service registry
-/// data into the Neo4j knowledge graph.
+/// data into the Memgraph knowledge graph.
 pub struct NacosSyncService {
     /// Graph repository for writing V2 nodes.
     graph: Arc<dyn GraphRepository>,

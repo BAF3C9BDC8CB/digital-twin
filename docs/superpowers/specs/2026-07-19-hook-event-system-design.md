@@ -44,7 +44,7 @@
 2. **自动触发**：hook 点内嵌在工具/MCP 实现中，AI 不需要手动触发事件
 3. **一对多**：一个 hook 点可触发多个标签写入（例如部署完成时同时写入 `:Deployment` + 更新 `:JenkinsJob`）
 4. **可扩展**：新增事件类型只需改 YAML，零代码变更
-5. **可测试**：核心组件为纯函数，无需 Neo4j 即可测试
+5. **可测试**：核心组件为纯函数，无需 Memgraph 即可测试
 
 ---
 
@@ -61,21 +61,21 @@
 │         execute_one(config, context)                     │
 │           ├─ IdGenerator.generate()         纯函数       │
 │           ├─ PropertyMapper.map()           纯函数       │
-│           ├─ NodeWriter.write()             → Neo4j     │
-│           ├─ RelationshipWriter.write()     → Neo4j     │
-│           └─ SideEffectRunner.run()         → Neo4j     │
+│           ├─ NodeWriter.write()             → Memgraph     │
+│           ├─ RelationshipWriter.write()     → Memgraph     │
+│           └─ SideEffectRunner.run()         → Memgraph     │
 └─────────────────────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    GraphRepository (trait)                │
-│                     (Neo4j Bolt)                         │
+│                     (Memgraph Bolt)                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ### 组件职责矩阵
 
-| 组件 | 模式 | 是否有状态 | 依赖 Neo4j | 可独立测试 |
+| 组件 | 模式 | 是否有状态 | 依赖 Memgraph | 可独立测试 |
 |------|------|-----------|-----------|-----------|
 | `HookEngine` | Template Method | 有（组合子组件） | 间接 | ✅（mock repo） |
 | `IdGenerator` | Strategy | 无 | 否 | ✅ |
@@ -405,7 +405,7 @@ HookEngine 执行时，将所有 `HookContext` 字段 + 生成的 `event_id` 注
 | 路径 | 类型 | 说明 |
 |------|------|------|
 | `hooks.<name>.description` | string | Hook 点的语义描述 |
-| `event_types[].label` | string | Neo4j 标签名，如 `Deployment` |
+| `event_types[].label` | string | Memgraph 标签名，如 `Deployment` |
 | `event_types[].subscribe` | string | 订阅的 hook 名称 |
 | `event_types[].id.prefix` | string | 事件 ID 前缀，如 `deploy` |
 | `event_types[].id.fields` | string[] | 用于生成 ID 的 context 字段列表 |
@@ -767,7 +767,7 @@ dt event --hook jenkins_deploy_completed \
 
 ## 八、测试策略
 
-### 纯函数组件（无需 Neo4j）
+### 纯函数组件（无需 Memgraph）
 
 | 组件 | 测试内容 | 用例数 |
 |------|---------|-------|
@@ -829,7 +829,7 @@ dt event --hook jenkins_deploy_completed \
 | **Strategy** | `IdGenerator`, `PropertyMapper` | ID 生成策略和属性映射策略由配置控制 |
 | **Observer** | Hook → EventType | Hook 是 Subject，EventType 配置是 Observer |
 | **Composite** | `HookEngine` | 组合多个 writer/runner 完成完整写入 |
-| **Bridge** | `NodeWriter`/`RelationshipWriter` → `GraphRepository` | 通过 trait 桥接，不依赖具体 Neo4j 实现 |
+| **Bridge** | `NodeWriter`/`RelationshipWriter` → `GraphRepository` | 通过 trait 桥接，不依赖具体 Memgraph 实现 |
 | **Factory** | `HookRegistry::from_file()` | 从 YAML 创建配置对象 |
 
 ---

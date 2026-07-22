@@ -103,46 +103,59 @@ impl CrossWorldSearch {
         }
     }
 
-    /// Search the Reality World (code entities) via Neo4j.
+    /// Search the Reality World (code entities) via Qdrant vector search.
     async fn search_code(
         &self,
         query: &str,
         _project: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SearchHit>, DtError> {
-        let Some(ref graph) = self.graph else {
+        let (Some(ref vector), Some(ref embed)) = (&self.vector, &self.embed) else {
             return Ok(Vec::new());
         };
 
-        let cypher = r#"
-            CALL db.index.fulltext.queryNodes("infra_search", $query)
-            YIELD node, score
-            WHERE score > 0.2
-            RETURN elementId(node) AS id,
-                   coalesce(node.name, node.title, '') AS title,
-                   coalesce(node.description, node.summary, '') AS snippet,
-                   labels(node)[0] AS type,
-                   node.source_file AS source_ref,
-                   score
-            ORDER BY score DESC
-            LIMIT $limit
-        "#;
+        let embeddings = embed.embed_batch(&[query.to_string()]).await?;
+        let Some(query_vec) = embeddings.into_iter().next() else {
+            return Ok(Vec::new());
+        };
 
-        let mut params = std::collections::HashMap::new();
-        params.insert(
-            "query".to_string(),
-            serde_json::Value::String(query.to_string()),
-        );
-        params.insert(
-            "limit".to_string(),
-            serde_json::json!(limit as i64),
-        );
+        let results = vector.search("kg_nodes", query_vec, limit as u64).await?;
 
-        let result = graph.read_query(cypher, params).await?;
-        Ok(Self::parse_neo4j_hits(&result, "code"))
+        let hits = results
+            .into_iter()
+            .filter(|hit| {
+                let labels = hit["payload"]["labels"].as_array();
+                labels.map_or(false, |l| {
+                    l.iter().any(|v| {
+                        v.as_str().map_or(false, |s| {
+                            matches!(s, "Method" | "Class" | "Module" | "Service" | "Endpoint" | "ConfigKey")
+                        })
+                    })
+                })
+            })
+            .map(|hit| {
+                let payload = &hit["payload"];
+                let labels = payload["labels"]
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                SearchHit {
+                    id: hit["id"].as_str().unwrap_or("?").to_string(),
+                    title: payload["name"].as_str().unwrap_or("?").to_string(),
+                    snippet: payload["description"].as_str().unwrap_or("").to_string(),
+                    source_world: "code".into(),
+                    entity_type: labels.to_string(),
+                    score: hit["score"].as_f64().unwrap_or(0.0),
+                    source_ref: None,
+                }
+            })
+            .collect();
+
+        Ok(hits)
     }
 
-    /// Search the Knowledge World via Neo4j.
+    /// Search the Knowledge World via graph.
     async fn search_knowledge(
         &self,
         query: &str,
@@ -160,7 +173,7 @@ impl CrossWorldSearch {
                 OR n.description CONTAINS $fragment
                 OR n.summary CONTAINS $fragment
                 OR n.definition CONTAINS $fragment)
-            RETURN elementId(n) AS id,
+            RETURN toString(id(n)) AS id,
                    coalesce(n.name, n.title, '') AS title,
                    coalesce(n.description, n.summary, n.definition, '') AS snippet,
                    labels(n)[0] AS type,
@@ -176,7 +189,7 @@ impl CrossWorldSearch {
         params.insert("limit".to_string(), serde_json::json!(limit as i64));
 
         let result = graph.read_query(cypher, params).await?;
-        Ok(Self::parse_neo4j_hits(&result, "knowledge"))
+        Ok(Self::parse_graph_hits(&result, "knowledge"))
     }
 
     /// Search the vector store via Qdrant.
@@ -215,13 +228,13 @@ impl CrossWorldSearch {
         Ok(hits)
     }
 
-    /// Convert Neo4j results to SearchHit list.
+    /// Convert graph results to SearchHit list.
     ///
     /// Supports two response formats:
-    /// 1. neo4rs driver — `Value::Array` of row objects
-    /// 2. Neo4j HTTP API — `{"results":[{"data":[{"row":[...]}]}]}` (legacy)
-    fn parse_neo4j_hits(raw: &serde_json::Value, world: &str) -> Vec<SearchHit> {
-        // Try neo4rs driver format first (Array of row objects).
+    /// 1. Bolt driver — `Value::Array` of row objects
+    /// 2. HTTP API — `{"results":[{"data":[{"row":[...]}]}]}` (legacy)
+    fn parse_graph_hits(raw: &serde_json::Value, world: &str) -> Vec<SearchHit> {
+        // Try Bolt driver format first (Array of row objects).
         if let Some(rows) = raw.as_array() {
             return rows
                 .iter()

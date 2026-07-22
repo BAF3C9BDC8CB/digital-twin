@@ -1,6 +1,6 @@
 # Digital Twin V2
 
-**AI 辅助开发的持久记忆层**。结合 Neo4j 知识图谱 + Qdrant 向量数据库，为 AI Agent 提供跨会话上下文。
+**AI 辅助开发的持久记忆层**。结合 Memgraph 知识图谱 + Qdrant 向量数据库，为 AI Agent 提供跨会话上下文。
 
 ## 架构
 
@@ -9,7 +9,7 @@
 ```
 src/
   domain/          # 领域层: types, traits, error, config, id
-  infrastructure/  # 基础设施: neo4j, qdrant, sqlite, parser, scanner, embedder
+  infrastructure/  # 基础设施: memgraph, qdrant, sqlite, parser, scanner, embedder
   application/     # 应用层: build, sync, context, knowledge, plugins
   interfaces/      # 接口层: gRPC server, CLI
   shared/          # 横切: logging, metrics, coordinator, chunker, vectorizer
@@ -19,18 +19,18 @@ src/
 
 | 世界 | 数据 | 存储 |
 |------|------|------|
-| Reality | 代码、配置、K8s 资源 | Neo4j + Qdrant |
-| Knowledge | 概念、模式、Playbook、经验 | Neo4j |
-| Memory | 事件、会话、时间线 | Neo4j |
+| Reality | 代码、配置、K8s 资源 | Memgraph + Qdrant |
+| Knowledge | 概念、模式、Playbook、经验 | Memgraph |
+| Memory | 事件、会话、时间线 | Memgraph |
 | Semantic | 文档、API、日志模式向量 | Qdrant |
 | Runtime | Pod 状态、服务运行态 | K8s API 实时查询 |
-| Reasoning | 观察 → 分析 → 决策链路 | Neo4j (含 TTL) |
+| Reasoning | 观察 → 分析 → 决策链路 | Memgraph (含 TTL) |
 
 ## 快速开始
 
 ### 依赖
 
-- Neo4j 5.x (Bolt :7687)
+- Memgraph 5.x (Bolt :7687)
 - Qdrant (gRPC :6334)
 - dt-embed (Python, BGE-M3 :50052)
 
@@ -76,7 +76,7 @@ cargo build --release
 
 ### 运维
 
-| `dt backup` | 分层备份 (Neo4j + Qdrant + SQLite) |
+| `dt backup` | 分层备份 (Memgraph + Qdrant + SQLite) |
 | `dt archive` | Memory 数据归档 |
 | `dt clean` | 清空所有数据 |
 | `dt cleanup` | TTL 数据清理 |
@@ -102,7 +102,7 @@ digital-twin-v2/
 │   │   └── types.rs            # 六世界实体类型定义
 │   ├── infrastructure/
 │   │   ├── embedder.rs         # dt-embed gRPC client
-│   │   ├── neo4j/              # Neo4j Bolt 驱动 (neo4rs)
+│   │   ├── memgraph/              # Memgraph Bolt 驱动
 │   │   ├── parser/             # tree-sitter 多语言解析器
 │   │   ├── qdrant/             # Qdrant gRPC 驱动
 │   │   ├── scanner.rs          # 项目文件扫描
@@ -143,7 +143,7 @@ digital-twin-v2/
 |------|------|
 | [architecture-v3-single-crate-layered.md](docs/architecture-v3-single-crate-layered.md) | 当前架构: 单 crate DDD 五层 |
 | [architecture-v2-six-worlds.md](docs/architecture-v2-six-worlds.md) | 六世界模型设计 |
-| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Neo4j Schema: 25 约束 + 全文索引 |
+| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Memgraph Schema: 25 约束 + 全文索引 |
 | [architecture-v2-data-pipeline.md](docs/architecture-v2-data-pipeline.md) | 数据采集管线设计 |
 | [architecture-v2-pipeline-impl.md](docs/architecture-v2-pipeline-impl.md) | 管道实现细节 |
 | [architecture-v2-project-structure.md](docs/architecture-v2-project-structure.md) | 项目结构设计 |

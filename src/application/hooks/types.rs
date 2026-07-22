@@ -4,7 +4,7 @@ use std::collections::HashMap;
 /// 单一事件标签的完整配置（从 YAML 反序列化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventTypeConfig {
-    /// Neo4j 标签名，如 "Modification"
+    /// 图数据库标签名，如 "Modification"
     pub label: String,
     /// 订阅的 hook 名，如 "code_modified"
     pub subscribe: String,

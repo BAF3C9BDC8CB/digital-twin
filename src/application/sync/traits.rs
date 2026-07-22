@@ -27,7 +27,7 @@ pub struct SyncReport {
     // -- K8s-specific --
     /// Items fetched from the external API.
     pub items_fetched: usize,
-    /// Items newly created in Neo4j.
+    /// Items newly created in the graph database.
     pub items_created: usize,
     /// Items that already existed and were updated.
     pub items_updated: usize,

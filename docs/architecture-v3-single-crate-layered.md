@@ -37,7 +37,7 @@ dt-daemon/
 │   │
 │   ├── infrastructure/           # ─── 基础设施层 ───
 │   │   ├── mod.rs                #    外部系统交互、存储实现
-│   │   ├── neo4j/                #    Neo4j 图存储
+│   │   ├── memgraph/                #    Memgraph 图存储
 │   │   │   ├── mod.rs
 │   │   │   ├── client.rs         #    Bolt 连接池
 │   │   │   ├── repo.rs           #    impl GraphRepository（含内联 Cypher 模板）
@@ -182,7 +182,7 @@ dt-daemon/
 │   │       ├── kub.rs
 │   │       ├── jcli.rs
 │   │       ├── backup.rs
-│   │       ├── backup_neo4j.rs
+│   │       ├── backup_memgraph.rs
 │   │       ├── backup_qdrant.rs
 │   │       ├── backup_sqlite.rs
 │   │       ├── backup_verify.rs
@@ -243,7 +243,7 @@ application/ (用例编排)
 |----------|--------|
 | dt-common | domain/ + shared/ |
 | dt-log | shared/logging/ |
-| dt-storage | infrastructure/ (neo4j + qdrant + sqlite) |
+| dt-storage | infrastructure/ (memgraph + qdrant + sqlite) |
 | dt-pipeline | application/build/ + infrastructure/parser/ + infrastructure/scanner.rs |
 | dt-sync | application/sync/ |
 | dt-knowledge | application/knowledge/ |
@@ -290,10 +290,10 @@ path = "src/main.rs"
 |------|------|
 | main.rs 行数 | 1566 行（从 V2 workspace 的 2625 行缩减） |
 | gRPC services | `DtCoreServiceImpl` 已实现，含 6 个 RPC（Build/Search/GetContext/RecordEvent/Memorize/Sync） |
-| wiring.rs | 连接真实 Neo4j/Qdrant 后端（从 config.yaml 读取连接配置） |
+| wiring.rs | 连接真实 Memgraph/Qdrant 后端（从 config.yaml 读取连接配置） |
 | Thread service | 已移动至 `application/knowledge/thread/`（含 `mod.rs` + `service.rs`） |
 | CLI 命令 | 已提取 17 个模块到 `interfaces/cli/`（build, sync, event, memorize, learn, context, thread, kub, jcli, backup 等） |
 | parser | Rust 解析器实际文件名为 `rust_parser.rs`（避免与 `rust` 关键字冲突） |
-| Neo4j Cypher | 模板内联在 `infrastructure/neo4j/repo.rs` 中，无独立 `queries.rs` 文件 |
+| Memgraph Cypher | 模板内联在 `infrastructure/memgraph/repo.rs` 中，无独立 `queries.rs` 文件 |
 | metrics | 位于 `shared/logging/metrics.rs`（不在 `shared/` 根目录） |
 | search | 实际文件名为 `context/search_mcp.rs`

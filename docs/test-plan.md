@@ -1,7 +1,7 @@
 # Digital Twin V2 测试方案
 
 > 日期：2026-07-10 | 测试项目：third-center (307 Java) + digital-twin-v2 (129 Rust)
-> Neo4j: 4800+ 节点 | Qdrant: 2790+ vectors | MCP: 34 工具
+> Memgraph: 4800+ 节点 | Qdrant: 2790+ vectors | MCP: 34 工具
 
 ---
 
@@ -9,7 +9,7 @@
 
 | 组件 | 地址 | 状态 |
 |------|------|------|
-| Neo4j | bolt://localhost:7687 | ✅ |
+| Memgraph | bolt://localhost:7687 | ✅ |
 | Qdrant | grpc://localhost:6334 | ✅ |
 | dt-embed | gRPC :50052 | ✅ BGE-M3 1024维 |
 | Nacos | test: nacos.newoffen.net | ✅ |
@@ -37,19 +37,19 @@ T8: dt kub pods / dt jcli list      ← 插件
 ### T1: 健康检查 ✅
 ```
 MCP: dt_health
-  ✅ Neo4j   : healthy (1 ms)
+  ✅ Memgraph   : healthy (1 ms)
   ✅ Qdrant  : healthy, v1.18.2
 ```
 
 ### T2: dt build ✅
 ```
-third-center:    383 files, 2790 methods, 11s   → Neo4j + Qdrant vectors
+third-center:    383 files, 2790 methods, 11s   → Memgraph + Qdrant vectors
 digital-twin-v2: 307 files,  909 methods, 16s   → 自建成功
 ```
 
 ### T3: dt search ✅
 ```
-查询 "Neo4jClient" → 找到 Class Neo4jClient
+查询 "MemgraphClient" → 找到 Class MemgraphClient
 查询 "DaoBase"     → 找到 Interface DaoBase (Java接口修复后)
 ```
 

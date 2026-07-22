@@ -9,7 +9,7 @@
 
 | 用户说 | 应执行 | 说明 |
 |--------|--------|------|
-| "XX 服务的密码/账号/地址/配置" | `dt search-kg "XX" --limit 10` → `neo4j_read_cypher` 取属性 | 基础设施/凭证类走 KG 向量搜索 |
+| "XX 服务的密码/账号/地址/配置" | `dt search-kg "XX" --limit 10` → `memgraph_read_cypher` 取属性 | 基础设施/凭证类走 KG 向量搜索 |
 | "XX 服务的端口/URL" | 同上 | 同上 |
 | "项目有哪些数据库/中间件" | `dt search-kg "数据库 中间件 基础设施" --limit 20` | 全景查询 |
 | "XX 功能的代码在哪里/怎么实现的" | `dt search "XX" --project <项目名>` | 代码语义搜索 |
@@ -51,7 +51,7 @@
 
 | 场景 | 应执行 | 说明 |
 |------|--------|------|
-| 搜索失败/报错/行为异常 | `dt health` | 5 项检查：Neo4j、Embed、Qdrant、KG Bridge、全文索引 |
+| 搜索失败/报错/行为异常 | `dt health` | 5 项检查：Memgraph、Embed、Qdrant、KG Bridge、全文索引 |
 | "dt search 返回空" | 先 `dt health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
 | "search-kg 报错" | `dt health`，看 [4/5] 是否通过 | kg_nodes 集合可能不存在，需 `dt kg-sync` |
 | 验证新项目解析是否正常 | `dt validate --path <路径> --name <项目名>` | 干跑，不写数据库 |

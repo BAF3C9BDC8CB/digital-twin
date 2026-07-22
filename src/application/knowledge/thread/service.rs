@@ -147,11 +147,11 @@ impl ThreadService {
 
     /// Extract the first result row as a JSON object with named keys.
     ///
-    /// Handles both the neo4rs driver format (Array of row objects with
+    /// Handles both the Bolt driver format (Array of row objects with
     /// named keys) and the legacy HTTP API format (nested results/data/row).
     /// Returns the row object for named-key access.
     fn first_row_obj(result: &serde_json::Value) -> Option<serde_json::Value> {
-        // neo4rs driver format: Array of row objects like [{"id": "4:xxx", ...}]
+        // Bolt driver format: Array of row objects like [{"id": "4:xxx", ...}]
         if let Some(rows) = result.as_array() {
             return rows.first().cloned();
         }
@@ -490,9 +490,9 @@ impl ThreadService {
         let params = std::collections::HashMap::new();
         let result = self.graph.read_query(&cypher, params).await?;
 
-        // Handle both neo4rs driver format (Array of row objects) and legacy HTTP format
+        // Handle both Bolt driver format (Array of row objects) and legacy HTTP format
         let rows: Vec<&serde_json::Value> = if let Some(arr) = result.as_array() {
-            // neo4rs driver format: Array of row objects with named keys
+            // Bolt driver format: Array of row objects with named keys
             arr.iter().collect()
         } else {
             // Legacy HTTP API format
@@ -508,11 +508,11 @@ impl ThreadService {
 
         let mut threads = Vec::new();
         for row_val in rows {
-            // neo4rs format: row object has named keys like {"id": ..., "title": ..., ...}
+            // Bolt driver format: row object has named keys like {"id": ..., "title": ..., ...}
             // Legacy format: row_val.get("row") returns positional array
-            let is_neo4rs = row_val.as_object().is_some();
+            let is_driver_format = row_val.as_object().is_some();
             let get = |key: &str, default: &str| -> String {
-                if is_neo4rs {
+                if is_driver_format {
                     row_val.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
                 } else {
                     // Legacy: positional array by index
@@ -531,7 +531,7 @@ impl ThreadService {
                 }
             };
             let get_opt = |key: &str| -> Option<String> {
-                if is_neo4rs {
+                if is_driver_format {
                     row_val.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
                 } else {
                     let idx = match key { "project" => 4, "closed_at" => 7, _ => return None };
@@ -543,7 +543,7 @@ impl ThreadService {
                 }
             };
             let get_int = |key: &str| -> usize {
-                if is_neo4rs {
+                if is_driver_format {
                     row_val.get(key).and_then(|v| v.as_i64()).unwrap_or(0) as usize
                 } else {
                     let idx = match key { "session_count" => 8, "decision_count" => 9, _ => return 0 };
@@ -887,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn first_row_obj_neo4rs_format() {
+    fn first_row_obj_driver_format() {
         let raw = serde_json::json!([
             {"id": "4:abc123", "title": "Test Thread"}
         ]);

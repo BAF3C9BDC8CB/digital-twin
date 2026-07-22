@@ -12,7 +12,7 @@ use crate::application::search::fusion::RankedItem;
 
 /// Handle `dt build` — index a project into the knowledge graph.
 ///
-/// All backend connections (Neo4j, Qdrant, embed, SQLite) must be established
+/// All backend connections (Memgraph, Qdrant, embed, SQLite) must be established
 /// by the caller and passed as `Option<Arc<...>>`.
 pub async fn handle_build(
     path: PathBuf,
@@ -134,12 +134,12 @@ fn extract_ascii_words(s: &str) -> Vec<String> {
 /// Handle `dt search` — semantic code search across worlds.
 ///
 /// For "code" world: vector search across `*_methods` collections, falls
-/// back to Neo4j CONTAINS text search.
+/// back to CONTAINS text search.
 /// For "config"/"all" worlds: **hybrid search** — Qdrant vector search on
-/// `kg_nodes` + Neo4j CONTAINS keyword search on config labels, fused
+/// `kg_nodes` + keyword CONTAINS search on config labels, fused
 /// with Reciprocal Rank Fusion. Multi-query expansion (Chinese + English)
 /// bridges the language gap between user queries and config property names.
-/// For "knowledge" / "memory" / etc.: Neo4j Cypher text search.
+/// For "knowledge" / "memory" / etc.: Cypher text search.
 pub async fn handle_search(
     query: String,
     world: String,
@@ -189,7 +189,7 @@ pub async fn handle_search(
     // ── Config world: vector search on config_chunks (Qdrant) ────────────
     // Uses full-chunk text embeddings to bridge the Chinese→English gap
     // that prevented effective vector search on individual ConfigKey names.
-    // Falls back to Neo4j keyword search when dt-embed is unavailable.
+    // Falls back to keyword search when dt-embed is unavailable.
     if world == "config" {
         // Attempt vector search on config_chunks
         if let Some(vec_repo) = &vector {
@@ -248,7 +248,7 @@ pub async fn handle_search(
                 Err(e) => tracing::warn!("dt-embed unavailable for config search: {e}"),
             }
         }
-        // Fallback: Neo4j CONTAINS keyword search on ConfigKey nodes
+        // Fallback: CONTAINS keyword search on ConfigKey nodes
         println!("  (vector search unavailable — falling back to keyword search)");
         if let Some(graph_ref) = &graph {
             let keywords = get_keywords(&query);
@@ -306,7 +306,7 @@ pub async fn handle_search(
                             return Ok(());
                         }
                     }
-                    Err(e) => tracing::warn!("Neo4j config search failed: {e}"),
+                    Err(e) => tracing::warn!("Config search failed: {e}"),
                 }
             }
         }
@@ -314,7 +314,7 @@ pub async fn handle_search(
         return Ok(());
     }
 
-    // ── Shared: RankedItem collection from vector search + Neo4j ────
+    // ── Shared: RankedItem collection from vector search + keyword ────
     use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
@@ -427,7 +427,7 @@ pub async fn handle_search(
         false
     };
 
-    // ── All world: also add Neo4j keyword search on config labels ──
+    // ── All world: also add keyword search on config labels ──
     if world == "all" {
         if let Some(graph_ref) = &graph {
             let keywords = get_keywords(&query);
@@ -467,7 +467,7 @@ pub async fn handle_search(
                                 id: row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 title: row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 snippet: row.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                source_world: "neo4j/config".into(),
+                                source_world: "graph/config".into(),
                                 entity_type: row.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
                                 score: 0.0,
                             }
@@ -511,12 +511,12 @@ pub async fn handle_search(
         }
     }
 
-    // Fall through: code world still needs Neo4j fallback
+    // Fall through: code world still needs keyword fallback
     if world == "code" && did_vector_search {
-        println!("  (vector search unavailable — falling back to Neo4j text search)");
+        println!("  (vector search unavailable — falling back to keyword text search)");
     }
 
-    // ── Pure Neo4j text search for code/knowledge/memory/other ──
+    // ── Cypher text search for code/knowledge/memory/other ──
     // (Also serves as fallback for code when vector is down)
     match graph {
         Some(graph_ref) => {
@@ -582,7 +582,7 @@ pub async fn handle_search(
         }
         None => {
             if vector.is_none() {
-                tracing::warn!("Neither Neo4j nor Qdrant available — no search results");
+                tracing::warn!("Neither graph database nor Qdrant available — no search results");
                 println!("  (No search backend available)");
             }
         }
@@ -606,10 +606,10 @@ fn print_config_chunk_results(items: &[RankedItem]) {
     }
 }
 
-/// Handle `dt search-kg` — hybrid KG search (vector + Neo4j keyword).
+/// Handle `dt search-kg` — hybrid KG search (vector + keyword).
 ///
 /// Uses multi-query expansion (Chinese + English) with Reciprocal Rank
-/// Fusion for vector search on `kg_nodes`, combined with Neo4j CONTAINS
+/// Fusion for vector search on `kg_nodes`, combined with CONTAINS
 /// keyword search on business labels. This hybrid approach bridges the
 /// language gap between Chinese queries and English config property names.
 pub async fn handle_search_kg(
@@ -626,7 +626,7 @@ pub async fn handle_search_kg(
 
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
-    // ── 1. Neo4j keyword search on business labels ─────────────────
+    // ── 1. Keyword search on business labels ─────────────────
     if let Some(graph_ref) = &graph {
         // Extract English keywords from query
         let rewriter = crate::application::search::rewrite::QueryRewriter::with_defaults();
@@ -683,7 +683,7 @@ pub async fn handle_search_kg(
                                 id: row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 title: row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                                 snippet: row.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                source_world: "neo4j".into(),
+                                source_world: "graph".into(),
                                 entity_type: row.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
                                 score: 0.0,
                             }
@@ -691,7 +691,7 @@ pub async fn handle_search_kg(
                         if !list.is_empty() { all_rank_lists.push(list); }
                     }
                 }
-                Err(e) => tracing::warn!("Search-KG Neo4j query failed: {e}"),
+                Err(e) => tracing::warn!("Search-KG graph query failed: {e}"),
             }
         }
     }

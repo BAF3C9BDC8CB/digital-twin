@@ -3,11 +3,11 @@
 //!
 //! This file integrates the former dt-backup crate into the single-crate
 //! architecture.  Individual backup targets have been split into separate
-//! files (backup_neo4j, backup_qdrant, backup_sqlite, backup_verify).
+//! files (backup_memgraph, backup_qdrant, backup_sqlite, backup_verify).
 
-pub mod neo4j {
-    //! Neo4j backup helpers.
-    pub use crate::interfaces::cli::backup_neo4j::*;
+pub mod memgraph {
+    //! Memgraph backup helpers.
+    pub use crate::interfaces::cli::backup_memgraph::*;
 }
 pub mod qdrant {
     //! Qdrant backup helpers.
@@ -40,8 +40,8 @@ pub struct BackupReport {
 /// Per-target backup status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupTargets {
-    pub neo4j: bool,
-    pub neo4j_size_bytes: u64,
+    pub memgraph: bool,
+    pub memgraph_size_bytes: u64,
     pub qdrant: bool,
     pub qdrant_size_bytes: u64,
     pub sqlite: bool,
@@ -81,7 +81,7 @@ const BACKUP_ROOT: &str = "/var/backups/digital-twin";
 /// Create a new backup.
 ///
 /// 1. Creates a date-stamped directory under `BACKUP_ROOT`.
-/// 2. Dumps Neo4j, snapshots Qdrant collections, copies SQLite.
+/// 2. Dumps Memgraph, snapshots Qdrant collections, copies SQLite.
 /// 3. Generates checksums.
 /// 4. Returns a `BackupReport`.
 pub async fn create_backup() -> Result<BackupReport> {
@@ -89,14 +89,17 @@ pub async fn create_backup() -> Result<BackupReport> {
     let date = Utc::now().format("%Y-%m-%d").to_string();
     let backup_dir = PathBuf::from(BACKUP_ROOT).join(&date);
 
-    tracing::info!("dt_backup: creating backup for {date} at {}", backup_dir.display());
+    tracing::info!(
+        "dt_backup: creating backup for {date} at {}",
+        backup_dir.display()
+    );
 
     // Ensure backup directory exists
     tokio::fs::create_dir_all(&backup_dir).await?;
 
     // ---- Back up each component ----
-    let (neo4j_ok, neo4j_size) =
-        crate::interfaces::cli::backup_neo4j::dump_graph(&backup_dir).await?;
+    let (memgraph_ok, memgraph_size) =
+        crate::interfaces::cli::backup_memgraph::dump_graph(&backup_dir).await?;
     let (qdrant_ok, qdrant_size) =
         crate::interfaces::cli::backup_qdrant::snapshot_collections(&backup_dir).await?;
     let (sqlite_ok, sqlite_size) =
@@ -113,8 +116,8 @@ pub async fn create_backup() -> Result<BackupReport> {
         location: backup_dir,
         date,
         targets: BackupTargets {
-            neo4j: neo4j_ok,
-            neo4j_size_bytes: neo4j_size,
+            memgraph: memgraph_ok,
+            memgraph_size_bytes: memgraph_size,
             qdrant: qdrant_ok,
             qdrant_size_bytes: qdrant_size,
             sqlite: sqlite_ok,
@@ -140,7 +143,7 @@ pub async fn restore_backup(date: &str) -> Result<()> {
     tracing::info!("dt_backup: restoring backup from {date}");
 
     // ---- Restore each component ----
-    crate::interfaces::cli::backup_neo4j::restore_graph(&backup_dir).await?;
+    crate::interfaces::cli::backup_memgraph::restore_graph(&backup_dir).await?;
     crate::interfaces::cli::backup_qdrant::restore_collections(&backup_dir).await?;
     crate::interfaces::cli::backup_sqlite::restore_database(&backup_dir).await?;
 

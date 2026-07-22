@@ -28,7 +28,7 @@ fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Va
 
 /// Synchronises Nacos service registry data into the knowledge graph.
 ///
-/// # Produced Neo4j nodes
+/// # Produced graph nodes
 ///
 /// - `NacosService` — `service_id = dt://nacos/{ns}/{service_name}`
 /// - `Service` — the corresponding Digital Twin service node

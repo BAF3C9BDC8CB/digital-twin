@@ -52,12 +52,12 @@ pub enum PluginError {
 pub struct AppConfig {
     /// Data directory for the system.
     pub data_dir: PathBuf,
-    /// Neo4j connection URI (bolt://).
-    pub neo4j_uri: String,
-    /// Neo4j username.
-    pub neo4j_user: String,
-    /// Neo4j password.
-    pub neo4j_password: String,
+    /// Memgraph connection URI (bolt://).
+    pub memgraph_uri: String,
+    /// Memgraph username.
+    pub memgraph_user: String,
+    /// Memgraph password.
+    pub memgraph_password: String,
     /// Qdrant gRPC endpoint.
     pub qdrant_uri: String,
     /// Embed server gRPC endpoint.
@@ -70,9 +70,9 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             data_dir: PathBuf::from("/var/lib/digital-twin"),
-            neo4j_uri: "bolt://localhost:7687".into(),
-            neo4j_user: "neo4j".into(),
-            neo4j_password: "password".into(),
+            memgraph_uri: "bolt://localhost:7687".into(),
+            memgraph_user: "memgraph".into(),
+            memgraph_password: "password".into(),
             qdrant_uri: "http://localhost:6334".into(),
             embed_uri: "http://localhost:50052".into(),
             listen_addr: "127.0.0.1:50051".into(),

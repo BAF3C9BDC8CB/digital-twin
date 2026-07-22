@@ -25,13 +25,19 @@ command -v cargo    >/dev/null || warn "cargo 未安装 (跳过 dt CLI 编译)"
 
 # ---- 2. 外部服务检查 ----
 log "检查外部服务..."
-for url in "http://localhost:7474" "http://localhost:6333"; do
+for url in "http://localhost:6333"; do
   if curl -sf "$url" >/dev/null 2>&1; then
     log "  $url 可达"
   else
-    warn "  $url 不可达，请确保 Neo4j/Qdrant 已启动"
+    warn "  $url 不可达，请确保 Qdrant 已启动"
   fi
 done
+# Memgraph 走 Bolt 协议，用 nc 检查端口可达性
+if nc -z localhost 7688 2>/dev/null; then
+  log "  bolt://localhost:7688 可达"
+else
+  warn "  bolt://localhost:7688 不可达，请确保 Memgraph 已启动"
+fi
 
 # ---- 3. 编译 dt CLI ----
 log "编译 dt CLI..."
@@ -78,7 +84,7 @@ else
 fi
 
 # ---- 7. 初始化知识图谱 ----
-log "初始化 Neo4j Schema..."
+log "初始化 Memgraph Schema..."
 if command -v dt >/dev/null 2>&1; then
   dt event --type SchemaInit --entity-id setup --details "schema bootstrap" 2>/dev/null
   log "Schema 将在首次 dt build/index 时通过 ensure_schema() 自动初始化"

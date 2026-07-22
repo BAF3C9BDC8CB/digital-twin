@@ -31,7 +31,7 @@ use crate::application::sync::traits::{SyncReport, SyncSource};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
-/// Synchronise Jenkins Views, Jobs, and Builds into Neo4j.
+/// Synchronise Jenkins Views, Jobs, and Builds into Memgraph.
 pub struct JobSyncSource {
     client: Arc<JenkinsApiClient>,
     job_filter: Option<String>,

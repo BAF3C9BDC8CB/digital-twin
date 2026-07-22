@@ -1,7 +1,7 @@
 //! gRPC server assembly — owns the tonic Router, registers all plugins,
 //! and starts the daemon listener.
 //!
-//! Backend connections (Neo4j, Qdrant) are obtained via
+//! Backend connections (Memgraph, Qdrant) are obtained via
 //! [`crate::interfaces::grpc::wiring::wire()`].  If either backend is
 //! unreachable the server falls back to no-op implementations and logs
 //! a warning — the daemon starts regardless.
@@ -34,12 +34,12 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     // implementations so the server still starts.
     let graph: Arc<dyn crate::domain::traits::GraphRepository> = match components.graph {
         Some(g) => {
-            tracing::info!("using real Neo4j backend for gRPC server");
+            tracing::info!("using real Memgraph backend for gRPC server");
             g
         }
         None => {
-            tracing::warn!("Neo4j unavailable — gRPC server will use NoopGraphRepo");
-            Arc::new(crate::infrastructure::neo4j::NoopGraphRepo)
+            tracing::warn!("Memgraph unavailable — gRPC server will use NoopGraphRepo");
+            Arc::new(crate::infrastructure::memgraph::NoopGraphRepo)
         }
     };
     let vector: Arc<dyn crate::domain::traits::VectorRepository> = match components.vector {
@@ -95,7 +95,7 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Register DtCore gRPC service — delegates dt build/search/context/
     // event/memorize/sync to the same application-layer services used
     // by the CLI.  Passes real backend Arc handles so the service can
-    // access Neo4j and Qdrant directly.
+    // access Memgraph and Qdrant directly.
     let dt_core_impl =
         crate::interfaces::grpc::services::dt_core_service::DtCoreServiceImpl::new(
             Some(graph.clone()),

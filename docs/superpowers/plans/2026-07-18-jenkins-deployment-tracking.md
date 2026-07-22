@@ -6,7 +6,7 @@
 
 **Architecture:** The `DeploymentHandler` currently creates `(:Deployment)` nodes. We rewrite it to update/merge `(:JenkinsJob)`, `(:JenkinsBuild)`, and `(:ServiceInstance)` nodes instead, and connect them via `[:LATEST_DEPLOY]` and `[:DEPLOYED_TO]` relationships. `EventType::Deployment` enum value is retained for CLI compatibility.
 
-**Tech Stack:** Rust, Neo4j Cypher, tokio async
+**Tech Stack:** Rust, Memgraph Cypher, tokio async
 
 ## Global Constraints
 
@@ -144,7 +144,7 @@ Replace the params HashMap (lines 102-152) with:
         params.insert("now".into(), serde_json::Value::String(event.timestamp.to_rfc3339()));
         params.insert("instance_id".into(), serde_json::Value::String(instance_id));
 
-        // build_number_int: parse for Neo4j integer property (0 if missing/invalid)
+        // build_number_int: parse for Memgraph integer property (0 if missing/invalid)
         let build_number_int: i64 = build_number.parse().unwrap_or(0);
         params.insert("build_number_int".into(), serde_json::Value::Number(build_number_int.into()));
 

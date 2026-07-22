@@ -47,7 +47,7 @@
        │          │              │               │
        ▼          ▼              ▼               ▼
 ┌──────────┐ ┌─────────┐  ┌──────────┐  ┌───────────────┐
-│  Neo4j   │ │  SQLite │  │  Qdrant  │  │  dt-embed      │
+│  Memgraph   │ │  SQLite │  │  Qdrant  │  │  dt-embed      │
 │ (Cypher) │ │(snapshot)│  │ (gRPC)   │  │ (gRPC)         │
 └──────────┘ └─────────┘  └──────────┘  └──────┬────────┘
                                                 │
@@ -66,7 +66,7 @@
                         │                                  │
                         │  ┌───────────────────────────┐   │
                         │  │  tonic (gRPC framework)    │   │
-                        │  │  neo4rs (Bolt driver)      │   │
+                        │  │  bolt-driver (Bolt protocol)      │   │
                         │  │  qdrant-client (gRPC)      │   │
                         │  │  rusqlite (SQLite local)    │   │
                         │  └───────────────────────────┘   │
@@ -75,7 +75,7 @@
                 │ gRPC         │ gRPC │  Bolt │ gRPC          │
                 ▼              ▼      ▼        ▼              ▼
         ┌────────────┐ ┌────────────┐ ┌──────────┐ ┌──────────────┐
-        │  dt-embed  │ │   Qdrant   │ │  Neo4j   │ │  MCP Server  │
+        │  dt-embed  │ │   Qdrant   │ │  Memgraph   │ │  MCP Server  │
         │  (Python)  │ │(gRPC:6334) │ │(Bolt:7687│ │  (Python)    │
         │ gRPC:50052 │ └────────────┘ └──────────┘ │ gRPC client  │
         └─────┬──────┘                             └──────┬───────┘
@@ -89,14 +89,14 @@
 - 全链路使用 protobuf 序列化，类型安全，编译期校验
 - gRPC HTTP/2 多路复用，连接池，无需每次新建连接
 - dt CLI 变为常驻 daemon（systemd socket activated），不再 subprocess 启动
-- Neo4j 走 Bolt 二进制协议（原生驱动，无法用 gRPC 替代），持久连接池
+- Memgraph 走 Bolt 二进制协议（原生驱动，无法用 gRPC 替代），持久连接池
 - dt-embed 不再手写 Unix Socket 帧协议，改用标准 gRPC
 - MCP Server 不再解析 stdout，改为结构化 gRPC 调用
 ```
 
 **旧架构（V1）— 已废弃：**
 ```
-Rust dt CLI ──HTTP POST──▶ Neo4j    (REST Cypher, 每次新建连接)
+Rust dt CLI ──HTTP POST──▶ Memgraph    (REST Cypher, 每次新建连接)
 Rust dt CLI ──HTTP PUT ──▶ Qdrant   (REST, JSON 序列化开销大)
 Rust dt CLI ──SQLite─────▶ lazy.db  (本地文件, ✅ 保留)
 Rust dt CLI ──UnixSocket─▶ dt-embed (自定义4字节帧+JSON, ❌ 无类型安全)
@@ -123,8 +123,8 @@ MCP Server  ──subprocess─▶ dt CLI   (stdout解析, ❌ 错误处理脆�
 ├──────────────────────────────────────────────┤
 │ 2. 健康检查                                   │
 │    embed::health()  → 确保 dt-embed 运行      │
-│    neo4j::health()  → 确保 Neo4j 可连接        │
-│    neo4j::ensure_schema() → 创建约束/索引      │
+│    memgraph::health()  → 确保 Memgraph 可连接        │
+│    memgraph::ensure_schema() → 创建约束/索引      │
 │    qdrant::ensure_collection() → 创建向量集合  │
 ├──────────────────────────────────────────────┤
 │ 3. 文件扫描                                   │
@@ -138,7 +138,7 @@ MCP Server  ──subprocess─▶ dt CLI   (stdout解析, ❌ 错误处理脆�
 │    → SQLite 比对：changed / deleted / unchanged│
 ├──────────────────────────────────────────────┤
 │ 5. 删除旧数据                                 │
-│    neo4j::delete_methods_by_files(changed)    │
+│    memgraph::delete_methods_by_files(changed)    │
 │    qdrant::delete_points_by_files(changed)    │
 ├──────────────────────────────────────────────┤
 │ 6. AST 解析                                   │
@@ -151,10 +151,10 @@ MCP Server  ──subprocess─▶ dt CLI   (stdout解析, ❌ 错误处理脆�
 │    embed_and_write_all(methods)               │
 │    a. embed::embed_batch(texts) → BGE-M3      │
 │    b. qdrant::upsert_points(batch=1000)       │
-│    c. neo4j::write_methods_batch(batch=2000)  │
+│    c. memgraph::write_methods_batch(batch=2000)  │
 ├──────────────────────────────────────────────┤
 │ 8. 类关系 + 快照 + 调用图                      │
-│    neo4j::write_classes_batch() → CONTAINS    │
+│    memgraph::write_classes_batch() → CONTAINS    │
 │    write_sqlite_snapshots() → INSERT OR REPLACE│
 │    rebuild_calls_for_files() → CALLS 关系      │
 └──────────────────────────────────────────────┘
@@ -228,15 +228,15 @@ fn detect_changes(db, project, file_hashes) -> (changed, deleted) {
 dt update --file /path/to/PayService.java
 
 流程：
-  1. 读取文件 → 从 Qdrant + Neo4j 删除该文件的旧方法
+  1. 读取文件 → 从 Qdrant + Memgraph 删除该文件的旧方法
   2. tree-sitter 解析 → 提取 MethodBlock + ClassBlock
-  3. 向量嵌入 → 写入 Qdrant + Neo4j
+  3. 向量嵌入 → 写入 Qdrant + Memgraph
   4. 写入类关系（CONTAINS）
   5. 增量重建该文件的调用图（CALLS）
   6. 更新 SQLite 快照
 ```
 
-### 2.5 Neo4j 写入查询
+### 2.5 Memgraph 写入查询
 
 **方法节点**（批量，每批 2000 条）：
 
@@ -447,7 +447,7 @@ servers:
     auth_password: "encrypted..."
 ```
 
-`dt build-all` 时一并索引到 Neo4j。
+`dt build-all` 时一并索引到 Memgraph。
 
 ---
 
@@ -460,8 +460,8 @@ servers:
 ```rust
 // dt-common/src/config.rs
 pub enum SecretString {
-    Env(String),      // "env:NEO4J_PASSWORD"
-    Vault(String),    // "vault:secret/neo4j"
+    Env(String),      // "env:MEMGRAPH_PASSWORD"
+    Vault(String),    // "vault:secret/memgraph"
     Plain(String),    // 明文（仅 dev，生产拒绝启动）
 }
 ```
@@ -470,8 +470,8 @@ pub enum SecretString {
 - `Debug`/`Display` 实现输出 `"***"`，日志自动脱敏
 - config.yaml 改造：
   ```yaml
-  neo4j:
-    password: "env:NEO4J_PASSWORD"     # 从环境变量读取
+  memgraph:
+    password: "env:MEMGRAPH_PASSWORD"     # 从环境变量读取
   qdrant:
     api_key: "vault:secret/qdrant"     # 从外部密钥管理
   ```
@@ -511,7 +511,7 @@ OpenCode MCP Server ──▶  Unix Socket             全部（本地信任）
 
 ### 5.1 问题
 
-三个独立写入源可能同时写 Neo4j/Qdrant，Cypher MERGE 不保证事务隔离：
+三个独立写入源可能同时写 Memgraph/Qdrant，Cypher MERGE 不保证事务隔离：
 
 | 写入源 | 触发 | 频率 |
 |--------|------|------|
@@ -519,7 +519,7 @@ OpenCode MCP Server ──▶  Unix Socket             全部（本地信任）
 | 用户 CLI → `dt build` | 手动执行 | 随意 |
 | cron → `nacos-sync` / `k8s-sync` | 定时 | 每小时 |
 
-> **daemon 内聚原则**：`dt update` / `dt build` / `dt memorize` 等 CLI 命令必须是 **Thin Client**——不包含任何业务逻辑或数据库连接。CLI 通过 Unix Socket gRPC 将请求转发至 `dt daemon`，所有写操作（Neo4j/Qdrant/SQLite）由 daemon 内唯一的 `WriteCoordinator` 实例串行化。`dt_core.proto` 需补充 `UpdateFile`、`BuildProject` 等 RPC 定义，确保无 CLI 绕过 daemon 直接写库的路径。
+> **daemon 内聚原则**：`dt update` / `dt build` / `dt memorize` 等 CLI 命令必须是 **Thin Client**——不包含任何业务逻辑或数据库连接。CLI 通过 Unix Socket gRPC 将请求转发至 `dt daemon`，所有写操作（Memgraph/Qdrant/SQLite）由 daemon 内唯一的 `WriteCoordinator` 实例串行化。`dt_core.proto` 需补充 `UpdateFile`、`BuildProject` 等 RPC 定义，确保无 CLI 绕过 daemon 直接写库的路径。
 
 ### 5.2 设计
 
@@ -928,7 +928,7 @@ kg_nodes_{model_version}            ← 知识图谱节点向量
 
 ### 8.6 KG ↔ Qdrant 桥接（`dt kg-sync`）
 
-将 Neo4j 中非代码实体同步到 Qdrant，使 `dt search-kg` 能语义搜索 KG：
+将 Memgraph 中非代码实体同步到 Qdrant，使 `dt search-kg` 能语义搜索 KG：
 
 ```
 流程：
@@ -997,7 +997,7 @@ dt svc status aflm-pay
 # → {"status": "running", "pid": 12345, "port": 8080, "uptime": "3d 12h"}
 ```
 
-通过进程管理和端口检查实现，不入 Neo4j。
+通过进程管理和端口检查实现，不入 Memgraph。
 
 ---
 
@@ -1118,7 +1118,7 @@ service MetricsService {
 dt_build_duration_seconds{project, strategy}      histogram
 dt_embed_requests_total{status}                   counter
 dt_embed_queue_depth                               gauge
-dt_neo4j_connection_pool_size                      gauge
+dt_memgraph_connection_pool_size                      gauge
 dt_qdrant_write_bytes_total                        counter
 dt_plugin_health_status{plugin}                    gauge (0/1)
 dt_context_total_duration_seconds                  histogram
@@ -1148,7 +1148,7 @@ dt_backup_last_success_timestamp                    gauge
 
 | 存储 | 备份方式 | 频率 | 保留 |
 |------|----------|------|------|
-| Neo4j | `neo4j-admin database dump` | 每日 03:00 | 7 天滚动 |
+| Memgraph | `memgraph-admin database dump` | 每日 03:00 | 7 天滚动 |
 | Qdrant | Collection snapshot API | 每日 03:30 | 7 天滚动 |
 | SQLite | `cp lazy.db lazy.{date}.db` | 每次 `dt build` 前 | 30 天滚动 |
 
@@ -1175,7 +1175,7 @@ dt archive --list                   # 列出归档文件
 
 - `crates/dt-backup/` — 备份 crate
 - `dt-daemon/src/archive.rs` — 归档逻辑
-- `dt-storage/src/neo4j/repo.rs` — `archive_events_before()` 方法
+- `dt-storage/src/memgraph/repo.rs` — `archive_events_before()` 方法
 
 ---
 
@@ -1185,7 +1185,7 @@ dt archive --list                   # 列出归档文件
 
 | 服务 | 端口 | 用途 |
 |------|------|------|
-| Neo4j | 7687 (bolt), 7474 (HTTP) | 图谱存储和查询 |
+| Memgraph | 7687 (bolt), 7474 (HTTP) | 图谱存储和查询 |
 | Qdrant | 6333 (HTTP), 6334 (gRPC) | 向量存储和搜索 |
 | dt-embed daemon | gRPC :50052 | BGE-M3 向量化推理 |
 | dt-sync 脚本 | cron 定时 | 定期同步 Nacos/K8s/KG |
@@ -1203,7 +1203,7 @@ dt archive --list                   # 列出归档文件
 
 | 文件 | 位置 | 关键配置 |
 |------|------|----------|
-| `config.yaml` | `/etc/digital-twin/` | Neo4j/Qdrant/Nacos/K8s 连接，项目列表 |
+| `config.yaml` | `/etc/digital-twin/` | Memgraph/Qdrant/Nacos/K8s 连接，项目列表 |
 | `opencode.json` | `~/.config/opencode/` | MCP 注册，Hook 配置 |
 | `dt-build.js` | `~/.config/opencode/skills/digital-twin/.opencode/plugins/` | OpenCode 编辑钩子 |
 
@@ -1232,10 +1232,10 @@ server:
   hostname: "dev-server"
 
 services:
-  neo4j:
+  memgraph:
     url: "bolt://localhost:7687"
-    user: "neo4j"
-    password: "env:DT_NEO4J_PASSWORD"
+    user: "memgraph"
+    password: "env:DT_MEMGRAPH_PASSWORD"
   qdrant:
     url: "grpc://localhost:6334"
   embed_server:

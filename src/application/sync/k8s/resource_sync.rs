@@ -2,11 +2,11 @@
 //!
 //! Fetches deployments, services, and nodes from K8s via the Kuboard proxy
 //! and writes them as `K8sDeployment`, `K8sService`, and `Server` nodes in
-//! Neo4j.
+//! Memgraph.
 //!
 //! ## What is synced
 //!
-//! | K8s Object    | Neo4j Label     | Sync Condition        |
+//! | K8s Object    | Memgraph Label | Sync Condition        |
 //! |---------------|-----------------|-----------------------|
 //! | Deployment    | K8sDeployment   | always                |
 //! | Service       | K8sService      | always                |
@@ -33,7 +33,7 @@ pub struct K8sSyncSummary {
     pub resource: String,
     /// Number of items fetched from the K8s API.
     pub items_fetched: usize,
-    /// Items written to Neo4j (created or updated via MERGE).
+    /// Items written to Memgraph (created or updated via MERGE).
     pub items_written: usize,
     /// Items skipped due to write coordinator conflict.
     pub items_skipped: usize,
@@ -718,7 +718,16 @@ mod tests {
     #[tokio::test]
     async fn sync_servers_writes_nodes() {
         let graph = MockGraph::new();
-        let items = vec![make_test_node("worker-1")];
+        let items = vec![K8sServer {
+            server_id: K8sServer::make_server_id("worker-1"),
+            name: "worker-1".to_string(),
+            hostname: "192.168.1.10".to_string(),
+            service_type: "kubernetes_node".to_string(),
+            cpu_cores: "8".to_string(),
+            memory_gb: "32Gi".to_string(),
+            url: String::new(),
+            description: "K8s node worker-1".to_string(),
+        }];
         let summary = sync_servers(&graph, &items, &WriteCoordinator::new(), Instant::now())
             .await
             .unwrap();

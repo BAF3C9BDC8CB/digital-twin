@@ -1,13 +1,13 @@
 //! K8s Event Timeline sync (skeleton).
 //!
 //! K8s Events are ephemeral — they exist in the Runtime world and are NOT
-//! persisted to Neo4j. This module provides a skeleton for streaming K8s
+//! persisted to Memgraph. This module provides a skeleton for streaming K8s
 //! events into the timeline for real-time monitoring and alerting.
 //!
 //! ## Future direction
 //!
 //! - Stream K8s events via the K8s Watch API (long-lived HTTP connection).
-//! - Correlate with existing Neo4j entities (K8sDeployment, K8sService).
+//! - Correlate with existing Memgraph entities (K8sDeployment, K8sService).
 //! - Emit structured log/tracing events for alerting pipelines.
 //! - Optionally persist high-severity events as `PodEvent` nodes via
 //!   `(:PodEvent)-[:TRIGGERED_BY]->(:K8sDeployment)`.

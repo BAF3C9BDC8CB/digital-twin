@@ -33,8 +33,8 @@
              │                     │                     │
              ▼                     ▼                     ▼
     ┌─────────────────────────────────────────────────────────────┐
-    │                      Neo4j + Qdrant                         │
-    │  Reality / Knowledge / Memory / Reasoning → Neo4j            │
+    │                      Memgraph + Qdrant                         │
+    │  Reality / Knowledge / Memory / Reasoning → Memgraph            │
     │  Semantic → Qdrant                                          │
     └─────────────────────────────────────────────────────────────┘
                                      │
@@ -61,7 +61,7 @@ dt update --file <abs_path> [--type create|modify|delete] [--project <name>]
 执行流程：
   1. 解析文件 → 提取 Entity（tree-sitter AST）
   2. SHA1 比对 → 变更检测（SQLite 快照）
-  3. Neo4j upsert（Entity 节点 + 关系）
+  3. Memgraph upsert（Entity 节点 + 关系）
   4. Qdrant upsert（增量嵌入，仅变更 chunk）
   5. 更新 SQLite 快照
 ```
@@ -244,12 +244,12 @@ AI 执行工具命令后，将返回结果中有长期价值的结构化信息�
 
 | 文本类型 | 来源 | 关联 |
 |----------|------|------|
-| Code snippets | tree-sitter 提取的方法体+签名 | `entity_id` → Neo4j Code Entity |
-| Documents | document_dirs 中的 md/pdf/txt | `entity_id` → Neo4j Document Entity |
-| Config values | Nacos 配置项的值 | `entity_id` → Neo4j Config Entity |
-| API descriptions | 接口注解 + Javadoc | `entity_id` → Neo4j API Entity |
+| Code snippets | tree-sitter 提取的方法体+签名 | `entity_id` → Memgraph Code Entity |
+| Documents | document_dirs 中的 md/pdf/txt | `entity_id` → Memgraph Document Entity |
+| Config values | Nacos 配置项的值 | `entity_id` → Memgraph Config Entity |
+| API descriptions | 接口注解 + Javadoc | `entity_id` → Memgraph API Entity |
 | Log patterns | K8s 日志中提取的错误模板 | 独立向量 |
-| Experience | Memory World 中的经验节点 | `entity_id` → Neo4j Experience Entity |
+| Experience | Memory World 中的经验节点 | `entity_id` → Memgraph Experience Entity |
 
 **生成方式：** 文本 chunk → BGE-M3 1024维 → Qdrant Collection `{project}_semantic_{model_version}`
 
@@ -320,7 +320,7 @@ AI 分析出 "支付平台切换需要改 5 个地方"
 | `dt nacos-sync` | 同步 Nacos 配置 | 定时 / 手动 |
 | `dt k8s-sync` | 同步 K8s 资源 | 定时 / 手动 |
 | `dt kg-sync` | KG 节点同步到 Qdrant | 增量自动 / 手动 |
-| `dt backup` | Neo4j/Qdrant/SQLite 分层备份 | CLI / cron |
+| `dt backup` | Memgraph/Qdrant/SQLite 分层备份 | CLI / cron |
 | `dt archive` | Memory.Event 超期归档 | CLI / cron |
 | `dt cleanup` | 按 TTL 策略清理过期数据 | CLI / cron |
 | `dt metrics` | gRPC 指标查询（无 HTTP） | CLI |

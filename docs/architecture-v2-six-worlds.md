@@ -53,8 +53,8 @@
          │  │             │  │                    │  │  (AI推理缓存)   │  │
          │  │ →ServiceIns │  │ Qdrant collections │  │ Observation    │  │
          │  │  tance缓存  │  │ BGE-M3 1024-dim    │  │ →Analysis     │  │
-         │  │  字段       │  │ entity_id→Neo4j    │  │ →Decision     │  │
-         │  │ 不入Neo4j   │  │                    │  │ →Knowledge    │  │
+         │  │  字段       │  │ entity_id→Memgraph    │  │ →Decision     │  │
+         │  │ 不入Memgraph   │  │                    │  │ →Knowledge    │  │
          │  └──────┬──────┘  └──────────┬─────────┘  └───────┬────────┘  │
          │         │                    │                     │          │
          └─────────┼────────────────────┼─────────────────────┼──────────┘
@@ -85,7 +85,7 @@
 | 组件 | 通信 | 说明 |
 |------|------|------|
 | dt CLI daemon | gRPC Server :50051 | 常驻进程，所有工具的统一入口 |
-| Neo4j | Bolt :7687 | 图数据库，存储 Reality/Knowledge/Memory/Reasoning/Thread |
+| Memgraph | Bolt :7687 | 图数据库，存储 Reality/Knowledge/Memory/Reasoning/Thread |
 | Qdrant | gRPC :6334 | 向量数据库，存储 Semantic World |
 | dt-embed | gRPC :50052 | BGE-M3 嵌入服务 (Python) |
 | dt-log | gRPC LogService | 统一日志管道，聚合 4 个进程的日志 |
@@ -93,7 +93,7 @@
 | MCP Server | gRPC client | 协议适配，LLM ↔ dt daemon |
 | Auth Interceptor | 进程内 | gRPC mTLS + Unix socket 鉴权，权限分级（Admin/ReadOnly） |
 | MetricsService | gRPC (:50051) | 指标采集与查询，不暴露 HTTP 端口 |
-| Backup Manager | 进程内 | Neo4j/Qdrant/SQLite 分层备份与恢复 |
+| Backup Manager | 进程内 | Memgraph/Qdrant/SQLite 分层备份与恢复 |
 
 ---
 
@@ -101,12 +101,12 @@
 
 | 世界 | 存储 | 核心实体 | 特征 |
 |------|------|----------|------|
-| **Reality** | Neo4j (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **K8sDeployment** | 客观存在，可被自动发现。实体有稳定性层级：Service(年)→ServiceInstance(周)→K8sDeployment(部署时) |
-| **Knowledge** | Neo4j (Bolt) | Knowledge, Playbook, Experience, Concept, Domain | 人类整理或 AI 自动沉淀。@knowledge 注释→自动提取；dt_learn→任务完成后沉淀 |
-| **Memory** | Neo4j (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。TTL 365天后归档。完整审计日志 |
-| **Runtime** | 缓存（不入 Neo4j） | **Pod 信息** (name, ip, phase, restarts, node) + **Metrics** (cpu, memory, uptime, heap, thread) | 实时查询 K8s API/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 重新拉取 |
-| **Semantic** | Qdrant (gRPC) | Code/Doc/Config/API/Exp/Log 向量 | BGE-M3 1024 维，通过 entity_id 反查 Neo4j |
-| **Reasoning** | Neo4j（会话级） | Observation, Analysis, Decision | AI 推理痕迹。验证后升级为 Knowledge；未验证的会话结束后降级 |
+| **Reality** | Memgraph (Bolt) | Method, Class, Module, Service, **ServiceInstance**, Server, Database, Table, NacosConfig, ConfigKey, Endpoint, Document, **K8sDeployment** | 客观存在，可被自动发现。实体有稳定性层级：Service(年)→ServiceInstance(周)→K8sDeployment(部署时) |
+| **Knowledge** | Memgraph (Bolt) | Knowledge, Playbook, Experience, Concept, Domain | 人类整理或 AI 自动沉淀。@knowledge 注释→自动提取；dt_learn→任务完成后沉淀 |
+| **Memory** | Memgraph (Bolt) | Day, Session, Modification, Deployment（→ServiceInstance）, ConfigChange, BugFix, Decision | 时间线驱动，只增不删。TTL 365天后归档。完整审计日志 |
+| **Runtime** | 缓存（不入 Memgraph） | **Pod 信息** (name, ip, phase, restarts, node) + **Metrics** (cpu, memory, uptime, heap, thread) | 实时查询 K8s API/Actuator，注入到 **ServiceInstance 缓存字段**。每次 dt_context 重新拉取 |
+| **Semantic** | Qdrant (gRPC) | Code/Doc/Config/API/Exp/Log 向量 | BGE-M3 1024 维，通过 entity_id 反查 Memgraph |
+| **Reasoning** | Memgraph（会话级） | Observation, Analysis, Decision | AI 推理痕迹。验证后升级为 Knowledge；未验证的会话结束后降级 |
 
 ### Reality World 深入：多环境模型与稳定性层级
 
@@ -121,17 +121,17 @@ Reality World 中的实体有天然的**稳定性层级**：
   永不变化              部署策略              phase, restarts
                        image, replicas        cpu, memory
   Reality ✅          Reality ✅              Runtime ⚠️
-  (Neo4j 持久化)      (Neo4j, k8s-sync)     (缓存，不入库)
+  (Memgraph 持久化)      (Memgraph, k8s-sync)     (缓存，不入库)
 ```
 
 **设计决策：Pod 全部属于 Runtime**
 
-K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩都会销毁 Pod。把 Pod 写进 Neo4j 意味着需要管理生命周期（标记 Terminated、清理旧 Pod、处理快照不一致）。
+K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩都会销毁 Pod。把 Pod 写进 Memgraph 意味着需要管理生命周期（标记 Terminated、清理旧 Pod、处理快照不一致）。
 
 **放在 Runtime 的好处**：
-- 每次查询都是最新数据，不存在"Pod 已终止但 Neo4j 还显示 Running"的脏数据
+- 每次查询都是最新数据，不存在"Pod 已终止但 Memgraph 还显示 Running"的脏数据
 - 无需生命周期管理代码（Terminated 标记、过期 Pod 清理）
-- 减少 Neo4j 写入量（k8s-sync 不再写 Pod）
+- 减少 Memgraph 写入量（k8s-sync 不再写 Pod）
 - Pod 的历史信息（哪天哪个 Pod 崩溃了）应该走 Memory World 事件，不污染 Reality
 
 **Reality 中唯一的 K8s 实体是 K8sDeployment**——它足够稳定（name/image/replicas 仅部署时变），提供足够的追溯信息。
@@ -174,7 +174,7 @@ K8s 自己都不保证 Pod 永存——滚动更新、节点故障、HPA 伸缩�
 ```
 k8s-sync (每小时)                    Context Builder (按需)
 ─────────────────                    ─────────────────────
-写入 Neo4j:                          实时查询 K8s API:
+写入 Memgraph:                          实时查询 K8s API:
   (:K8sDeployment)                     GET /pods → pods[]
     name, image, replicas              GET /metrics → cpu, memory
   (:ServiceInstance)                   GET actuator → heap, threads
@@ -188,8 +188,8 @@ k8s-sync (每小时)                    Context Builder (按需)
 - Service = 稳定标识，service_id 不含环境
 - ServiceInstance = 每个环境的部署快照，含 host/port/version
 - K8sDeployment = K8s 稳定资源，含 image/replicas
-- K8sPod 全部属于 Runtime（实时查询，不入 Neo4j），终止后的历史追溯走 Memory World 事件
-- Runtime 指标（CPU/Mem/Uptime）和 Pod 信息全部作为缓存字段挂在 ServiceInstance 上，**不入 Neo4j**
+- K8sPod 全部属于 Runtime（实时查询，不入 Memgraph），终止后的历史追溯走 Memory World 事件
+- Runtime 指标（CPU/Mem/Uptime）和 Pod 信息全部作为缓存字段挂在 ServiceInstance 上，**不入 Memgraph**
 - Context Builder 组装时实时查询 K8s API → 注入 ServiceInstance 缓存字段
 - 想追溯"昨天 Pod 为什么 CrashLoop"→ 查 Memory World 的事件记录
 
@@ -228,9 +228,9 @@ k8s-sync (每小时)                    Context Builder (按需)
 
 ### World 关系
 
-- **Reality + Knowledge + Memory** 是 Neo4j 中三类 Entity，通过统一关系模型连接
-- **Semantic** 是 Qdrant 中的向量，通过 `entity_id` 反查 Neo4j
-- **Runtime** 不入 Neo4j，通过 ServiceInstance 缓存字段注入 Context：
+- **Reality + Knowledge + Memory** 是 Memgraph 中三类 Entity，通过统一关系模型连接
+- **Semantic** 是 Qdrant 中的向量，通过 `entity_id` 反查 Memgraph
+- **Runtime** 不入 Memgraph，通过 ServiceInstance 缓存字段注入 Context：
   ```
   K8s API / Actuator ──实时查询──▶ Context Builder ──注入──▶ ServiceInstance.{cpu_usage, pod_phase, ...}
   ```
@@ -256,7 +256,7 @@ k8s-sync (每小时)                    Context Builder (按需)
 
 ### 扩展性
 
-- **Neo4j schemaless**：加属性不需要 migration，加标签不需要 schema change
+- **Memgraph schemaless**：加属性不需要 migration，加标签不需要 schema change
 - **trait 先行**：所有扩展通过实现已有 trait（GraphRepository、SyncSource、EventHandler、Plugin）完成
 - **ServiceInstance 是扩展枢纽**：任何与环境相关的字段都挂在 ServiceInstance 上
 - 详见 [数据格式文档第十节：扩展指南](./architecture-v2-data-schema.md#十扩展指南如何新增实体关系属性)
@@ -273,13 +273,13 @@ Context Builder 是整个平台的大脑，负责从六世界中切出当前任�
 Context Builder (Chain of Responsibility 模式):
   ┌─────────────────────────────────────────────────────────┐
   │ Stage 1: Retriever — 并行查询六世界                       │
-  │   Reality   → Neo4j: 相关代码、服务实例、配置              │
-  │   Knowledge → Neo4j: 领域概念、业务术语                    │
-  │   Memory    → Neo4j: 历史相似任务、踩坑记录                │
+  │   Reality   → Memgraph: 相关代码、服务实例、配置              │
+  │   Knowledge → Memgraph: 领域概念、业务术语                    │
+  │   Memory    → Memgraph: 历史相似任务、踩坑记录                │
   │   Semantic  → Qdrant: 文档向量检索                        │
   │   Runtime   → K8s API/Actuator: 实时拉取                  │
   │              → 注入 ServiceInstance 缓存字段               │
-  │   Reasoning → Neo4j: 之前对此类任务的分析                  │
+  │   Reasoning → Memgraph: 之前对此类任务的分析                  │
   ├─────────────────────────────────────────────────────────┤
   │ Stage 2: Ranker  — 按语义相关度排序，过滤低分结果 (<0.5)    │
   │ Stage 3: Dedup   — 合并重复信息，保留来源引用               │
@@ -317,7 +317,7 @@ LLM 通过 OpenCode MCP Protocol 调用以下 12 个高层 MCP 工具（含 4 �
 
 | 系统工具 | CLI | 功能 |
 |----------|-----|------|
-| dt_backup | `dt backup [--restore\|--list\|--verify]` | Neo4j/Qdrant/SQLite 分层备份与灾难恢复 |
+| dt_backup | `dt backup [--restore\|--list\|--verify]` | Memgraph/Qdrant/SQLite 分层备份与灾难恢复 |
 | dt_archive | `dt archive [--before\|--dry-run\|--list]` | Memory World 超期数据归档（.json.gz） |
 | dt_cleanup | `dt cleanup [--dry-run\|--execute]` | 按 TTL 策略自动清理过期数据 |
 | dt_metrics | `dt metrics [--watch\|--interval]` | gRPC MetricsService 查询，不暴露 HTTP |
@@ -387,7 +387,7 @@ Thread 把六个世界从**"六张独立的快照"**变成**"跨时间、跨系�
 ├─────────────────────────────────────────────────────┤
 │  Domain       types, traits, entities, rules         │
 ├─────────────────────────────────────────────────────┤
-│  Infrastructure  Neo4jRepo, QdrantRepo,              │
+│  Infrastructure  MemgraphRepo, QdrantRepo,              │
 │                  NacosClient, K8sClient, dt-log      │
 ├─────────────────────────────────────────────────────┤
 │  Cross-cutting   Security (mTLS+SecretString),       │

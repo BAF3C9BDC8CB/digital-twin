@@ -21,7 +21,7 @@ pub async fn handle_record_event(
     hook_engine: Option<Arc<HookEngine>>,
 ) -> Result<common::Empty, Status> {
     let graph = graph.ok_or_else(|| {
-        Status::unavailable("Neo4j graph backend not available")
+        Status::unavailable("Graph backend not available")
     })?;
 
     let project = if req.project.is_empty() {

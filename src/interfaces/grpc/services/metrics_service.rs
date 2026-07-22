@@ -44,8 +44,8 @@ impl MetricsServiceImpl {
         m.counter("dt_embed_requests_total");
         m.gauge("dt_embed_queue_depth");
 
-        // Neo4j connection pool
-        m.gauge("dt_neo4j_connection_pool_size");
+        // Memgraph connection pool
+        m.gauge("dt_memgraph_connection_pool_size");
 
         // Qdrant write throughput
         m.counter("dt_qdrant_write_bytes_total");

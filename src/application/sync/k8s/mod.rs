@@ -1,9 +1,9 @@
 //! K8s sync module — V2 schema: K8sDeployment, K8sService, Server (from nodes).
 //!
 //! ## V2 Design
-//! - **K8sDeployment**: persisted in Neo4j with label `K8sDeployment`.
-//! - **K8sService**: persisted in Neo4j with label `K8sService`.
-//! - **Server** (from K8s nodes): persisted in Neo4j with label `Server`.
+//! - **K8sDeployment**: persisted in Memgraph with label `K8sDeployment`.
+//! - **K8sService**: persisted in Memgraph with label `K8sService`.
+//! - **Server** (from K8s nodes): persisted in Memgraph with label `Server`.
 
 pub mod client;
 pub mod resource_sync;

@@ -111,7 +111,7 @@ hooks:
   # ---------------------------------------------------------------------------
   # K8s 同步完成
   # ---------------------------------------------------------------------------
-  # 触发时机: dt k8s-sync 命令执行完成（Deployment/Service/Node 同步到 Neo4j 后）
+  # 触发时机: dt k8s-sync 命令执行完成（Deployment/Service/Node 同步到 Memgraph 后）
   # 内嵌位置: src/application/sync/k8s/resource_sync.rs（同步完成时 fire）
   # 触发方式: 自动（k8s-sync 管道完成时 fire）
   # 携带上下文: cluster, namespaces_count, deployments_count, services_count, duration_ms
@@ -123,7 +123,7 @@ hooks:
 # 事件标签配置
 # =============================================================================
 # 每个 event_type 定义：
-#   label      — Neo4j 节点标签名
+#   label      — Memgraph 节点标签名
 #   subscribe  — 订阅的 hook 名（hook 触发时自动创建此标签）
 #   id         — 事件 ID 生成策略（SHA256 确定性 ID，相同输入去重）
 #   id_field   — 节点属性中用作唯一标识的字段名
@@ -277,7 +277,7 @@ event_types:
   # ---------------------------------------------------------------------------
   # 用途: 记录 K8s Pod 的异常事件（CrashLoopBackOff、OOMKilled、Evicted 等）。
   #       解决"昨天 Pod 为什么 Crash"的历史追溯需求。
-  #       注意：Pod 的正常运行时信息属于 Runtime World（不入 Neo4j），
+  #       注意：Pod 的正常运行时信息属于 Runtime World（不入 Memgraph），
   #       只有异常事件才写入此标签。
   # 关系链路: (:PodEvent)-[:AFFECTS]->(:ServiceInstance)
   # 状态: 预留——等 K8s Event Watcher 管道接入后自动触发

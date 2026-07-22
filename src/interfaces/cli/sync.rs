@@ -80,8 +80,8 @@ pub async fn handle_nacos_sync(
             Err(e) => tracing::warn!("Failed to clean orphan NacosConfig nodes: {e}"),
         }
     } else {
-        tracing::warn!("Neo4j unavailable — nacos-sync skipped");
-        println!("Nacos sync: Neo4j unavailable — skipped");
+        tracing::warn!("Graph database unavailable — nacos-sync skipped");
+        println!("Nacos sync: graph database unavailable — skipped");
     }
 
     tracing::info!("nacos-sync complete: env={env}");
@@ -134,8 +134,8 @@ pub async fn handle_k8s_sync(
                 }
             }
         } else {
-            tracing::warn!("Neo4j unavailable — k8s-sync skipped");
-            println!("K8s sync: Neo4j unavailable — skipped");
+            tracing::warn!("Graph database unavailable — k8s-sync skipped");
+            println!("K8s sync: graph database unavailable — skipped");
         }
     } else {
         println!("K8s not configured — skip");
@@ -238,8 +238,8 @@ pub async fn handle_kg_sync(
             report.items_created, report.elapsed_ms,
         );
     } else {
-        tracing::warn!("Neo4j unavailable — kg-sync skipped");
-        println!("KG sync: Neo4j unavailable — skipped");
+        tracing::warn!("Graph database unavailable — kg-sync skipped");
+        println!("KG sync: graph database unavailable — skipped");
     }
 
     tracing::info!("kg-sync complete: incremental={incremental}");

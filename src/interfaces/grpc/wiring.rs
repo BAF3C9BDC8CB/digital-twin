@@ -5,7 +5,7 @@
 //! across the three ingestion sources (OpenCode hooks, manual builds, cron
 //! syncs).
 //!
-//! Backend connections (Neo4j, Qdrant) are created lazily at wire-time by
+//! Backend connections (Memgraph, Qdrant) are created lazily at wire-time by
 //! reading `config.yaml`.  If either backend is unreachable, the
 //! corresponding field in [`AppComponents`] is set to `None` — callers
 //! (e.g. the gRPC server) must fall back to no-op implementations.
@@ -35,8 +35,8 @@ struct DaemonConfig {
 
 #[derive(Debug, Deserialize, Default)]
 struct ServiceConfig {
-    #[serde(default)]
-    neo4j: Neo4jConfig,
+    #[serde(default, alias = "memgraph")]
+    graph: GraphDbConfig,
     #[serde(default)]
     qdrant: QdrantServiceConfig,
     #[serde(default)]
@@ -46,18 +46,18 @@ struct ServiceConfig {
 }
 
 #[derive(Debug, Deserialize)]
-struct Neo4jConfig {
+struct GraphDbConfig {
     url: Option<String>,
     user: Option<String>,
     password: Option<String>,
 }
 
-impl Default for Neo4jConfig {
+impl Default for GraphDbConfig {
     fn default() -> Self {
         Self {
             url: Some("bolt://localhost:7687".to_string()),
-            user: Some("neo4j".to_string()),
-            password: Some("neo4j".to_string()),
+            user: Some("memgraph".to_string()),
+            password: Some("".to_string()),
         }
     }
 }
@@ -108,7 +108,7 @@ pub struct AppComponents {
     /// The shared write coordinator. Exposed for cron-like consumers that
     /// need to call `has_active_writes()` before starting a sync.
     pub coordinator: Arc<WriteCoordinator>,
-    /// Neo4j graph repository (None if connection failed).
+    /// Memgraph graph repository (None if connection failed).
     pub graph: Option<Arc<dyn GraphRepository>>,
     /// Qdrant vector repository (None if connection failed).
     pub vector: Option<Arc<dyn VectorRepository>>,
@@ -126,7 +126,7 @@ pub struct AppComponents {
 /// Assemble all application components.
 ///
 /// Reads `config.yaml` (falling back through the usual search paths) and
-/// attempts to connect to Neo4j and Qdrant.  If either backend is
+/// attempts to connect to Memgraph and Qdrant.  If either backend is
 /// unreachable the corresponding `AppComponents` field is left as `None`
 /// so callers can fall back to no-op implementations.
 pub async fn wire() -> AppComponents {
@@ -232,12 +232,12 @@ fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
     Some(PathBuf::from(home).join(suffix))
 }
 
-/// Resolve the Neo4j Bolt URI from config.yaml `services.neo4j`.
+/// Resolve the Memgraph Bolt URI from config.yaml `services.graph`.
 ///
 /// If `url` is set but uses HTTP scheme (e.g. `http://localhost:7474`),
 /// converts it to Bolt (`bolt://localhost:7687`).  If no URL is configured,
 /// returns the default `bolt://localhost:7687`.
-fn resolve_neo4j_bolt_url(cfg: &Neo4jConfig) -> String {
+fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     match &cfg.url {
         Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
             if let Some(host) = url
@@ -257,20 +257,20 @@ fn resolve_neo4j_bolt_url(cfg: &Neo4jConfig) -> String {
     }
 }
 
-/// Connect to Neo4j using values from config.yaml (or sensible defaults).
+/// Connect to Memgraph using values from config.yaml (or sensible defaults).
 async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let cfg = load_config()?;
-    let bolt_url = resolve_neo4j_bolt_url(&cfg.services.neo4j);
-    let user = cfg.services.neo4j.user.as_deref().unwrap_or("neo4j");
-    let password = cfg.services.neo4j.password.as_deref().unwrap_or("neo4j");
+    let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
+    let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
+    let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match crate::infrastructure::neo4j::Neo4jClient::connect(&bolt_url, user, password).await {
+    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await {
         Ok(client) => {
-            tracing::info!("Neo4j connected: {}", bolt_url);
+            tracing::info!("Memgraph connected: {}", bolt_url);
             Some(Arc::new(client) as Arc<dyn GraphRepository>)
         }
         Err(e) => {
-            tracing::warn!("Neo4j connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
             None
         }
     }

@@ -1,6 +1,6 @@
 # Knowledge Graph Behavior
 
-This project uses a Neo4j knowledge graph for persistent memory.
+This project uses a Memgraph knowledge graph for persistent memory.
 
 ## ⚠️ [新增] 必须先加载 digital-twin 技能
 

@@ -1,6 +1,6 @@
 # Digital Twin
 
-AI 辅助开发的持久化记忆层。Digital Twin 结合 **Neo4j 知识图谱**（结构化记忆：事件、决策、配置）和 **Qdrant 向量数据库**（语义代码搜索），让 AI 能够在多个会话之间保持上下文。
+AI 辅助开发的持久化记忆层。Digital Twin 结合 **Memgraph 知识图谱**（结构化记忆：事件、决策、配置）和 **Qdrant 向量数据库**（语义代码搜索），让 AI 能够在多个会话之间保持上下文。
 
 ---
 
@@ -32,7 +32,7 @@ AI 辅助开发的持久化记忆层。Digital Twin 结合 **Neo4j 知识图谱*
         ┌──────────────────┼──────────────────┐
         ▼                  ▼                  
 ┌──────────────┐  ┌──────────────┐  
-│   Neo4j      │  │   Qdrant     │  
+│   Memgraph      │  │   Qdrant     │  
 │  知识图谱    │  │   向量数据库  │  
 │ localhost    │  │  localhost   │  
 │   :7474      │  │   :6333      │  
@@ -56,7 +56,7 @@ AI 辅助开发的持久化记忆层。Digital Twin 结合 **Neo4j 知识图谱*
 
 | 服务 | 版本 | 用途 |
 |------|------|------|
-| [Neo4j](https://neo4j.com/download/) | 5.x | 知识图谱存储 |
+| [Memgraph](https://memgraph.com/download/) | 5.x | 知识图谱存储 |
 | [Qdrant](https://qdrant.tech/documentation/quick-start/) | 1.x | 向量数据库，用于语义搜索 |
 | Python | 3.10+ | dt-embed CLI |
 | Rust | 1.75+ | 编译 `dt` CLI |
@@ -77,12 +77,12 @@ sudo apt install python3 python3-pip
 
 ### 1. 启动所需服务
 
-**Neo4j：**
+**Memgraph：**
 ```bash
 # 原生安装（systemd）
-sudo systemctl start neo4j
+sudo systemctl start memgraph
 
-# 或从 https://neo4j.com/download/ 下载手动安装
+# 或从 https://memgraph.com/download/ 下载手动安装
 ```
 
 **Qdrant：**
@@ -248,16 +248,16 @@ dt build --path /proj --name myapp
   ├─ 与 SQLite 缓存比较（/var/lib/digital-twin/lazy.db）
   │   ├─ 哈希一致 → 跳过（未变更）
   │   ├─ 哈希不同 → 重新索引
-  │   └─ 缓存中有但磁盘已删除 → 从 Neo4j + Qdrant 删除
+  │   └─ 缓存中有但磁盘已删除 → 从 Memgraph + Qdrant 删除
   │
   ├─ 每个变更文件：
   │   1. tree-sitter 解析 → 提取方法/类
    │   2. dt-embed CLI 子进程调用 → 生成 1024 维向量 (BGE-M3)
   │   3. 写入 Qdrant（向量 + 负载数据）
-  │   4. 写入 Neo4j（Method 节点 + Class + CONTAINS 关系）
+  │   4. 写入 Memgraph（Method 节点 + Class + CONTAINS 关系）
   │   5. 更新 SQLite 哈希缓存
   │
-  └─ 重建 Neo4j 中的 CALLS 关系
+  └─ 重建 Memgraph 中的 CALLS 关系
 ```
 
 ---
@@ -322,7 +322,7 @@ digital-twin/
 │       │   ├── remove.rs        # 代码实体删除
 │       │   └── callgraph.rs     # 调用图构建
 │       ├── client/              # 客户端
-│       │   ├── neo4j.rs         # Neo4j REST 客户端
+│       │   ├── memgraph.rs         # Memgraph REST 客户端
 │       │   ├── qdrant.rs        # Qdrant REST 客户端
 │       │   └── embed.rs         # dt-embed CLI 子进程客户端
 │       └── sync/                # 数据同步
@@ -341,7 +341,7 @@ digital-twin/
 │       ├── app.py
 │       └── templates/
 │
-└──（运行时数据目录）             # SQLite 缓存、Neo4j 数据等
+└──（运行时数据目录）             # SQLite 缓存、Memgraph 数据等
 ```
 
 ---
@@ -352,9 +352,9 @@ digital-twin/
 
 | 键 | 默认值 | 说明 |
 |-----|--------|------|
-| `services.neo4j.url` | `http://localhost:7474` | Neo4j REST API 地址 |
-| `services.neo4j.user` | `neo4j` | Neo4j 用户名 |
-| `services.neo4j.password` | `neo4j` | Neo4j 密码 |
+| `services.memgraph.url` | `http://localhost:7474` | Memgraph REST API 地址 |
+| `services.memgraph.user` | `memgraph` | Memgraph 用户名 |
+| `services.memgraph.password` | `memgraph` | Memgraph 密码 |
 | `services.qdrant.url` | `http://localhost:6333` | Qdrant REST API 地址 |
 | `services.embed_server.url` | `http://localhost:8001` | （已废弃）dt 直接调 dt-embed CLI |
 | `services.embed_server.dim` | `1024` | 向量维度 |
@@ -369,7 +369,7 @@ digital-twin/
 
 | 数据 | 位置 | 技术 |
 |------|------|------|
-| 知识图谱 | Neo4j（`localhost:7474`） | 节点与关系 |
+| 知识图谱 | Memgraph（`localhost:7474`） | 节点与关系 |
 | 代码向量 | Qdrant（`localhost:6333`） | 按项目的集合 |
 | 文件哈希缓存 | `/var/lib/digital-twin/lazy.db` | SQLite |
 | 文本嵌入 | 内存 / CPU | bge-m3 |

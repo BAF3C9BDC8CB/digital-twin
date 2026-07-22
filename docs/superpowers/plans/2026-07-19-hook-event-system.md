@@ -6,7 +6,7 @@
 
 **Architecture:** HookEngine（Template Method 编排器）组合 IdGenerator（纯函数 ID 生成）、PropertyMapper（纯函数属性映射）、NodeWriter（通用 MERGE 节点写入）、RelationshipWriter（通用关系创建）、SideEffectRunner（Cypher 模板逃生舱）五个组件，所有组件由 HookRegistry 从 `event-hooks.yaml` 加载的配置驱动。
 
-**Tech Stack:** Rust, Neo4j (Bolt via GraphRepository trait), Serde, SHA256
+**Tech Stack:** Rust, Memgraph (Bolt via GraphRepository trait), Serde, SHA256
 
 ---
 
@@ -14,7 +14,7 @@
 
 - 所有新组件放在 `src/application/hooks/` 目录下
 - 每个文件 ≤ 100 行，单一职责
-- 纯函数组件（IdGenerator, PropertyMapper）不依赖 Neo4j，用普通 `#[test]` 测试
+- 纯函数组件（IdGenerator, PropertyMapper）不依赖 Memgraph，用普通 `#[test]` 测试
 - 集成组件（NodeWriter, RelationshipWriter, SideEffectRunner, HookEngine）用 mock GraphRepository 测试
 - 不删除既有功能，只替换实现方式——迁移期间新旧系统可共存
 - `event-hooks.yaml` 放在项目根目录 `config/` 下
@@ -75,7 +75,7 @@ use std::collections::HashMap;
 /// 单一事件标签的完整配置（从 YAML 反序列化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventTypeConfig {
-    /// Neo4j 标签名，如 "Modification"
+    /// Memgraph 标签名，如 "Modification"
     pub label: String,
     /// 订阅的 hook 名，如 "code_modified"
     pub subscribe: String,

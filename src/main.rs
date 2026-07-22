@@ -26,7 +26,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Wipe all data from Neo4j, Qdrant, and SQLite.
+    /// Wipe all data from Memgraph, Qdrant, and SQLite.
     ///
     /// Requires `--confirm` to actually execute. Without it, prints a
     /// summary of what would be deleted and exits.
@@ -71,7 +71,7 @@ enum Commands {
         targets: Vec<String>,
     },
 
-    /// System backup — tiered backup of Neo4j, Qdrant, and SQLite.
+    /// System backup — tiered backup of Memgraph, Qdrant, and SQLite.
     ///
     /// Default (no subcommand) creates a new backup.
     /// Subcommands: list, restore <date>, verify <date>.
@@ -103,7 +103,7 @@ enum Commands {
     #[command(subcommand)]
     Schema(SchemaAction),
 
-    /// Check health of all backend services (Neo4j, Qdrant, SQLite, dt-embed).
+    /// Check health of all backend services (Memgraph, Qdrant, SQLite, dt-embed).
     Health,
 
     /// Write a knowledge entry (Knowledge, Experience, Concept, Domain, Playbook).
@@ -487,7 +487,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SchemaAction {
-    /// Initialize V2 schema — create all uniqueness constraints and full-text indexes.
+    /// Initialize V2 schema — create all uniqueness constraints and indexes.
     Init,
 }
 
@@ -560,8 +560,8 @@ struct DaemonConfig {
 
 #[derive(Debug, Deserialize, Default)]
 struct ServiceConfig {
-    #[serde(default)]
-    neo4j: Neo4jConfig,
+    #[serde(default, alias = "memgraph")]
+    graph: GraphDbConfig,
     #[serde(default)]
     qdrant: QdrantServiceConfig,
     #[serde(default)]
@@ -579,18 +579,18 @@ struct ServiceConfig {
 }
 
 #[derive(Debug, Deserialize)]
-struct Neo4jConfig {
+struct GraphDbConfig {
     url: Option<String>,
     user: Option<String>,
     password: Option<String>,
 }
 
-impl Default for Neo4jConfig {
+impl Default for GraphDbConfig {
     fn default() -> Self {
         Self {
             url: Some("bolt://localhost:7687".to_string()),
-            user: Some("neo4j".to_string()),
-            password: Some("neo4j".to_string()),
+            user: Some("memgraph".to_string()),
+            password: Some("".to_string()),
         }
     }
 }
@@ -749,12 +749,12 @@ fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// Resolve the Neo4j Bolt URI from config.yaml `services.neo4j`.
+/// Resolve the Memgraph Bolt URI from config.yaml `services.graph`.
 ///
 /// If `url` is set but uses HTTP scheme (e.g. `http://localhost:7474`),
 /// converts it to Bolt (`bolt://localhost:7687`).  If no URL is configured,
 /// returns the default `bolt://localhost:7687`.
-fn resolve_neo4j_bolt_url(cfg: &Neo4jConfig) -> String {
+fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     match &cfg.url {
         Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
             // Extract host from HTTP URL, use default Bolt port
@@ -775,32 +775,32 @@ fn resolve_neo4j_bolt_url(cfg: &Neo4jConfig) -> String {
     }
 }
 
-/// Connect to Neo4j using values from config.yaml (or sensible defaults).
+/// Connect to Memgraph using values from config.yaml (or sensible defaults).
 /// Returns an `Arc<dyn GraphRepository>` ready for use by services.
 async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let cfg = load_config()?;
-    let bolt_url = resolve_neo4j_bolt_url(&cfg.services.neo4j);
-    let user = cfg.services.neo4j.user.as_deref().unwrap_or("neo4j");
-    let password = cfg.services.neo4j.password.as_deref().unwrap_or("neo4j");
+    let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
+    let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
+    let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::neo4j::Neo4jClient::connect(
+    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(
         &bolt_url, user, password,
     )
     .await
     {
         Ok(client) => {
-            tracing::info!("Neo4j connected: {}", bolt_url);
+            tracing::info!("Memgraph connected: {}", bolt_url);
             Some(Arc::new(client) as Arc<dyn GraphRepository>)
         }
         Err(e) => {
-            tracing::warn!("Neo4j connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
             None
         }
     }
 }
 
-/// Build a HookEngine from the Neo4j graph connection and event-hooks.yaml.
-/// Returns `None` if Neo4j is unavailable or the config file is missing.
+/// Build a HookEngine from the Memgraph graph connection and event-hooks.yaml.
+/// Returns `None` if Memgraph is unavailable or the config file is missing.
 async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::HookEngine>> {
     let graph = connect_graph().await?;
     match dt_daemon::application::hooks::HookRegistry::from_file("config/event-hooks.yaml") {
@@ -818,24 +818,24 @@ async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::Hook
     }
 }
 
-/// Connect to Neo4j using values from config.yaml (or sensible defaults).
-async fn connect_neo4j() -> Option<dt_daemon::infrastructure::neo4j::Neo4jClient> {
+/// Connect to Memgraph using values from config.yaml (or sensible defaults).
+async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::MemgraphClient> {
     let cfg = load_config()?;
-    let bolt_url = resolve_neo4j_bolt_url(&cfg.services.neo4j);
-    let user = cfg.services.neo4j.user.as_deref().unwrap_or("neo4j");
-    let password = cfg.services.neo4j.password.as_deref().unwrap_or("neo4j");
+    let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
+    let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
+    let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::neo4j::Neo4jClient::connect(
+    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(
         &bolt_url, user, password,
     )
     .await
     {
         Ok(client) => {
-            tracing::info!("Neo4j connected: {}", bolt_url);
+            tracing::info!("Memgraph connected: {}", bolt_url);
             Some(client)
         }
         Err(e) => {
-            tracing::warn!("Neo4j connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
             None
         }
     }
@@ -975,10 +975,10 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let neo4j = connect_neo4j().await;
+            let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_clean(
                 confirm,
-                neo4j.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                memgraph.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
             )
             .await?;
             return Ok(());
@@ -1035,9 +1035,9 @@ async fn main() -> anyhow::Result<()> {
                     println!("Backup created:");
                     println!("  Location:   {}", report.location.display());
                     println!(
-                        "  Neo4j:      {} ({} bytes)",
-                        if report.targets.neo4j { "✓" } else { "✗" },
-                        report.targets.neo4j_size_bytes,
+                        "  Memgraph:   {} ({} bytes)",
+                        if report.targets.memgraph { "✓" } else { "✗" },
+                        report.targets.memgraph_size_bytes,
                     );
                     println!(
                         "  Qdrant:     {} ({} bytes)",
@@ -1165,9 +1165,9 @@ async fn main() -> anyhow::Result<()> {
 
         // ---- CLI mode: dt schema init ----
         Some(Commands::Schema(SchemaAction::Init)) => {
-            let neo4j = connect_neo4j().await;
+            let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_schema_init(
-                neo4j.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                memgraph.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
             )
             .await?;
             return Ok(());
@@ -1175,12 +1175,12 @@ async fn main() -> anyhow::Result<()> {
 
         // ---- CLI mode: dt health ----
         Some(Commands::Health) => {
-            let neo4j = connect_neo4j().await;
+            let memgraph = connect_memgraph().await;
             let qdrant = connect_vector().await;
             let snapshot = connect_snapshot().await;
             let embed = connect_embed().await;
             dt_daemon::interfaces::cli::cleanup::run_health(
-                neo4j.as_ref().map(|c| c as &dyn GraphRepository),
+                memgraph.as_ref().map(|c| c as &dyn GraphRepository),
                 qdrant.as_deref().map(|c| c as &dyn VectorRepository),
                 snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
                 embed.as_deref().map(|c| c as &dyn EmbedService),
@@ -1278,9 +1278,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Build { path, name, file, full }) => {
             // No args at all → build all projects from config.yaml
             if path.is_none() && name.is_none() && file.is_none() {
-                let neo4j = connect_neo4j().await;
+                let memgraph = connect_memgraph().await;
                 let graph: Option<Arc<dyn GraphRepository>> =
-                    neo4j.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
+                    memgraph.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
 
                 let embed = connect_embed().await;
                 let vector = connect_vector().await;
@@ -1304,9 +1304,9 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let neo4j = connect_neo4j().await;
+            let memgraph = connect_memgraph().await;
             let graph: Option<Arc<dyn GraphRepository>> =
-                neo4j.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
+                memgraph.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
 
             let embed = connect_embed().await;
             let vector = connect_vector().await;
@@ -1579,12 +1579,12 @@ async fn main() -> anyhow::Result<()> {
             match action.as_str() {
                 "status" => {
                     tracing::info!("dt-daemon CLI: daemon status");
-                    let neo4j = connect_neo4j().await;
+                    let memgraph = connect_memgraph().await;
                     let qdrant = connect_vector().await;
                     let snapshot = connect_snapshot().await;
                     let embed = connect_embed().await;
                     dt_daemon::interfaces::cli::cleanup::run_health(
-                        neo4j.as_ref().map(|c| c as &dyn GraphRepository),
+                        memgraph.as_ref().map(|c| c as &dyn GraphRepository),
                         qdrant.as_deref().map(|c| c as &dyn VectorRepository),
                         snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
                         embed.as_deref().map(|c| c as &dyn EmbedService),

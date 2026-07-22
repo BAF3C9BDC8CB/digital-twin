@@ -10,10 +10,10 @@ services:
     url: http://localhost:8001
     dim: 1024
     model: BAAI/bge-m3
-  neo4j:
-    url: http://localhost:7474
-    user: neo4j
-    password: changeme
+  graph:
+    url: bolt://localhost:7688
+    user: memgraph
+    password: ""
   qdrant:
     url: http://localhost:6333
   # Optional: Kubernetes sync via Kuboard API
@@ -36,8 +36,8 @@ services:
 # variables. Plain-text passwords are rejected in production when
 # `allow_plain_passwords` is false.
 #
-#   "env:NEO4J_PASSWORD"   →  read $NEO4J_PASSWORD
-#   "vault:secret/neo4j"   →  external vault (future)
+#   "env:GRAPH_PASSWORD"   →  read $GRAPH_PASSWORD
+#   "vault:secret/memgraph"   →  external vault (future)
 #   "plaintext"            →  plain text (DEV only)
 #
 security:
@@ -53,10 +53,10 @@ security:
   # Production deployments must set this to false.
   allow_plain_passwords: false
 
-# Neo4j / Qdrant passwords shipped via env vars:
-#   export NEO4J_PASSWORD=...
+# Memgraph / Qdrant passwords shipped via env vars:
+#   export MEMGRAPH_PASSWORD=...
 #   export QDRANT_API_KEY=...
-# In config.yaml the value is "env:NEO4J_PASSWORD" (not the real password).
+# In config.yaml the value is "env:MEMGRAPH_PASSWORD" (not the real password).
 
 snapshot_dir: /var/lib/digital-twin/snapshots
 

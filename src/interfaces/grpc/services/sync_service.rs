@@ -19,7 +19,7 @@ pub async fn handle_sync(
     let start = Instant::now();
 
     let graph = graph.ok_or_else(|| {
-        Status::unavailable("Neo4j graph backend not available")
+        Status::unavailable("Graph backend not available")
     })?;
 
     let vector = vector.ok_or_else(|| {

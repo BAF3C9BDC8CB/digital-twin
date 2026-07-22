@@ -156,7 +156,7 @@ impl DependencyService {
         Self::parse_entity_rows(&result, 1)
     }
 
-    /// Parse Neo4j results into DepEntity list.
+    /// Parse graph results into DepEntity list.
     fn parse_entity_rows(raw: &serde_json::Value, distance: u32) -> Result<Vec<DepEntity>, DtError> {
         let rows = raw
             .get("results")

@@ -18,7 +18,7 @@ pub async fn handle_memorize(
     graph: Option<Arc<dyn GraphRepository>>,
 ) -> Result<common::Empty, Status> {
     let graph = graph.ok_or_else(|| {
-        Status::unavailable("Neo4j graph backend not available")
+        Status::unavailable("Graph backend not available")
     })?;
 
     let svc = DefaultKnowledgeService::new(graph);

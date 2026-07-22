@@ -48,7 +48,7 @@ pub async fn handle_jenkins_sync(
             }
         }
         None => {
-            eprintln!("  ✗ Neo4j unavailable — skipping");
+            eprintln!("  ✗ Graph database unavailable — skipping");
         }
     }
 

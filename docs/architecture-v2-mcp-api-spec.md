@@ -103,7 +103,7 @@ dt search-kg "支付平台的数据库配置" --limit 5
   ...
 ```
 
-**后续操作：** 拿到 elementId 后，用 `neo4j_read_cypher` 精确取完整属性。
+**后续操作：** 拿到 elementId 后，用 `memgraph_read_cypher` 精确取完整属性。
 
 ---
 
@@ -844,7 +844,7 @@ dt build --path /data/myProject/aflm-pay --name aflm-pay
 [parse] 4 / 4 files (0.3s)
 [methods] 23 total
 [embed] 23 vectors (0.8s)
-[write] 23 vectors → qdrant + neo4j (1.5s)
+[write] 23 vectors → qdrant + memgraph (1.5s)
 [class] 2 classes
 [rels] created 12 CALLS relationships
 [meta] Java project
@@ -927,7 +927,7 @@ dt memorize --type Decision \
 
 ```text
 📝 已写入知识: Decision/payment-platform-migration-20260709 (ArchitectureDecision)
-   Neo4j 节点 ID: knowledge-abc123def456
+   Memgraph 节点 ID: knowledge-abc123def456
 ```
 
 ---
@@ -1036,7 +1036,7 @@ dt health
 ```text
 服务              状态      延迟      说明
 ─────────────────────────────────────────────────
-Neo4j             ✓ 正常    12ms      bolt://localhost:7687
+Memgraph             ✓ 正常    12ms      bolt://localhost:7687
 Qdrant            ✓ 正常    8ms       grpc://localhost:6334
 Embed Server      ✓ 正常    5ms       grpc://localhost:50052 (BGE-M3)
 KG Bridge         ✓ 正常    —         kg_nodes collection: 1,234 points
@@ -1622,7 +1622,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
 
 ### 32. dt_backup — 备份与灾难恢复
 
-分层备份 Neo4j + Qdrant + SQLite，支持指定日期恢复。
+分层备份 Memgraph + Qdrant + SQLite，支持指定日期恢复。
 
 **请求参数（设计）：**
 
@@ -1645,7 +1645,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
   "action": "backup",
   "timestamp": "2026-07-09T03:00:00Z",
   "targets": {
-    "neo4j": {"size": "250MB", "format": "dump", "checksum": "sha256:abc123..."},
+    "memgraph": {"size": "250MB", "format": "dump", "checksum": "sha256:abc123..."},
     "qdrant": {"collections": 12, "size": "1.2GB", "format": "snapshot"},
     "sqlite": {"size": "15MB", "format": "file_copy"}
   },
@@ -1658,7 +1658,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
 
 ### 33. dt_archive — Memory 数据归档
 
-将超过 TTL 的 Memory.Event 数据导出为压缩 JSON 归档，释放 Neo4j 存储。
+将超过 TTL 的 Memory.Event 数据导出为压缩 JSON 归档，释放 Memgraph 存储。
 
 **请求参数（设计）：**
 
@@ -1682,7 +1682,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
   "archive_file": "/var/lib/dt/archive/2025.json.gz",
   "events_archived": 5678,
   "events_remaining": 2345,
-  "neo4j_space_freed": "120MB",
+  "memgraph_space_freed": "120MB",
   "duration_seconds": 12.7
 }
 ```
@@ -1715,7 +1715,7 @@ Context Builder 解析意图 → 确定涉及哪些 World
 {
   "timestamp": "2026-07-09T14:30:00Z",
   "gauges": {
-    "dt_neo4j_connection_pool_size": 8,
+    "dt_memgraph_connection_pool_size": 8,
     "dt_plugin_health_status{plugin=\"plugin_k8s\"}": 1,
     "dt_write_coordinator_active_locks": 2
   },

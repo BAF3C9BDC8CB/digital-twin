@@ -50,8 +50,8 @@ walkdir = "2"
 # Regex
 regex = "1"
 
-# Neo4j Bolt driver
-neo4rs = { version = "0.8", features = ["json"] }
+# Bolt protocol driver (Memgraph-compatible, wraps neo4rs crate)
+bolt-driver = { package = "neo4rs", version = "0.8", features = ["json"] }
 
 # Hashing
 sha2 = "0.10"

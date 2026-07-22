@@ -1,7 +1,7 @@
 pub mod cleanup;
 pub mod archive;
 pub mod backup;
-pub mod backup_neo4j;
+pub mod backup_memgraph;
 pub mod backup_qdrant;
 pub mod backup_sqlite;
 pub mod backup_verify;

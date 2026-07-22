@@ -54,7 +54,7 @@ pub async fn handle_memorize(
                     Err(e) => eprintln!("Knowledge write failed: {e}"),
                 }
             } else {
-                tracing::warn!("Neo4j unavailable — knowledge not persisted");
+                tracing::warn!("Graph database unavailable — knowledge not persisted");
                 println!(
                     "Knowledge (not persisted): id={} name={} title={} domain={} project={}",
                     knowledge.knowledge_id,
@@ -83,7 +83,7 @@ pub async fn handle_memorize(
                     Err(e) => eprintln!("Experience write failed: {e}"),
                 }
             } else {
-                tracing::warn!("Neo4j unavailable — experience not persisted");
+                tracing::warn!("Graph database unavailable — experience not persisted");
                 println!(
                     "Experience (not persisted): id={} title={} severity={} domain={}",
                     experience.experience_id,
@@ -107,7 +107,7 @@ pub async fn handle_memorize(
                     Err(e) => eprintln!("Concept write failed: {e}"),
                 }
             } else {
-                tracing::warn!("Neo4j unavailable — concept not persisted");
+                tracing::warn!("Graph database unavailable — concept not persisted");
                 println!(
                     "Concept (not persisted): id={} name={} domain={}",
                     concept.concept_id, concept.name, concept.domain,
@@ -128,7 +128,7 @@ pub async fn handle_memorize(
                     Err(e) => eprintln!("Domain write failed: {e}"),
                 }
             } else {
-                tracing::warn!("Neo4j unavailable — domain not persisted");
+                tracing::warn!("Graph database unavailable — domain not persisted");
                 println!(
                     "Domain (not persisted): id={} name={}",
                     domain.domain_id, domain.name,
@@ -150,7 +150,7 @@ pub async fn handle_memorize(
                     Err(e) => eprintln!("Playbook write failed: {e}"),
                 }
             } else {
-                tracing::warn!("Neo4j unavailable — playbook not persisted");
+                tracing::warn!("Graph database unavailable — playbook not persisted");
                 println!(
                     "Playbook (not persisted): id={} name={} domain={}",
                     playbook.playbook_id, playbook.name, playbook.domain,
@@ -173,7 +173,7 @@ pub async fn handle_memorize(
     Ok(())
 }
 
-/// Map a `knowledge_type` to its Neo4j label + id-property key, then
+/// Map a `knowledge_type` to its graph label + id-property key, then
 /// enqueue the newly-written node for background sync to Qdrant.
 ///
 /// This returns immediately — the actual embed + upsert happens in a

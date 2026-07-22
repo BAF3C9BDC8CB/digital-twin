@@ -1,11 +1,11 @@
 //! V2 domain types for K8s sync.
 //!
-//! These are the Neo4j node representations for entities that belong in the
+//! These are the graph node representations for entities that belong in the
 //! **Reality World** (persisted to the knowledge graph).
 //!
-//! ## What goes into Neo4j
+//! ## What goes into the graph database
 //!
-//! | K8s Object    | Neo4j Label     | Rationale |
+//! | K8s Object    | Graph Label | Rationale |
 //! |---------------|-----------------|-----------|
 //! | Deployment    | `K8sDeployment` | Desired-state infrastructure |
 //! | Service       | `K8sService`    | Stable network endpoint |
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 // K8sDeployment
 // ---------------------------------------------------------------------------
 
-/// A K8s Deployment persisted as a `:K8sDeployment` node in Neo4j.
+/// A K8s Deployment persisted as a `:K8sDeployment` node in the graph database.
 ///
 /// Uniqueness constraint: `(name, namespace)`.
 /// Relationship: `(:ServiceInstance)-[:DEPLOYED_AS]->(:K8sDeployment)`
@@ -58,7 +58,7 @@ impl K8sDeployment {
 // K8sService
 // ---------------------------------------------------------------------------
 
-/// A K8s Service persisted as a `:K8sService` node in Neo4j.
+/// A K8s Service persisted as a `:K8sService` node in the graph database.
 ///
 /// Relationship: `(:Namespace)-[:HAS_SERVICE]->(:K8sService)`
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,7 +87,7 @@ impl K8sService {
 
 /// A Server node derived from a K8s worker node.
 ///
-/// Persisted as a `:Server` node in Neo4j.
+/// Persisted as a `:Server` node in the graph database.
 /// Relationship: `(:Server)-[:DEPLOYED_IN]->(:Environment)`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct K8sServer {
@@ -150,7 +150,7 @@ pub(crate) struct OwnerRef {
     pub name: String,
 }
 
-// ── Pod (for CLI display, not persisted in Neo4j) ───────────
+// ── Pod (for CLI display, not persisted in the graph database) ───────────
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PodItem {

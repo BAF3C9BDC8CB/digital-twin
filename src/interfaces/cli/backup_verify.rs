@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Instant;
 
 /// Regular files in a backup directory that should be checksummed.
-const BACKUP_FILES: &[&str] = &["neo4j.dump", "qdrant.snapshot", "sqlite.copy"];
+const BACKUP_FILES: &[&str] = &["memgraph.dump", "qdrant.snapshot", "sqlite.copy"];
 
 /// Generate SHA256 checksums for all backup files in a directory.
 ///
@@ -130,7 +130,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         // Create a test file
-        tokio::fs::write(dir.path().join("neo4j.dump"), b"test neo4j data")
+        tokio::fs::write(dir.path().join("memgraph.dump"), b"test memgraph data")
             .await
             .unwrap();
         tokio::fs::write(dir.path().join("qdrant.snapshot"), b"test qdrant data")
@@ -139,7 +139,7 @@ mod tests {
 
         let checksums = generate_checksums(dir.path()).await.unwrap();
 
-        assert!(checksums.contains_key("neo4j.dump"));
+        assert!(checksums.contains_key("memgraph.dump"));
         assert!(checksums.contains_key("qdrant.snapshot"));
         assert!(!checksums.contains_key("sqlite.copy")); // doesn't exist
 
@@ -153,14 +153,14 @@ mod tests {
         let dir = TempDir::new().unwrap();
 
         // Create test files + checksums
-        tokio::fs::write(dir.path().join("neo4j.dump"), b"test neo4j data")
+        tokio::fs::write(dir.path().join("memgraph.dump"), b"test memgraph data")
             .await
             .unwrap();
         tokio::fs::write(dir.path().join("sqlite.copy"), b"test sqlite data")
             .await
             .unwrap();
 
-        let neo4j_hash = compute_sha256(&dir.path().join("neo4j.dump"))
+        let memgraph_hash = compute_sha256(&dir.path().join("memgraph.dump"))
             .await
             .unwrap();
         let sqlite_hash = compute_sha256(&dir.path().join("sqlite.copy"))
@@ -168,8 +168,8 @@ mod tests {
             .unwrap();
 
         let checksum_content = format!(
-            "{}  neo4j.dump\n{}  sqlite.copy\n",
-            neo4j_hash, sqlite_hash
+            "{}  memgraph.dump\n{}  sqlite.copy\n",
+            memgraph_hash, sqlite_hash
         );
         tokio::fs::write(dir.path().join("checksums.sha256"), checksum_content)
             .await
@@ -187,22 +187,22 @@ mod tests {
     async fn verify_backup_detects_tampering() {
         let dir = TempDir::new().unwrap();
 
-        tokio::fs::write(dir.path().join("neo4j.dump"), b"original data")
+        tokio::fs::write(dir.path().join("memgraph.dump"), b"original data")
             .await
             .unwrap();
 
-        let original_hash = compute_sha256(&dir.path().join("neo4j.dump"))
+        let original_hash = compute_sha256(&dir.path().join("memgraph.dump"))
             .await
             .unwrap();
 
         // Write checksum for original
-        let checksum_content = format!("{}  neo4j.dump\n", original_hash);
+        let checksum_content = format!("{}  memgraph.dump\n", original_hash);
         tokio::fs::write(dir.path().join("checksums.sha256"), checksum_content)
             .await
             .unwrap();
 
         // Tamper with the file
-        tokio::fs::write(dir.path().join("neo4j.dump"), b"tampered data")
+        tokio::fs::write(dir.path().join("memgraph.dump"), b"tampered data")
             .await
             .unwrap();
 

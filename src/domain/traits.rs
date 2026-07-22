@@ -8,7 +8,7 @@ use crate::domain::error::DtError;
 use crate::domain::types::{HealthStatus, FileSnapshot, ParseResult};
 use std::path::Path;
 
-/// Repository abstraction for the Neo4j knowledge graph (Bolt driver).
+/// Repository abstraction for the graph database (Bolt driver).
 #[async_trait]
 pub trait GraphRepository: Send + Sync + 'static {
     /// Execute a read-only Cypher query.

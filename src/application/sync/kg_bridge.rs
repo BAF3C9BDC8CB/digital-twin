@@ -1,5 +1,5 @@
-//! KG → Qdrant bridge — syncs V2 business-label nodes from Neo4j into
-//! the Qdrant vector store for semantic search.
+//! KG → Qdrant bridge — syncs V2 business-label nodes from the graph database
+//! into the Qdrant vector store for semantic search.
 //!
 //! ## V2 Design
 //!
@@ -99,7 +99,7 @@ pub const BUSINESS_LABELS: &[&str] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// KgNode — raw row from Neo4j
+// KgNode — raw row from the graph database
 // ---------------------------------------------------------------------------
 
 /// A single node row returned by the fetch Cypher query.
@@ -107,7 +107,7 @@ pub const BUSINESS_LABELS: &[&str] = &[
 /// Each row contains: `[node_properties, elementId, labels]`.
 #[derive(Debug, Clone)]
 pub(crate) struct KgNode {
-    /// Neo4j elementId (used as the source for point-id hashing).
+    /// Graph element ID (Memgraph node ID) (used as the source for point-id hashing).
     element_id: String,
     /// All labels on this node (e.g. `["Server", "Infrastructure"]`).
     labels: Vec<String>,
@@ -119,7 +119,7 @@ pub(crate) struct KgNode {
 // KgBridge
 // ---------------------------------------------------------------------------
 
-/// Bridges the Neo4j knowledge graph to Qdrant by embedding business-label
+/// Bridges the graph database to Qdrant by embedding business-label
 /// nodes and upserting them as vectors for semantic search.
 ///
 /// # Example
@@ -254,7 +254,7 @@ impl KgBridge {
         text.trim_end().to_string()
     }
 
-    /// Sync adaptive config chunks from Neo4j ConfigSection + ConfigKey
+    /// Sync adaptive config chunks from ConfigSection + ConfigKey
     /// nodes into the Qdrant `config_chunks` collection.
     ///
     /// Uses `chunk_config_adaptive` from the Nacos config content stored in
@@ -365,14 +365,14 @@ impl KgBridge {
     ///
     /// This is used for **auto-sync after write**: after a node is created or
     /// mutated via `dt memorize` / `dt learn` / `dt event`, this method fetches
-    /// the node from Neo4j and syncs it into Qdrant immediately — so the vector
+    /// the node from the graph database and syncs it into Qdrant immediately — so the vector
     /// index is always current without needing a manual `dt kg-sync`.
     ///
     /// If the node isn't found (e.g. the label isn't in [`BUSINESS_LABELS`]),
-    /// it silently succeeds — not every Neo4j node needs to be in Qdrant.
+    /// it silently succeeds — not every graph node needs to be in Qdrant.
     ///
     /// # Arguments
-    /// - `label` — Neo4j label (e.g. `"Knowledge"`, `"Experience"`, `"Decision"`).
+    /// - `label` — graph label (e.g. `"Knowledge"`, `"Experience"`, `"Decision"`).
     /// - `prop_key` — the property used to look up the node (e.g. `"knowledge_id"`).
     /// - `prop_value` — the property value.
     pub async fn sync_node_by_property(
@@ -398,7 +398,7 @@ impl KgBridge {
         );
 
         let result = self.graph.read_query(&cypher, params).await?;
-        let nodes = parse_neo4j_rows(&result)?;
+        let nodes = parse_graph_rows(&result)?;
 
         if nodes.is_empty() {
             tracing::debug!(
@@ -419,7 +419,7 @@ impl KgBridge {
     // Internal (exposed for BatchAccumulator)
     // ------------------------------------------------------------------
 
-    /// Fetch a single business-label node from Neo4j by (label, key, value).
+    /// Fetch a single business-label node from Memgraph by (label, key, value).
     ///
     /// Returns `None` if the node isn't found or isn't a business label.
     pub(crate) async fn fetch_node(
@@ -443,7 +443,7 @@ impl KgBridge {
         );
 
         let result = self.graph.read_query(&cypher, params).await?;
-        let mut nodes = parse_neo4j_rows(&result)?;
+        let mut nodes = parse_graph_rows(&result)?;
         Ok(nodes.pop())
     }
 
@@ -463,7 +463,7 @@ impl KgBridge {
             .ensure_collection(KG_COLLECTION, VECTOR_DIM)
             .await?;
 
-        // 2.  Fetch nodes from Neo4j.
+        // 2.  Fetch nodes from the graph database.
         let nodes = self.fetch_nodes(incremental).await?;
 
         if nodes.is_empty() {
@@ -571,7 +571,7 @@ impl KgBridge {
         // (d) Upsert to Qdrant.
         self.vector.upsert(KG_COLLECTION, points).await?;
 
-        // (e) Mark nodes as synced in Neo4j.
+        // (e) Mark nodes as synced in Memgraph.
         let eids: Vec<&str> = chunk.iter().map(|n| n.element_id.as_str()).collect();
         let mut params = HashMap::new();
         params.insert("eids".to_string(), serde_json::json!(eids));
@@ -588,7 +588,7 @@ impl KgBridge {
         Ok(chunk.len())
     }
 
-    /// Fetch business-label nodes from Neo4j.
+    /// Fetch business-label nodes from Memgraph.
     ///
     /// When `incremental` is `true`, only nodes without `_kg_synced_at`
     /// are returned.
@@ -617,7 +617,7 @@ impl KgBridge {
         let params = HashMap::new();
         let result = self.graph.read_query(&cypher, params).await?;
 
-        let nodes = parse_neo4j_rows(&result)?;
+        let nodes = parse_graph_rows(&result)?;
         Ok(nodes)
     }
 }
@@ -775,7 +775,7 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
     })
 }
 
-/// Generate a deterministic UUID v4 from a Neo4j elementId via SHA-256.
+/// Generate a deterministic UUID v4 from a graph element ID via SHA-256.
 ///
 /// This ensures the same elementId always maps to the same Qdrant point
 /// ID across sync runs, allowing idempotent upserts.
@@ -795,34 +795,34 @@ fn make_point_id(element_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Neo4j result parsing
+// Graph result parsing
 // ---------------------------------------------------------------------------
 
-/// Parse the raw Neo4j response JSON into a `Vec<KgNode>`.
+/// Parse the raw graph response JSON into a `Vec<KgNode>`.
 ///
 /// Handles two response formats:
-/// 1. **neo4rs driver** — `Value::Array` of row objects:
+    /// 1. **Bolt driver** — `Value::Array` of row objects:
 ///    ```json
 ///    [{"n": {...}, "eid": "4:...", "lbls": ["Server"]}]
 ///    ```
-/// 2. **Neo4j HTTP API** (legacy fallback):
+/// 2. **HTTP API** (legacy fallback):
 ///    ```json
 ///    {"results":[{"columns":["n","eid","lbls"],"data":[{"row":[{...},"4:...",["Server"]]}]}]}
 ///    ```
-fn parse_neo4j_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
-    // Try neo4rs driver format first (Array of row objects).
+fn parse_graph_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
+    // Try Bolt driver format first (Array of row objects).
     if let Some(rows) = raw.as_array() {
-        return parse_neo4rs_rows(rows);
+        return parse_bolt_rows(rows);
     }
 
-    // Fall back to Neo4j HTTP API format.
+    // Fall back to HTTP API format.
     let rows = raw
         .get("results")
         .and_then(|r| r.as_array())
         .and_then(|results| results.first())
         .and_then(|first| first.get("data"))
         .and_then(|data| data.as_array())
-        .ok_or_else(|| DtError::Repository("missing 'results[0].data' in Neo4j response".into()))?;
+        .ok_or_else(|| DtError::Repository("missing 'results[0].data' in graph response".into()))?;
 
     let mut nodes: Vec<KgNode> = Vec::with_capacity(rows.len());
 
@@ -830,7 +830,7 @@ fn parse_neo4j_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
         let row = row_val
             .get("row")
             .and_then(|r| r.as_array())
-            .ok_or_else(|| DtError::Repository("missing 'row' in Neo4j data item".into()))?;
+            .ok_or_else(|| DtError::Repository("missing 'row' in graph data item".into()))?;
 
         if row.len() < 3 {
             continue;
@@ -861,11 +861,11 @@ fn parse_neo4j_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
     Ok(nodes)
 }
 
-/// Parse rows from the neo4rs driver format (Array of JSON objects).
+/// Parse rows from the Bolt driver format (Array of JSON objects).
 ///
 /// Each object has keys `n` (node properties), `eid` (elementId string),
 /// and `lbls` (labels array).
-fn parse_neo4rs_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
+fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
     let mut nodes: Vec<KgNode> = Vec::with_capacity(rows.len());
 
     for row in rows {
@@ -1138,7 +1138,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // parse_neo4j_rows
+    // parse_graph_rows
     // ------------------------------------------------------------------
 
     #[test]
@@ -1152,7 +1152,7 @@ mod tests {
                 ]
             }]
         });
-        let nodes = parse_neo4j_rows(&raw).expect("should parse");
+        let nodes = parse_graph_rows(&raw).expect("should parse");
         assert_eq!(nodes.len(), 2);
 
         assert_eq!(nodes[0].element_id, "4:eid-1");
@@ -1172,14 +1172,14 @@ mod tests {
                 "data": []
             }]
         });
-        let nodes = parse_neo4j_rows(&raw).expect("should parse empty");
+        let nodes = parse_graph_rows(&raw).expect("should parse empty");
         assert!(nodes.is_empty());
     }
 
     #[test]
     fn parse_missing_results_returns_error() {
         let raw = serde_json::json!({"unexpected": "format"});
-        let result = parse_neo4j_rows(&raw);
+        let result = parse_graph_rows(&raw);
         assert!(result.is_err());
     }
 

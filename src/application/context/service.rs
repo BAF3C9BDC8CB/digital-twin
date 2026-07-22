@@ -23,7 +23,7 @@ impl ContextService {
     /// Create a new service with the given backends.
     ///
     /// # Arguments
-    /// * `graph` — Neo4j repository for Reality/Knowledge/Memory/Reasoning worlds.
+    /// * `graph` — graph repository for Reality/Knowledge/Memory/Reasoning worlds.
     /// * `vector` — Qdrant repository for the Semantic world.
     /// * `embed` — Embedding service for generating query vectors.
     pub fn new(

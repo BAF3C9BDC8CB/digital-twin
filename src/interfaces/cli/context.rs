@@ -45,7 +45,7 @@ pub async fn handle_context(
         ..ContextOptions::default()
     };
 
-    // Connect to Neo4j and create a RetrieverStage that can return
+    // Connect to Memgraph and create a RetrieverStage that can return
     // real data from the knowledge graph.
     let retriever = if let Some(ref g) = graph {
         RetrieverStage::new(
@@ -161,8 +161,8 @@ pub async fn handle_plan(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot generate plan");
-            println!("Plan: task=\"{task}\" (Neo4j unavailable)");
+            eprintln!("Graph database unavailable — cannot generate plan");
+            println!("Plan: task=\"{task}\" (graph database unavailable)");
         }
     }
 
@@ -222,8 +222,8 @@ pub async fn handle_domain(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot query domain");
-            println!("Domain: name=\"{name}\" depth={depth} include-code={include_code} (Neo4j unavailable)");
+            eprintln!("Graph database unavailable — cannot query domain");
+            println!("Domain: name=\"{name}\" depth={depth} include-code={include_code} (graph database unavailable)");
         }
     }
 
@@ -284,8 +284,8 @@ pub async fn handle_history(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot search history");
-            println!("History: task=\"{task}\" (Neo4j unavailable)");
+            eprintln!("Graph database unavailable — cannot search history");
+            println!("History: task=\"{task}\" (graph database unavailable)");
         }
     }
 
@@ -354,9 +354,9 @@ pub async fn handle_dependency(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot analyze dependencies");
+            eprintln!("Graph database unavailable — cannot analyze dependencies");
             println!(
-                "Dependency: target=\"{target}\" direction={direction} depth={depth} type={dep_type} (Neo4j unavailable)"
+                "Dependency: target=\"{target}\" direction={direction} depth={depth} type={dep_type} (graph database unavailable)"
             );
         }
     }
@@ -425,8 +425,8 @@ pub async fn handle_verify(
             }
         }
         None => {
-            eprintln!("Neo4j unavailable — cannot verify");
-            println!("Verify: files={:?} (Neo4j unavailable)", files);
+            eprintln!("Graph database unavailable — cannot verify");
+            println!("Verify: files={:?} (graph database unavailable)", files);
         }
     }
 

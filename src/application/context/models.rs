@@ -19,17 +19,17 @@ pub struct AggregatedContext {
     /// conversation or investigation thread.
     pub thread: Option<ThreadSummary>,
 
-    /// **Reality World** — code, services, configurations (from Neo4j).
+    /// **Reality World** — code, services, configurations (from Qdrant).
     pub reality: WorldSlice,
-    /// **Knowledge World** — domain concepts, patterns, playbooks (from Neo4j).
+    /// **Knowledge World** — domain concepts, patterns, playbooks (from Memgraph).
     pub knowledge: WorldSlice,
-    /// **Memory World** — historical events, experiences, lessons learned (from Neo4j).
+    /// **Memory World** — historical events, experiences, lessons learned (from Memgraph).
     pub memory: WorldSlice,
     /// **Semantic World** — document and code vectors (from Qdrant).
     pub semantic: WorldSlice,
     /// **Runtime World** — live Pod / Service / metrics (from K8s API).
     pub runtime: WorldSlice,
-    /// **Reasoning World** — past analyses and decision chains (from Neo4j).
+    /// **Reasoning World** — past analyses and decision chains (from Memgraph).
     pub reasoning: WorldSlice,
 
     /// Alerts raised during conflict detection and experience injection.
@@ -62,7 +62,7 @@ impl Default for AggregatedContext {
 /// A lightweight summary of a Digital Thread.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadSummary {
-    /// Thread identifier (e.g. Neo4j elementId).
+    /// Thread identifier (e.g. graph element ID).
     pub thread_id: String,
     /// Thread title or summary line.
     pub title: String,
@@ -111,7 +111,7 @@ impl WorldSlice {
 /// A single item retrieved from a knowledge world.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldItem {
-    /// Unique identifier (e.g. Neo4j elementId, Qdrant point id).
+    /// Unique identifier (e.g. graph element ID, Qdrant point id).
     pub id: String,
     /// Short label / title.
     pub label: String,
@@ -459,7 +459,7 @@ mod tests {
     fn world_item_construction() {
         let item = WorldItem::new("id1", "MyLabel", "Some content here")
             .with_score(0.85)
-            .with_source("neo4j://entity/123")
+            .with_source("memgraph://entity/123")
             .with_type("Method")
             .with_meta("language", "rust");
 

@@ -184,7 +184,7 @@ async fn search_via_vector(
     Ok(results)
 }
 
-/// Fallback search using the Neo4j graph (Cypher CONTAINS query).
+/// Fallback search using the graph database (Cypher CONTAINS query).
 async fn search_via_graph(
     graph: &dyn GraphRepository,
     query: &str,

@@ -1,7 +1,7 @@
 //! WriteCoordinator — concurrent write safety for three ingestion sources.
 //!
 //! Three writers (OpenCode Hook → dt update, user dt build, cron syncs)
-//! can concurrently write to Neo4j / Qdrant. The `WriteCoordinator` provides
+//! can concurrently write to Memgraph / Qdrant. The `WriteCoordinator` provides
 //! file-level locks, entity-level locks, and an optional global serialization
 //! lock to prevent conflicts.
 //!
@@ -48,7 +48,7 @@ const MAX_CONCURRENT_WRITES: u32 = 1024;
 ///
 /// // Single file update — file-level lock (acquires 1 global permit)
 /// let _guard = coordinator.acquire_file(path).await;
-/// // ... write to Neo4j/Qdrant ...
+/// // ... write to Memgraph/Qdrant ...
 ///
 /// // Full build — global lock (acquires ALL global permits)
 /// let _guard = coordinator.acquire_global().await;

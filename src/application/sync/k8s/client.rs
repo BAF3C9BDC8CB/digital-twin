@@ -108,7 +108,7 @@ impl KuboardClient {
         fetch_items::<NodeItem>(&self.http, &url, &self.token).await
     }
 
-    /// Fetch pods for a namespace (CLI display, not persisted in Neo4j).
+    /// Fetch pods for a namespace (CLI display, not persisted in the graph database).
     pub async fn fetch_pods(&self, namespace: &str) -> Vec<PodItem> {
         let url = format!(
             "{}/api/v1/namespaces/{}/pods",

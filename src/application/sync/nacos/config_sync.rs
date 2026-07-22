@@ -289,7 +289,7 @@ pub struct NacosConfigEntry {
 
 /// Vectorises Nacos config keys and values into Qdrant for semantic search.
 ///
-/// After nacos-sync writes config keys/values to Neo4j, this vectoriser
+/// After nacos-sync writes config keys/values to Memgraph, this vectoriser
 /// embeds the key name + value text using the configured embedding service,
 /// then upserts the resulting vectors into a Qdrant collection named
 /// `{project}_semantic`.
@@ -527,7 +527,7 @@ pub fn build_chunk_text(chunk: &ChunkToVectorize) -> String {
 
 /// Synchronises Nacos configuration data into the knowledge graph.
 ///
-/// # Produced Neo4j nodes
+/// # Produced graph nodes
 ///
 /// - `NacosConfig` — `config_id = dt://nacos/{ns}/{data_id}`
 /// - `NacosGroup` — configuration group

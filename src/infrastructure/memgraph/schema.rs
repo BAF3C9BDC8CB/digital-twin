@@ -1,8 +1,12 @@
 //! V2 Schema initialization — constraints, indexes, and data lifecycle.
 //!
+//! Memgraph-compatible version. Memgraph supports Cypher `IS UNIQUE` constraints
+//! and regular b-tree indexes, but does **not** support fulltext indexes.
+//! All fulltext-related code has been excluded.
+//!
 //! Provides:
-//! - `initialize_schema()` — creates all uniqueness constraints + fulltext indexes.
-//! - `clean_all_data()` — wipes all nodes and relationships (for dev/testing).
+//! - `init_schema()` — creates all uniqueness constraints and b-tree indexes.
+//! - `clean_all()` — wipes all nodes and relationships (for dev/testing).
 //!
 //! # Data Retention Policy (documented here, enforced via `dt cleanup`)
 //!
@@ -11,7 +15,7 @@
 //! | Memory.Event (Modification, Deployment, ConfigChange, BugFix, Decision, PodEvent) | 365 days | Archive to `/var/lib/dt/archive/` |
 //! | Reasoning (unverified Observation, Analysis, Decision) | Session end | `SET _stale_at = timestamp()`; `dt cleanup` deletes after 30 days |
 //! | SQLite snapshots old rows | Latest only | `dt build` auto-deletes `WHERE updated_at < latest_per_file` |
-//! | Qdrant orphan points | Follows Neo4j | Entity deleted → corresponding point cleaned by `dt kg-sync` |
+//! | Qdrant orphan points | Follows Memgraph | Entity deleted → corresponding point cleaned by `dt kg-sync` |
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
@@ -39,9 +43,9 @@ pub struct CleanReport {
     pub nodes_deleted: usize,
     /// Number of relationships deleted.
     pub relationships_deleted: usize,
-    /// Number of Qdrant collections removed (0 when Neo4j-only).
+    /// Number of Qdrant collections removed (0 when Memgraph-only).
     pub qdrant_collections_removed: usize,
-    /// Whether SQLite snapshots were cleared (false when Neo4j-only).
+    /// Whether SQLite snapshots were cleared (false when Memgraph-only).
     pub snapshots_cleared: bool,
     /// Number of stale Reasoning nodes deleted (Observation/Analysis/Decision).
     pub reasoning_stale_deleted: usize,
@@ -60,7 +64,7 @@ pub struct CleanReport {
 /// All V2 entity uniqueness constraints.
 ///
 /// Each entity type gets a unique ID constraint. Composite constraints use
-/// `(propA, propB) IS UNIQUE` notation (Neo4j 5.x+).
+/// `(propA, propB) IS UNIQUE` notation (supported by Memgraph).
 const CONSTRAINT_STATEMENTS: &[&str] = &[
     // ── Reality World: Code entities ──
     "CREATE CONSTRAINT method_id_unique IF NOT EXISTS FOR (n:Method) REQUIRE n.method_id IS UNIQUE",
@@ -104,39 +108,44 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
     "CREATE CONSTRAINT analysis_id_unique IF NOT EXISTS FOR (n:Analysis) REQUIRE n.analysis_id IS UNIQUE",
 ];
 
-/// Full-text index covering infrastructure and knowledge search across labels.
+/// Regular b-tree indexes for query performance.
 ///
-/// Covers: Server, Database, NacosConfig, NacosService, K8sDeployment, K8sService,
-/// Service, ServiceInstance, Knowledge, Concept, Experience, Playbook, Document, Thread.
-///
-/// Indexed properties: name, description, hostname, url, auth_user.
-const FULLTEXT_INDEX_STATEMENT: &str = r#"
-CREATE FULLTEXT INDEX infra_search IF NOT EXISTS
-FOR (n:Server|Database|NacosConfig|NacosService|K8sDeployment|K8sService|Service|ServiceInstance|Method|Class|Module|Knowledge|Concept|Experience|Playbook|Document|Thread|ConfigKey|Endpoint|JenkinsView|JenkinsJob|JenkinsBuild)
-ON EACH [n.name, n.description, n.hostname, n.url, n.auth_user, n.signature, n.file_path, n.package_or_module, n.data_id, n.title, n.summary, n.definition]
-"#;
-
-/// Regular b-tree indexes for query performance (not full-text).
+/// Memgraph supports label-property indexes via `CREATE INDEX ON :Label(prop)`.
+/// The expanded `IF NOT EXISTS` syntax used below is supported alongside
+/// the shorter `CREATE INDEX ON :Label(prop)` form.
 const INDEX_STATEMENTS: &[&str] = &[
     // Speeds up call-graph rebuild: MATCH (callee:Method {project: $project, name: called_name})
     "CREATE INDEX method_project_name IF NOT EXISTS FOR (n:Method) ON (n.project, n.name)",
+    // Accelerate CONTAINS-based queries in retriever.rs
+    "CREATE INDEX idx_concept_name IF NOT EXISTS FOR (n:Concept) ON (n.name)",
+    "CREATE INDEX idx_concept_title IF NOT EXISTS FOR (n:Concept) ON (n.title)",
+    "CREATE INDEX idx_playbook_name IF NOT EXISTS FOR (n:Playbook) ON (n.name)",
+    "CREATE INDEX idx_playbook_title IF NOT EXISTS FOR (n:Playbook) ON (n.title)",
+    "CREATE INDEX idx_knowledge_name IF NOT EXISTS FOR (n:Knowledge) ON (n.name)",
+    "CREATE INDEX idx_knowledge_title IF NOT EXISTS FOR (n:Knowledge) ON (n.title)",
+    "CREATE INDEX idx_experience_name IF NOT EXISTS FOR (n:Experience) ON (n.name)",
+    "CREATE INDEX idx_experience_title IF NOT EXISTS FOR (n:Experience) ON (n.title)",
+    "CREATE INDEX idx_domain_name IF NOT EXISTS FOR (n:Domain) ON (n.name)",
+    "CREATE INDEX idx_thread_title IF NOT EXISTS FOR (n:Thread) ON (n.title)",
+    "CREATE INDEX idx_observation_obs_id IF NOT EXISTS FOR (n:Observation) ON (n.observation_id)",
+    "CREATE INDEX idx_analysis_analysis_id IF NOT EXISTS FOR (n:Analysis) ON (n.analysis_id)",
 ];
 
 // ---------------------------------------------------------------------------
 // Schema initialization
 // ---------------------------------------------------------------------------
 
-/// Initialize the complete V2 schema.
+/// Initialize the complete V2 schema on a Memgraph instance.
 ///
-/// Creates all uniqueness constraints and the full-text index. All statements
-/// use `IF NOT EXISTS` so the function is safe to call repeatedly (idempotent).
+/// Creates all uniqueness constraints and b-tree indexes. All statements use
+/// `IF NOT EXISTS` so the function is safe to call repeatedly (idempotent).
 ///
 /// # Arguments
-/// * `graph` — any [`GraphRepository`] implementation (real Neo4j or noop mock).
+/// * `graph` — any [`GraphRepository`] implementation.
 ///
 /// # Returns
 /// [`SchemaInitReport`] summarising what was created and how long it took.
-pub async fn initialize_schema(graph: &dyn GraphRepository) -> Result<SchemaInitReport, DtError> {
+pub async fn init_schema(graph: &dyn GraphRepository) -> Result<SchemaInitReport, DtError> {
     let start = std::time::Instant::now();
     let empty_params = HashMap::new();
 
@@ -148,12 +157,6 @@ pub async fn initialize_schema(graph: &dyn GraphRepository) -> Result<SchemaInit
         graph.write_query(stmt, empty_params.clone()).await?;
         constraints_created += 1;
     }
-
-    // --- full-text index ---
-    graph
-        .write_query(FULLTEXT_INDEX_STATEMENT, empty_params.clone())
-        .await?;
-    indexes_created += 1;
 
     // --- regular b-tree indexes ---
     for stmt in INDEX_STATEMENTS {
@@ -174,7 +177,7 @@ pub async fn initialize_schema(graph: &dyn GraphRepository) -> Result<SchemaInit
 // Data cleanup
 // ---------------------------------------------------------------------------
 
-/// Wipe **all** nodes and relationships from the graph.
+/// Wipe **all** nodes and relationships from the Memgraph instance.
 ///
 /// # Safety
 /// This is a destructive operation. Use with caution — typically only
@@ -183,7 +186,7 @@ pub async fn initialize_schema(graph: &dyn GraphRepository) -> Result<SchemaInit
 ///
 /// Before deleting, the current node and relationship counts are captured
 /// so the caller can report what was removed.
-pub async fn clean_all_data(graph: &dyn GraphRepository) -> Result<CleanReport, DtError> {
+pub async fn clean_all(graph: &dyn GraphRepository) -> Result<CleanReport, DtError> {
     let start = std::time::Instant::now();
     let empty_params = HashMap::new();
 
@@ -251,7 +254,7 @@ fn extract_count(value: &serde_json::Value, field: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::traits::GraphRepository;
+
     use crate::domain::types::HealthStatus;
     use async_trait::async_trait;
 
@@ -308,35 +311,34 @@ mod tests {
     #[tokio::test]
     async fn init_schema_creates_all_constraints() {
         let mock = MockGraphRepo::new();
-        let report = initialize_schema(&mock).await.expect("should succeed");
+        let report = init_schema(&mock).await.expect("should succeed");
 
-        // 30 constraints + 1 fulltext index + 1 regular index
+        // 29 constraints + 13 regular indexes
         assert_eq!(report.constraints_created, 29);
-        assert_eq!(report.indexes_created, 2);
+        assert_eq!(report.indexes_created, 13);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 31); // 29 constraints + 2 indexes
+        assert_eq!(write_calls.len(), 42); // 29 constraints + 13 indexes
         assert!(write_calls[0].contains("method_id_unique"));
         assert!(write_calls[28].contains("analysis_id_unique"));
-        assert!(write_calls[29].contains("FULLTEXT INDEX"));
     }
 
     #[tokio::test]
     async fn init_schema_is_idempotent_via_if_not_exists() {
         let mock = MockGraphRepo::new();
         // First call
-        initialize_schema(&mock).await.unwrap();
+        init_schema(&mock).await.unwrap();
         // Second call — all statements have IF NOT EXISTS, so should succeed
-        let report2 = initialize_schema(&mock).await.unwrap();
+        let report2 = init_schema(&mock).await.unwrap();
         assert_eq!(report2.constraints_created, 29);
-        assert_eq!(report2.indexes_created, 2);
+        assert_eq!(report2.indexes_created, 13);
     }
 
     #[tokio::test]
-    async fn clean_all_data_deletes_everything() {
+    async fn clean_all_deletes_everything() {
         let mock = MockGraphRepo::new();
-        let report = clean_all_data(&mock).await.expect("should succeed");
+        let report = clean_all(&mock).await.expect("should succeed");
 
         // Nodes/relationships were 0 (mock returns 0)
         assert_eq!(report.nodes_deleted, 0);

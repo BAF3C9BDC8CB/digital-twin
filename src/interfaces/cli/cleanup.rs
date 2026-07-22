@@ -2,7 +2,7 @@
 //!
 //! Provides:
 //! - `dt schema init`    — idempotent schema initialization (constraints + indexes)
-//! - `dt clean --confirm` — wipe all data across Neo4j, Qdrant, and SQLite
+//! - `dt clean --confirm` — wipe all data across Memgraph, Qdrant, and SQLite
 //! - `dt cleanup --targets reasoning` — clean stale Reasoning nodes (Observation/Analysis/Decision)
 //! - `dt cleanup --targets memory`    — archive Memory events beyond retention
 //! - `dt cleanup --targets snapshots` — remove orphaned SQLite snapshot rows
@@ -11,8 +11,8 @@
 
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::HealthStatus;
-use crate::infrastructure::neo4j::schema::{clean_all_data, initialize_schema};
-use crate::infrastructure::neo4j::{CleanReport, SchemaInitReport};
+use crate::infrastructure::memgraph::schema::{clean_all, init_schema};
+use crate::infrastructure::memgraph::{CleanReport, SchemaInitReport};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -20,16 +20,16 @@ use std::time::Instant;
 // dt schema init
 // ---------------------------------------------------------------------------
 
-/// Run `dt schema init` — creates all constraints and indexes via Neo4j.
+/// Run `dt schema init` — creates all constraints and indexes via Memgraph.
 ///
 /// When `graph` is `None`, falls back to `NoopGraphRepo` (no-op, for testing).
 pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
     println!("Initializing V2 schema...");
     let report: SchemaInitReport = if let Some(g) = graph {
-        initialize_schema(g).await?
+        init_schema(g).await?
     } else {
-        let noop = crate::infrastructure::neo4j::NoopGraphRepo;
-        initialize_schema(&noop).await?
+        let noop = crate::infrastructure::memgraph::NoopGraphRepo;
+        init_schema(&noop).await?
     };
 
     println!();
@@ -48,11 +48,11 @@ pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Res
 /// Run `dt clean --confirm` — wipe all data from all backends.
 ///
 /// Without `--confirm`, prints a warning and exits without making changes.
-/// With `--confirm`, proceeds to clean Neo4j, Qdrant, and SQLite.
+/// With `--confirm`, proceeds to clean Memgraph, Qdrant, and SQLite.
 pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
     if !confirm {
         eprintln!("DANGER: `dt clean` will delete ALL data from:");
-        eprintln!("  - Neo4j:  all nodes and relationships");
+        eprintln!("  - Memgraph:  all nodes and relationships");
         eprintln!("  - Qdrant: all vector collections");
         eprintln!("  - SQLite: all file snapshots");
         eprintln!();
@@ -66,24 +66,24 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     println!("Cleaning all data...");
     println!();
 
-    // --- Neo4j ---
-    let neo4j_report: CleanReport = if let Some(g) = graph {
-        clean_all_data(g).await?
+    // --- Memgraph ---
+    let memgraph_report: CleanReport = if let Some(g) = graph {
+        clean_all(g).await?
     } else {
-        let noop = crate::infrastructure::neo4j::NoopGraphRepo;
-        clean_all_data(&noop).await?
+        let noop = crate::infrastructure::memgraph::NoopGraphRepo;
+        clean_all(&noop).await?
     };
 
-    println!("Neo4j:");
+    println!("Memgraph:");
     println!(
         "  Nodes deleted         : {}",
-        neo4j_report.nodes_deleted
+        memgraph_report.nodes_deleted
     );
     println!(
         "  Relationships deleted : {}",
-        neo4j_report.relationships_deleted
+        memgraph_report.relationships_deleted
     );
-    println!("  Elapsed               : {} ms", neo4j_report.elapsed_ms);
+    println!("  Elapsed               : {} ms", memgraph_report.elapsed_ms);
 
     // --- Qdrant ---
     // NoopVectorRepo does not expose collection-management methods; in the
@@ -113,8 +113,8 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     let total_elapsed = total_start.elapsed().as_millis() as u64;
 
     let combined = CleanReport {
-        nodes_deleted: neo4j_report.nodes_deleted,
-        relationships_deleted: neo4j_report.relationships_deleted,
+        nodes_deleted: memgraph_report.nodes_deleted,
+        relationships_deleted: memgraph_report.relationships_deleted,
         qdrant_collections_removed: qdrant_removed,
         snapshots_cleared,
         reasoning_stale_deleted: 0,
@@ -184,7 +184,7 @@ macro_rules! check_health {
 
 /// Run `dt health` — check health of all backend services.
 ///
-/// Contacts Neo4j, Qdrant, SQLite, and dt-embed, reporting each service's
+/// Contacts Memgraph, Qdrant, SQLite, and dt-embed, reporting each service's
 /// availability and latency.
 ///
 /// When a service is `None`, reports it as "no backend configured".
@@ -199,11 +199,11 @@ pub async fn run_health(
 
     let mut all_healthy = true;
 
-    // --- Neo4j ---
+    // --- Memgraph ---
     let (healthy, detail) = if let Some(g) = graph {
-        check_health!("Neo4j", g)
+        check_health!("Memgraph", g)
     } else {
-        (false, "  ❌ Neo4j    : no backend configured".to_string())
+        (false, "  ❌ Memgraph : no backend configured".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -348,7 +348,7 @@ fn extract_count(value: &serde_json::Value, field: &str) -> usize {
 ///
 /// Supports both `--dry-run` (preview only) and `--execute` modes.
 pub async fn run_clean_reasoning(dry_run: bool) -> anyhow::Result<()> {
-    let graph = crate::infrastructure::neo4j::NoopGraphRepo;
+    let graph = crate::infrastructure::memgraph::NoopGraphRepo;
 
     if dry_run {
         println!("=== dt cleanup --targets reasoning (dry-run) ===");
@@ -387,10 +387,10 @@ pub async fn run_clean_reasoning(dry_run: bool) -> anyhow::Result<()> {
 /// - Modification, Deployment, ConfigChange, BugFix, Decision, PodEvent, Conversation
 ///
 /// When `dry_run` is true, counts archivable events without modifying data.
-/// When `dry_run` is false, archives and deletes them from Neo4j.
+/// When `dry_run` is false, archives and deletes them from the graph database.
 pub async fn run_cleanup_memory(dry_run: bool) -> anyhow::Result<CleanReport> {
     let start = Instant::now();
-    let graph = crate::infrastructure::neo4j::NoopGraphRepo;
+    let graph = crate::infrastructure::memgraph::NoopGraphRepo;
     let empty_params = HashMap::new();
 
     if dry_run {
@@ -402,7 +402,7 @@ pub async fn run_cleanup_memory(dry_run: bool) -> anyhow::Result<CleanReport> {
     }
 
     // Count archivable Memory events (older than 365 days)
-    // In production this would query Neo4j for events with timestamp criteria
+    // In production this would query Memgraph for events with timestamp criteria
     let count_query = r#"
         MATCH (e:Event)
         WHERE (e:Modification OR e:Deployment OR e:ConfigChange
@@ -571,7 +571,7 @@ pub async fn run_cleanup_all(dry_run: bool) -> anyhow::Result<CleanReport> {
 
 /// Inner version that returns CleanReport for composition (used by run_cleanup_all).
 async fn run_cleanup_reasoning_inner(dry_run: bool) -> anyhow::Result<CleanReport> {
-    let graph = crate::infrastructure::neo4j::NoopGraphRepo;
+    let graph = crate::infrastructure::memgraph::NoopGraphRepo;
     clean_reasoning_stale(&graph, dry_run).await
 }
 

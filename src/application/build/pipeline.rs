@@ -380,7 +380,7 @@ impl PipelineTemplate {
         })
     }
 
-    /// Write methods, classes, modules, and CONTAINS relationships to Neo4j.
+    /// Write methods, classes, modules, and CONTAINS relationships to the graph database.
     async fn write_graph(
         &self,
         graph: &dyn GraphRepository,
@@ -527,7 +527,7 @@ impl PipelineTemplate {
         Ok(())
     }
 
-    /// Write @knowledge annotations as Concept and Knowledge nodes to Neo4j.
+    /// Write @knowledge annotations as Concept and Knowledge nodes to the graph database.
     async fn write_knowledge_annotations(
         &self,
         graph: &dyn GraphRepository,
@@ -811,7 +811,7 @@ async fn delete_files_from_graph(
 // ---------------------------------------------------------------------------
 
 impl PipelineTemplate {
-    /// Process document files: parse, chunk, embed, and write to Neo4j.
+    /// Process document files: parse, chunk, embed, and write to the graph database.
     ///
     /// Returns the number of documents successfully written.
     async fn process_documents(
@@ -923,7 +923,7 @@ impl PipelineTemplate {
                 modified: parsed.modified,
             };
 
-            // Write to Neo4j
+            // Write to Memgraph
             if let Some(graph) = graph {
                 self.write_document_to_graph(graph, &doc_item).await;
                 for chunk in &chunks {
@@ -956,7 +956,7 @@ impl PipelineTemplate {
         Ok(written)
     }
 
-    /// Write a single Document node to Neo4j.
+    /// Write a single Document node to the graph database.
     async fn write_document_to_graph(
         &self,
         graph: &dyn GraphRepository,
@@ -1000,7 +1000,7 @@ impl PipelineTemplate {
             .await;
     }
 
-    /// Write a single chunk node to Neo4j, linked to its parent Document.
+    /// Write a single chunk node to the graph database, linked to its parent Document.
     async fn write_chunk_to_graph(
         &self,
         graph: &dyn GraphRepository,

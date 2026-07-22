@@ -1,7 +1,7 @@
 //! Batch-accumulating async sync worker for KG → Qdrant.
 //!
 //! Collects individual sync requests (label + key + value), fetches
-//! nodes from Neo4j, and delegates embedding to the global
+//! nodes from the graph database, and delegates embedding to the global
 //! [`VectorQueue`](super::queue::VectorQueue) for priority-aware GPU
 //! scheduling.
 //!
@@ -42,7 +42,7 @@ struct SyncItem {
 
 /// Collects KG nodes for background sync.
 ///
-/// Fetches nodes from Neo4j and passes them to `KgBridge::process_batch`,
+/// Fetches nodes from the graph database and passes them to `KgBridge::process_batch`,
 /// which embeds via the global VectorQueue (LOW priority) and upserts to
 /// Qdrant.
 pub struct SyncAccumulator {
@@ -124,7 +124,7 @@ impl SyncAccumulator {
     }
 }
 
-/// Fetch nodes from Neo4j, then delegate to KgBridge for embed+upsert.
+/// Fetch nodes from the graph database, then delegate to KgBridge for embed+upsert.
 async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
     if buffer.is_empty() {
         return;

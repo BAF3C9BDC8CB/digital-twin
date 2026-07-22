@@ -4,12 +4,12 @@
 //!
 //! | World     | Source      | Query Type                     |
 //! |-----------|-------------|--------------------------------|
-//! | Reality   | Neo4j       | Cypher for code/services/config|
-//! | Knowledge | Neo4j       | Cypher for concepts/patterns   |
-//! | Memory    | Neo4j       | Cypher for events/experiences  |
+//! | Reality   | Qdrant      | Vector search for code/services|
+//! | Knowledge | Memgraph    | Cypher for concepts/patterns   |
+//! | Memory    | Memgraph    | Cypher for events/experiences  |
 //! | Semantic  | Qdrant      | Vector search                  |
 //! | Runtime   | K8s API     | Placeholder (real-time)        |
-//! | Reasoning | Neo4j       | Cypher for past analyses       |
+//! | Reasoning | Memgraph    | Cypher for past analyses       |
 
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -32,7 +32,7 @@ pub const WORLDS: [&str; 6] = [
 
 /// Retrieves initial results from all enabled knowledge worlds in parallel.
 pub struct RetrieverStage {
-    /// Neo4j graph repository for Cypher queries.
+    /// Graph repository for Cypher queries.
     graph: Option<Arc<dyn GraphRepository>>,
     /// Qdrant vector repository for semantic search.
     vector: Option<Arc<dyn VectorRepository>>,
@@ -89,7 +89,7 @@ impl ContextStage for RetrieverStage {
             &state.task[..state.task.len().min(80)]
         );
 
-        // Query worlds sequentially — neo4rs connection pool does not work
+        // Query worlds sequentially — Bolt connection pool does not work
         // correctly across tokio::spawn boundaries (BoltType params are
         // silently dropped), so we avoid parallel spawning.
         for world in enabled_worlds {
@@ -140,7 +140,7 @@ async fn query_world(
     embed: Option<&dyn EmbedService>,
 ) -> Result<Vec<WorldItem>, DtError> {
     match world {
-        "reality" => query_reality(graph, task).await,
+        "reality" => query_reality(graph, vector, embed, task).await,
         "knowledge" => query_knowledge(graph, task).await,
         "memory" => query_memory(graph, task).await,
         "semantic" => query_semantic(vector, embed, task).await,
@@ -154,32 +154,57 @@ async fn query_world(
 
 async fn query_reality(
     graph: Option<&dyn GraphRepository>,
+    vector: Option<&dyn VectorRepository>,
+    embed: Option<&dyn EmbedService>,
     task: &str,
 ) -> Result<Vec<WorldItem>, DtError> {
-    let Some(graph) = graph else {
+    let (Some(vector), Some(embed)) = (vector, embed) else {
         return Ok(Vec::new());
     };
 
-    // Search for related Methods, Classes, Services, Configs in Neo4j
-    let cypher = r#"
-        CALL db.index.fulltext.queryNodes("infra_search", $task)
-        YIELD node, score
-        WHERE score > 0.3
-        RETURN node.name AS name,
-               labels(node)[0] AS type,
-               node.description AS description,
-               node.source_file AS source_file,
-               node.service_type AS service_type,
-               score
-        ORDER BY score DESC
-        LIMIT 30
-    "#;
+    // Generate embedding for the task text
+    let embeddings = embed.embed_batch(&[task.to_string()]).await?;
+    let Some(query_vector) = embeddings.into_iter().next() else {
+        return Ok(Vec::new());
+    };
 
-    let mut params = std::collections::HashMap::new();
-    params.insert("task".to_string(), serde_json::Value::String(task.to_string()));
+    // Search Qdrant for semantically similar code/infra entities
+    let results = vector.search("kg_nodes", query_vector, 30).await?;
 
-    let result = graph.read_query(cypher, params).await?;
-    let items = parse_neo4j_search_results(&result, "reality");
+    let items: Vec<WorldItem> = results
+        .into_iter()
+        .filter(|hit| {
+            let labels = hit["payload"]["labels"].as_array();
+            labels.map_or(true, |l| {
+                l.iter().any(|v| {
+                    v.as_str().map_or(false, |s| {
+                        matches!(s, "Method" | "Class" | "Module" | "Server" | "Database"
+                            | "K8sDeployment" | "K8sService" | "Service" | "ServiceInstance"
+                            | "NacosConfig" | "Endpoint" | "ConfigKey")
+                    })
+                })
+            })
+        })
+        .map(|hit| {
+            let id = hit["id"].as_str().unwrap_or("?").to_string();
+            let payload = &hit["payload"];
+            let name = payload["name"].as_str().unwrap_or("?").to_string();
+            let desc = payload["description"].as_str().unwrap_or("").to_string();
+            let labels = payload["labels"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string();
+            let score = hit["score"].as_f64().unwrap_or(0.0);
+
+            WorldItem::new(&id, name, desc)
+                .with_score(score)
+                .with_source("reality")
+                .with_type(labels)
+        })
+        .collect();
+
     Ok(items)
 }
 
@@ -231,7 +256,7 @@ async fn query_knowledge(
     );
 
     let result = graph.read_query(cypher, params).await?;
-    Ok(parse_neo4j_search_results(&result, "knowledge"))
+    Ok(parse_graph_search_results(&result, "knowledge"))
 }
 
 // ── Memory World — events, experiences, lessons ─────────────────────────────
@@ -277,7 +302,7 @@ async fn query_memory(
     );
 
     let result = graph.read_query(cypher, params).await?;
-    Ok(parse_neo4j_search_results(&result, "memory"))
+    Ok(parse_graph_search_results(&result, "memory"))
 }
 
 // ── Semantic World — vector search via Qdrant ───────────────────────────────
@@ -372,14 +397,14 @@ async fn query_reasoning(
     "#;
 
     let result = graph.read_query(cypher, params).await?;
-    Ok(parse_neo4j_search_results(&result, "reasoning"))
+    Ok(parse_graph_search_results(&result, "reasoning"))
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Split a task string into simple keyword tokens for Neo4j CONTAINS matching.
+/// Split a task string into simple keyword tokens for CONTAINS matching.
 fn tokenize(text: &str) -> Vec<String> {
     text.split_whitespace()
         .filter(|w| w.len() > 2)
@@ -389,11 +414,11 @@ fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Parse Neo4j fulltext / MATCH query results into `WorldItem`s.
+/// Parse graph fulltext / MATCH query results into `WorldItem`s.
 ///
 /// Expected row shape: `[name, type, description, ...]`
-fn parse_neo4j_search_results(raw: &serde_json::Value, world: &str) -> Vec<WorldItem> {
-    // neo4rs returns a flat JSON array of objects, e.g.:
+fn parse_graph_search_results(raw: &serde_json::Value, world: &str) -> Vec<WorldItem> {
+    // Bolt driver returns a flat JSON array of objects, e.g.:
     // [{"name": "DaoBase", "type": "Class", "description": "", "score": 4.1}, ...]
     let rows = raw.as_array();
     let Some(rows) = rows else {
@@ -476,19 +501,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_neo4j_search_results_empty() {
+    fn parse_graph_search_results_empty() {
         let raw = serde_json::json!([]);
-        let items = parse_neo4j_search_results(&raw, "reality");
+        let items = parse_graph_search_results(&raw, "reality");
         assert!(items.is_empty());
     }
 
     #[test]
-    fn parse_neo4j_search_results_with_data() {
+    fn parse_graph_search_results_with_data() {
         let raw = serde_json::json!([
             {"name": "PaymentService", "type": "Service", "description": "Handles payments", "source_file": "payment-svc.java", "score": 0.95},
             {"name": "UserDB", "type": "Database", "description": "User database", "score": 0.82}
         ]);
-        let items = parse_neo4j_search_results(&raw, "reality");
+        let items = parse_graph_search_results(&raw, "reality");
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].label, "PaymentService");
         assert_eq!(items[0].entity_type, "Service");

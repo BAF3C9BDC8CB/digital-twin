@@ -66,9 +66,9 @@ const DEFAULT_RETENTION_DAYS: i64 = 365;
 ///
 /// Archives Memory World events older than the given date.
 /// In production, this would:
-/// 1. Query Neo4j for events with `timestamp < before_date - 365d`
+/// 1. Query Memgraph for events with `timestamp < before_date - 365d`
 /// 2. Export them as a gzipped JSON file
-/// 3. Delete the archived events from Neo4j (DETACH DELETE)
+/// 3. Delete the archived events from Memgraph (DETACH DELETE)
 /// 4. Return an ArchiveReport
 ///
 /// When `dry_run` is true, counts but does not modify data.
@@ -140,7 +140,7 @@ pub async fn run_archive(before: Option<&str>, dry_run: bool) -> anyhow::Result<
         "type": "memory_archive",
         "archived_at": chrono::Utc::now().to_rfc3339(),
         "events_count": events_to_archive,
-        "note": "Placeholder — actual archive will be produced when Neo4j client is wired",
+        "note": "Placeholder — actual archive will be produced when Memgraph client is wired",
         "events": []
     });
 
@@ -227,7 +227,7 @@ pub async fn list_archives() -> anyhow::Result<Vec<ArchiveEntry>> {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder helpers (real implementations when Neo4j wired)
+// Placeholder helpers (real implementations when Memgraph wired)
 // ---------------------------------------------------------------------------
 
 /// Count events that would be archived (older than retention period).
@@ -239,13 +239,13 @@ pub async fn list_archives() -> anyhow::Result<Vec<ArchiveEntry>> {
 /// RETURN count(e) AS count
 /// ```
 async fn count_archivable_events(_before_date: &str) -> anyhow::Result<usize> {
-    // Placeholder: return 0 until Neo4j is wired
+    // Placeholder: return 0 until Memgraph is wired
     Ok(0)
 }
 
 /// Count events that are not yet due for archival.
 async fn count_remaining_events(_before_date: &str) -> anyhow::Result<usize> {
-    // Placeholder: return 0 until Neo4j is wired
+    // Placeholder: return 0 until Memgraph is wired
     Ok(0)
 }
 

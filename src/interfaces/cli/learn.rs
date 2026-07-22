@@ -31,13 +31,13 @@ pub async fn handle_learn(
         pitfalls,
     );
 
-    // Connect to Neo4j for real persistence (fallback to noop if unavailable).
+    // Connect to Memgraph for real persistence (fallback to noop if unavailable).
     // Both branches produce Arc<dyn GraphRepository>, so DefaultKnowledgeService is concrete.
     let graph_for_knowledge: Arc<dyn GraphRepository> = match graph {
         Some(g) => g,
         None => {
-            tracing::warn!("Neo4j unavailable — using noop for learn");
-            Arc::new(crate::infrastructure::neo4j::NoopGraphRepo)
+            tracing::warn!("Memgraph unavailable — using noop for learn");
+            Arc::new(crate::infrastructure::memgraph::NoopGraphRepo)
         }
     };
     let knowledge_svc = Arc::new(DefaultKnowledgeService::new(graph_for_knowledge));

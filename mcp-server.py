@@ -265,7 +265,7 @@ async def list_tools():
         # ===== 搜索 =====
         Tool(
             name="dt_search_kg",
-            description="向量语义搜索知识图谱节点(无需写Cypher)。返回匹配的KG节点及其elementId。拿到elementId后用neo4j_read_cypher精确取完整属性。",
+            description="向量语义搜索知识图谱节点(无需写Cypher)。返回匹配的KG节点及其elementId。拿到elementId后可通过Cypher查询精确取完整属性。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -668,7 +668,7 @@ async def list_tools():
         # ===== 运维 =====
         Tool(
             name="dt_health",
-            description="检查所有后端服务健康状态(Neo4j/Embed/Qdrant/KG Bridge/Fulltext)",
+            description="检查所有后端服务健康状态(Memgraph/Embed/Qdrant/KG Bridge/Fulltext)",
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
         Tool(
@@ -689,7 +689,7 @@ async def list_tools():
         ),
         Tool(
             name="dt_backup",
-            description="系统备份：分级备份 Neo4j/Qdrant/SQLite。支持 backup/restore/list/verify 四种操作。",
+            description="系统备份：分级备份 Memgraph/Qdrant/SQLite。支持 backup/restore/list/verify 四种操作。",
             inputSchema={
                 "type": "object",
                 "properties": {

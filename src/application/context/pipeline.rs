@@ -81,7 +81,7 @@ impl ContextPipeline {
     }
 
     /// Replace the built-in RetrieverStage with a custom one (e.g. wired to
-    /// real Neo4j / Qdrant backends).  The new stage is placed at index 0.
+    /// real Memgraph / Qdrant backends).  The new stage is placed at index 0.
     ///
     /// This is the preferred way to inject live backends without changing the
     /// rest of the pipeline.
