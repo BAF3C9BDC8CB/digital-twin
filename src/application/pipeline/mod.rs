@@ -41,6 +41,7 @@ pub mod processor;
 pub mod processors;
 pub mod prompt;
 pub mod registry;
+pub mod test;
 
 pub use config::PipelineConfig;
 pub use context::PipelineContext;

@@ -193,6 +193,7 @@ enum Commands {
     /// `dt build --name <name>` — build a project by name in config.yaml.
     /// `dt build --file <file>` — single file incremental update.
     /// `dt build --full` — full rebuild (can combine with --path/--name/--file).
+    /// `dt build --test` — run self-contained pipeline integration test.
     Build {
         /// Project root path.
         #[arg(long = "path")]
@@ -213,6 +214,17 @@ enum Commands {
         /// Skip pipeline analysis after build (enabled by default).
         #[arg(long = "no-pipeline")]
         no_pipeline: bool,
+
+        /// Run the self-contained pipeline integration test.
+        ///
+        /// Creates test- prefixed nodes and collections, verifies
+        /// every entity type, then cleans up (unless --keep is set).
+        #[arg(long = "test")]
+        test: bool,
+
+        /// Preserve test data after --test run (for debugging).
+        #[arg(long = "keep")]
+        keep: bool,
     },
 
     /// Semantic code search across worlds.
@@ -1274,7 +1286,65 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full, no_pipeline }) => {
+        Some(Commands::Build { path, name, file, full, no_pipeline, test, keep }) => {
+            // ── dt build --test: run self-contained pipeline integration test ──
+            if test {
+                tracing::info!("dt build --test: starting pipeline integration test");
+
+                let memgraph = connect_memgraph().await;
+                let qdrant = connect_vector().await;
+                let embed = connect_embed().await;
+
+                let graph: Arc<dyn GraphRepository> = memgraph
+                    .map(|c| Arc::new(c) as Arc<dyn GraphRepository>)
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Memgraph unavailable, using NoopGraphRepo");
+                        Arc::new(
+                            dt_daemon::infrastructure::memgraph::NoopGraphRepo,
+                        ) as Arc<dyn GraphRepository>
+                    });
+
+                let vector: Arc<dyn VectorRepository> = qdrant
+                    .map(|c| c)
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Qdrant unavailable, using NoopVectorRepo");
+                        Arc::new(
+                            dt_daemon::infrastructure::qdrant::NoopVectorRepo,
+                        ) as Arc<dyn VectorRepository>
+                    });
+
+                let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
+                    tracing::warn!("dt-embed unavailable, using NoopEmbedService");
+                    Arc::new(
+                        dt_daemon::infrastructure::embedder::NoopEmbedService::default(),
+                    ) as Arc<dyn EmbedService>
+                });
+
+                // Determine project root.
+                let project_root = if let Some(ref p) = path {
+                    p.clone()
+                } else {
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| PathBuf::from("/data/myProject/digital-twin-v2"))
+                };
+
+                let runner = dt_daemon::application::pipeline::test::TestRunner::new(
+                    graph,
+                    vector,
+                    embed,
+                    project_root,
+                    keep,
+                );
+
+                let report = runner.run().await;
+                report.print();
+
+                if report.failed > 0 {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+
             // No args at all → build all projects from config.yaml
             if path.is_none() && name.is_none() && file.is_none() {
                 let memgraph = connect_memgraph().await;
