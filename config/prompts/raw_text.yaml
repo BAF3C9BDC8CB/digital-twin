@@ -1,0 +1,9 @@
+name: raw_text
+description: "Raw text analysis without prior processing"
+system: "You are a document analysis assistant. Return JSON only."
+prompt: |
+  File: ${file_path}
+
+  ${file_text}
+
+  Extract: entities, relations, summary, tags

@@ -1,0 +1,13 @@
+name: document_with_nlp
+description: "Document analysis with HanLP NLP results"
+system: "You are a document analysis assistant. Return JSON only."
+prompt: |
+  File: ${file_path}
+
+  NLP entities: ${hanlp.entities}
+  Keywords: ${hanlp.keywords}
+
+  Document text:
+  ${file_text}
+
+  Extract: entities, relations, summary, tags, category

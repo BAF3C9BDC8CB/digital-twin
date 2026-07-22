@@ -1,0 +1,212 @@
+//! Tree-sitter AST processor — wraps [`ParserRegistry`] to extract code
+//! entities (classes, methods, fields) from source files.
+//!
+//! Produces a [`ProcessorOutput`] with three keys:
+//! - `"entities"`   — JSON object containing `classes` and `methods` arrays
+//! - `"annotations"` — `@knowledge` annotation entries extracted from
+//!   comments
+//! - `"imports"`    — list of import/use statements (bare structure, may be
+//!   empty for languages without a full import-tree extractor)
+
+use async_trait::async_trait;
+use std::path::Path;
+use std::sync::Arc;
+
+use crate::application::pipeline::context::PipelineContext;
+use crate::application::pipeline::output::ProcessorOutput;
+use crate::application::pipeline::processor::Processor;
+use crate::domain::error::DtError;
+use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::parser::extract_knowledge_annotations;
+
+/// AST‑based code parser using tree‑sitter grammars.
+///
+/// This processor handles source code file extensions (.java, .py, .rs,
+/// .go, .ts, .tsx, .js, .jsx, .php) and uses the shared
+/// `ParserRegistry` to produce structured entity data.
+pub struct TreeSitterProcessor {
+    registry: Arc<ParserRegistry>,
+}
+
+impl TreeSitterProcessor {
+    /// Create a new processor wrapping the given parser registry.
+    pub fn new(registry: Arc<ParserRegistry>) -> Self {
+        Self { registry }
+    }
+}
+
+#[async_trait]
+impl Processor for TreeSitterProcessor {
+    fn name(&self) -> &str {
+        "tree_sitter"
+    }
+
+    fn priority(&self) -> i32 {
+        100
+    }
+
+    fn matches(&self, file_path: &Path) -> bool {
+        matches!(
+            file_path.extension().and_then(|e| e.to_str()),
+            Some("java" | "py" | "rs" | "go" | "ts" | "tsx" | "js" | "jsx" | "php")
+        )
+    }
+
+    async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
+        let mut output = ProcessorOutput::new();
+
+        // Parse the file using the registry.
+        let parse_result = self
+            .registry
+            .parse_file(&ctx.file_text, &ctx.file_path, &ctx.project_name)?;
+
+        // Store entities as a JSON object with "classes" and "methods".
+        let entities = serde_json::json!({
+            "classes": parse_result.classes.iter().map(|c| {
+                serde_json::json!({
+                    "id": c.class_id,
+                    "name": c.name,
+                    "kind": c.kind.as_str(),
+                    "file_path": c.file_path,
+                    "package": c.package_or_module,
+                    "start_line": c.start_line,
+                    "end_line": c.end_line,
+                })
+            }).collect::<Vec<_>>(),
+            "methods": parse_result.methods.iter().map(|m| {
+                serde_json::json!({
+                    "id": m.method_id,
+                    "name": m.name,
+                    "signature": m.signature,
+                    "params": m.params,
+                    "return_type": m.return_type,
+                    "class_name": m.class_name,
+                    "file_path": m.file_path,
+                    "package": m.package_or_module,
+                    "language": m.language,
+                    "start_line": m.start_line,
+                    "end_line": m.end_line,
+                    "calls": m.calls,
+                    "comment": m.comment,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        output.set("entities", entities);
+
+        // Extract @knowledge annotations from comments.
+        let raw_annotations = extract_knowledge_annotations(
+            &ctx.file_text,
+            &ctx.file_path.to_string_lossy(),
+            &ctx.project_name,
+        );
+        let annotations: Vec<serde_json::Value> = raw_annotations
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "domain": a.domain,
+                    "concept": a.concept,
+                    "definition": a.definition,
+                    "pitfall": a.pitfall,
+                    "experience": a.experience,
+                    "line_number": a.line_number,
+                    "file_path": a.file_path,
+                    "description": a.description,
+                })
+            })
+            .collect();
+        output.set("annotations", annotations);
+
+        // Basic import extraction — collect unique package/module paths from
+        // the parsed classes as a simple list.
+        let import_paths: Vec<String> = {
+            let mut paths: Vec<String> = parse_result
+                .classes
+                .iter()
+                .map(|c| c.package_or_module.clone())
+                .filter(|p| !p.is_empty())
+                .collect();
+            paths.sort();
+            paths.dedup();
+            paths
+        };
+        output.set("imports", import_paths);
+
+        // Also store the raw method count and class count for easy reference.
+        output.set("method_count", parse_result.methods.len());
+        output.set("class_count", parse_result.classes.len());
+
+        Ok(output)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_context(file_name: &str, text: &str) -> PipelineContext {
+        PipelineContext::new(
+            PathBuf::from(file_name),
+            text.to_string(),
+            "test_project".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn matches_code_extensions() {
+        let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
+        assert!(processor.matches(Path::new("main.rs")));
+        assert!(processor.matches(Path::new("Main.java")));
+        assert!(processor.matches(Path::new("app.py")));
+        assert!(processor.matches(Path::new("server.go")));
+        assert!(processor.matches(Path::new("component.ts")));
+        assert!(processor.matches(Path::new("component.tsx")));
+        assert!(processor.matches(Path::new("app.js")));
+        assert!(processor.matches(Path::new("app.jsx")));
+        assert!(processor.matches(Path::new("index.php")));
+        assert!(!processor.matches(Path::new("README.md")));
+        assert!(!processor.matches(Path::new("config.yaml")));
+    }
+
+    #[tokio::test]
+    async fn executes_rust_file() {
+        let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
+        let ctx = make_context("lib.rs", "fn greet() -> &'static str { \"hello\" }");
+        let result = processor.execute(&ctx).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.get("entities").is_some());
+        assert!(output.get("annotations").is_some());
+        assert!(output.get("imports").is_some());
+    }
+
+    #[tokio::test]
+    async fn executes_java_file() {
+        let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
+        let ctx = make_context("Foo.java", "class Foo { }");
+        let result = processor.execute(&ctx).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.get("entities").is_some());
+        assert!(output.get("class_count").is_some());
+    }
+
+    #[tokio::test]
+    async fn rejects_unsupported_file() {
+        let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
+        let ctx = make_context("readme.md", "# Hello");
+        let result = processor.execute(&ctx).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn name_and_priority() {
+        let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
+        assert_eq!(processor.name(), "tree_sitter");
+        assert_eq!(processor.priority(), 100);
+    }
+}

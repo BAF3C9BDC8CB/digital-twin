@@ -1,0 +1,13 @@
+name: code_with_ast
+description: "Code analysis with AST results"
+system: "You are a code analysis assistant. Return JSON only."
+prompt: |
+  File: ${file_path}
+
+  AST entities: ${tree_sitter.entities}
+  Annotations: ${tree_sitter.annotations}
+
+  Source code:
+  ${file_text}
+
+  Analyze and return JSON with: entities, relations, summary, service_role

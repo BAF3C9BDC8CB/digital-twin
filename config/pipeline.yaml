@@ -1,0 +1,39 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Pipeline Configuration — Digital Twin v2
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# This file controls the behaviour of the build pipeline and its various
+# processors.  All fields are optional — missing values fall back to the
+# defaults in `PipelineConfig::default()`.
+
+# ── Master switch ──────────────────────────────────────────────────────────
+# When false, the entire pipeline is skipped.
+enabled: true
+
+# ── Inference server (dt-inference-server, Python) ─────────────────────────
+inference_server:
+  url: "http://localhost:50052"
+  # gRPC URL is optional — only set when the inference server exposes one.
+  # grpc_url: "http://localhost:50051"
+  max_concurrent: 16
+
+# ── Per-processor feature flags ────────────────────────────────────────────
+processors:
+  tree_sitter: true    # AST parsing
+  hanlp: true          # Chinese NLP (HanLP)
+  llm: true            # LLM‑based analysis
+  chunk: true          # Text chunking / splitting
+  extract_text: true   # Raw text extraction
+  ocr: false           # OCR (off by default)
+  store: true          # Graph + vector storage
+
+# ── LLM inference presets ──────────────────────────────────────────────────
+llm:
+  temperature: 0.1     # Low = more deterministic
+  max_tokens: 4096     # Max tokens per response
+
+# ── Ecosystem mode (optional) ──────────────────────────────────────────────
+# When enabled, the pipeline processes all registered projects in one batch.
+# ecosystem:
+#   enabled: false
+#   projects: []
