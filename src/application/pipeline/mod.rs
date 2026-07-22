@@ -44,7 +44,7 @@ pub mod registry;
 
 pub use config::PipelineConfig;
 pub use context::PipelineContext;
-pub use engine::ProcessorEngine;
+pub use engine::{EcosystemAnalysis, ProcessorEngine, ProjectAnalysis, ServiceDependency};
 pub use infer_client::InferClient;
 pub use output::ProcessorOutput;
 pub use processor::Processor;

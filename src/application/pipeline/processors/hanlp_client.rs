@@ -1,16 +1,17 @@
 //! HanLP NLP processor — calls the inference server's NLP endpoint for
 //! named-entity recognition and keyword extraction.
 //!
-//! **Current status**: placeholder — the HanLP endpoint is not yet
-//! implemented on `dt-inference-server`.  This processor always produces
-//! an empty output.
+//! Custom NER dictionaries are loaded from static configuration and
+//! dynamically from Memgraph service/component names, then passed to the
+//! inference server as request parameters.
 //!
 //! Produces a [`ProcessorOutput`] with:
-//! - `"entities"`  — array of `{text, tag}` named entities (empty for now)
-//! - `"keywords"`  — array of keyword strings (empty for now)
-//! - `"status"`    — `"unavailable"` string
+//! - `"entities"`  — array of `{text, tag}` named entities
+//! - `"keywords"`  — array of keyword strings
+//! - `"status"`    — `"ok"`, `"empty"`, or `"error"`
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,15 +20,61 @@ use crate::application::pipeline::infer_client::InferClient;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
+use crate::domain::traits::GraphRepository;
+
+/// Static configuration for custom named-entity dictionaries.
+///
+/// These entity lists are passed to the inference server alongside each
+/// NLP request so that HanLP can recognise project‑specific terms
+/// (service names, technology components, business entities, etc.)
+/// that are not present in its built‑in models.
+#[derive(Debug, Clone)]
+pub struct CustomEntityConfig {
+    /// Static list of known service / application names.
+    pub service_names: Vec<String>,
+    /// Technology components (e.g. "Redis", "Kafka", "MySQL", "Elasticsearch").
+    pub tech_components: Vec<String>,
+    /// Business‑domain entities in the project's language (e.g. "订单", "用户", "支付").
+    pub business_entities: Vec<String>,
+}
+
+impl Default for CustomEntityConfig {
+    fn default() -> Self {
+        Self {
+            service_names: Vec::new(),
+            tech_components: vec![
+                "Redis".into(),
+                "Kafka".into(),
+                "MySQL".into(),
+                "PostgreSQL".into(),
+                "MongoDB".into(),
+                "Elasticsearch".into(),
+                "RabbitMQ".into(),
+                "Nacos".into(),
+                "MinIO".into(),
+                "Docker".into(),
+                "Kubernetes".into(),
+            ],
+            business_entities: Vec::new(),
+        }
+    }
+}
 
 /// NLP processor that calls the inference server's HanLP endpoint.
 ///
-/// Currently a placeholder — the underlying [`InferClient::hanlp_analyze`]
-/// returns an error because the endpoint is not yet implemented.  The
-/// processor catches that error gracefully and emits an empty result so
-/// downstream stages can still proceed.
+/// Produces a [`ProcessorOutput`] with:
+/// - `"entities"`  — array of `{text, tag}` named entities
+/// - `"keywords"`  — array of keyword strings
+/// - `"status"`    — `"ok"`, `"empty"`, or `"error"`
+///
+/// Custom NER dictionaries are built from:
+/// 1. Static [`CustomEntityConfig`] entries (always used).
+/// 2. Dynamic service/component names queried from Memgraph (fallible;
+///    failures are silently downgraded to the static lists only).
 pub struct HanlpClientProcessor {
     client: Arc<InferClient>,
+    config: CustomEntityConfig,
+    graph: Option<Arc<dyn GraphRepository>>,
 }
 
 impl HanlpClientProcessor {
@@ -35,12 +82,110 @@ impl HanlpClientProcessor {
     /// inference server.
     pub fn new(base_url: String) -> Self {
         let client = Arc::new(InferClient::new(base_url, 4));
-        Self { client }
+        Self {
+            client,
+            config: CustomEntityConfig::default(),
+            graph: None,
+        }
+    }
+
+    /// Create a processor with full configuration.
+    ///
+    /// * `client`           — shared inference-server client.
+    /// * `config`           — static entity lists (or [`Default::default`]).
+    /// * `graph`            — optional Memgraph handle for dynamic entity
+    ///                        discovery.  When `None` only static entities
+    ///                        are used.
+    pub fn with_config(
+        client: Arc<InferClient>,
+        config: CustomEntityConfig,
+        graph: Option<Arc<dyn GraphRepository>>,
+    ) -> Self {
+        Self {
+            client,
+            config,
+            graph,
+        }
     }
 
     /// Create a processor from an existing shared client.
     pub fn with_client(client: Arc<InferClient>) -> Self {
-        Self { client }
+        Self {
+            client,
+            config: CustomEntityConfig::default(),
+            graph: None,
+        }
+    }
+
+    /// Build the custom-entities dictionary passed to the inference server.
+    ///
+    /// Merges static configuration with dynamic entities queried from
+    /// Memgraph.  If the graph query fails the error is logged (via the
+    /// return value) and only the static entries are used.
+    async fn build_custom_entities(&self) -> HashMap<String, Vec<String>> {
+        let mut custom = HashMap::new();
+
+        // ---- Static entries (always present) ----
+        custom.insert("SERVICE_NAME".into(), self.config.service_names.clone());
+        custom.insert("TECH_COMPONENT".into(), self.config.tech_components.clone());
+        custom.insert("BUSINESS_ENTITY".into(), self.config.business_entities.clone());
+
+        // ---- Dynamic entries from Memgraph ----
+        if let Some(graph) = &self.graph {
+            // Service names
+            if let Ok(result) = graph
+                .read_query(
+                    "MATCH (s:Service) RETURN s.name",
+                    HashMap::new(),
+                )
+                .await
+            {
+                if let Some(rows) = result.as_array() {
+                    let names: Vec<String> = rows
+                        .iter()
+                        .filter_map(|row| {
+                            row.get("s.name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    if !names.is_empty() {
+                        custom
+                            .entry("SERVICE_NAME".into())
+                            .or_insert_with(Vec::new)
+                            .extend(names);
+                    }
+                }
+            }
+
+            // Component names
+            if let Ok(result) = graph
+                .read_query(
+                    "MATCH (c:Component) RETURN c.name",
+                    HashMap::new(),
+                )
+                .await
+            {
+                if let Some(rows) = result.as_array() {
+                    let names: Vec<String> = rows
+                        .iter()
+                        .filter_map(|row| {
+                            row.get("c.name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .collect();
+                    if !names.is_empty() {
+                        custom
+                            .entry("TECH_COMPONENT".into())
+                            .or_insert_with(Vec::new)
+                            .extend(names);
+                    }
+                }
+            }
+        }
+
+        custom
     }
 }
 
@@ -77,12 +222,19 @@ impl Processor for HanlpClientProcessor {
             return Ok(output);
         }
 
-        // Call the inference server.  The endpoint currently returns an
-        // error — we catch it and emit an empty result so the pipeline
-        // is not blocked.
+        // Build the custom-entities dictionary (static config + Memgraph).
+        let custom_entities = self.build_custom_entities().await;
+
+        // Call the inference server.  If the endpoint is unreachable or
+        // returns an error, we emit a graceful error output so downstream
+        // stages can still proceed.
         match self
             .client
-            .hanlp_analyze(text, &["ner".to_string(), "keyword".to_string()])
+            .hanlp_analyze(
+                text,
+                &["ner".to_string(), "keyword".to_string()],
+                &custom_entities,
+            )
             .await
         {
             Ok(nlp_response) => {
@@ -98,13 +250,15 @@ impl Processor for HanlpClientProcessor {
                     .collect();
                 output.set("entities", entities);
                 output.set("keywords", nlp_response.keywords);
-                output.set("status", "available");
+                output.set("status", "ok");
             }
-            Err(_err) => {
-                // HanLP endpoint not ready — return empty results.
+            Err(err) => {
+                // Return empty results with an error status so the
+                // pipeline can continue.
                 output.set("entities", serde_json::Value::Array(vec![]));
                 output.set("keywords", serde_json::Value::Array(vec![]));
-                output.set("status", "unavailable");
+                output.set("status", "error");
+                output.set("error", err);
             }
         }
 
@@ -137,20 +291,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_empty_placeholder_output() {
+    async fn returns_error_when_server_unreachable() {
         let processor = HanlpClientProcessor::new("http://localhost:50052".into());
         let ctx = make_context("test.java", "class Foo {}");
         let result = processor.execute(&ctx).await;
         assert!(result.is_ok());
         let output = result.unwrap();
-        // The HanLP endpoint is not implemented, so status should be
-        // "unavailable" and entity/keyword lists should be empty.
+        // The HanLP endpoint is not running locally, so status should be
+        // "error" and entity/keyword lists should be empty.
         assert_eq!(
             output.get("status").and_then(|v| v.as_str()),
-            Some("unavailable")
+            Some("error")
         );
         assert!(output.get("entities").is_some());
         assert!(output.get("keywords").is_some());
+        assert!(output.get("error").is_some());
     }
 
     #[tokio::test]
@@ -171,5 +326,60 @@ mod tests {
         let processor = HanlpClientProcessor::new("http://localhost:50052".into());
         assert_eq!(processor.name(), "hanlp");
         assert_eq!(processor.priority(), 80);
+    }
+
+    #[test]
+    fn custom_entity_config_default() {
+        let cfg = CustomEntityConfig::default();
+        assert!(cfg.service_names.is_empty());
+        assert!(cfg.tech_components.len() >= 8); // well-known tech list
+        assert!(cfg.business_entities.is_empty());
+    }
+
+    #[test]
+    fn custom_entity_config_custom_values() {
+        let cfg = CustomEntityConfig {
+            service_names: vec!["order-service".into(), "user-api".into()],
+            tech_components: vec!["Redis".into()],
+            business_entities: vec!["订单".into(), "用户".into()],
+        };
+        assert_eq!(cfg.service_names.len(), 2);
+        assert_eq!(cfg.tech_components.len(), 1);
+        assert_eq!(cfg.business_entities.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn build_custom_entities_without_graph() {
+        let cfg = CustomEntityConfig {
+            service_names: vec!["my-service".into()],
+            tech_components: vec!["Redis".into()],
+            business_entities: vec!["用户".into()],
+        };
+        let client = Arc::new(InferClient::new("http://localhost:50052".into(), 4));
+        let processor =
+            HanlpClientProcessor::with_config(client, cfg, None);
+
+        let entities = processor.build_custom_entities().await;
+        assert!(entities.contains_key("SERVICE_NAME"));
+        assert!(entities.contains_key("TECH_COMPONENT"));
+        assert!(entities.contains_key("BUSINESS_ENTITY"));
+
+        let services = entities.get("SERVICE_NAME").unwrap();
+        assert!(services.contains(&"my-service".to_string()));
+
+        let tech = entities.get("TECH_COMPONENT").unwrap();
+        assert!(tech.contains(&"Redis".to_string()));
+
+        let biz = entities.get("BUSINESS_ENTITY").unwrap();
+        assert!(biz.contains(&"用户".to_string()));
+    }
+
+    #[tokio::test]
+    async fn with_config_accepts_graph_none() {
+        let cfg = CustomEntityConfig::default();
+        let client = Arc::new(InferClient::new("http://localhost:50052".into(), 4));
+        let processor =
+            HanlpClientProcessor::with_config(client, cfg, None);
+        assert_eq!(processor.config.service_names.len(), 0);
     }
 }

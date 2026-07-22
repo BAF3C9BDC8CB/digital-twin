@@ -12,6 +12,7 @@
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -71,6 +72,13 @@ struct ChatMessage {
 struct EmbedRequest {
     model: String,
     input: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct HanlpRequest {
+    text: String,
+    tasks: Vec<String>,
+    custom_entities: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,15 +198,47 @@ impl InferClient {
 
     /// NLP analysis via the HanLP endpoint.
     ///
-    /// The endpoint is planned as `POST /v1/nlp/hanlp` but is *not yet
-    /// implemented* on the inference server.  For now this always returns
-    /// an error indicating the feature is unavailable.
+    /// Sends a `POST /v1/nlp/hanlp` request with the given text, tasks,
+    /// and custom entity dictionaries.  The inference server uses the
+    /// custom dictionaries to improve NER recall for project-specific
+    /// entity types (service names, components, business terms, etc.).
     pub async fn hanlp_analyze(
         &self,
-        _text: &str,
-        _tasks: &[String],
+        text: &str,
+        tasks: &[String],
+        custom_entities: &HashMap<String, Vec<String>>,
     ) -> Result<NlpResponse, String> {
-        Err("HanLP endpoint is not yet implemented on dt-inference-server".into())
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| format!("semaphore acquire failed: {e}"))?;
+
+        let url = format!("{}/v1/nlp/hanlp", self.base_url);
+
+        let body = HanlpRequest {
+            text: text.to_string(),
+            tasks: tasks.to_vec(),
+            custom_entities: custom_entities.clone(),
+        };
+
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("hanlp request failed: {e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text_body = resp.text().await.unwrap_or_default();
+            return Err(format!("hanlp returned HTTP {status}: {text_body}"));
+        }
+
+        resp.json::<NlpResponse>()
+            .await
+            .map_err(|e| format!("hanlp response parse failed: {e}"))
     }
 
     /// Embed a batch of texts via `POST /v1/embeddings`.
@@ -259,10 +299,13 @@ mod tests {
     #[tokio::test]
     async fn hanlp_analyze_returns_error_for_now() {
         let client = InferClient::new("http://localhost:50052".into(), 4);
-        let result = client.hanlp_analyze("hello", &["ner".into()]).await;
+        let custom = HashMap::new();
+        let result = client
+            .hanlp_analyze("hello", &["ner".into()], &custom)
+            .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("not yet implemented"));
+        assert!(err.contains("hanlp"));
     }
 
     #[test]

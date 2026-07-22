@@ -32,6 +32,7 @@ from models.spec import ModelSpec
 from models.embed import load_embed_model, DEFAULT_EMBED_MODEL, DEFAULT_DEVICE
 from models.reranker import load_reranker_model, DEFAULT_RERANKER_MODEL
 from models.llm import load_llm_model, DEFAULT_LLM_MODEL, DEFAULT_DEVICE as LLM_DEVICE
+from models.hanlp import load_hanlp_model, DEFAULT_HANLP_MODEL
 from taskqueue.router import TaskRouter, QUEUE_MAXSIZE
 from taskqueue.worker import InferenceWorker
 from api.grpc_server import SharedEventLoop, serve_grpc
@@ -69,6 +70,13 @@ def build_registry() -> ModelRegistry:
         device=LLM_DEVICE,
         batch_capable=False,
         idle_ttl_sec=600,  # unload LLM after 10min idle
+    ))
+    registry.register(ModelSpec(
+        name=DEFAULT_HANLP_MODEL,
+        model_type="nlp",
+        loader=load_hanlp_model,
+        device="cpu",
+        batch_capable=False,
     ))
     return registry
 

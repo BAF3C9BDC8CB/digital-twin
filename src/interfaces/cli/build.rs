@@ -3,13 +3,22 @@
 //! Extracted from main.rs to keep the entrypoint lean.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::application::pipeline::config::PipelineConfig;
+use crate::application::pipeline::engine::ProcessorEngine;
+use crate::application::pipeline::infer_client::InferClient;
+use crate::application::pipeline::processors::{
+    ChunkProcessor, HanlpClientProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
+};
+use crate::application::pipeline::prompt::PromptRegistry;
+use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::BatchConfig;
 use crate::application::search::fusion::RankedItem;
+use crate::infrastructure::parser::ParserRegistry;
 
 /// Handle `dt build` — index a project into the knowledge graph.
 ///
@@ -20,6 +29,7 @@ pub async fn handle_build(
     name: Option<String>,
     file: Option<PathBuf>,
     full: bool,
+    pipeline: bool,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
@@ -56,6 +66,11 @@ pub async fn handle_build(
         verbose: true,
     };
 
+    // Clone for pipeline use since BuildDependencies consumes the originals.
+    let pipeline_graph = graph.as_ref().map(|g| Arc::clone(g) as Arc<dyn GraphRepository>);
+    let pipeline_vector = vector.as_ref().map(|v| Arc::clone(v) as Arc<dyn VectorRepository>);
+    let pipeline_embed = embed.as_ref().map(|e| Arc::clone(e) as Arc<dyn EmbedService>);
+
     let deps = crate::application::build::builder::BuildDependencies {
         graph,
         vector,
@@ -65,6 +80,183 @@ pub async fn handle_build(
     };
 
     cmd.run(deps).await?;
+
+    // ── Optional pipeline analysis (enhancement, not replacement) ────
+    if pipeline {
+        if let Err(e) = run_pipeline_analysis(
+            &path,
+            &project_name,
+            pipeline_graph,
+            pipeline_vector,
+            pipeline_embed,
+        )
+        .await
+        {
+            tracing::warn!("Pipeline analysis failed (non-fatal): {e}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Collect all text-bearing files from a directory recursively.
+///
+/// Skips hidden files/directories (names starting with `.`), binary files,
+/// and common non-text extensions.  Returns up to `MAX_PIPELINE_FILES`
+/// entries to avoid overwhelming the pipeline engine.
+fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
+    use walkdir::WalkDir;
+
+    const MAX_PIPELINE_FILES: usize = 500;
+
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
+    let walk = WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            // Skip hidden files / directories.
+            e.file_name()
+                .to_str()
+                .map(|s| !s.starts_with('.'))
+                .unwrap_or(false)
+        });
+
+    for entry in walk.filter_map(|e| e.ok()) {
+        if files.len() >= MAX_PIPELINE_FILES {
+            tracing::info!("Reached pipeline file limit ({MAX_PIPELINE_FILES}) — truncating");
+            break;
+        }
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        // Skip common binary / non-text extensions.
+        let skip_ext = ["png", "jpg", "jpeg", "gif", "svg", "ico", "woff2",
+                        "ttf", "eot", "pdf", "zip", "jar", "class", "o", "so",
+                        "dylib", "dll", "exe", "bin", "db", "sqlite"];
+        if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
+            if skip_ext.contains(&ext) {
+                continue;
+            }
+        }
+        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            files.push((entry.path().to_path_buf(), content));
+        }
+    }
+
+    tracing::debug!("Collected {} text files from {}", files.len(), root.display());
+    files
+}
+
+/// Run pipeline analysis on a project after the build completes.
+///
+/// This is a purely additive step — any error is logged as a warning and
+/// does **not** fail the overall build.
+async fn run_pipeline_analysis(
+    project_path: &Path,
+    project_name: &str,
+    graph: Option<Arc<dyn GraphRepository>>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
+) -> anyhow::Result<()> {
+    // ── 1. Load pipeline config — skip if disabled ────────────────
+    let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
+    if !pipeline_config.enabled {
+        tracing::info!("Pipeline disabled (config/pipeline.yaml enabled=false)");
+        return Ok(());
+    }
+    tracing::info!("Pipeline analysis starting for {project_name}...");
+
+    // ── 2. Connect to inference server ────────────────────────────
+    let infer_client = Arc::new(InferClient::new(
+        pipeline_config.inference_server.url.clone(),
+        pipeline_config.inference_server.max_concurrent,
+    ));
+
+    let inference_available = match infer_client.health_check().await {
+        Ok(true) => {
+            tracing::info!("Inference server available");
+            true
+        }
+        Ok(false) => {
+            tracing::info!("Inference server not reachable — skipping GPU processors");
+            false
+        }
+        Err(e) => {
+            tracing::warn!("Inference server health check failed: {e} — skipping GPU processors");
+            false
+        }
+    };
+
+    // ── 3. Build processor registry ───────────────────────────────
+    let mut registry = ProcessorRegistry::new();
+
+    if pipeline_config.processors.tree_sitter {
+        let parser_registry = Arc::new(ParserRegistry::new());
+        registry.register(Box::new(TreeSitterProcessor::new(parser_registry)));
+        tracing::info!("  Processor: TreeSitter");
+    }
+    if pipeline_config.processors.chunk {
+        registry.register(Box::new(ChunkProcessor::default()));
+        tracing::info!("  Processor: Chunk");
+    }
+    if pipeline_config.processors.hanlp && inference_available {
+        registry.register(Box::new(HanlpClientProcessor::with_client(infer_client.clone())));
+        tracing::info!("  Processor: Hanlp");
+    }
+    if pipeline_config.processors.llm && inference_available {
+        match PromptRegistry::load(Path::new("config/prompts")) {
+            Ok(prompts) => {
+                let llm_config = pipeline_config.llm.unwrap_or_default();
+                registry.register(Box::new(LlmClientProcessor::new(
+                    infer_client.clone(),
+                    Arc::new(prompts),
+                    llm_config,
+                )));
+                tracing::info!("  Processor: LlmClient");
+            }
+            Err(e) => {
+                tracing::warn!("  Prompt registry unavailable: {e} — skipping LLM processor");
+            }
+        }
+    }
+    if pipeline_config.processors.store {
+        registry.register(Box::new(StoreProcessor::new(graph, vector, embed)));
+        tracing::info!("  Processor: Store");
+    }
+
+    if registry.is_empty() {
+        tracing::info!("No pipeline processors registered — skipping analysis");
+        return Ok(());
+    }
+
+    // ── 4. Run pipeline ───────────────────────────────────────────
+    let registry = Arc::new(registry);
+    let engine = ProcessorEngine::new(registry, pipeline_config.inference_server.max_concurrent);
+
+    let files = collect_project_files(project_path);
+    tracing::info!("Pipeline analyzing {} files...", files.len());
+
+    let analyses = engine.analyze_batch(files, project_name.to_string()).await;
+    let success_count = analyses.iter().filter(|a| a.success).count();
+    let error_count = analyses.len() - success_count;
+
+    // Log per-file errors at debug level
+    for analysis in &analyses {
+        if !analysis.errors.is_empty() {
+            let path_display = analysis.file_path.display();
+            for err in &analysis.errors {
+                tracing::debug!("  [{path_display}] {err}");
+            }
+        }
+    }
+
+    tracing::info!(
+        "Pipeline analysis complete for {project_name}: \
+         {} files analyzed, {} OK, {} with errors",
+        analyses.len(),
+        success_count,
+        error_count,
+    );
 
     Ok(())
 }
@@ -77,6 +269,7 @@ pub async fn handle_build(
 pub async fn handle_build_all(
     projects: Vec<(String, PathBuf)>,
     full: bool,
+    pipeline: bool,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
@@ -98,6 +291,7 @@ pub async fn handle_build_all(
             Some(name.clone()),
             None,
             full,
+            pipeline,
             graph.clone(),
             vector.clone(),
             embed.clone(),

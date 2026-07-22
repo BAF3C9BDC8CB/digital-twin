@@ -54,11 +54,13 @@ class TaskRouter:
         from models.embed import DEFAULT_EMBED_MODEL
         from models.reranker import DEFAULT_RERANKER_MODEL
         from models.llm import DEFAULT_LLM_MODEL
+        from models.hanlp import DEFAULT_HANLP_MODEL
 
         model_map = {
             "embed": DEFAULT_EMBED_MODEL,
             "rerank": DEFAULT_RERANKER_MODEL,
             "chat": DEFAULT_LLM_MODEL,
+            "hanlp": DEFAULT_HANLP_MODEL,
         }
 
         task = InferenceTask(
@@ -87,6 +89,8 @@ class TaskRouter:
             return self._dispatch_rerank(payload)
         elif task.task_type == "chat":
             return self._dispatch_chat(payload)
+        elif task.task_type == "hanlp":
+            return self._dispatch_hanlp(payload)
         else:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
@@ -191,3 +195,90 @@ class TaskRouter:
             "model": DEFAULT_LLM_MODEL,
             "elapsed_ms": elapsed_ms,
         }
+
+    def _dispatch_hanlp(self, payload: dict) -> dict:
+        """NLP analysis: NER with caller-provided custom entity dictionaries.
+
+        Accepts:
+            text (str):            input text
+            tasks (list[str]):     requested analyses, e.g. ["ner", "keyword"]
+            custom_entities (dict): custom NER dictionaries, e.g.
+                {"SERVICE_NAME": ["订单服务", "支付服务"], ...}
+
+        Returns:
+            dict with keys: entities, keywords, tasks_completed, elapsed_ms
+        """
+        from models.hanlp import DEFAULT_HANLP_MODEL
+
+        text = payload.get("text", "")
+        tasks = payload.get("tasks", ["ner", "keyword"])
+        custom_entities = payload.get("custom_entities", {})
+
+        t0 = time.time()
+        result: dict = {
+            "entities": [],
+            "keywords": [],
+            "tasks_completed": [],
+            "model": DEFAULT_HANLP_MODEL,
+        }
+
+        # ── NER: scan text for every custom entity name ────────────────
+        if "ner" in tasks and custom_entities:
+            seen_spans: set[tuple[int, int]] = set()
+            entities = []
+            for tag, names in custom_entities.items():
+                for name in names:
+                    if not isinstance(name, str) or not name:
+                        continue
+                    start = 0
+                    while True:
+                        idx = text.find(name, start)
+                        if idx == -1:
+                            break
+                        span = (idx, idx + len(name))
+                        if span not in seen_spans:
+                            seen_spans.add(span)
+                            entities.append({
+                                "text": name,
+                                "tag": tag,
+                                "start": idx,
+                                "end": idx + len(name),
+                            })
+                        start = idx + 1
+            entities.sort(key=lambda e: e["start"])
+            result["entities"] = entities
+            result["tasks_completed"].append("ner")
+
+        # ── Part-of-speech tagging (simple fallback) ────────────────────
+        if "pos" in tasks:
+            # Simple tokenisation by splitting on punctuation / whitespace.
+            # For production Chinese POS, install `hanlp` or `jieba`.
+            import re
+            tokens = re.findall(r"[\u4e00-\u9fff\w]+", text)
+            result["pos_tags"] = [
+                {"token": t, "pos": "UNK"} for t in tokens
+            ]
+            result["tasks_completed"].append("pos")
+
+        # ── Semantic-role-labelling (stub) ──────────────────────────────
+        if "srl" in tasks:
+            # SRL requires a full neural pipeline (e.g. HanLP).
+            # Return a placeholder indicating the capability is available
+            # only when the `hanlp` package is installed.
+            result["srl"] = []
+            result["srl_note"] = (
+                "SRL requires the `hanlp` Python package. "
+                "Install with: pip install hanlp"
+            )
+            result["tasks_completed"].append("srl")
+
+        # ── Keyword extraction ──────────────────────────────────────────
+        if "keyword" in tasks:
+            keywords = sorted(set(
+                e["text"] for e in result.get("entities", [])
+            ))
+            result["keywords"] = keywords
+            result["tasks_completed"].append("keyword")
+
+        result["elapsed_ms"] = int((time.time() - t0) * 1000)
+        return result

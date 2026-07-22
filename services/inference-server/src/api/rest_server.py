@@ -20,6 +20,7 @@ def create_rest_app(registry, router) -> web.Application:
     app.router.add_post("/v1/chat/completions", handle_chat)
     app.router.add_post("/v1/embeddings", handle_embed)
     app.router.add_post("/v1/rerank", handle_rerank)
+    app.router.add_post("/v1/nlp/hanlp", handle_hanlp)
     app.router.add_get("/v1/models", handle_models)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/metrics", handle_metrics)
@@ -144,6 +145,57 @@ async def handle_rerank(request: web.Request) -> web.Response:
             return web.json_response(result)
     except Exception as e:
         logger.error("Rerank API failed: %s", e)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+# ── HanLP NLP ─────────────────────────────────────────────────────────────
+
+async def handle_hanlp(request: web.Request) -> web.Response:
+    """POST /v1/nlp/hanlp — NLP analysis with custom NER dictionaries.
+
+    Request body:
+    ```json
+    {
+      "text": "要分析的文本内容",
+      "tasks": ["ner", "keyword", "pos", "srl"],
+      "custom_entities": {
+        "SERVICE_NAME": ["用户服务", "订单服务", "支付服务"],
+        "TECH_COMPONENT": ["Redis", "Kafka", "MySQL"],
+        "BUSINESS_ENTITY": ["订单", "用户"]
+      },
+      "sync": true
+    }
+    ```
+
+    The ``custom_entities`` dict is *required* for NER — the server has no
+    built-in entity lists.  Callers (e.g. the Rust pipeline engine) MUST
+    supply every entity dictionary as a request parameter.
+    """
+    router = request.app["router"]
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    text = body.get("text", "")
+    tasks = body.get("tasks", ["ner", "keyword"])
+    custom_entities = body.get("custom_entities", {})
+
+    if not text:
+        return web.json_response({"error": "text is required"}, status=400)
+
+    sync = body.get("sync", True)
+
+    try:
+        result = await router.submit(
+            "hanlp",
+            {"text": text, "tasks": tasks, "custom_entities": custom_entities},
+            priority=Priority.NORMAL,
+            sync=sync,
+        )
+        return web.json_response(result)
+    except Exception as e:
+        logger.error("HanLP API failed: %s", e)
         return web.json_response({"error": str(e)}, status=500)
 
 

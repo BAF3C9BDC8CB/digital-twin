@@ -209,6 +209,10 @@ enum Commands {
         /// Full rebuild — bypass incremental snapshots.
         #[arg(long = "full")]
         full: bool,
+
+        /// Skip pipeline analysis after build (enabled by default).
+        #[arg(long = "no-pipeline")]
+        no_pipeline: bool,
     },
 
     /// Semantic code search across worlds.
@@ -1270,7 +1274,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full }) => {
+        Some(Commands::Build { path, name, file, full, no_pipeline }) => {
             // No args at all → build all projects from config.yaml
             if path.is_none() && name.is_none() && file.is_none() {
                 let memgraph = connect_memgraph().await;
@@ -1293,8 +1297,9 @@ async fn main() -> anyhow::Result<()> {
                 }
 
                 let batch_config = cfg.batch.clone();
+                let pipeline = !no_pipeline;
                 dt_daemon::interfaces::cli::build::handle_build_all(
-                    projects, full, graph, vector, embed, snapshot, batch_config,
+                    projects, full, pipeline, graph, vector, embed, snapshot, batch_config,
                 )
                 .await?;
                 return Ok(());
@@ -1328,8 +1333,9 @@ async fn main() -> anyhow::Result<()> {
                 .map(|c| c.batch)
                 .unwrap_or_default();
 
+            let pipeline = !no_pipeline;
             dt_daemon::interfaces::cli::build::handle_build(
-                actual_path, name, file, full, graph, vector, embed, snapshot, batch_config,
+                actual_path, name, file, full, pipeline, graph, vector, embed, snapshot, batch_config,
             )
             .await?;
             return Ok(());
