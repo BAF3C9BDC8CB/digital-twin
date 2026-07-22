@@ -40,46 +40,63 @@
 ## 二、总体架构
 
 ```
-                          dt build (现有)
+                          dt build / dt analyze
                                │
                                │  文件列表 + hash 增量检测
                                ▼
                     ┌─────────────────────┐
-                    │   Processor Engine  │  ← 新增
+                    │   Processor Engine  │  ← Rust (CPU only)
                     │   (自动编排引擎)     │
                     └─────────┬───────────┘
                               │
           ┌───────────────────┼───────────────────┐
+          │  Rust 本地 (CPU)  │  HTTP 客户端       │
           │                   │                   │
           ▼                   ▼                   ▼
-   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-   │ tree-sitter │    │   HanLP     │    │    LLM      │
-   │  (确定性)    │    │ (中文NLP)    │    │  (语义推理)  │
-   │  代码AST解析  │    │ 分词/NER/SRL │    │  关系/摘要   │
-   └──────┬──────┘    └──────┬──────┘    └──────┬──────┘
-          │                   │                   │
-          │         ┌─────────┴─────────┐         │
-          │         ▼                   ▼         │
-          │  ┌─────────────┐    ┌─────────────┐   │
-          │  │   chunk     │    │ extract_text│   │
-          │  │  (文档分片)  │    │ (PDF/DOCX)  │   │
-          │  └─────────────┘    └─────────────┘   │
-          │                                       │
-          └───────────────────┬───────────────────┘
-                              │
-                              ▼
-                    ┌─────────────────────┐
-                    │    Store Writer     │
-                    │  Memgraph + Qdrant  │
-                    └─────────────────────┘
+   ┌─────────────┐    ┌─────────────┐    ┌─────────────────────────┐
+   │ tree-sitter │    │   chunk     │    │  dt-inference-server    │
+   │  (内置AST)   │    │  (内置分片)  │    │  :50052 (REST)          │
+   └──────┬──────┘    └──────┬──────┘    │                         │
+          │                   │           │  ┌───────────────────┐  │
+          │         ┌─────────┘           │  │   TaskRouter       │  │
+          │         │                     │  │   优先级队列+攒批   │  │
+          │         │                     │  │   HIGH/NORMAL/LOW  │  │
+          │         │                     │  └────────┬──────────┘  │
+          │         │                     │           │             │
+          │         │                     │  ┌────────▼──────────┐  │
+          │         │                     │  │  ModelRegistry     │  │
+          │         │                     │  │  ├─ BGE-M3 (embed) │  │
+          │         │                     │  │  ├─ BGE-reranker   │  │
+          │         │                     │  │  ├─ Qwen3-4B (LLM) │  │
+          │         │                     │  │  └─ HanLP (future) │  │
+          │         │                     │  └────────────────────┘  │
+          │         │                     └─────────────────────────┘
+          │         │                               │
+          │         │                      HTTP 响应 (JSON)
+          │         │                               │
+          └─────────┼───────────────────────────────┘
+                    │
+                    ▼
+          ┌─────────────────────┐
+          │    Store Writer     │
+          │  Memgraph + Qdrant  │
+          └─────────────────────┘
 ```
+
+**关键边界：**
+
+| 组件 | 职责 | 不负责 |
+|------|------|--------|
+| **Processor Engine (Rust)** | 文件扫描、编排决策、CPU 处理器（tree-sitter/chunk）、调用 inference-server API、结果汇总入库 | GPU 管理、模型加载、推理队列 |
+| **dt-inference-server (Python)** | GPU 模型管理、优先级队列、批量推理、Embed/Rerank/LLM/HanLP（未来） | 文件处理、知识图谱写入 |
 
 ### 设计原则
 
 1. **自动编排**：引擎根据文件类型和处理器能力卡片自动决定执行链，用户无需手工配置 stages 顺序
 2. **开放输出**：每个处理器输出写入统一的 `PipelineContext`，下游处理器可任意引用上游输出
 3. **处理器自治**：每个处理器自描述其能力（支持的文件类型、产生的输出、依赖关系），引擎据此编排
-4. **优雅降级**：任一处理器失败不影响其他处理器，tree-sitter 挂了仍然可以 chunk+store
+4. **关注点分离**：Rust 负责编排和确定性处理（tree-sitter/chunk），GPU 推理全部委托 inference-server
+5. **优雅降级**：任一处理器或 inference-server 失败不影响其他处理器
 
 ---
 
@@ -158,8 +175,10 @@ match:
   file_extensions: [.md, .txt, .yaml, .yml, .properties]
   languages: [zh]
 
-model: transformer
-device: cuda
+# 通过 inference-server 调用（模型管理、队列、GPU 由 server 负责）
+server: http://localhost:50052
+endpoint: /v1/nlp/hanlp       # 未来扩展端点（当前可先直连 HanLP 服务）
+timeout_sec: 30
 
 tasks: [tok, pos, ner, srl]
 
@@ -174,6 +193,8 @@ custom_ner:
     BUSINESS_ENTITY: []
 ```
 
+> **设计决策**：HanLP 最终也应接入 inference-server，统一 GPU 调度。过渡期可直连。Rust 侧只负责构造请求 payload、调用 HTTP API、解析 JSON 响应。
+
 #### llm — 语义推理
 
 ```yaml
@@ -185,12 +206,16 @@ match:
   file_extensions: [.java, .py, .rs, .go, .ts, .md, .txt, .yaml, .yml]
   min_chars: 50
 
-model: qwen3-4b
-api: http://localhost:11434
+# 通过 inference-server 调用（OpenAI 兼容 API）
+server: http://localhost:50052
+endpoint: /v1/chat/completions
 temperature: 0.1
 max_tokens: 4096
-batch_size: 8
 
+# 并发控制（Rust 侧只需限制并发请求数，队列/攒批由 server 负责）
+max_concurrent: 16
+
+# ── 按输入场景选择 Prompt ──
 prompts:
   code:
     when:
@@ -207,6 +232,8 @@ prompts:
       none_of: [tree_sitter, hanlp]
     file: raw_text.yaml
 ```
+
+> **设计决策**：Rust 不管理 LLM 队列，不关心 GPU 状态。只需限制并发请求数（`max_concurrent=16`），其余（队列优先级、攒批、模型切换）全部由 inference-server 的 TaskRouter 处理。调用方式为标准 OpenAI Chat Completions API。
 
 #### chunk — 文本分片
 
@@ -279,30 +306,28 @@ write:
 
 ### 4.3 处理器实现接口
 
-每个处理器通过 trait 实现：
-
 ```rust
 #[async_trait]
 pub trait Processor: Send + Sync {
     fn name(&self) -> &str;
     fn priority(&self) -> i32;
-
-    /// 判断此处理器是否适用于该文件
     fn matches(&self, file: &FileInfo) -> bool;
-
-    /// 执行处理，可从 context 中读取上游处理器的输出
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, Error>;
 }
 ```
 
-各处理器的实现：
+各处理器的实现策略：
 
-- **tree_sitter**：Rust 内直接集成，复用现有 tree-sitter 解析逻辑
-- **chunk**：Rust 内直接集成，复用现有 `chunker.rs`
-- **hanlp**：通过 HTTP 调 Python HanLP 服务（hanlp serve），或直接集成 `hanlp-rs`
-- **llm**：通过 HTTP 调 ollama API
-- **extract_text**：调外部工具（pdf-extract / python-docx），输出纯文本到 context
-- **store**：复用现有 Memgraph + Qdrant 写入逻辑
+| 处理器 | 运行位置 | 实现方式 |
+|--------|---------|---------|
+| tree_sitter | Rust 内联 | 复用现有 tree-sitter 解析逻辑，CPU 并行 |
+| chunk | Rust 内联 | 复用现有 `chunker.rs`，CPU 并行 |
+| extract_text | Rust 调外部工具 | `pdf-extract` / `python-docx`，输出纯文本 |
+| **hanlp** | **→ inference-server** | HTTP POST 到 `:50052/v1/nlp/hanlp`，返回 JSON |
+| **llm** | **→ inference-server** | HTTP POST 到 `:50052/v1/chat/completions`，OpenAI 兼容格式 |
+| store | Rust 内联 | 复用现有 Memgraph + Qdrant 写入逻辑 |
+
+**Rust 侧不负责**：GPU 管理、模型加载/卸载、推理队列管理、请求攒批——全部由 inference-server 的 TaskRouter + ModelRegistry 处理。
 
 ---
 
@@ -429,6 +454,8 @@ LLM 处理器根据 `PipelineContext` 中已有的输出自动选择 Prompt：
 ### 7.1 引擎核心
 
 ```rust
+use tokio::sync::Semaphore;
+
 pub async fn analyze(&self, file: &FileInfo) -> Result<AnalysisResult> {
     let mut context = PipelineContext::new(file);
 
@@ -439,7 +466,7 @@ pub async fn analyze(&self, file: &FileInfo) -> Result<AnalysisResult> {
         .sorted_by_key(|p| Reverse(p.priority()))
         .collect();
 
-    // 2. 顺序执行
+    // 2. 顺序执行（CPU处理器 + HTTP调用 inference-server）
     for processor in processors {
         match processor.execute(&context).await {
             Ok(output) => { context.add(processor.name(), output); }
@@ -450,10 +477,32 @@ pub async fn analyze(&self, file: &FileInfo) -> Result<AnalysisResult> {
         }
     }
 
-    // 3. 汇总
     Ok(context.into_result())
 }
+
+/// 批量并行处理多个文件（阶段批量模式）
+pub async fn analyze_batch(&self, files: &[FileInfo]) -> Vec<Result<AnalysisResult>> {
+    // Phase 1-2: CPU 密集型 — 全并行
+    let contexts: Vec<_> = stream::iter(files)
+        .map(|f| async { self.run_cpu_processors(f).await })
+        .buffer_unordered(num_cpus::get())
+        .collect().await;
+
+    // Phase 3-4: GPU 委托 — 信号量控制并发 HTTP 请求
+    let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent));
+    let results: Vec<_> = stream::iter(contexts)
+        .map(|ctx| {
+            let sem = semaphore.clone();
+            async { self.run_gpu_processors(ctx, &sem).await }
+        })
+        .buffer_unordered(self.config.max_concurrent)
+        .collect().await;
+
+    results
+}
 ```
+
+Rust 引擎的并发控制只有一点：**信号量限制对 inference-server 的并发 HTTP 请求数**。其余全部委托。
 
 ### 7.2 完整链路示例（Spring Cloud 微服务）
 
@@ -524,191 +573,119 @@ Qdrant:
 ```
 dt build --project my-microservices
 
-┌─ Phase A: 所有文件的 file_stages (并行) ──────────────────────────┐
+┌─ Phase A: CPU 阶段 (Rust 并行) ────────────────────────────────────┐
 │                                                                    │
-│  gateway/**/*.java     → tree_sitter → hanlp → llm → store       │
-│  user-service/**/*.java → tree_sitter → hanlp → llm → store      │
-│  order-service/**/*.java→ tree_sitter → hanlp → llm → store      │
-│  pay-service/**/*.java  → tree_sitter → hanlp → llm → store      │
-│  docs/**/*.md           → chunk → hanlp → llm → store            │
-│  *.yml                  → chunk(配置策略) → hanlp → store         │
+│  gateway/**/*.java     → tree_sitter (并行) → chunk (并行)        │
+│  user-service/**/*.java → tree_sitter → chunk                     │
+│  order-service/**/*.java→ tree_sitter → chunk                     │
+│  pay-service/**/*.java  → tree_sitter → chunk                     │
+│  docs/**/*.md           → chunk                                   │
+│  *.yml                  → chunk(配置策略)                          │
 │                                                                    │
-└────────────────────────────────────────────────────────────────────┘
-                                 │
-┌─ Phase B: 每个项目的 project_stages (服务间并行) ──────────────────┐
+└────────────────────────────┬───────────────────────────────────────┘
+                             │
+┌─ Phase B: GPU 委托 (→ inference-server) ──────────────────────────┐
 │                                                                    │
-│  gateway       → llm(project_architecture) 汇总本服务内所有文件   │
-│  user-service  → llm(project_architecture)                       │
-│  order-service → llm(project_architecture)                       │
-│  pay-service   → llm(project_architecture)                       │
+│  所有文件 ──HTTP──► inference-server :50052                       │
+│                      ├─ hanlp (NLP分析, LOW优先级 → 自动攒批)     │
+│                      └─ llm  (语义推理, NORMAL优先级)             │
 │                                                                    │
-└────────────────────────────────────────────────────────────────────┘
-                                 │
-┌─ Phase C: ecosystem_stages (全局汇总) ─────────────────────────────┐
+│  Rust 侧仅控制并发 HTTP 请求数 (信号量=16)                         │
 │                                                                    │
-│  llm(service_mesh_topology)       — 构建服务拓扑                  │
-│  llm(cross_service_transactions)  — 分布式事务链路                │
-│  llm(architecture_health_check)   — 架构风险识别                  │
-│  store → 写入生态级实体和关系                                     │
+└────────────────────────────┬───────────────────────────────────────┘
+                             │
+┌─ Phase C: 项目/生态级汇总 + 入库 ──────────────────────────────────┐
+│                                                                    │
+│  Rust: project_stages (llm汇总各服务内所有文件)                    │
+│  Rust: ecosystem_stages (llm构建服务拓扑、分布式事务链路)          │
+│  Rust: store → Memgraph + Qdrant                                  │
 │                                                                    │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 八、性能架构：阶段批量 + 消息队列
+## 八、性能架构：Rust 并发 + inference-server 委托
 
-### 8.1 问题：逐文件管线的 GPU 浪费
+### 8.1 关注点分离
 
-七节中的执行模型是**每个文件顺序走完所有处理器**。这导致 GPU 大量空闲：
-
-```
-时间线（逐文件管线，GPU 浪费严重）：
-────────────────────────────────────────────────────────────
-文件1:  [tree_sitter(C)] ═══════ GPU空闲 ═══════ [hanlp(G)] ═══ GPU空闲 ═══ [llm(G)] ═══ [store(C)]
-文件2:                                       wait              [hanlp(G)] ═══ GPU空闲 ═══ [llm(G)] ...
-文件3:                                                         wait              [hanlp(G)] ...
-────────────────────────────────────────────────────────────
-
-GPU 利用率: ██░░░░░░░░░░░░░░ (约 15%)
-C=CPU, G=GPU, ═══ = GPU 等待切换模型
-```
-
-每次切换处理器、每次切换文件，GPU 都在等。
-
-### 8.2 方案：阶段批量执行 + 消息队列
-
-将执行模型从"文件流水线"改为"阶段批量"：
+Rust 引擎和 inference-server 各自负责擅长的部分：
 
 ```
-时间线（阶段批量，GPU 持续满载）：
-────────────────────────────────────────────────────────────
-
-Phase 1: tree_sitter (CPU 并行，无 GPU)
-  [File1 █] [File2 █] [File3 █] ... [File250 █]  →  所有结果写入上下文
-
-Phase 2: chunk (CPU 并行，无 GPU)  
-  [File1 █] [File2 █] [File3 █] ... [File250 █]
-
-        ┌─────────────── 消息队列 ───────────────┐
-        │  {file_id, text, tree_sitter_output, chunks}  │
-        └──────────────────────────────────────────┘
-
-Phase 3: hanlp (GPU 批量推理，持续满载)
-  ┌─────────────────────────────────────────┐
-  │  GPU 加载 HanLP 模型（一次）              │
-  │  batch_size=16, 持续灌入队列消息           │
-  │  ████████████████████████████  GPU 满载  │
-  └─────────────────────────────────────────┘
-
-        ┌─────────────── 消息队列 ───────────────┐
-        │  {file_id, + hanlp_output}             │
-        └──────────────────────────────────────────┘
-
-Phase 4: llm (GPU 批量推理，持续满载)
-  ┌─────────────────────────────────────────┐
-  │  卸载 HanLP → 加载 qwen3-4b（一次）       │
-  │  batch_size=8, 持续灌入队列消息            │
-  │  ████████████████████████████████  GPU 满载│
-  └─────────────────────────────────────────┘
-
-Phase 5: store (CPU 并行，无 GPU)
-  [File1 █] [File2 █] [File3 █] ... [File250 █]
-
-────────────────────────────────────────────────────────────
-GPU 利用率: ████████████████████ (Phases 3+4 期间 ~90%)
+Rust Processor Engine (CPU)              dt-inference-server (GPU)
+─────────────────────────────            ─────────────────────────
+├─ 文件扫描 + hash 检测                  ├─ 模型加载/卸载 (懒加载)
+├─ tree-sitter AST 解析 (并行)           ├─ 三级优先级队列 (HIGH/NORMAL/LOW)
+├─ chunk 文本分片 (并行)                 ├─ LOW 优先级自动攒批 (64条/0.5s)
+├─ 构造推理请求 payload                  ├─ BGE-M3 embed (gRPC :50051)
+├─ HTTP 客户端 → 调用推理 API            ├─ BGE-reranker 重排序
+├─ 限制并发数 (信号量)                   ├─ Qwen3-4B LLM (OpenAI API)
+├─ 解析 API 响应 JSON                    └─ 自动下载缺失模型 (aria2c)
+└─ 写入 Memgraph + Qdrant
 ```
 
-### 8.3 消息队列设计
-
-参照现有 embed 服务的模式，使用**内存队列**（单进程场景）或 **Redis Stream**（多进程/分布式场景）：
+### 8.2 Rust 侧并发模型
 
 ```rust
-use tokio::sync::mpsc;
+use tokio::sync::Semaphore;
+use std::sync::Arc;
 
-// 阶段间消息
-struct StageMessage {
-    file_id: String,
-    file_path: String,
-    context: PipelineContext,      // 累积的前置处理器输出
+// 阶段 1: CPU 密集型 — 无限制并行
+async fn phase_tree_sitter(files: Vec<FileInfo>) -> Vec<Output> {
+    let tasks: Vec<_> = files.into_iter().map(|f| {
+        tokio::task::spawn_blocking(move || tree_sitter_parse(f))
+    }).collect();
+    futures::future::join_all(tasks).await
 }
 
-// 阶段间通道
-struct StagePipe {
-    rx: mpsc::Receiver<StageMessage>,
-    tx: mpsc::Sender<StageMessage>,
-}
+// 阶段 2: CPU 密集型 — 同上
+async fn phase_chunk(files: Vec<FileInfo>) -> Vec<Output> { /* 同上模式 */ }
 
-// 每个 GPU 阶段 = 消费者协程
-async fn gpu_stage_worker<T: GpuProcessor>(
-    mut rx: mpsc::Receiver<StageMessage>,
-    tx_next: mpsc::Sender<StageMessage>,
-    processor: T,
-    batch_size: usize,
-) {
-    let mut batch = Vec::with_capacity(batch_size);
+// 阶段 3: GPU 委托 — 信号量限制并发请求数
+async fn phase_llm(contexts: Vec<PipelineContext>, config: &LlmConfig) -> Vec<Output> {
+    let semaphore = Arc::new(Semaphore::new(config.max_concurrent)); // 默认 16
 
-    while let Some(msg) = rx.recv().await {
-        batch.push(msg);
-
-        if batch.len() >= batch_size {
-            // GPU 批量推理 — 模型已加载，持续推理
-            let results = processor.process_batch(&batch).await;
-
-            for (msg, result) in batch.drain(..).zip(results) {
-                let mut ctx = msg.context;
-                ctx.add(processor.name(), result);
-                tx_next.send(StageMessage { context: ctx, ..msg }).await.ok();
-            }
+    let tasks: Vec<_> = contexts.into_iter().map(|ctx| {
+        let sem = semaphore.clone();
+        let client = reqwest::Client::new();
+        async move {
+            let _permit = sem.acquire().await.unwrap();
+            // inference-server 内部处理队列、优先级、攒批
+            let resp = client
+                .post("http://localhost:50052/v1/chat/completions")
+                .json(&build_chat_request(&ctx))
+                .send().await?
+                .json::<ChatResponse>().await?;
+            parse_llm_output(resp)
         }
-    }
+    }).collect();
 
-    // 处理剩余批次
-    if !batch.is_empty() {
-        let results = processor.process_batch(&batch).await;
-        for (msg, result) in batch.drain(..).zip(results) {
-            let mut ctx = msg.context;
-            ctx.add(processor.name(), result);
-            tx_next.send(StageMessage { context: ctx, ..msg }).await.ok();
-        }
-    }
+    futures::future::join_all(tasks).await
 }
 ```
 
-### 8.4 阶段并行策略
+**Rust 不需要**：
+- 消息队列（inference-server 内置）
+- 攒批逻辑（inference-server LOW 优先级自动攒批 64 条）
+- GPU 显存管理（inference-server 懒加载 + 自动 GC）
+- 模型切换协调（inference-server 统一调度）
 
-| 阶段 | 处理器 | 并行度 | 策略 |
-|------|--------|--------|------|
-| Phase 1 | tree_sitter | CPU 核心数 | `tokio::task::spawn` 并行，无状态 |
-| Phase 2 | chunk | CPU 核心数 | 同上 |
-| Phase 3 | hanlp | GPU batch | 单消费者 + batch_size=16，GPU 满载 |
-| Phase 4 | llm | GPU batch | 单消费者 + batch_size=8，GPU 满载 |
-| Phase 5 | store | CPU 核心数 | 并行写入，注意 Memgraph 连接池 |
+**Rust 只需要**：
+- 信号量控制并发 HTTP 请求数，避免打爆 inference-server
+- 构造符合 OpenAI Chat API 格式的请求体
+- 解析 JSON 响应
 
-### 8.5 GPU 显存管理
+### 8.3 请求优先级使用
 
-RTX 3060 12GB 的显存分配策略：
+| Rust 调用场景 | 对应 Priority | 说明 |
+|--------------|---------------|------|
+| `dt build` / `dt analyze` 批量处理 | NORMAL | 代码索引，不攒批，单条立即处理 |
+| 后台文档同步 | LOW | 触发攒批（64条/0.5s），提高 GPU 吞吐 |
+| 用户实时搜索 | HIGH | 最高优先，立即处理（不经过本管线） |
 
-```
-Phase 3 开始：加载 HanLP transformer 模型
-  ├── HanLP 模型: ~1.5GB
-  ├── 推理中间张量: ~2GB (batch_size=16)
-  └── 剩余: ~8.5GB 空闲
+> `dt build` 期间调用 llm 走 NORMAL 优先级；HanLP NLP 分析走 LOW 优先级（可攒批）。
 
-Phase 3 → 4 切换：
-  ├── 卸载 HanLP 模型 (释放 1.5GB)
-  ├── 加载 qwen3-4b INT4: ~3.5GB
-  ├── KV Cache: ~2GB (batch_size=8, max_tokens=4096)
-  └── 剩余: ~6GB 空闲 — 可增大 batch_size 或加载更大模型
-
-单 GPU 同时跑两个模型（如果显存够）：
-  HanLP (~1.5G) + qwen3-4b INT4 (~3.5G) + 中间张量(~4G) = ~9GB
-  → RTX 3060 12GB 可以同时驻留，无需切换，但仍建议串行以避免推理干扰
-```
-
-### 8.6 增量处理与缓存
-
-避免每次 `dt build` 都重新分析所有文件：
+### 8.4 增量处理与缓存
 
 ```
 增量策略                   缓存策略
@@ -716,7 +693,7 @@ Phase 3 → 4 切换：
 1. hash 检测（现有）       1. 处理器输出缓存
    SHA256 比对 → 仅处理      key = file_hash + processor_name + config_hash
    变更文件                   value = ProcessorOutput (JSON)
-                           存储 = SQLite（现有快照表）或文件缓存
+                           存储 = SQLite（现有快照表）
 
 2. 阶段级跳过              2. Prompt 模板缓存
    如果 tree_sitter 输出      模板预编译，变量替换用模板引擎
@@ -727,35 +704,20 @@ Phase 3 → 4 切换：
    共享分析结果
 ```
 
-### 8.7 资源调度优先级
+### 8.5 性能预估
 
-```
-dt build 执行中：
-  ├── 文件扫描/hash 检测 (CPU, 最高优先级 — 确定变更范围)
-  ├── tree_sitter 并行 (CPU, 高优先级)
-  ├── chunk 并行 (CPU, 高优先级)
-  ├── hanlp 批量 (GPU, 正常优先级 — 可被 embed 服务抢占)
-  ├── llm 批量 (GPU, 正常优先级)
-  └── store 写入 (CPU, 低优先级 — 可延迟)
+基于 RTX 3060 (12GB)，处理 200 Java + 50 文档：
 
-与其他 GPU 服务（embed）的协调：
-  - embed 服务优先级 > 管线 GPU 阶段
-  - 管线感知 embed 是否活跃，自动降速或暂停
-  - 可通过配置控制 GPU 占用上限
-```
+| 阶段 | 运行位置 | 并行方式 | 耗时 |
+|------|---------|---------|------|
+| Phase 1: tree_sitter | Rust CPU | 8核 `spawn_blocking` | < 3s |
+| Phase 2: chunk | Rust CPU | 8核并行 | < 1s |
+| Phase 3: hanlp | → inference-server | HTTP + 信号量(16) | ~30s |
+| Phase 4: llm | → inference-server | HTTP + 信号量(16), NORMAL优先级 | ~5min |
+| Phase 5: store | Rust CPU | 连接池并行写入 | < 10s |
+| **总计** | | | **~6 分钟** |
 
-### 8.8 修正后的性能预估
-
-基于阶段批量 + 队列模型，RTX 3060 处理 200 Java + 50 文档：
-
-| 阶段 | 并行方式 | 耗时 |
-|------|---------|------|
-| Phase 1: tree_sitter | CPU 8核并行 | < 3s |
-| Phase 2: chunk | CPU 8核并行 | < 1s |
-| Phase 3: hanlp | GPU batch=16 | ~30s |
-| Phase 4: llm | GPU batch=8 | ~6min |
-| Phase 5: store | CPU 并行 | < 10s |
-| **总计** | | **~7 分钟**（比逐文件管线快 40%） |
+> inference-server 内部的 TaskRouter 确保 GPU 在 Phase 3+4 期间持续满载，无需 Rust 侧额外编排。
 
 ---
 
@@ -859,6 +821,12 @@ config/
 pipeline:
   enabled: true                       # 总开关
 
+  # inference-server 连接
+  inference_server:
+    url: http://localhost:50052       # REST API
+    grpc_url: http://localhost:50051  # gRPC (legacy embed)
+    max_concurrent: 16                # Rust 侧并发 HTTP 请求上限
+
   # 启用的处理器
   processors:
     tree_sitter: true
@@ -866,19 +834,13 @@ pipeline:
     llm: true
     chunk: true
     extract_text: true
-    ocr: false                          # 不需要 OCR 时关闭
+    ocr: false
     store: true
 
-  # LLM 配置
+  # LLM 配置（透传给 inference-server）
   llm:
-    model: qwen3-4b
-    api: http://localhost:11434
     temperature: 0.1
-
-  # HanLP 配置
-  hanlp:
-    model: transformer
-    device: cuda
+    max_tokens: 4096
 
   # 项目级/生态级分析
   ecosystem:
@@ -896,35 +858,29 @@ pipeline:
 ```
 src/pipeline/                         # 新增模块
 ├── mod.rs                            # 模块入口
-├── engine.rs                         # ProcessorEngine - 自动编排核心
-│   pub struct ProcessorEngine { registry }
-│   pub async fn analyze(&self, file) -> AnalysisResult
-│   pub async fn analyze_project(&self, project) -> ProjectResult
-│   pub async fn analyze_ecosystem(&self, ecosystem) -> EcosystemResult
+├── engine.rs                         # ProcessorEngine - 阶段批量执行
+│   pub async fn analyze_batch(files, config) -> Vec<Result>
 ├── context.rs                        # PipelineContext - 数据容器
 │   pub struct PipelineContext { raw, outputs, project }
 │   pub fn add(name, output)
 │   pub fn get<T>(name) -> Option<&T>
-│   pub fn resolve_variables(template, ctx) -> String
-├── registry.rs                       # 处理器注册表
-│   pub fn load(path: &Path) -> ProcessorRegistry
-│   pub fn register(processor)
-│   pub fn matching(file) -> Vec<&Processor>
+├── registry.rs                       # 处理器注册表（从 config/processors/ 加载）
 ├── processor.rs                      # Processor trait 定义
 │   pub trait Processor { name, priority, matches, execute }
 ├── output.rs                         # ProcessorOutput 通用输出类型
-│   pub struct ProcessorOutput(HashMap<String, JsonValue>)
 ├── processors/
 │   ├── mod.rs
-│   ├── tree_sitter.rs                # 封装现有 tree-sitter
-│   ├── hanlp.rs                      # HanLP HTTP 客户端
-│   ├── llm.rs                        # Ollama HTTP 客户端
-│   ├── chunk.rs                      # 封装现有 chunker
-│   ├── extract_text.rs              # PDF/DOCX 文本提取
+│   ├── tree_sitter.rs                # 封装现有 tree-sitter（CPU 内联）
+│   ├── chunk.rs                      # 封装现有 chunker（CPU 内联）
+│   ├── extract_text.rs              # PDF/DOCX 文本提取（调外部工具）
+│   ├── hanlp_client.rs              # HanLP HTTP 客户端 → inference-server
+│   ├── llm_client.rs                # LLM HTTP 客户端 → inference-server
 │   └── store.rs                      # Memgraph + Qdrant 写入
-└── prompt.rs                         # Prompt 加载 + 变量替换
-    pub fn load(name) -> Prompt
-    pub fn render(prompt, ctx) -> String
+├── prompt.rs                         # Prompt 加载 + 变量替换
+└── infer_client.rs                   # 共享：inference-server HTTP 客户端
+    pub struct InferClient { base_url, client, semaphore }
+    pub async fn chat(messages, config) -> ChatResponse
+    pub async fn hanlp_nlp(text, tasks) -> NlpResponse
 ```
 
 ### 与现有代码的集成点
@@ -940,24 +896,18 @@ pub async fn execute(config: BuildConfig) -> Result<()> {
         None
     };
 
-    for file in changed_files {
-        // 现有：tree-sitter (代码) + chunker (文档)
-        let existing_entities = extract_entities(&file);
-
-        // 新：自动编排管线
-        let pipeline_result = if let Some(engine) = &pipeline {
-            engine.analyze(&file).await?
-        } else {
-            PipelineResult::empty()
-        };
-
-        // 合并写入
-        store_writer.write_all(merge(existing_entities, pipeline_result)).await?;
-    }
-
-    // 项目级分析（可选）
+    // ── 阶段批量执行 ──
     if let Some(engine) = &pipeline {
-        engine.analyze_project(&config.project).await?;
+        // Phase A: CPU 密集阶段（Rust 并行）
+        let cpu_results = engine.run_cpu_stages(&changed_files).await?;
+
+        // Phase B: GPU 委托阶段（HTTP → inference-server）
+        let gpu_results = engine.run_gpu_stages(&cpu_results).await?;
+
+        // Phase C: 项目/生态级汇总 + 入库
+        engine.run_project_stages(&gpu_results).await?;
+        engine.run_ecosystem_stages(&gpu_results).await?;
+        engine.store_all(&gpu_results).await?;
     }
 
     Ok(())
@@ -975,46 +925,52 @@ pub async fn execute(config: BuildConfig) -> Result<()> {
 
 例如：
   tree_sitter 成功 → entities, annotations ✓
-  hanlp 失败     → 记录 warn，继续
-  llm 失败       → 记录 warn，继续
-  store 成功     → 至少 tree_sitter 的结构数据已入库
+  hanlp 失败     → 记录 warn，继续（LLM 仍可基于原文推理）
+  llm 失败       → 记录 warn，继续（至少 tree_sitter 的结构数据已入库）
+  store 成功     → 数据入库
 ```
 
-### 处理器依赖声明
+### inference-server 异常处理
 
-处理器可声明最小依赖要求：
+```
+场景                           Rust 行为
+─────────────────────────────────────────────────────
+inference-server 未启动         启动时 check /health → 禁用 GPU 处理器
+                                只运行 CPU 阶段（tree_sitter + chunk + store）
 
-```yaml
-# llm 可以不依赖任何前置处理器
-dependencies: []
-  # 但如果有 tree_sitter 输出，启用 code_with_ast prompt
-  # 如果有 hanlp 输出，启用 document_with_nlp prompt
-  # 都没有，启用 raw_text prompt（纯文本推理）
+请求超时 (30s)                  重试 1 次 → 仍失败则跳过该文件
+                                其他文件不受影响
+
+inference-server 返回 5xx       记录错误 + 跳过 → 下一个文件继续
+
+并发过高触发 server 背压         Rust 信号量自动限流（max_concurrent=16）
 ```
 
 ### 失败重试
 
-- LLM 推理超时：重试 1 次，仍失败则跳过
-- HanLP 服务不可用：重试 1 次，仍失败则跳过，但不阻塞 LLM 处理器
+- LLM 推理超时：重试 1 次，仍失败则跳过该文件
+- HanLP NLP 超时：重试 1 次，仍失败则跳过，LLM 仍可用原文推理
+- inference-server 整体不可用：禁用所有 GPU 处理器，仅运行 CPU 管线
 
 ---
 
 ## 十三、实施计划
 
-### 第一阶段：核心引擎 + 阶段批量执行（2-3周）
+### 第一阶段：核心引擎 + CPU 管线（2-3周）
 
 - [ ] `ProcessorEngine` + `PipelineContext` + `Processor` trait
 - [ ] 处理器注册表加载（从 YAML）
-- [ ] **阶段批量执行引擎**：消息队列通道 + GPU worker 协程
+- [ ] **HTTP 客户端**：封装 inference-server 调用（InferClient）
 - [ ] tree_sitter 处理器（封装现有逻辑）
+- [ ] chunk 处理器（封装现有逻辑）
 - [ ] store 处理器（封装现有写入逻辑）
 - [ ] **增量缓存**：SHA256 hash 检测 + 处理器输出缓存
-- [ ] 验证：Java 项目的语法实体正确入库，GPU 利用率和性能基准
+- [ ] 验证：Java 项目正确入库，inference-server 联通
 
 ### 第二阶段：HanLP + LLM 集成（2-3周）
 
-- [ ] HanLP Python 服务 / hanlp-rs 集成
-- [ ] LLM ollama 客户端
+- [ ] HanLP 接入 inference-server（或直连过渡）
+- [ ] LLM chat 客户端（OpenAI 兼容 → inference-server）
 - [ ] Prompt 模板加载与变量替换
 - [ ] HanLP 自定义 NER（从 Memgraph 加载服务词典）
 - [ ] 验证：中文文档的实体+关系+摘要正确生成
@@ -1023,7 +979,6 @@ dependencies: []
 
 - [ ] project_stages 汇总逻辑
 - [ ] ecosystem_stages 跨项目分析
-- [ ] 微服务拓扑 Prompt 模板
 - [ ] 验证：Spring Cloud 项目的服务调用图正确
 
 ### 第四阶段：二进制文件支持（1周）
@@ -1039,9 +994,8 @@ dependencies: []
 |------|------|
 | qwen3-4b 实体抽取质量不如预期 | 保留 tree-sitter 确定性输出作为兜底；Prompt 可迭代优化 |
 | HanLP 仅支持中文，多语言文档无法处理 | 多语言文档回退到纯 LLM 推理（raw_text prompt） |
-| GPU 显存不足同时加载 HanLP + LLM | 串行加载：HanLP 跑完后释放，再加载 LLM |
-| 大量文件时 LLM 推理耗时长 | 批处理 + 增量（仅处理变更文件）+ batch_size 调优 |
+| inference-server 不可用 | 启动 /health 检测 → 降级为纯 CPU 管线（tree-sitter + chunk + store） |
+| 大量文件时 LLM 耗时过长 | 增量（仅处理变更文件）+ 信号量限流 + NORMAL 优先级避免阻塞 |
 | Prompt 质量依赖人工调优 | 提供默认 Prompt，输出带 schema 校验，不合格自动重试 |
-| 消息队列积压导致内存增长 | 背压机制：当前阶段消费者跟不上时暂停上游生产者 |
-| LLM 推理与 embed 服务争抢 GPU | 优先级调度：embed 优先，管线可降速；或配置 GPU 占用时间窗口 |
+| inference-server 与 embed 服务争抢 GPU | server 内置 TaskRouter 优先级调度（HIGH > NORMAL > LOW） |
 | 增量缓存失效（配置变更导致） | 缓存 key 包含 processor config hash，配置变更自动失效 |
