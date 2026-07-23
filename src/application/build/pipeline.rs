@@ -19,7 +19,9 @@ use crate::domain::types::{BatchConfig, BuildReport, FileSnapshot, ScanConfig};
 use futures::stream::{self, StreamExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
 use super::strategy::BuildStrategy;
@@ -54,12 +56,18 @@ pub struct DocumentItem {
 pub struct PipelineTemplate {
     parser_registry: Arc<ParserRegistry>,
     batch_config: BatchConfig,
+    /// Optional SiliconFlow client for Phase 2 (code semantic analysis).
+    siliconflow: Option<Arc<SiliconFlowClient>>,
 }
 
 impl PipelineTemplate {
     /// Create a new pipeline template with the given parser registry.
-    pub fn new(parser_registry: Arc<ParserRegistry>, batch_config: BatchConfig) -> Self {
-        Self { parser_registry, batch_config }
+    pub fn new(
+        parser_registry: Arc<ParserRegistry>,
+        batch_config: BatchConfig,
+        siliconflow: Option<Arc<SiliconFlowClient>>,
+    ) -> Self {
+        Self { parser_registry, batch_config, siliconflow }
     }
 
     /// Execute the full build pipeline.
@@ -240,6 +248,86 @@ impl PipelineTemplate {
             tracing::info!("updating {} snapshots...", extraction.snapshots.len());
             strategy.update_snapshots(repo, project, &extraction.snapshots).await?;
             tracing::info!("snapshot update complete");
+        }
+
+        // ── Phase 2: LLM semantic analysis (resumable) ────────────────
+        if let (Some(ref client), Some(repo)) = (&self.siliconflow, snapshot_repo) {
+            tracing::info!(
+                "Phase 2: LLM analysis for {} files (resumable, checking progress)...",
+                files_to_process.len()
+            );
+
+            let mut analyzed_count = 0usize;
+            let mut skipped_count = 0usize;
+            let total = files_to_process.len();
+
+            for (idx, file_path) in files_to_process.iter().enumerate() {
+                let rel = scanner::rel_path(root, file_path);
+
+                // Compute current file hash to check if content changed
+                let (file_hash, _) = scanner::compute_file_hash(file_path).unwrap_or_default();
+
+                // Check if already analyzed with SAME content
+                if repo.is_llm_analyzed(project, &rel, &file_hash).await.unwrap_or(false) {
+                    skipped_count += 1;
+                    continue;
+                }
+
+                // Read source code
+                let source = match tokio::fs::read_to_string(file_path).await {
+                    Ok(s) => s,
+                    Err(_) => continue, // skip unreadable files
+                };
+
+                // Log progress every 10 files
+                if idx % 10 == 0 {
+                    tracing::info!(
+                        "Phase 2 [{}/{}] analyzing {}...",
+                        idx + 1, total, rel
+                    );
+                }
+
+                // Call SiliconFlow LLM for semantic analysis
+                let t0 = std::time::Instant::now();
+                match client
+                    .chat(
+                        "You are a code analyst. Explain what this code does in 2-3 sentences.",
+                        &source,
+                        0.1,
+                        512,
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        let elapsed = t0.elapsed();
+                        tracing::info!(
+                            "Phase 2 [{}/{}] {} analyzed in {:?} ({} bytes)",
+                            idx + 1, total, rel, elapsed, response.len()
+                        );
+                        // Mark as completed with file hash
+                        let _ = repo.mark_llm_analyzed(project, &rel, &file_hash).await;
+                        analyzed_count += 1;
+                    }
+                    Err(e) => {
+                        let elapsed = t0.elapsed();
+                        tracing::warn!(
+                            "Phase 2 [{}/{}] {} FAILED after {:?}: {}",
+                            idx + 1, total, rel, elapsed, e
+                        );
+                        // Don't mark — will retry on next build
+                    }
+                }
+
+                // Small delay between files to avoid API throttling
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+
+            tracing::info!(
+                "Phase 2 complete: {} analyzed, {} skipped (previously done), {} errors",
+                analyzed_count,
+                skipped_count,
+                total - analyzed_count - skipped_count,
+            );
         }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -1077,6 +1165,6 @@ mod tests {
     #[test]
     fn pipeline_can_be_created() {
         let registry = Arc::new(ParserRegistry::new());
-        let _pipeline = PipelineTemplate::new(registry, BatchConfig::default());
+        let _pipeline = PipelineTemplate::new(registry, BatchConfig::default(), None);
     }
 }

@@ -92,6 +92,16 @@ pub trait SnapshotRepository: Send + Sync + 'static {
     /// List all snapshots for a project.
     async fn list_snapshots(&self, project: &str) -> Result<Vec<FileSnapshot>, DtError>;
 
+    /// Mark a file as having completed LLM analysis, with the current file hash.
+    async fn mark_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<(), DtError>;
+
+    /// Check whether a file has already been LLM-analyzed with the same content.
+    /// Returns `true` only if previously analyzed AND the file hash matches.
+    async fn is_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<bool, DtError>;
+
+    /// Clear all LLM analysis progress for a project (used on full rebuild).
+    async fn clear_llm_progress(&self, project: &str) -> Result<(), DtError>;
+
     /// Check storage health.
     async fn health_check(&self) -> Result<HealthStatus, DtError>;
 }

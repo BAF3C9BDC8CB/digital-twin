@@ -18,7 +18,6 @@ use crate::domain::traits::{BuildService, EmbedService, GraphRepository, Snapsho
 use crate::domain::types::BatchConfig;
 use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::embedder::GrpcEmbedService;
 use crate::application::build::service::BuildServiceImpl;
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -155,6 +154,7 @@ pub async fn wire() -> AppComponents {
         vector.clone(),
         snapshot,
         embed.clone(),
+        None, // siliconflow — not wired through gRPC yet
         false, // gRPC builds default to incremental
         batch_config,
     ));
@@ -299,18 +299,20 @@ async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     }
 }
 
-/// Connect to the dt-embed gRPC service (falls back to None).
+/// Connect to the Xinference embedding service (always succeeds
+/// since the client is a thin HTTP wrapper that makes lazy calls).
 async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
-    match GrpcEmbedService::connect("http://[::1]:50052").await {
-        Ok(svc) => {
-            tracing::info!("dt-embed connected via gRPC");
-            Some(Arc::new(svc) as Arc<dyn EmbedService>)
-        }
-        Err(e) => {
-            tracing::warn!("dt-embed gRPC unavailable: {e} — build/sync will use zero-vector embeddings");
-            None
-        }
-    }
+    use crate::infrastructure::siliconflow::SiliconFlowClient;
+    use crate::infrastructure::siliconflow::{base_url_from_env, api_key_from_env, embed_model_from_env, reranker_model_from_env, llm_model_from_env};
+    let client = SiliconFlowClient::new(
+        base_url_from_env(),
+        api_key_from_env(),
+        embed_model_from_env(),
+        reranker_model_from_env(),
+        llm_model_from_env(),
+    );
+    tracing::info!("SiliconFlow client created");
+    Some(Arc::new(client) as Arc<dyn EmbedService>)
 }
 
 // ---------------------------------------------------------------------------

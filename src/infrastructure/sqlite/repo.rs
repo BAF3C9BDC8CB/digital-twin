@@ -9,6 +9,7 @@ use crate::domain::traits::SnapshotRepository;
 use crate::domain::types::FileSnapshot;
 use crate::domain::types::HealthStatus;
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use std::sync::Mutex;
 
 /// SQLite-backed snapshot repository.
@@ -49,6 +50,14 @@ impl SqliteRepo {
                 method_count INTEGER DEFAULT 0,
                 updated_at   TEXT NOT NULL,
                 PRIMARY KEY (file_path, project)
+            );
+            CREATE TABLE IF NOT EXISTS build_progress (
+                file_path     TEXT NOT NULL,
+                project       TEXT NOT NULL,
+                stage         TEXT NOT NULL DEFAULT 'llm_analysis',
+                file_sha1     TEXT NOT NULL DEFAULT '',
+                completed_at  TEXT NOT NULL,
+                PRIMARY KEY (file_path, project, stage)
             );",
         )
         .map_err(|e| DtError::Repository(format!("SQLite schema: {e}")))?;
@@ -174,11 +183,47 @@ impl SnapshotRepository for SqliteRepo {
             Err(e) => Ok(HealthStatus::Unhealthy(e.to_string())),
         }
     }
+
+    async fn mark_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<(), DtError> {
+        let conn = self.conn.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO build_progress (file_path, project, stage, file_sha1, completed_at)
+             VALUES (?1, ?2, 'llm_analysis', ?3, ?4)",
+            params![file_path, project, file_sha1, chrono::Utc::now().to_rfc3339()],
+        )
+        .map_err(|e| DtError::Repository(format!("mark_llm_analyzed: {e}")))?;
+        Ok(())
+    }
+
+    async fn is_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<bool, DtError> {
+        let conn = self.conn.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT 1 FROM build_progress
+                 WHERE file_path = ?1 AND project = ?2 AND stage = 'llm_analysis'
+                 AND file_sha1 = ?3",
+            )
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        let exists = stmt.exists(params![file_path, project, file_sha1])
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        Ok(exists)
+    }
+
+    async fn clear_llm_progress(&self, project: &str) -> Result<(), DtError> {
+        let conn = self.conn.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM build_progress WHERE project = ?1",
+            params![project],
+        )
+        .map_err(|e| DtError::Repository(format!("clear_llm_progress: {e}")))?;
+        Ok(())
+    }
 }
 
 /// In-memory snapshot repository for testing.
 pub struct MemorySnapshotRepo {
     snapshots: Mutex<Vec<FileSnapshot>>,
+    progress: Mutex<HashSet<(String, String, String)>>,
 }
 
 impl MemorySnapshotRepo {
@@ -186,6 +231,7 @@ impl MemorySnapshotRepo {
     pub fn new() -> Self {
         Self {
             snapshots: Mutex::new(Vec::new()),
+            progress: Mutex::new(HashSet::new()),
         }
     }
 }
@@ -233,6 +279,23 @@ impl SnapshotRepository for MemorySnapshotRepo {
 
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
         Ok(HealthStatus::Healthy)
+    }
+
+    async fn mark_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<(), DtError> {
+        let mut progress = self.progress.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        progress.insert((project.to_string(), file_path.to_string(), file_sha1.to_string()));
+        Ok(())
+    }
+
+    async fn is_llm_analyzed(&self, project: &str, file_path: &str, file_sha1: &str) -> Result<bool, DtError> {
+        let progress = self.progress.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        Ok(progress.contains(&(project.to_string(), file_path.to_string(), file_sha1.to_string())))
+    }
+
+    async fn clear_llm_progress(&self, project: &str) -> Result<(), DtError> {
+        let mut progress = self.progress.lock().map_err(|e| DtError::Repository(e.to_string()))?;
+        progress.retain(|(p, _, _)| p != project);
+        Ok(())
     }
 }
 

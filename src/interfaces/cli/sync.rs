@@ -182,15 +182,17 @@ pub async fn handle_kg_sync(
             };
             (q.embed_service().clone(), v)
         } else {
-            let embed: Arc<dyn EmbedService> = match crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50051").await {
-                Ok(svc) => {
-                    tracing::info!("dt-embed connected for kg-sync");
-                    Arc::new(svc)
-                }
-                Err(e) => {
-                    tracing::warn!("dt-embed unavailable for kg-sync: {e}");
-                    Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
-                }
+            let embed: Arc<dyn EmbedService> = {
+                use crate::infrastructure::siliconflow::{base_url_from_env, api_key_from_env, embed_model_from_env, reranker_model_from_env, llm_model_from_env};
+                let svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
+                    base_url_from_env(),
+                    api_key_from_env(),
+                    embed_model_from_env(),
+                    reranker_model_from_env(),
+                    llm_model_from_env(),
+                );
+                tracing::info!("SiliconFlow client connected for kg-sync");
+                Arc::new(svc)
             };
             let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
             let vector: Arc<dyn VectorRepository> = match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {

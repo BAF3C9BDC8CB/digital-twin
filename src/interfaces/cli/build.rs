@@ -19,6 +19,7 @@ use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, V
 use crate::domain::types::BatchConfig;
 use crate::application::search::fusion::RankedItem;
 use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// Handle `dt build` — index a project into the knowledge graph.
 ///
@@ -71,11 +72,34 @@ pub async fn handle_build(
     let pipeline_vector = vector.as_ref().map(|v| Arc::clone(v) as Arc<dyn VectorRepository>);
     let pipeline_embed = embed.as_ref().map(|e| Arc::clone(e) as Arc<dyn EmbedService>);
 
+    // Create SiliconFlow client for Phase 2 (LLM analysis)
+    let siliconflow = {
+        use crate::infrastructure::siliconflow::SiliconFlowClient;
+        let api_key = load_siliconflow_api_key();
+        let base_url = load_siliconflow_config_str("url")
+            .or_else(|| std::env::var("SILICONFLOW_BASE_URL").ok())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
+        let llm_model = load_siliconflow_config_str("model_llm")
+            .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+        let client = SiliconFlowClient::new(
+            base_url,
+            api_key,
+            String::new(), // embed model — not needed for chat
+            String::new(), // reranker model — not needed for chat
+            llm_model,
+        );
+        Some(Arc::new(client))
+    };
+
     let deps = crate::application::build::builder::BuildDependencies {
         graph,
         vector,
         snapshot,
         embed,
+        siliconflow,
         batch_config: Some(batch_config),
     };
 
@@ -147,6 +171,66 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
     files
 }
 
+/// Read the SiliconFlow API key from `~/.config/digital-twin/config.yaml`,
+/// falling back to `SILICONFLOW_API_KEY` env var.
+fn load_siliconflow_api_key() -> String {
+    // Try env var first
+    if let Ok(key) = std::env::var("SILICONFLOW_API_KEY") {
+        if !key.is_empty() {
+            return key;
+        }
+    }
+    // Try config file
+    load_siliconflow_config_str("api_key").unwrap_or_default()
+}
+
+/// Read a field from `services.siliconflow.<field>` in config.yaml.
+fn load_siliconflow_config_str(field: &str) -> Option<String> {
+    let config_paths = [
+        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("config.yaml")),
+        Some(std::path::PathBuf::from("config/config.yaml")),
+    ];
+    for config_path in config_paths.iter().flatten() {
+        if let Ok(content) = std::fs::read_to_string(config_path) {
+            use serde::Deserialize;
+            #[derive(Deserialize)]
+            struct SfCfg {
+                #[serde(default)]
+                url: Option<String>,
+                #[serde(default)]
+                api_key: Option<String>,
+                #[serde(default)]
+                model_embed: Option<String>,
+                #[serde(default)]
+                model_reranker: Option<String>,
+                #[serde(default)]
+                model_llm: Option<String>,
+            }
+            #[derive(Deserialize)]
+            struct Services { siliconflow: Option<SfCfg> }
+            #[derive(Deserialize)]
+            struct Cfg { services: Option<Services> }
+            if let Ok(cfg) = serde_yaml::from_str::<Cfg>(&content) {
+                let sf = cfg.services.and_then(|s| s.siliconflow)?;
+                let val = match field {
+                    "url" => sf.url,
+                    "api_key" => sf.api_key,
+                    "model_embed" => sf.model_embed,
+                    "model_reranker" => sf.model_reranker,
+                    "model_llm" => sf.model_llm,
+                    _ => None,
+                };
+                if let Some(v) = val {
+                    if !v.is_empty() {
+                        return Some(v);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Run pipeline analysis on a project after the build completes.
 ///
 /// This is a purely additive step — any error is logged as a warning and
@@ -166,11 +250,12 @@ async fn run_pipeline_analysis(
     }
     tracing::info!("Pipeline analysis starting for {project_name}...");
 
-    // ── 2. Connect to inference server ────────────────────────────
+    // ── 2. Connect to SiliconFlow cloud API ─────────────────────
     let infer_client = Arc::new(InferClient::new(
-        pipeline_config.inference_server.url.clone(),
-        pipeline_config.inference_server.max_concurrent,
+        "https://api.siliconflow.cn/v1".to_string(),
+        2, // max concurrent — conservatively low for cloud API
     ));
+    let api_key = std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
     let inference_available = match infer_client.health_check().await {
         Ok(true) => {
@@ -392,59 +477,60 @@ pub async fn handle_search(
     if world == "config" {
         // Attempt vector search on config_chunks
         if let Some(vec_repo) = &vector {
-            match crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50051").await {
-                Ok(embed_svc) => {
-                    let embed = Arc::new(embed_svc) as Arc<dyn EmbedService>;
-                    // Build query variants for multi-vector fusion
-                    let queries: Vec<String> = {
-                        let mut qs = vec![query.clone()];
-                        let ascii_terms: Vec<String> = extract_ascii_words(&query);
-                        for t in &ascii_terms {
-                            if *t != query && !qs.contains(t) { qs.push(t.clone()); }
-                        }
-                        if !query.to_lowercase().contains("config") {
-                            qs.push(format!("{} config", query));
-                        }
-                        qs.truncate(3);
-                        qs
-                    };
+            let embed = Arc::new(SiliconFlowClient::new(
+                crate::infrastructure::siliconflow::base_url_from_env(),
+                crate::infrastructure::siliconflow::api_key_from_env(),
+                crate::infrastructure::siliconflow::embed_model_from_env(),
+                crate::infrastructure::siliconflow::reranker_model_from_env(),
+                crate::infrastructure::siliconflow::llm_model_from_env(),
+            )) as Arc<dyn EmbedService>;
+            // Build query variants for multi-vector fusion
+            let queries: Vec<String> = {
+                let mut qs = vec![query.clone()];
+                let ascii_terms: Vec<String> = extract_ascii_words(&query);
+                for t in &ascii_terms {
+                    if *t != query && !qs.contains(t) { qs.push(t.clone()); }
+                }
+                if !query.to_lowercase().contains("config") {
+                    qs.push(format!("{} config", query));
+                }
+                qs.truncate(3);
+                qs
+            };
 
-                    if let Ok(all_vectors) = embed.embed_batch(&queries).await {
-                        use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
-                        let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
-                        for qvec in &all_vectors {
-                            if let Ok(results) = vec_repo.search(
-                                "config_chunks", qvec.clone(), (limit * 2) as u64,
-                            ).await {
-                                let list: Vec<RankedItem> = results.iter().map(|r| {
-                                    let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                    let payload = r.get("payload").unwrap_or(r);
-                                    let section = payload.get("section_name").and_then(|v| v.as_str()).unwrap_or("");
-                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                    let data_id = payload.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    let ns = payload.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-                                    RankedItem {
-                                        id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
-                                        title: format!("[{}:{}] ({} keys)",
-                                            data_id, section,
-                                            payload.get("key_count").and_then(|v| v.as_u64()).unwrap_or(0)),
-                                        snippet: text.to_string(),
-                                        source_world: "vector/config_chunks".into(),
-                                        entity_type: "ConfigChunk".into(),
-                                        score,
-                                    }
-                                }).collect();
-                                if !list.is_empty() { rank_lists.push(list); }
+            if let Ok(all_vectors) = embed.embed_batch(&queries).await {
+                use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
+                let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
+                for qvec in &all_vectors {
+                    if let Ok(results) = vec_repo.search(
+                        "config_chunks", qvec.clone(), (limit * 2) as u64,
+                    ).await {
+                        let list: Vec<RankedItem> = results.iter().map(|r| {
+                            let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let payload = r.get("payload").unwrap_or(r);
+                            let section = payload.get("section_name").and_then(|v| v.as_str()).unwrap_or("");
+                            let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                            let data_id = payload.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let ns = payload.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+                            RankedItem {
+                                id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
+                                title: format!("[{}:{}] ({} keys)",
+                                    data_id, section,
+                                    payload.get("key_count").and_then(|v| v.as_u64()).unwrap_or(0)),
+                                snippet: text.to_string(),
+                                source_world: "vector/config_chunks".into(),
+                                entity_type: "ConfigChunk".into(),
+                                score,
                             }
-                        }
-                        if !rank_lists.is_empty() {
-                            let fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
-                            print_config_chunk_results(&fused);
-                            return Ok(());
-                        }
+                        }).collect();
+                        if !list.is_empty() { rank_lists.push(list); }
                     }
                 }
-                Err(e) => tracing::warn!("dt-embed unavailable for config search: {e}"),
+                if !rank_lists.is_empty() {
+                    let fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
+                    print_config_chunk_results(&fused);
+                    return Ok(());
+                }
             }
         }
         // Fallback: CONTAINS keyword search on ConfigKey nodes
@@ -521,17 +607,16 @@ pub async fn handle_search(
     let did_vector_search = if (world == "code" || world == "all") && vector.is_some() {
         let vec_repo = vector.as_ref().unwrap();
 
-        let embed: Option<Arc<dyn EmbedService>> =
-            match crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50051").await {
-                Ok(svc) => {
-                    tracing::info!("dt-embed connected for vector search");
-                    Some(Arc::new(svc) as Arc<dyn EmbedService>)
-                }
-                Err(e) => {
-                    tracing::warn!("dt-embed unavailable for vector search: {e}");
-                    None
-                }
-            };
+        let embed: Option<Arc<dyn EmbedService>> = {
+            tracing::info!("Xinference client created for vector search");
+            Some(Arc::new(SiliconFlowClient::new(
+                crate::infrastructure::siliconflow::base_url_from_env(),
+                crate::infrastructure::siliconflow::api_key_from_env(),
+                crate::infrastructure::siliconflow::embed_model_from_env(),
+                crate::infrastructure::siliconflow::reranker_model_from_env(),
+                crate::infrastructure::siliconflow::llm_model_from_env(),
+            )) as Arc<dyn EmbedService>)
+        };
 
         if let Some(embed_svc) = embed {
             let queries_to_embed: Vec<String> = if world == "code" {
@@ -897,8 +982,14 @@ pub async fn handle_search_kg(
 
     // ── 2. Vector search on kg_nodes + _semantic collections ─────────
     if let Some(vec_repo) = &vector {
-        if let Ok(embed_svc) = crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50051").await {
-            let embed = Arc::new(embed_svc) as Arc<dyn EmbedService>;
+        {
+            let embed = Arc::new(SiliconFlowClient::new(
+                crate::infrastructure::siliconflow::base_url_from_env(),
+                crate::infrastructure::siliconflow::api_key_from_env(),
+                crate::infrastructure::siliconflow::embed_model_from_env(),
+                crate::infrastructure::siliconflow::reranker_model_from_env(),
+                crate::infrastructure::siliconflow::llm_model_from_env(),
+            )) as Arc<dyn EmbedService>;
             let rewriter = crate::application::search::rewrite::QueryRewriter::with_defaults();
             let candidates = rewriter.rewrite(&query);
             let mut queries_to_embed = vec![query.clone()];

@@ -1,11 +1,10 @@
 //! Embedding service gRPC client — text → vector conversion.
 //!
-//! Communicates with `dt-embed` gRPC server (defined in `proto/embed.proto`).
+//! Communicates with external embedding servers.
 //! This client is used by the pipeline to generate embeddings for code chunks.
 //!
 //! ## Implementations
 //!
-//! - `GrpcEmbedService` — real gRPC client using tonic-generated stubs.
 //! - `EmbedClient` — legacy stub (kept for backward compat, 384-dim zeros).
 //! - `NoopEmbedService` — always returns zero-vectors of a configurable dim.
 
@@ -13,93 +12,6 @@ use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::EmbedService;
 use crate::domain::types::HealthStatus;
-use std::time::Instant;
-
-// ---------------------------------------------------------------------------
-// GrpcEmbedService — real tonic client
-// ---------------------------------------------------------------------------
-
-/// Real embedding service gRPC client using `proto/embed.proto`.
-///
-/// Connects to a dt-embed gRPC server (future: Python gRPC wrapper around
-/// BGE-M3 model) and calls `EmbedService::Embed` to convert text batches
-/// into float vectors.
-///
-/// # Usage
-///
-/// ```ignore
-/// let svc = GrpcEmbedService::connect("http://[::1]:50051").await?;
-/// let vecs = svc.embed_batch(&["fn test() {}".to_string()]).await?;
-/// ```
-pub struct GrpcEmbedService {
-    client: crate::proto::dt::embed::embed_service_client::EmbedServiceClient<
-        tonic::transport::Channel,
-    >,
-}
-
-impl GrpcEmbedService {
-    /// Connect to the dt-embed gRPC server at `addr` (e.g. `http://[::1]:50051`).
-    pub async fn connect(addr: &str) -> Result<Self, DtError> {
-        let endpoint = tonic::transport::Endpoint::from_shared(addr.to_string())
-            .map_err(|e| DtError::Repository(format!("embed channel: {e}")))?;
-        let channel = endpoint
-            .connect()
-            .await
-            .map_err(|e| DtError::Repository(format!("embed connect: {e}")))?;
-        let client =
-            crate::proto::dt::embed::embed_service_client::EmbedServiceClient::new(channel);
-        Ok(Self { client })
-    }
-}
-
-#[async_trait]
-impl EmbedService for GrpcEmbedService {
-    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-        use crate::proto::dt::embed::EmbedRequest;
-
-        if texts.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let start = Instant::now();
-        let request = tonic::Request::new(EmbedRequest {
-            texts: texts.to_vec(),
-            model: String::new(),
-        });
-
-        let mut client = self.client.clone();
-        let response = client
-            .embed(request)
-            .await
-            .map_err(|e| DtError::Repository(format!("embed call: {e}")))?;
-
-        let vectors: Vec<Vec<f32>> = response
-            .into_inner()
-            .embeddings
-            .into_iter()
-            .map(|e| e.vector)
-            .collect();
-
-        tracing::debug!(
-            "embed: {} texts → {} vectors in {:?}",
-            texts.len(),
-            vectors.len(),
-            start.elapsed()
-        );
-
-        Ok(vectors)
-    }
-
-    async fn health_check(&self) -> Result<HealthStatus, DtError> {
-        use crate::proto::dt::common::Empty;
-
-        let mut client = self.client.clone();
-        match client.health(tonic::Request::new(Empty {})).await {
-            Ok(_) => Ok(HealthStatus::Healthy),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!("embed health: {e}"))),
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // EmbedClient — legacy stub (backward compat)
@@ -107,8 +19,7 @@ impl EmbedService for GrpcEmbedService {
 
 /// Embedding service gRPC client (stub — zero-length vectors).
 ///
-/// Kept for backward compatibility.  Prefer `GrpcEmbedService` for real
-/// embedding or `NoopEmbedService` for tests.
+/// Kept for backward compatibility.  Prefer `NoopEmbedService` for tests.
 pub struct EmbedClient {
     uri: String,
 }
@@ -224,7 +135,7 @@ mod tests {
         let texts = vec!["fn foo() {}".to_string()];
         let result = svc.embed_batch(&texts).await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].len(), 384);
+        assert_eq!(result[0].len(), 1024);
     }
 
     #[tokio::test]

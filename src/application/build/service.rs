@@ -14,6 +14,7 @@ use crate::domain::types::{BatchConfig, BuildReport, ScanConfig};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 use crate::infrastructure::parser::ParserRegistry;
 use super::pipeline::PipelineTemplate;
 use super::strategy::full_rebuild::FullRebuildStrategy;
@@ -31,6 +32,7 @@ pub struct BuildServiceImpl {
     vector: Option<Arc<dyn VectorRepository>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
+    siliconflow: Option<Arc<SiliconFlowClient>>,
     scan_config: ScanConfig,
     full: bool,
     batch_config: BatchConfig,
@@ -44,6 +46,7 @@ impl BuildServiceImpl {
         vector: Option<Arc<dyn VectorRepository>>,
         snapshot: Option<Arc<dyn SnapshotRepository>>,
         embed: Option<Arc<dyn EmbedService>>,
+        siliconflow: Option<Arc<SiliconFlowClient>>,
         full: bool,
         batch_config: BatchConfig,
     ) -> Self {
@@ -53,6 +56,7 @@ impl BuildServiceImpl {
             vector,
             snapshot,
             embed,
+            siliconflow,
             scan_config: ScanConfig::default(),
             full,
             batch_config,
@@ -80,7 +84,11 @@ impl BuildServiceImpl {
 #[async_trait]
 impl BuildService for BuildServiceImpl {
     async fn build(&self, project: &str, root: &Path) -> Result<BuildReport, DtError> {
-        let pipeline = PipelineTemplate::new(self.parser_registry.clone(), self.batch_config.clone());
+        let pipeline = PipelineTemplate::new(
+            self.parser_registry.clone(),
+            self.batch_config.clone(),
+            self.siliconflow.clone(),
+        );
         let strategy = self.select_strategy();
 
         let snapshot_ref: Option<&dyn SnapshotRepository> =
@@ -186,7 +194,7 @@ mod tests {
     #[test]
     fn service_creates() {
         let registry = Arc::new(ParserRegistry::new());
-        let service = BuildServiceImpl::new(registry, None, None, None, None, false, BatchConfig::default());
+        let service = BuildServiceImpl::new(registry, None, None, None, None, None, false, BatchConfig::default());
         // Just verify it compiles and is constructable
         assert_eq!(service.scan_config.max_file_size, 524_288);
     }

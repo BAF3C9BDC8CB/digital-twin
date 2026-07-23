@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 use super::service::BuildServiceImpl;
 
 /// Build command — index a project's source code into the knowledge graph.
@@ -46,6 +47,7 @@ pub struct BuildDependencies {
     pub vector: Option<Arc<dyn VectorRepository>>,
     pub snapshot: Option<Arc<dyn SnapshotRepository>>,
     pub embed: Option<Arc<dyn EmbedService>>,
+    pub siliconflow: Option<Arc<SiliconFlowClient>>,
     pub batch_config: Option<BatchConfig>,
 }
 
@@ -69,6 +71,7 @@ impl BuildCommand {
             deps.vector,
             deps.snapshot,
             deps.embed,
+            deps.siliconflow,
             self.full,
             batch,
         );

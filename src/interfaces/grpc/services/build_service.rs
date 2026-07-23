@@ -51,6 +51,7 @@ pub async fn handle_build(
         vector,
         None, // snapshot — not required for gRPC build
         None, // embed — using noop
+        None, // siliconflow — not wired through gRPC yet
         false, // gRPC builds default to incremental
         BatchConfig::default(),
     );
@@ -120,12 +121,13 @@ async fn search_via_vector(
     limit: u64,
 ) -> Result<Vec<SearchResult>, Status> {
     // 1. Connect to embed service
-    let embed_svc = crate::infrastructure::embedder::GrpcEmbedService::connect("http://[::1]:50052")
-        .await
-        .map_err(|e| {
-            tracing::warn!("dt-embed unavailable for gRPC vector search: {e}");
-            Status::unavailable("Embedding service unavailable")
-        })?;
+    let embed_svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
+        crate::infrastructure::siliconflow::base_url_from_env(),
+        crate::infrastructure::siliconflow::api_key_from_env(),
+        crate::infrastructure::siliconflow::embed_model_from_env(),
+        crate::infrastructure::siliconflow::reranker_model_from_env(),
+        crate::infrastructure::siliconflow::llm_model_from_env(),
+    );
     let embed: Arc<dyn EmbedService> = Arc::new(embed_svc);
 
     // 2. Generate query vector

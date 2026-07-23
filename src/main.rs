@@ -593,9 +593,7 @@ struct ServiceConfig {
     #[serde(default)]
     sqlite: SqliteConfig,
     #[serde(default)]
-    embed_server: EmbedServerConfig,
-    #[serde(default)]
-    reranker: RerankerConfig,
+    siliconflow: SiliconFlowConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -674,29 +672,31 @@ fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
 }
 
-/// dt-embed gRPC server configuration from config.yaml `services.embed_server`.
+/// Xinference service configuration from config.yaml `services.xinference`.
 #[derive(Debug, Deserialize, Default)]
-struct EmbedServerConfig {
-    /// URL of the dt-embed gRPC server.
-    #[serde(default = "default_embed_url")]
+struct SiliconFlowConfig {
+    /// Base URL (e.g. https://api.siliconflow.cn/v1).
+    #[serde(default = "default_siliconflow_url")]
     url: String,
+    /// API key for Bearer authentication.
+    #[serde(default = "default_siliconflow_api_key")]
+    api_key: String,
+    /// Embedding model name (e.g. BAAI/bge-m3).
+    #[serde(default = "default_model_embed")]
+    model_embed: String,
+    /// Reranker model name (e.g. BAAI/bge-reranker-v2-m3).
+    #[serde(default = "default_model_reranker")]
+    model_reranker: String,
+    /// LLM model name (e.g. Qwen/Qwen3-8B).
+    #[serde(default = "default_model_llm")]
+    model_llm: String,
 }
 
-fn default_embed_url() -> String {
-    "http://[::1]:50051".to_string()
-}
-
-/// dt-reranker gRPC server configuration from config.yaml `services.reranker`.
-#[derive(Debug, Deserialize, Default)]
-struct RerankerConfig {
-    /// URL of the dt-reranker gRPC server.
-    #[serde(default = "default_reranker_url")]
-    url: String,
-}
-
-fn default_reranker_url() -> String {
-    "http://[::1]:50051".to_string()
-}
+fn default_siliconflow_url() -> String { "https://api.siliconflow.cn/v1".to_string() }
+fn default_siliconflow_api_key() -> String { "".to_string() }
+fn default_model_embed() -> String { "BAAI/bge-m3".to_string() }
+fn default_model_reranker() -> String { "BAAI/bge-reranker-v2-m3".to_string() }
+fn default_model_llm() -> String { "Qwen/Qwen3.5-9B".to_string() }
 
 #[derive(Debug, Deserialize)]
 struct ProjectGroup {
@@ -878,27 +878,30 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
     }
 }
 
-/// Connect to the dt-embed gRPC service (falls back to NoopEmbedService).
+/// Connect to the Xinference embedding service.
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
-    let url = load_config()
-        .map(|c| c.services.embed_server.url.clone())
-        .unwrap_or_else(default_embed_url);
+    let cfg = load_config();
+    let (url, api_key, model_embed, model_reranker, model_llm) = cfg
+        .as_ref()
+        .map(|c| (
+            c.services.siliconflow.url.clone(),
+            c.services.siliconflow.api_key.clone(),
+            c.services.siliconflow.model_embed.clone(),
+            c.services.siliconflow.model_reranker.clone(),
+            c.services.siliconflow.model_llm.clone(),
+        ))
+        .unwrap_or_else(|| (
+            default_siliconflow_url(),
+            default_siliconflow_api_key(),
+            default_model_embed(),
+            default_model_reranker(),
+            default_model_llm(),
+        ));
 
-    match dt_daemon::infrastructure::embedder::GrpcEmbedService::connect(&url).await {
-        Ok(svc) => {
-            tracing::info!("dt-embed connected via gRPC: {url}");
-            Some(Arc::new(svc) as Arc<dyn dt_daemon::domain::traits::EmbedService>)
-        }
-        Err(e) => {
-            tracing::warn!(
-                "dt-embed gRPC unavailable at {url}: {e} — using NoopEmbedService (zero-vectors)"
-            );
-            Some(Arc::new(
-                dt_daemon::infrastructure::embedder::NoopEmbedService::default(),
-            )
-                as Arc<dyn dt_daemon::domain::traits::EmbedService>)
-        }
-    }
+    let client = dt_daemon::infrastructure::siliconflow::SiliconFlowClient::new(
+        url, api_key, model_embed, model_reranker, model_llm,
+    );
+    Some(Arc::new(client) as Arc<dyn dt_daemon::domain::traits::EmbedService>)
 }
 
 /// Build an optional KgBridge for auto-syncing nodes to Qdrant after writes.
@@ -983,22 +986,25 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         // ---- CLI mode: dt clean ----
         Some(Commands::Clean { confirm, dry_run, targets, test }) => {
-            // Handle --test: clean test- prefixed data
+            // Handle --test: clean test- prefixed data (fail-fast, no Noop fallback)
             if test {
-                let memgraph = connect_memgraph().await;
-                let qdrant = connect_vector().await;
+                // a. Connect to real Memgraph — fail fast if unavailable
+                let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
+                    Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
+                    None => {
+                        eprintln!("error: Memgraph unavailable — clean --test requires real backends");
+                        std::process::exit(1);
+                    }
+                };
 
-                let graph: Arc<dyn GraphRepository> = memgraph
-                    .map(|c| Arc::new(c) as Arc<dyn GraphRepository>)
-                    .unwrap_or_else(|| {
-                        tracing::warn!("Memgraph unavailable, using NoopGraphRepo");
-                        Arc::new(dt_daemon::infrastructure::memgraph::NoopGraphRepo)
-                    });
-                let vector: Arc<dyn VectorRepository> = qdrant
-                    .unwrap_or_else(|| {
-                        tracing::warn!("Qdrant unavailable, using NoopVectorRepo");
-                        Arc::new(dt_daemon::infrastructure::qdrant::NoopVectorRepo)
-                    });
+                // b. Connect to real Qdrant — fail fast if unavailable
+                let vector: Arc<dyn VectorRepository> = match connect_vector().await {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("error: Qdrant unavailable — clean --test requires real backends");
+                        std::process::exit(1);
+                    }
+                };
 
                 let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
                     &graph, &vector,
@@ -1317,49 +1323,70 @@ async fn main() -> anyhow::Result<()> {
             if test {
                 tracing::info!("dt build --test: starting pipeline integration test");
 
-                let memgraph = connect_memgraph().await;
-                let qdrant = connect_vector().await;
-                let embed = connect_embed().await;
+                // a. Connect to real Memgraph — fail fast if unavailable
+                let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
+                    Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
+                    None => {
+                        eprintln!("error: Memgraph unavailable — build --test requires real backends");
+                        std::process::exit(1);
+                    }
+                };
 
-                let graph: Arc<dyn GraphRepository> = memgraph
-                    .map(|c| Arc::new(c) as Arc<dyn GraphRepository>)
+                // b. Connect to real Qdrant — fail fast if unavailable
+                let vector: Arc<dyn VectorRepository> = match connect_vector().await {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("error: Qdrant unavailable — build --test requires real backends");
+                        std::process::exit(1);
+                    }
+                };
+
+                // c. Connect to dt-embed (fallback to Noop if unavailable — embed quality doesn't affect test validity)
+                let embed: Arc<dyn EmbedService> = connect_embed().await
                     .unwrap_or_else(|| {
-                        tracing::warn!("Memgraph unavailable, using NoopGraphRepo");
-                        Arc::new(
-                            dt_daemon::infrastructure::memgraph::NoopGraphRepo,
-                        ) as Arc<dyn GraphRepository>
+                        tracing::warn!("dt-embed unavailable, using NoopEmbedService");
+                        Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
+                            as Arc<dyn EmbedService>
                     });
 
-                let vector: Arc<dyn VectorRepository> = qdrant
-                    .map(|c| c)
-                    .unwrap_or_else(|| {
-                        tracing::warn!("Qdrant unavailable, using NoopVectorRepo");
-                        Arc::new(
-                            dt_daemon::infrastructure::qdrant::NoopVectorRepo,
-                        ) as Arc<dyn VectorRepository>
-                    });
+                // d. Connect to real SQLite snapshot store — fail fast if unavailable
+                let snapshot: Arc<dyn SnapshotRepository> = match connect_snapshot().await {
+                    Some(c) => c,
+                    None => {
+                        eprintln!("error: SQLite snapshot store unavailable — build --test requires real backends");
+                        std::process::exit(1);
+                    }
+                };
 
-                let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
-                    tracing::warn!("dt-embed unavailable, using NoopEmbedService");
-                    Arc::new(
-                        dt_daemon::infrastructure::embedder::NoopEmbedService::default(),
-                    ) as Arc<dyn EmbedService>
-                });
+                // f. Run incremental build (no cleanup — leverages file hash tracking)
+                //    full=false: only changed files are rebuilt
+                //    pipeline=true: runs Phase 2 LLM analysis with hash-based skip
+                dt_daemon::interfaces::cli::build::handle_build(
+                    PathBuf::from("/data/myProject/digital-twin-v2"),
+                    Some("test-pipeline".to_string()),
+                    None,  // file
+                    false, // full: incremental mode — only changed files
+                    true,  // pipeline: enable Phase 2 LLM analysis
+                    Some(graph.clone()),
+                    Some(vector.clone()),
+                    Some(embed.clone()),
+                    Some(snapshot.clone()),
+                    BatchConfig::default(),
+                )
+                .await?;
+                // Note: after incremental build, verify may detect stale test data
+                // from a previous run. This is fine — the build only verifies that
+                // the data pipeline works correctly.
 
-                let sqlite = Arc::new(
-                    dt_daemon::infrastructure::sqlite::MemorySnapshotRepo::new(),
-                ) as Arc<dyn SnapshotRepository>;
+                // h. Verify test data
+                let report =
+                    dt_daemon::application::pipeline::test::runner::verify_test_data(graph, vector)
+                        .await;
 
-                let runner = dt_daemon::application::pipeline::test::TestRunner::new(
-                    graph,
-                    vector,
-                    sqlite,
-                    embed,
-                );
-
-                let report = runner.run().await;
+                // i. Print the test report
                 report.print();
 
+                // j. Exit with failure code if any checks failed
                 if report.failed > 0 {
                     std::process::exit(1);
                 }

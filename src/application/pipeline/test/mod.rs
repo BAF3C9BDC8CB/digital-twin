@@ -1,28 +1,22 @@
-//! Pipeline test runner — self-contained integration test for the Digital Twin
+//! Pipeline test verification — standalone integration test for the Digital Twin
 //! build pipeline.
 //!
 //! # Architecture
 //!
-//! The test runner creates test- prefixed nodes and collections, exercises the
-//! full build pipeline (code indexing, Nacos/K8s/Jenkins/Knowledge data), then
-//! verifies every entity type was stored correctly and reports results.
+//! The [`verify_test_data`] function cleans old test-prefixed data, runs
+//! verification checks over every entity type (classes, methods, Nacos configs,
+//! pods, Jenkins jobs, knowledge entries), and returns a [`TestReport`].
 //!
 //! ```text
-//!                   TestRunner
-//!     ┌───────────────────────────────────────────┐
-//!     │  build_test_data() → verify_test_data()    │
-//!     │  → cleanup() (unless --keep)               │
-//!     └───────────────────────────────────────────┘
-//!                        │
-//!               ┌────────┴────────┐
-//!               │   TestReport    │
-//!               │  (colored TTY)  │
-//!               └─────────────────┘
+//!     verify_test_data()
+//!     → cleanup_test_data()
+//!     → 10 Cypher queries + Qdrant checks
+//!     → TestReport
 //! ```
 
 pub mod cleanup;
 pub mod report;
 pub mod runner;
 
-pub use runner::TestRunner;
 pub use report::TestReport;
+pub use runner::verify_test_data;
