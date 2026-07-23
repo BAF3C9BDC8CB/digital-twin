@@ -1346,19 +1346,15 @@ async fn main() -> anyhow::Result<()> {
                     ) as Arc<dyn EmbedService>
                 });
 
-                // Determine project root.
-                let project_root = if let Some(ref p) = path {
-                    p.clone()
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("/data/myProject/digital-twin-v2"))
-                };
+                let sqlite = Arc::new(
+                    dt_daemon::infrastructure::sqlite::MemorySnapshotRepo::new(),
+                ) as Arc<dyn SnapshotRepository>;
 
                 let runner = dt_daemon::application::pipeline::test::TestRunner::new(
                     graph,
                     vector,
+                    sqlite,
                     embed,
-                    project_root,
                 );
 
                 let report = runner.run().await;

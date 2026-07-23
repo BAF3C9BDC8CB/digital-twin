@@ -8,83 +8,46 @@ use crate::domain::traits::{GraphRepository, VectorRepository};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Delete all nodes whose labels contain the `test-` prefix and all `test-*`
-/// Qdrant collections.
-///
-/// Returns the total number of nodes deleted.
+/// Delete all test data: nodes where project starts with "test-" AND
+/// nodes whose labels contain `test-` prefix. Also deletes test-* Qdrant collections.
 pub async fn cleanup_test_data(
     graph: &Arc<dyn GraphRepository>,
     vector: &Arc<dyn VectorRepository>,
 ) -> Result<usize, String> {
     let mut total_cleaned = 0usize;
 
-    // ── Step 1: Delete test- nodes from Memgraph ──────────────────────
-    // We use a Cypher query that matches any node whose labels contain the
-    // `test-` prefix and detach-deletes them all in one shot, returning the
-    // count.
-    let delete_query = concat!(
-        "MATCH (n) ",
-        "WHERE any(label IN labels(n) WHERE label STARTS WITH 'test-') ",
-        "DETACH DELETE n ",
-        "RETURN count(*) AS deleted"
-    );
-
-    match graph
-        .write_query(delete_query, HashMap::new())
-        .await
-    {
-        Ok(result) => {
-            if let Some(arr) = result.as_array() {
-                if let Some(first) = arr.first() {
-                    if let Some(count) = first.get("deleted").and_then(|v| v.as_i64()) {
-                        total_cleaned += count as usize;
-                    }
-                }
+    // Delete by project property (new approach)
+    let q1 = "MATCH (n) WHERE n.project = 'test-pipeline' DETACH DELETE n RETURN count(*) AS deleted";
+    if let Ok(result) = graph.write_query(q1, HashMap::new()).await {
+        if let Some(arr) = result.as_array().and_then(|a| a.first()) {
+            if let Some(c) = arr.get("deleted").and_then(|v| v.as_i64()) {
+                total_cleaned += c as usize;
             }
-            tracing::info!(
-                deleted = total_cleaned,
-                "Cleaned up test- prefixed graph nodes"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to clean up test- graph nodes");
-            return Err(format!("graph cleanup failed: {e}"));
         }
     }
 
-    // ── Step 2: Delete test- collections from Qdrant ──────────────────
-    match vector.list_collections().await {
-        Ok(collections) => {
-            let test_collections: Vec<String> = collections
-                .into_iter()
-                .filter(|name| name.starts_with("test-"))
-                .collect();
-
-            for name in &test_collections {
-                match vector.delete_collection(name).await {
-                    Ok(_) => {
-                        tracing::info!(collection = %name, "Deleted test- Qdrant collection");
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            collection = %name,
-                            error = %e,
-                            "Failed to delete test- Qdrant collection"
-                        );
-                    }
-                }
-            }
-
-            if !test_collections.is_empty() {
-                tracing::info!(
-                    count = test_collections.len(),
-                    "Cleaned up test- prefixed Qdrant collections"
-                );
+    // Delete by label prefix (old approach, for any remaining data)
+    let q2 = "MATCH (n) WHERE any(label IN labels(n) WHERE label STARTS WITH 'test-') DETACH DELETE n RETURN count(*) AS deleted";
+    if let Ok(result) = graph.write_query(q2, HashMap::new()).await {
+        if let Some(arr) = result.as_array().and_then(|a| a.first()) {
+            if let Some(c) = arr.get("deleted").and_then(|v| v.as_i64()) {
+                total_cleaned += c as usize;
             }
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to list Qdrant collections for cleanup");
-            return Err(format!("Qdrant list_collections failed: {e}"));
+    }
+
+    tracing::info!(deleted = total_cleaned, "Cleaned up test data (graph)");
+
+    // Delete test- Qdrant collections
+    if let Ok(collections) = vector.list_collections().await {
+        let test_cols: Vec<String> = collections.into_iter()
+            .filter(|name| name.starts_with("test-"))
+            .collect();
+        for name in &test_cols {
+            let _ = vector.delete_collection(name).await;
+        }
+        if !test_cols.is_empty() {
+            tracing::info!(count = test_cols.len(), "Cleaned up test Qdrant collections");
         }
     }
 
