@@ -19,12 +19,17 @@ use crate::domain::types::{BatchConfig, BuildReport, FileSnapshot, ScanConfig};
 use futures::stream::{self, StreamExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::infrastructure::siliconflow::SiliconFlowClient;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
 use super::strategy::BuildStrategy;
+
+/// Maximum concurrent LLM analysis requests to SiliconFlow.
+const PHASE2_CONCURRENCY: usize = 5;
+
+/// Default prompt path (used when config/prompts/code_analysis.yaml is missing).
+const PHASE2_DEFAULT_PROMPT: &str = "You are a code analyst. Explain what this code does in 2-3 sentences. Focus on the purpose and key logic.";
 
 /// Result of extracting entities from all changed files.
 pub struct ExtractionResult {
@@ -250,83 +255,113 @@ impl PipelineTemplate {
             tracing::info!("snapshot update complete");
         }
 
-        // ── Phase 2: LLM semantic analysis (resumable) ────────────────
+        // ── Phase 2: LLM semantic analysis (resumable, concurrent) ─────
         if let (Some(ref client), Some(repo)) = (&self.siliconflow, snapshot_repo) {
             tracing::info!(
-                "Phase 2: LLM analysis for {} files (resumable, checking progress)...",
-                files_to_process.len()
+                "Phase 2: LLM analysis for {} files (concurrent={})...",
+                all_files.len(),
+                PHASE2_CONCURRENCY,
             );
 
-            let mut analyzed_count = 0usize;
-            let mut skipped_count = 0usize;
-            let total = files_to_process.len();
+            // Pre-filter: check ALL source files (not just changed) for pending LLM analysis
+            let mut jobs: Vec<(String, String, String)> = Vec::new();
+            for file_path in &all_files {
+                // Only analyze source code files — skip config, data, binary, and cache
+                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                match ext {
+                    "java" | "rs" | "py" | "go" | "ts" | "tsx" | "js" | "jsx"
+                    | "php" | "rb" | "kt" | "scala" | "swift" | "c" | "cpp" | "h" | "hpp"
+                    | "cs" | "vue" | "svelte" | "mjs" | "mts" => {} // keep
+                    _ => continue, // skip non-source files
+                }
 
-            for (idx, file_path) in files_to_process.iter().enumerate() {
                 let rel = scanner::rel_path(root, file_path);
-
-                // Compute current file hash to check if content changed
+                let rel = scanner::rel_path(root, file_path);
                 let (file_hash, _) = scanner::compute_file_hash(file_path).unwrap_or_default();
-
-                // Check if already analyzed with SAME content
                 if repo.is_llm_analyzed(project, &rel, &file_hash).await.unwrap_or(false) {
-                    skipped_count += 1;
                     continue;
                 }
-
-                // Read source code
                 let source = match tokio::fs::read_to_string(file_path).await {
                     Ok(s) => s,
-                    Err(_) => continue, // skip unreadable files
+                    Err(_) => continue,
                 };
-
-                // Log progress every 10 files
-                if idx % 10 == 0 {
-                    tracing::info!(
-                        "Phase 2 [{}/{}] analyzing {}...",
-                        idx + 1, total, rel
-                    );
-                }
-
-                // Call SiliconFlow LLM for semantic analysis
-                let t0 = std::time::Instant::now();
-                match client
-                    .chat(
-                        "You are a code analyst. Explain what this code does in 2-3 sentences.",
-                        &source,
-                        0.1,
-                        512,
-                    )
-                    .await
-                {
-                    Ok(response) => {
-                        let elapsed = t0.elapsed();
-                        tracing::info!(
-                            "Phase 2 [{}/{}] {} analyzed in {:?} ({} bytes)",
-                            idx + 1, total, rel, elapsed, response.len()
-                        );
-                        // Mark as completed with file hash
-                        let _ = repo.mark_llm_analyzed(project, &rel, &file_hash).await;
-                        analyzed_count += 1;
-                    }
-                    Err(e) => {
-                        let elapsed = t0.elapsed();
-                        tracing::warn!(
-                            "Phase 2 [{}/{}] {} FAILED after {:?}: {}",
-                            idx + 1, total, rel, elapsed, e
-                        );
-                        // Don't mark — will retry on next build
-                    }
-                }
-
-                // Small delay between files to avoid API throttling
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                jobs.push((rel, source, file_hash));
             }
 
+            let total = jobs.len();
+            let skipped = all_files.len() - total;
+            tracing::info!("Phase 2: {} to analyze, {} skipped (up-to-date)", total, skipped);
+
+            // Clone Arc for concurrent access
+            let system_prompt = load_code_analysis_prompt();
+            let sp_shared = system_prompt.clone();
+            let embed = embed.clone();
+            let vector = vector.clone();
+            let project_owned = project.to_string();
+
+            // Process files concurrently, logging and persisting results
+            let results: Vec<(String, bool)> = stream::iter(
+                jobs.into_iter().map(|(rel, source, hash)| {
+                    let embed = embed.clone();
+                    let vector = vector.clone();
+                    let sp = sp_shared.clone();
+                    let project = project_owned.clone();
+                    async move {
+                        let t0 = std::time::Instant::now();
+                        match client.chat(
+                            &sp,
+                            &source, 0.1, 512,
+                        ).await {
+                            Ok(response) => {
+                                let elapsed = t0.elapsed();
+                                 let _ = repo.mark_llm_analyzed(&project, &rel, &hash).await;
+
+                                // Persist analysis result to Qdrant entities collection
+                                if let (Some(ref embed_svc), Some(ref vector_repo)) = (&embed, &vector) {
+                                    let texts = vec![response.clone()];
+                                    if let Ok(embeddings) = embed_svc.embed_batch(&texts).await {
+                                        if let Some(vec) = embeddings.first() {
+                                            let collection = format!("{}_entities", project);
+                                            let point_id = format!("{}-llm-{}", project, rel);
+                                            let _ = vector_repo.ensure_collection(&collection, 1024).await;
+                                            let point = serde_json::json!({
+                                                "id": point_id,
+                                                "vector": vec,
+                                                "payload": {
+                                                    "file_path": rel,
+                                                    "project": project,
+                                                    "source": "llm_analysis",
+                                                    "entity_type": "file_analysis",
+                                                    "llm_analysis": response,
+                                                    "text": rel,
+                                                }
+                                            });
+                                            let _ = vector_repo.upsert(&collection, vec![point]).await;
+                                        }
+                                    }
+                                }
+
+                                tracing::info!("Phase 2 done {} ({:?})", rel, elapsed);
+                                (rel, true)
+                            }
+                            Err(e) => {
+                                let elapsed = t0.elapsed();
+                                tracing::warn!("Phase 2 failed {} ({:?}): {}", rel, elapsed, e);
+                                (rel, false)
+                            }
+                        }
+                    }
+                }),
+            )
+            .buffer_unordered(PHASE2_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+
+            let analyzed = results.iter().filter(|(_, ok)| *ok).count();
+
             tracing::info!(
-                "Phase 2 complete: {} analyzed, {} skipped (previously done), {} errors",
-                analyzed_count,
-                skipped_count,
-                total - analyzed_count - skipped_count,
+                "Phase 2 complete: {} analyzed, {} skipped (up-to-date), {} errors",
+                analyzed, skipped, total - analyzed,
             );
         }
 
@@ -1156,6 +1191,30 @@ fn infer_project_type(project: &str) -> &str {
     if lower.contains("-api") || lower.contains("api-") { return "微服务 — API 层"; }
     if lower.contains("center") { return "微服务 — 业务中台"; }
     "微服务"
+}
+
+/// Load the system prompt for Phase 2 code analysis from `config/prompts/code_analysis.yaml`.
+/// Falls back to a hardcoded default if the file is missing.
+fn load_code_analysis_prompt() -> String {
+    let paths = [
+        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("prompts").join("code_analysis.yaml")),
+        Some(std::path::PathBuf::from("config/prompts/code_analysis.yaml")),
+    ];
+    for path in paths.iter().flatten() {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            use serde::Deserialize;
+            #[derive(Deserialize)]
+            struct Prompt { system: Option<String> }
+            if let Ok(p) = serde_yaml::from_str::<Prompt>(&content) {
+                if let Some(s) = p.system {
+                    if !s.is_empty() {
+                        return s;
+                    }
+                }
+            }
+        }
+    }
+    PHASE2_DEFAULT_PROMPT.to_string()
 }
 
 #[cfg(test)]

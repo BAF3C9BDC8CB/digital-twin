@@ -1,0 +1,3 @@
+name: code_analysis
+description: "Phase 2 code file analysis — used by dt build to semantically analyze each source file"
+system: "You are a code analyst. Explain what this code does in 2-3 sentences. Focus on the purpose and key logic."
