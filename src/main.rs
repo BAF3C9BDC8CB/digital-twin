@@ -47,6 +47,11 @@ enum Commands {
         /// Supported: "reasoning", "all" (default when no targets specified).
         #[arg(long = "targets", value_delimiter = ',')]
         targets: Vec<String>,
+
+        /// Clean all test- prefixed data (nodes + Qdrant collections).
+        /// Equivalent to the cleanup phase of `dt build --test`.
+        #[arg(long = "test")]
+        test: bool,
     },
 
     /// Tiered cleanup with dry-run, execute, and per-target selection.
@@ -977,7 +982,31 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         // ---- CLI mode: dt clean ----
-        Some(Commands::Clean { confirm, dry_run, targets }) => {
+        Some(Commands::Clean { confirm, dry_run, targets, test }) => {
+            // Handle --test: clean test- prefixed data
+            if test {
+                let memgraph = connect_memgraph().await;
+                let qdrant = connect_vector().await;
+
+                let graph: Arc<dyn GraphRepository> = memgraph
+                    .map(|c| Arc::new(c) as Arc<dyn GraphRepository>)
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Memgraph unavailable, using NoopGraphRepo");
+                        Arc::new(dt_daemon::infrastructure::memgraph::NoopGraphRepo)
+                    });
+                let vector: Arc<dyn VectorRepository> = qdrant
+                    .unwrap_or_else(|| {
+                        tracing::warn!("Qdrant unavailable, using NoopVectorRepo");
+                        Arc::new(dt_daemon::infrastructure::qdrant::NoopVectorRepo)
+                    });
+
+                let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
+                    &graph, &vector,
+                ).await.map_err(|e| anyhow::anyhow!(e))?;
+                println!("Cleaned {} test- nodes and collections", deleted);
+                return Ok(());
+            }
+
             if targets.iter().any(|t| t == "reasoning") {
                 dt_daemon::interfaces::cli::cleanup::run_clean_reasoning(dry_run).await?;
                 return Ok(());

@@ -77,14 +77,17 @@ impl TestRunner {
     // Main entry point
     // ------------------------------------------------------------------
 
-    /// Run the full test flow: build → verify → (clean unless keep).
-    ///
-    /// Returns a [`TestReport`] with all check results.
+    /// Run the full test flow: clean old → build → verify.
+    /// Data persists until `dt clean --test` is run explicitly.
     pub async fn run(&self) -> TestReport {
         let start = Instant::now();
         tracing::info!("TestRunner: starting pipeline test");
 
         let mut report = TestReport::new();
+
+        // Phase 0: Clean old test data from previous runs.
+        tracing::info!("TestRunner: cleaning old test data");
+        let _ = cleanup_test_data(&self.graph, &self.vector).await;
 
         // Phase 1: Build test data.
         tracing::info!("TestRunner: phase 1 — building test data");
@@ -93,10 +96,6 @@ impl TestRunner {
         // Phase 2: Verify test data.
         tracing::info!("TestRunner: phase 2 — verifying test data");
         self.verify_test_data(&mut report).await;
-
-        // Phase 3: Always cleanup.
-        tracing::info!("TestRunner: phase 3 — cleaning up test data");
-        self.cleanup(&mut report).await;
 
         let elapsed = start.elapsed();
         report.set_duration(elapsed.as_millis() as u64);
@@ -863,32 +862,6 @@ impl TestRunner {
                     "Vector",
                     format!("Qdrant collection_info failed: {e}"),
                 ));
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Phase 3: Cleanup
-    // ------------------------------------------------------------------
-
-    /// Remove all test- prefixed data.
-    async fn cleanup(&self, report: &mut TestReport) {
-        match cleanup_test_data(&self.graph, &self.vector).await {
-            Ok(deleted) => {
-                report.add(CheckResult::passed(
-                    "Cleanup",
-                    "Pipeline",
-                ));
-                tracing::info!(deleted, "Test data cleanup complete");
-            }
-            Err(e) => {
-                report.add(CheckResult::failed(
-                    "Cleanup",
-                    "Pipeline",
-                    "cleanup to complete",
-                    &e,
-                ));
-                tracing::warn!(error = %e, "Test data cleanup encountered errors");
             }
         }
     }
