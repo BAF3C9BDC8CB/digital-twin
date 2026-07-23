@@ -25,7 +25,7 @@ AI 辅助开发的持久化记忆层。Digital Twin 结合 **Memgraph 知识图�
 │  └───────────────────────┬───────────────────────────┘ │
 │                          │ 子进程                      │
 │  ┌───────────────────────▼───────────────────────────┐ │
-│  │        dt-embed CLI (Python + BGE-M3)              │ │
+│  │    dt-inference-server (BGE-M3 / reranker / Qwen) │ │
 │  └───────────────────────────────────────────────────┘ │
 └──────────────────────────┬──────────────────────────────┘
                            │
@@ -44,7 +44,7 @@ AI 辅助开发的持久化记忆层。Digital Twin 结合 **Memgraph 知识图�
 | 组件 | 语言 | 用途 |
 |------|------|------|
 | `engine-rust/` | Rust | 核心 CLI（`dt`）：索引、搜索、事件/记忆管理 |
-| `services/embed-server/` | Python + sentence-transformers | `dt-embed` CLI：GPU 文本向量化（BGE-M3，1024 维） |
+| `services/inference-server/` | Python + transformers | 统一推理服务：Embed (BGE-M3)、Rerank (BGE-reranker)、LLM Chat (Qwen3-4B) |
 | `services/search-web/` | Python + Flask | Web 搜索界面 |
 | `config.yaml` | YAML | 中心配置 |
 
@@ -92,19 +92,19 @@ curl -L https://github.com/qdrant/qdrant/releases/latest/download/qdrant-x86_64-
 ./qdrant &
 ```
 
-### 2. dt-embed CLI
+### 2. dt-inference-server
+
+统一模型推理服务，提供 Embed (BGE-M3)、Rerank (BGE-reranker) 和 LLM Chat (Qwen3-4B) 三种能力。
 
 ```bash
-cd services/embed-server
-pip install -e .
-sudo ln -sf $(which dt-embed) /usr/local/bin/dt-embed
-
-# 验证
-dt-embed --info
-# → {"model": "BAAI/bge-m3", "dim": 1024, "device": "cuda", "fp16": true}
+cd services/inference-server/src
+python3 server.py --port 50051 --llm-port 50052
 ```
 
-`dt` 通过子进程自动调用 `dt-embed`，无需 HTTP 服务。
+- **`:50051`** — gRPC Embed 服务 (旧 `dt-embed` 兼容，`dt build` 直连)
+- **`:50052`** — REST API (chat/rerank/embed/health/metrics/nlp)
+- 模型首次请求时懒加载，启动不占显存
+- 内置 `TaskRouter` 三级优先级队列 (HIGH/NORMAL/LOW)，LOW 支持自动攒批
 
 ### 3. 编译并安装 `dt` CLI
 
@@ -126,6 +126,8 @@ cp config.yaml.example config.yaml
 编辑 `config.yaml` 匹配你的环境。
 
 `dt` CLI 会自动从项目根目录读取 `config.yaml`。可通过 `DT_CONFIG` 环境变量覆盖路径。
+
+新增 `config/pipeline.yaml` 配置 Pipeline 引擎参数（推理服务地址、处理器开关等），以及 `config/prompts/*.yaml` 管理 LLM 提示词模板。
 
 ### 5. 安装 OpenCode Skill（可选）
 
@@ -252,13 +254,60 @@ dt build --path /proj --name myapp
   │
   ├─ 每个变更文件：
   │   1. tree-sitter 解析 → 提取方法/类
-   │   2. dt-embed CLI 子进程调用 → 生成 1024 维向量 (BGE-M3)
+   │   2. dt-inference-server 调用 → 生成 1024 维向量 (BGE-M3)
   │   3. 写入 Qdrant（向量 + 负载数据）
   │   4. 写入 Memgraph（Method 节点 + Class + CONTAINS 关系）
   │   5. 更新 SQLite 哈希缓存
   │
   └─ 重建 Memgraph 中的 CALLS 关系
 ```
+
+---
+
+## dt-inference-server
+
+统一模型推理服务，合并旧 `dt-embed` (Python + BGE-M3) 为单一服务，新增 Rerank 和 LLM Chat 能力。
+
+**端口：**
+- `:50051` — gRPC Embed 服务（旧版兼容，Rust dt-daemon 直连）
+- `:50052` — REST API (chat/rerank/embed/health/metrics/nlp)
+
+**核心组件：**
+- **TaskRouter** — 三级优先级队列 (HIGH/NORMAL/LOW)，LOW 支持自动攒批 (64条 或 0.5s)
+- **ModelRegistry** — 模型懒加载 + 空闲自动卸载，支持 BGE-M3 / BGE-reranker-large / Qwen3-4B
+- **gRPC endpoint** — 兼容旧 `dt-embed` 协议，`dt build` 无需修改
+
+详见 [services/inference-server/README.md](services/inference-server/README.md)。
+
+## Pipeline Engine（管线引擎）
+
+处理器编排框架，将非结构化文件（代码/文档/文本）通过多阶段处理管道转换为结构化知识。
+
+**处理流程：**
+```
+File → TreeSitterProcessor → ChunkProcessor → HanlpClientProcessor → LlmClientProcessor → StoreProcessor → KG+Qdrant
+```
+
+**核心组件：**
+- **Processor trait** — 通用处理器接口，按 `priority()` 自动排序编排
+- **ProcessorEngine** — `analyze_file()` / `analyze_batch()` 入口，CPU/GPU 阶段分离
+- **InferClient** — HTTP 客户端连接 dt-inference-server (embed/rerank/chat)
+- **PromptRegistry** — YAML 模板管理 (`config/prompts/*.yaml`)
+- **PipelineConfig** — `config/pipeline.yaml` 配置
+
+**内置处理器：**
+
+| 处理器 | 优先级 | 阶段 | 功能 |
+|--------|--------|------|------|
+| TreeSitterProcessor | 0 | CPU | tree-sitter AST 解析 |
+| ChunkProcessor | 1 | CPU | 文档分块 + 边界检测 |
+| HanlpClientProcessor | 2 | GPU | HanLP NLP 标注（分词/词性/命名实体） |
+| LlmClientProcessor | 3 | GPU | LLM 摘要生成 + 标签提取 |
+| StoreProcessor | 4 | CPU | 结果写入 Memgraph + Qdrant |
+
+**测试命令：**
+- `dt build --test` — 对真实项目运行 BuildCommand，验证 KG+Qdrant 写入
+- `dt clean --test` — 删除所有 `test-` 前缀的测试数据
 
 ---
 
@@ -294,52 +343,96 @@ dt build --path /proj --name myapp
 ## 项目结构
 
 ```
-digital-twin/
+digital-twin-v2/
 ├── README.md                    # 英文文档
 ├── README.zh.md                 # 中文文档
 ├── AGENTS.md                    # AI 集成规则
-├── SKILL.md                     # OpenCode Skill
-├── config.yaml.example          # 配置模板
-├── setup.sh                     # 一键部署脚本
-├── dt-sync                      # 增量同步编排脚本
+├── config.yaml                  # 集中配置
+├── config/
+│   ├── pipeline.yaml            # Pipeline 引擎配置
+│   └── prompts/                 # LLM prompt 模板
+│       ├── code_with_ast.yaml
+│       ├── document_with_nlp.yaml
+│       └── raw_text.yaml
 │
-├── engine-rust/                 # Rust CLI (dt)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs              # CLI 入口（clap）
-│       ├── config.rs            # 配置读取（YAML + 环境变量）
-│       ├── search.rs            # 语义搜索 + KG 搜索
-│       ├── health.rs            # 健康检查
-│       ├── models.rs            # 数据模型
-│       ├── scanner.rs           # 文件扫描器
-│       ├── parser.rs            # tree-sitter 解析器
-│       ├── event.rs             # Event 节点写入
-│       ├── knowledge.rs         # Knowledge 节点写入
-│       ├── index/               # 索引子模块
-│       │   ├── build.rs         # 增量构建
-│       │   ├── full.rs          # 全量重建
-│       │   ├── update.rs        # 单文件更新
-│       │   ├── remove.rs        # 代码实体删除
-│       │   └── callgraph.rs     # 调用图构建
-│       ├── client/              # 客户端
-│       │   ├── memgraph.rs         # Memgraph REST 客户端
-│       │   ├── qdrant.rs        # Qdrant REST 客户端
-│       │   └── embed.rs         # dt-embed CLI 子进程客户端
-│       └── sync/                # 数据同步
-│           ├── nacos.rs         # Nacos 配置同步
-│           ├── k8s.rs           # K8s 资源同步
-│           └── kg.rs            # KG→Qdrant 桥接
+├── src/                         # Rust 核心 CLI (dt)
+│   ├── main.rs                  # CLI 入口（clap）+ gRPC 服务启动
+│   ├── lib.rs
+│   ├── domain/                  # 领域层
+│   │   ├── config.rs
+│   │   ├── error.rs
+│   │   ├── id.rs
+│   │   ├── traits.rs
+│   │   └── types.rs
+│   ├── infrastructure/          # 基础设施层
+│   │   ├── embedder.rs          # dt-inference-server gRPC 客户端
+│   │   ├── memgraph.rs          # Memgraph 客户端
+│   │   ├── parser/              # tree-sitter 解析器
+│   │   ├── qdrant/              # Qdrant gRPC 客户端
+│   │   ├── scanner.rs           # 文件扫描
+│   │   └── sqlite/              # SQLite 哈希缓存
+│   ├── application/             # 应用层
+│   │   ├── build/               # dt build / update / watch
+│   │   ├── context/             # 六世界上下文构建
+│   │   ├── knowledge/           # memorize / learn / event
+│   │   ├── pipeline/            # Pipeline Engine 处理器编排
+│   │   │   ├── engine.rs        # ProcessorEngine (analyze_file/batch)
+│   │   │   ├── registry.rs      # 优先级排序 + 注册中心
+│   │   │   ├── processor.rs     # Processor trait
+│   │   │   ├── config.rs        # PipelineConfig
+│   │   │   ├── context.rs       # 共享 PipelineContext
+│   │   │   ├── infer_client.rs  # HTTP → inference-server
+│   │   │   ├── prompt.rs        # YAML 提示词注册表
+│   │   │   ├── output.rs        # 输出类型
+│   │   │   ├── processors/      # 内置处理器
+│   │   │   │   ├── tree_sitter.rs    # AST 解析
+│   │   │   │   ├── chunk.rs          # 文档分块
+│   │   │   │   ├── hanlp_client.rs   # HanLP NLP 标注
+│   │   │   │   ├── llm_client.rs     # LLM 摘要/标签
+│   │   │   │   └── store.rs          # KG+Qdrant 写入
+│   │   │   └── test/            # 集成测试
+│   │   │       ├── runner.rs    # 测试执行器
+│   │   │       ├── cleanup.rs   # 测试数据清理
+│   │   │       └── report.rs    # 测试报告
+│   │   ├── plugins/             # Plugin 插件系统
+│   │   └── sync/                # nacos/k8s/kg 同步
+│   ├── interfaces/              # 接口层
+│   │   ├── cli/                 # CLI 辅助模块
+│   │   └── grpc/                # gRPC 服务
+│   └── shared/                  # 横切关注点
+│       ├── chunker.rs
+│       ├── coordinator.rs
+│       ├── logging/
+│       └── vectorizer.rs
 │
 ├── services/
-│   ├── embed-server/            # dt-embed CLI（Python，pip 安装）
-│   │   ├── pyproject.toml
-│   │   └── src/dt_embed/
-│   │       ├── cli.py           # CLI 入口
-│   │       ├── engine.py        # GPU 模型 + 推理
-│   │       └── pipeline.py      # 批处理流水线
+│   ├── inference-server/        # dt-inference-server（Python）
+│   │   ├── src/
+│   │   │   └── server.py        # 统一推理服务入口
+│   │   └── README.md
 │   └── search-web/              # Web 搜索界面（Python）
 │       ├── app.py
 │       └── templates/
+│
+├── docs/                        # 架构设计文档
+│   ├── architecture-v3-single-crate-layered.md
+│   ├── architecture-v2-six-worlds.md
+│   ├── architecture-v2-data-schema.md
+│   ├── architecture-v2-data-pipeline.md
+│   ├── architecture-v2-pipeline-impl.md
+│   ├── architecture-v2-project-structure.md
+│   ├── architecture-v2-mcp-api-spec.md
+│   └── superpowers/specs/
+│       ├── 2026-07-22-inference-server-refactor-design.md
+│       ├── 2026-07-22-unstructured-data-pipeline-design.md
+│       └── 2026-07-22-build-test-design.md
+│
+├── test/
+│   └── fixtures/                # 测试夹具
+│       ├── java/OrderController.java
+│       ├── python/payment.py
+│       ├── markdown/architecture.md
+│       └── yaml/config.yaml
 │
 └──（运行时数据目录）             # SQLite 缓存、Memgraph 数据等
 ```
