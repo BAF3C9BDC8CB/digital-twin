@@ -218,13 +218,10 @@ enum Commands {
         /// Run the self-contained pipeline integration test.
         ///
         /// Creates test- prefixed nodes and collections, verifies
-        /// every entity type, then cleans up (unless --keep is set).
+        /// every entity type, then cleans up automatically.
+        /// Use `dt clean --test` to manually clean test data.
         #[arg(long = "test")]
         test: bool,
-
-        /// Preserve test data after --test run (for debugging).
-        #[arg(long = "keep")]
-        keep: bool,
     },
 
     /// Semantic code search across worlds.
@@ -1286,7 +1283,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full, no_pipeline, test, keep }) => {
+        Some(Commands::Build { path, name, file, full, no_pipeline, test }) => {
             // ── dt build --test: run self-contained pipeline integration test ──
             if test {
                 tracing::info!("dt build --test: starting pipeline integration test");
@@ -1333,7 +1330,6 @@ async fn main() -> anyhow::Result<()> {
                     vector,
                     embed,
                     project_root,
-                    keep,
                 );
 
                 let report = runner.run().await;

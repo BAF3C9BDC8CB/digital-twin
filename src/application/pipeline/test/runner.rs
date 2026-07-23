@@ -37,7 +37,7 @@ fn test_label(name: &str) -> String {
 // TestRunner
 // ---------------------------------------------------------------------------
 
-/// Orchestrates the full test flow: build → verify → (clean unless keep).
+/// Orchestrates the full test flow: build → verify → clean.
 pub struct TestRunner {
     /// Graph repository (Memgraph).
     graph: Arc<dyn GraphRepository>,
@@ -47,8 +47,6 @@ pub struct TestRunner {
     embed: Arc<dyn EmbedService>,
     /// Project root path (where `test/fixtures/` lives).
     project_root: PathBuf,
-    /// If `true`, test data is kept after verification.
-    keep: bool,
 }
 
 impl TestRunner {
@@ -66,14 +64,12 @@ impl TestRunner {
         vector: Arc<dyn VectorRepository>,
         embed: Arc<dyn EmbedService>,
         project_root: PathBuf,
-        keep: bool,
     ) -> Self {
         Self {
             graph,
             vector,
             embed,
             project_root,
-            keep,
         }
     }
 
@@ -98,18 +94,9 @@ impl TestRunner {
         tracing::info!("TestRunner: phase 2 — verifying test data");
         self.verify_test_data(&mut report).await;
 
-        // Phase 3: Cleanup unless --keep.
-        if !self.keep {
-            tracing::info!("TestRunner: phase 3 — cleaning up test data");
-            self.cleanup(&mut report).await;
-        } else {
-            tracing::info!("TestRunner: --keep set, skipping cleanup");
-            report.add(CheckResult::skipped(
-                "Cleanup",
-                "Pipeline",
-                "--keep flag set, test data preserved",
-            ));
-        }
+        // Phase 3: Always cleanup.
+        tracing::info!("TestRunner: phase 3 — cleaning up test data");
+        self.cleanup(&mut report).await;
 
         let elapsed = start.elapsed();
         report.set_duration(elapsed.as_millis() as u64);
@@ -884,7 +871,7 @@ impl TestRunner {
     // Phase 3: Cleanup
     // ------------------------------------------------------------------
 
-    /// Remove all test- prefixed data unless `--keep` was set.
+    /// Remove all test- prefixed data.
     async fn cleanup(&self, report: &mut TestReport) {
         match cleanup_test_data(&self.graph, &self.vector).await {
             Ok(deleted) => {
