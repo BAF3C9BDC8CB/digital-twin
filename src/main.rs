@@ -1358,15 +1358,27 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                // f. Run incremental build (no cleanup — leverages file hash tracking)
-                //    full=false: only changed files are rebuilt
-                //    pipeline=true: runs Phase 2 LLM analysis with hash-based skip
+                // e. Clean up stale test data from previous runs
+                match dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
+                    &graph, &vector,
+                ).await {
+                    Ok(n) => tracing::info!("Cleaned {} stale test-pipeline items", n),
+                    Err(e) => tracing::warn!("Cleanup warning (non-fatal): {e}"),
+                }
+                // Clear LLM analysis progress so Phase 2 re-analyses all files
+                if let Err(e) = snapshot.clear_llm_progress("test-pipeline").await {
+                    tracing::warn!("Failed to clear LLM progress (non-fatal): {e}");
+                }
+
+                // f. Run full rebuild on standardized test project
+                //    full=true: always re-index all files (avoids stale SQLite snapshots)
+                //    pipeline=false: skip post-build pipeline (Phase 2 LLM still runs inside build)
                 dt_daemon::interfaces::cli::build::handle_build(
-                    PathBuf::from("/data/myProject/digital-twin-v2"),
+                    PathBuf::from("/data/myProject/digital-twin-v2/test/project"),
                     Some("test-pipeline".to_string()),
                     None,  // file
-                    false, // full: incremental mode — only changed files
-                    true,  // pipeline: enable Phase 2 LLM analysis
+                    true,  // full: always rebuild from scratch
+                    false, // pipeline: skip post-build pipeline (Phase 2 LLM still runs inside build)
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),

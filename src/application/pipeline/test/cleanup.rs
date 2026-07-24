@@ -9,7 +9,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Delete all test data: nodes where project starts with "test-" AND
-/// nodes whose labels contain `test-` prefix. Also deletes test-* Qdrant collections.
+/// nodes whose labels contain `test-` prefix. Also deletes test-* Qdrant collections
+/// and test-pipeline snapshots from SQLite.
 pub async fn cleanup_test_data(
     graph: &Arc<dyn GraphRepository>,
     vector: &Arc<dyn VectorRepository>,

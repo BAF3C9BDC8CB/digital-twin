@@ -1,0 +1,129 @@
+{
+  "project": "test-pipeline",
+  "_description": "Regression baseline for dt build --test. Must match actual parser output exactly. When a parser is fixed, update this file (not the other way around).",
+  "files": {
+    "HelloService.java": {
+      "language": "java",
+      "package": "com.example.order",
+      "_note": "Bugs: Java parser extracts 'new Order()' as method 'Order' and double-counts saveToDb/sendNotification from method bodies",
+      "methods": [
+        {"name": "createOrder", "class_name": "HelloService", "params": "OrderRequest request", "return_type": "Order"},
+        {"name": "Order", "class_name": "HelloService", "params": "", "return_type": "return new"},
+        {"name": "saveToDb", "class_name": "HelloService", "params": "request", "return_type": ""},
+        {"name": "saveToDb", "class_name": "HelloService", "params": "OrderRequest r", "return_type": "void"},
+        {"name": "sendNotification", "class_name": "HelloService", "params": "OrderRequest r", "return_type": "void"},
+        {"name": "sendNotification", "class_name": "HelloService", "params": "request", "return_type": ""}
+      ],
+      "classes": [
+        {"name": "HelloService", "kind": "Class"},
+        {"name": "OrderRequest", "kind": "Class"}
+      ]
+    },
+    "payment.py": {
+      "language": "python",
+      "module": "",
+      "methods": [
+        {"name": "process_payment", "class_name": "PaymentGateway", "params": "self, order_id: str, amount: float", "return_type": "dict"},
+        {"name": "_call_provider", "class_name": "PaymentGateway", "params": "self, order_id: str, amount: float", "return_type": "dict"},
+        {"name": "refund_payment", "class_name": "PaymentGateway", "params": "order_id: str", "return_type": "dict"}
+      ],
+      "classes": [
+        {"name": "PaymentGateway", "kind": "Class"}
+      ]
+    },
+    "utils.ts": {
+      "language": "typescript",
+      "module": "",
+      "_note": "TS parser doesn't handle union types in return type (getCache missing)",
+      "methods": [
+        {"name": "formatCurrency", "class_name": "_module_", "params": "amount: number, locale: string = \"zh-CN\"", "return_type": "any"},
+        {"name": "fetchUser", "class_name": "_module_", "params": "id: string", "return_type": "any"},
+        {"name": "setCache", "class_name": "_module_", "params": "key: string, value: string", "return_type": "any"}
+      ],
+      "classes": [
+        {"name": "User", "kind": "Interface"}
+      ]
+    },
+    "app.js": {
+      "language": "javascript",
+      "module": "",
+      "methods": [
+        {"name": "constructor", "class_name": "AppServer", "params": "port", "return_type": "any"},
+        {"name": "get", "class_name": "AppServer", "params": "path, handler", "return_type": "any"},
+        {"name": "start", "class_name": "AppServer", "params": "", "return_type": "any"},
+        {"name": "createApp", "class_name": "_module_", "params": "port", "return_type": "any"}
+      ],
+      "classes": [
+        {"name": "AppServer", "kind": "Class"}
+      ]
+    },
+    "routes.go": {
+      "language": "go",
+      "module": "",
+      "methods": [
+        {"name": "NewServer", "class_name": "Server", "params": "port int", "return_type": "*Server"},
+        {"name": "registerRoutes", "class_name": "Server", "params": "", "return_type": ""},
+        {"name": "healthHandler", "class_name": "Server", "params": "w http.ResponseWriter, r *http.Request", "return_type": ""}
+      ],
+      "classes": [
+        {"name": "Server", "kind": "Struct"}
+      ]
+    },
+    "Calculator.php": {
+      "language": "php",
+      "package": "App\\Util",
+      "methods": [
+        {"name": "add", "class_name": "Calculator", "params": "float $a, float $b", "return_type": "mixed"},
+        {"name": "pi", "class_name": "Calculator", "params": "", "return_type": "mixed"},
+        {"name": "subtract", "class_name": "Calculator", "params": "float $a, float $b", "return_type": "mixed"}
+      ],
+      "classes": [
+        {"name": "Calculator", "kind": "Class"}
+      ]
+    },
+    "lib.rs": {
+      "language": "rust",
+      "module": "",
+      "methods": [
+        {"name": "greet", "class_name": "Result", "params": "name: &str", "return_type": "String"},
+        {"name": "ok", "class_name": "Result", "params": "data: T", "return_type": "Self"}
+      ],
+      "classes": [
+        {"name": "Result", "kind": "Struct"}
+      ]
+    }
+  },
+  "summary": {
+    "total_methods": 24,
+    "total_classes": 8,
+    "total_modules": 1,
+    "has_project_node": true,
+    "qdrant_methods_collection": true,
+    "qdrant_methods_vector_count": 24,
+    "has_llm_analysis_on_methods": true,
+    "_note_llm": "Phase 2 now analyzes each method individually and stores llm_analysis on the method point itself",
+    "files_scanned_min": 13,
+    "files_with_code": 7,
+    "document_files": 1,
+    "languages": ["java", "python", "typescript", "javascript", "go", "php", "rust"]
+  },
+  "_known_issues": {
+    "HelloService.java": [
+      "Java parser extracts 'new Order()' as a method",
+      "Java parser extracts method calls from body as top-level methods"
+    ],
+    "payment.py": [
+      "Module-level function refund_payment assigned to PaymentGateway class (heuristic)"
+    ],
+    "utils.ts": [
+      "Module-level functions use class_name '_module_' instead of empty string",
+      "TS parser doesn't handle union types in return types (getCache missing)"
+    ],
+    "Calculator.php": [
+      "Module-level function 'pi' assigned to Calculator class (last-seen heuristic)"
+    ],
+    "lib.rs": [
+      "Module-level function 'greet' assigned to Result struct"
+    ]
+  }
+}

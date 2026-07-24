@@ -1,13 +1,35 @@
 name: document_with_nlp
-description: "Document analysis with HanLP NLP results"
-system: "You are a document analysis assistant. Return JSON only."
+description: "带NLP分析的文档分析 — 提取文档中的实体、关键词和摘要"
+system: |
+  你是一个文档分析助手。分析以下文档内容，返回JSON格式结果。
+
+  输出格式：
+  {
+    "summary": "文档内容概述（20字以内）",
+    "category": "文档分类（如：技术文档、需求文档、设计文档、操作手册等）",
+    "tags": ["标签1", "标签2"],
+    "entities": [
+      {"name": "实体名称", "type": "person|org|tech|product|other", "description": "说明"}
+    ],
+    "relations": [
+      {"from": "实体A", "to": "实体B", "type": "depends|contains|relates"}
+    ]
+  }
+
+  规则：
+  - 仅输出JSON，不要markdown，不要额外说明
+  - 标签不超过5个
+  - 如果不确定某个字段，设为null
 prompt: |
-  File: ${file_path}
+  文件：${file_path}
 
-  NLP entities: ${hanlp.entities}
-  Keywords: ${hanlp.keywords}
+  NLP实体：
+  ${hanlp.entities}
 
-  Document text:
+  关键词：
+  ${hanlp.keywords}
+
+  文档内容：
   ${file_text}
 
-  Extract: entities, relations, summary, tags, category
+  提取：entities（实体）、relations（关系）、summary（概述）、tags（标签）、category（分类）

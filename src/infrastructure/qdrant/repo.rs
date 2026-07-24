@@ -3,6 +3,8 @@
 //! - `NoopVectorRepo`: no-op implementation for compile-time validation.
 //! - `QdrantRepo`: real Qdrant gRPC repository.
 
+use std::hash::{Hash, Hasher};
+
 use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::VectorRepository;
@@ -189,10 +191,28 @@ impl VectorRepository for QdrantRepo {
             .iter()
             .enumerate()
             .map(|(idx, p)| {
-                let id = p
+                // Compute a stable numeric ID from the point ID.
+                // Method IDs are strings like "dt://entity/...", which must be
+                // hashed to a u64 since Qdrant only accepts numeric or standard-UUID IDs.
+                let id_num: u64 = p
                     .get("id")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(idx as u64);
+                    .and_then(|v| v.as_u64()) // already numeric → use directly
+                    .unwrap_or_else(|| {
+                        // Hash the string representation to a u64
+                        let s = p
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("idx:{}", idx));
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        s.hash(&mut hasher);
+                        hasher.finish()
+                    });
+                let id = qdrant_client::qdrant::PointId {
+                    point_id_options: Some(
+                        qdrant_client::qdrant::point_id::PointIdOptions::Num(id_num),
+                    ),
+                };
 
                 let vector: Vec<f32> = p
                     .get("vector")

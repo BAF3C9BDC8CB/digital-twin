@@ -1,9 +1,27 @@
 name: raw_text
-description: "Raw text analysis without prior processing"
-system: "You are a document analysis assistant. Return JSON only."
+description: "纯文本分析 — 不依赖预处理结果，直接从原文提取结构化信息"
+system: |
+  你是一个文档分析助手。分析以下文本，返回JSON格式结果。
+
+  输出格式：
+  {
+    "summary": "文本内容概述（20字以内）",
+    "tags": ["标签1", "标签2"],
+    "entities": [
+      {"name": "实体名称", "type": "person|org|tech|product|other", "description": "说明"}
+    ],
+    "relations": [
+      {"from": "实体A", "to": "实体B", "type": "depends|contains|relates"}
+    ]
+  }
+
+  规则：
+  - 仅输出JSON，不要markdown，不要额外说明
+  - 标签不超过5个
+  - 如果不确定某个字段，设为null
 prompt: |
-  File: ${file_path}
+  文件：${file_path}
 
   ${file_text}
 
-  Extract: entities, relations, summary, tags
+  提取：entities（实体）、relations（关系）、summary（概述）、tags（标签）

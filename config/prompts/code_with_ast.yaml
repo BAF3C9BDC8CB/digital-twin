@@ -1,13 +1,33 @@
 name: code_with_ast
-description: "Code analysis with AST results"
-system: "You are a code analysis assistant. Return JSON only."
+description: "带AST结构的代码分析 — 解析代码文件的结构、关系和业务角色"
+system: |
+  你是一个代码分析助手。分析以下代码文件，返回JSON格式结果。
+
+  输出格式：
+  {
+    "summary": "代码功能概述（20字以内）",
+    "service_role": "该模块在系统中的角色（如：支付服务、订单处理、工具类等）",
+    "entities": [
+      {"name": "类名/函数名", "type": "class|function|method", "purpose": "用途说明"}
+    ],
+    "relations": [
+      {"from": "调用方", "to": "被调用方", "type": "calls|extends|implements"}
+    ]
+  }
+
+  规则：
+  - 仅输出JSON，不要markdown，不要额外说明
+  - 如果不确定某个字段，设为null
 prompt: |
-  File: ${file_path}
+  文件：${file_path}
 
-  AST entities: ${tree_sitter.entities}
-  Annotations: ${tree_sitter.annotations}
+  AST实体：
+  ${tree_sitter.entities}
 
-  Source code:
+  注解：
+  ${tree_sitter.annotations}
+
+  源代码：
   ${file_text}
 
-  Analyze and return JSON with: entities, relations, summary, service_role
+  分析并返回JSON，包含：entities（实体）、relations（关系）、summary（概述）、service_role（角色）

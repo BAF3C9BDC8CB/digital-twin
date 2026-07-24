@@ -17,6 +17,7 @@ use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BatchConfig, BuildReport, FileSnapshot, ScanConfig};
 use futures::stream::{self, StreamExt};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,7 +30,26 @@ use super::strategy::BuildStrategy;
 const PHASE2_CONCURRENCY: usize = 5;
 
 /// Default prompt path (used when config/prompts/code_analysis.yaml is missing).
-const PHASE2_DEFAULT_PROMPT: &str = "You are a code analyst. Explain what this code does in 2-3 sentences. Focus on the purpose and key logic.";
+const PHASE2_DEFAULT_PROMPT: &str = "\
+你是一个代码分析助手。对于每个代码方法，精确输出两行：\n\
+\n\
+用途：<该方法的功能，15字以内>\n\
+逻辑：<实现原理，15字以内>\n\
+\n\
+规则：\n\
+- 仅用中文，不要使用markdown\n\
+- 如果不确定，输出：用途：未知  逻辑：无法解析\n\
+- 严格控制在两行以内\n\
+\n\
+示例：\n\
+输入：def add(a, b): return a + b\n\
+用途：将两个数相加并返回结果。\n\
+逻辑：接收两个参数并返回它们的和。\n\
+\n\
+输入：public String getName() { return this.name; }\n\
+用途：返回名称字段的值。\n\
+逻辑：从对象属性中读取并返回name字段。\
+";
 
 /// Result of extracting entities from all changed files.
 pub struct ExtractionResult {
@@ -255,114 +275,129 @@ impl PipelineTemplate {
             tracing::info!("snapshot update complete");
         }
 
-        // ── Phase 2: LLM semantic analysis (resumable, concurrent) ─────
-        if let (Some(ref client), Some(repo)) = (&self.siliconflow, snapshot_repo) {
-            tracing::info!(
-                "Phase 2: LLM analysis for {} files (concurrent={})...",
-                all_files.len(),
-                PHASE2_CONCURRENCY,
-            );
+        // ── Phase 2: Per-method LLM analysis (resumable, concurrent) ──
+        // Each method's source_text is sent to the LLM. The explanation is embedded
+        // and stored directly in the `_methods` Qdrant point as `llm_analysis`.
+        if let (Some(ref client), Some(ref embed_svc), Some(ref vector_repo), Some(repo)) =
+            (&self.siliconflow, &embed, &vector, snapshot_repo)
+        {
+            let methods = &extraction.methods;
+            if methods.is_empty() {
+                tracing::info!("Phase 2: no methods to analyze");
+            } else {
+                tracing::info!(
+                    "Phase 2: LLM analyzing {} methods (concurrent={})...",
+                    methods.len(),
+                    PHASE2_CONCURRENCY,
+                );
 
-            // Pre-filter: check ALL source files (not just changed) for pending LLM analysis
-            let mut jobs: Vec<(String, String, String)> = Vec::new();
-            for file_path in &all_files {
-                // Only analyze source code files — skip config, data, binary, and cache
-                let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                match ext {
-                    "java" | "rs" | "py" | "go" | "ts" | "tsx" | "js" | "jsx"
-                    | "php" | "rb" | "kt" | "scala" | "swift" | "c" | "cpp" | "h" | "hpp"
-                    | "cs" | "vue" | "svelte" | "mjs" | "mts" => {} // keep
-                    _ => continue, // skip non-source files
+                let system_prompt = load_code_analysis_prompt();
+                let collection = format!("{}_methods", project);
+
+                // Build job list: skip methods already analyzed with same source hash
+                let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
+                for m in methods {
+                    let mut hasher = Sha256::new();
+                    hasher.update(m.source_text.as_bytes());
+                    let hash = format!("{:x}", hasher.finalize());
+                    let prog_key = format!("method:{}", m.method_id);
+                    if repo
+                        .is_llm_analyzed(project, &prog_key, &hash)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    jobs.push((m.clone(), hash));
                 }
 
-                let rel = scanner::rel_path(root, file_path);
-                let rel = scanner::rel_path(root, file_path);
-                let (file_hash, _) = scanner::compute_file_hash(file_path).unwrap_or_default();
-                if repo.is_llm_analyzed(project, &rel, &file_hash).await.unwrap_or(false) {
-                    continue;
-                }
-                let source = match tokio::fs::read_to_string(file_path).await {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                jobs.push((rel, source, file_hash));
-            }
+                let total = jobs.len();
+                let skipped = methods.len() - total;
+                tracing::info!("Phase 2: {} to analyze, {} up-to-date", total, skipped);
 
-            let total = jobs.len();
-            let skipped = all_files.len() - total;
-            tracing::info!("Phase 2: {} to analyze, {} skipped (up-to-date)", total, skipped);
+                // Process methods concurrently
+                let results: Vec<(String, bool)> = stream::iter(
+                    jobs.into_iter().map(|(method, hash)| {
+                        let cli = client.clone();
+                        let svc = embed_svc.clone();
+                        let repo_vec = vector_repo.clone();
+                        let sp = system_prompt.clone();
+                        let coll = collection.clone();
+                        let proj = project.to_string();
+                        async move {
+                            let t0 = std::time::Instant::now();
+                            let method_name = method.name.clone();
+                            let method_id = method.method_id.clone();
 
-            // Clone Arc for concurrent access
-            let system_prompt = load_code_analysis_prompt();
-            let sp_shared = system_prompt.clone();
-            let embed = embed.clone();
-            let vector = vector.clone();
-            let project_owned = project.to_string();
+                            match cli.chat(&sp, &method.source_text, 0.1, 100).await {
+                                Ok(llm_response) => {
+                                    let _ = repo
+                                        .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
+                                        .await;
 
-            // Process files concurrently, logging and persisting results
-            let results: Vec<(String, bool)> = stream::iter(
-                jobs.into_iter().map(|(rel, source, hash)| {
-                    let embed = embed.clone();
-                    let vector = vector.clone();
-                    let sp = sp_shared.clone();
-                    let project = project_owned.clone();
-                    async move {
-                        let t0 = std::time::Instant::now();
-                        match client.chat(
-                            &sp,
-                            &source, 0.1, 512,
-                        ).await {
-                            Ok(response) => {
-                                let elapsed = t0.elapsed();
-                                 let _ = repo.mark_llm_analyzed(&project, &rel, &hash).await;
-
-                                // Persist analysis result to Qdrant entities collection
-                                if let (Some(ref embed_svc), Some(ref vector_repo)) = (&embed, &vector) {
-                                    let texts = vec![response.clone()];
-                                    if let Ok(embeddings) = embed_svc.embed_batch(&texts).await {
-                                        if let Some(vec) = embeddings.first() {
-                                            let collection = format!("{}_entities", project);
-                                            let point_id = format!("{}-llm-{}", project, rel);
-                                            let _ = vector_repo.ensure_collection(&collection, 1024).await;
-                                            let point = serde_json::json!({
-                                                "id": point_id,
-                                                "vector": vec,
-                                                "payload": {
-                                                    "file_path": rel,
-                                                    "project": project,
-                                                    "source": "llm_analysis",
-                                                    "entity_type": "file_analysis",
-                                                    "llm_analysis": response,
-                                                    "text": rel,
+                                    // Embed the LLM explanation and re-upsert method point
+                                    match svc.embed_batch(&[llm_response.clone()]).await {
+                                        Ok(embeddings) => {
+                                            if let Some(vec) = embeddings.first() {
+                                                let point = serde_json::json!({
+                                                    "id": method_id,
+                                                    "vector": vec,
+                                                    "payload": {
+                                                        "name": method.name,
+                                                        "signature": method.signature,
+                                                        "class_name": method.class_name,
+                                                        "file_path": method.file_path,
+                                                        "package_or_module": method.package_or_module,
+                                                        "language": method.language,
+                                                        "project": method.project,
+                                                        "start_line": method.start_line,
+                                                        "end_line": method.end_line,
+                                                        "calls": method.calls,
+                                                        "comment": method.comment,
+                                                        "params": method.params,
+                                                        "return_type": method.return_type,
+                                                        "entity_id": method.method_id,
+                                                        "llm_analysis": llm_response,
+                                                    }
+                                                });
+                                                if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
+                                                    tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
                                                 }
-                                            });
-                                            let _ = vector_repo.upsert(&collection, vec![point]).await;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
                                         }
                                     }
-                                }
 
-                                tracing::info!("Phase 2 done {} ({:?})", rel, elapsed);
-                                (rel, true)
-                            }
-                            Err(e) => {
-                                let elapsed = t0.elapsed();
-                                tracing::warn!("Phase 2 failed {} ({:?}): {}", rel, elapsed, e);
-                                (rel, false)
+                                    tracing::info!("Phase 2 done {} ({:?})", method_name, t0.elapsed());
+                                    (method_name, true)
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Phase 2 failed {} ({:?}): {}",
+                                        method_name,
+                                        t0.elapsed(),
+                                        e,
+                                    );
+                                    (method_name, false)
+                                }
                             }
                         }
-                    }
-                }),
-            )
-            .buffer_unordered(PHASE2_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
+                    }),
+                )
+                .buffer_unordered(PHASE2_CONCURRENCY)
+                .collect::<Vec<_>>()
+                .await;
 
-            let analyzed = results.iter().filter(|(_, ok)| *ok).count();
-
-            tracing::info!(
-                "Phase 2 complete: {} analyzed, {} skipped (up-to-date), {} errors",
-                analyzed, skipped, total - analyzed,
-            );
+                let analyzed = results.iter().filter(|(_, ok)| *ok).count();
+                tracing::info!(
+                    "Phase 2 complete: {} analyzed, {} up-to-date, {} errors",
+                    analyzed,
+                    skipped,
+                    total - analyzed,
+                );
+            }
         }
 
         let elapsed_ms = start.elapsed().as_millis() as u64;

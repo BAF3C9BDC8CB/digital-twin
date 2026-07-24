@@ -319,14 +319,20 @@ impl SiliconFlowClient {
             .await
             .map_err(|e| DtError::Repository(format!("SiliconFlow chat parse: {e}")))?;
 
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                DtError::Repository("SiliconFlow: missing content in chat response".into())
-            })?
-            .to_string();
+        let msg = &json["choices"][0]["message"];
 
-        Ok(content)
+        // Some reasoning models (e.g. Qwen3.5-9B) put the actual response in
+        // `reasoning_content` and leave `content` empty.  Try `content` first,
+        // then fall back to `reasoning_content`.
+        let content = msg["content"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
+            .ok_or_else(|| {
+                DtError::Repository("SiliconFlow: missing content/reasoning_content in chat response".into())
+            })?;
+
+        Ok(content.to_string())
     }
 }
 
