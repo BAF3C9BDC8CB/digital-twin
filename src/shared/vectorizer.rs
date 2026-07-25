@@ -104,7 +104,7 @@ impl EndpointVectorizer {
         }
 
         let collection = format!("{}_semantic", project);
-        self.vector.ensure_collection(&collection, 384).await?;
+        self.vector.ensure_collection(&collection, 1024).await?;
 
         // Build search texts: "POST /api/pay/confirm - Confirm payment transaction"
         let texts: Vec<String> = endpoints
@@ -130,11 +130,15 @@ impl EndpointVectorizer {
                     "id": ep.entity_id,
                     "vector": vec,
                     "payload": {
+                        // ---- identity ----
                         "entity_id": ep.entity_id,
+                        // ---- http ----
                         "method": ep.method,
                         "path": ep.path,
+                        // ---- description ----
                         "description": ep.description,
                         "controller": ep.controller,
+                        // ---- metadata ----
                         "source_type": "endpoint",
                         "project": project,
                     }
@@ -367,7 +371,7 @@ mod tests {
     #[async_trait::async_trait]
     impl EmbedService for MockEmbed {
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-            Ok(texts.iter().map(|_| vec![0.0_f32; 384]).collect())
+            Ok(texts.iter().map(|_| vec![0.0_f32; 1024]).collect())
         }
         async fn health_check(&self) -> Result<crate::domain::types::HealthStatus, DtError> {
             Ok(crate::domain::types::HealthStatus::Healthy)

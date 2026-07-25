@@ -108,7 +108,7 @@ enum Commands {
     #[command(subcommand)]
     Schema(SchemaAction),
 
-    /// Check health of all backend services (Memgraph, Qdrant, SQLite, dt-embed).
+    /// Check health of all backend services (Memgraph, Qdrant, SQLite).
     Health,
 
     /// Write a knowledge entry (Knowledge, Experience, Concept, Domain, Playbook).
@@ -672,7 +672,7 @@ fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
 }
 
-/// Xinference service configuration from config.yaml `services.xinference`.
+/// SiliconFlow service configuration from config.yaml `services.siliconflow`.
 #[derive(Debug, Deserialize, Default)]
 struct SiliconFlowConfig {
     /// Base URL (e.g. https://api.siliconflow.cn/v1).
@@ -878,7 +878,7 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
     }
 }
 
-/// Connect to the Xinference embedding service.
+/// Connect to the SiliconFlow embedding API.
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
     let cfg = load_config();
     let (url, api_key, model_embed, model_reranker, model_llm) = cfg
@@ -1006,8 +1006,11 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
+                // c. Connect to SQLite for snapshot cleanup (optional, non-fatal)
+                let snapshot = connect_snapshot().await;
+
                 let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
-                    &graph, &vector,
+                    &graph, &vector, snapshot.as_ref(),
                 ).await.map_err(|e| anyhow::anyhow!(e))?;
                 println!("Cleaned {} test- nodes and collections", deleted);
                 return Ok(());
@@ -1341,10 +1344,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                // c. Connect to dt-embed (fallback to Noop if unavailable — embed quality doesn't affect test validity)
+                // c. Connect to SiliconFlow (fallback to Noop if unavailable — embed quality doesn't affect test validity)
                 let embed: Arc<dyn EmbedService> = connect_embed().await
                     .unwrap_or_else(|| {
-                        tracing::warn!("dt-embed unavailable, using NoopEmbedService");
+                        tracing::warn!("SiliconFlow unavailable, using NoopEmbedService");
                         Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
                             as Arc<dyn EmbedService>
                     });
@@ -1358,27 +1361,17 @@ async fn main() -> anyhow::Result<()> {
                     }
                 };
 
-                // e. Clean up stale test data from previous runs
-                match dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
-                    &graph, &vector,
-                ).await {
-                    Ok(n) => tracing::info!("Cleaned {} stale test-pipeline items", n),
-                    Err(e) => tracing::warn!("Cleanup warning (non-fatal): {e}"),
-                }
-                // Clear LLM analysis progress so Phase 2 re-analyses all files
-                if let Err(e) = snapshot.clear_llm_progress("test-pipeline").await {
-                    tracing::warn!("Failed to clear LLM progress (non-fatal): {e}");
-                }
-
-                // f. Run full rebuild on standardized test project
-                //    full=true: always re-index all files (avoids stale SQLite snapshots)
-                //    pipeline=false: skip post-build pipeline (Phase 2 LLM still runs inside build)
+                // e. Run build (incremental by default — first run detects no snapshots
+                //    and processes all files; subsequent runs skip unchanged files).
+                //    full=false: use incremental strategy — relies on SQLite snapshots for mtime comparison.
+                //    pipeline=false: post-build pipeline disabled (inference server removed, _entities unused).
+                //    Use `dt clean --test` to force a full rebuild from scratch.
                 dt_daemon::interfaces::cli::build::handle_build(
-                    PathBuf::from("/data/myProject/digital-twin-v2/test/project"),
+                    PathBuf::from("/data/myProject/digital-twin-v2/test"),
                     Some("test-pipeline".to_string()),
                     None,  // file
-                    true,  // full: always rebuild from scratch
-                    false, // pipeline: skip post-build pipeline (Phase 2 LLM still runs inside build)
+                    false, // full: use incremental strategy (SQLite snapshots → mtime comparison)
+                    false, // pipeline: post-build pipeline disabled
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),
@@ -1386,9 +1379,6 @@ async fn main() -> anyhow::Result<()> {
                     BatchConfig::default(),
                 )
                 .await?;
-                // Note: after incremental build, verify may detect stale test data
-                // from a previous run. This is fine — the build only verifies that
-                // the data pipeline works correctly.
 
                 // h. Verify test data
                 let report =

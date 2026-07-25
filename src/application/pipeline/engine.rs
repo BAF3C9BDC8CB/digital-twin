@@ -18,7 +18,7 @@
 //!   [`Semaphore`] to avoid overwhelming the GPU server.
 
 use crate::application::pipeline::context::PipelineContext;
-use crate::application::pipeline::infer_client::InferClient;
+use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::registry::ProcessorRegistry;
 use futures::stream::{self, StreamExt};
@@ -361,7 +361,7 @@ impl ProcessorEngine {
         &self,
         project_name: String,
         file_analyses: &[FileAnalysis],
-        infer_client: Option<Arc<InferClient>>,
+        infer_client: Option<Arc<SiliconFlowChatClient>>,
     ) -> ProjectAnalysis {
         let file_count = file_analyses.len();
         let success_count = file_analyses.iter().filter(|a| a.success).count();
@@ -572,7 +572,7 @@ impl ProcessorEngine {
         &self,
         ecosystem_name: String,
         project_analyses: &[ProjectAnalysis],
-        infer_client: Option<Arc<InferClient>>,
+        infer_client: Option<Arc<SiliconFlowChatClient>>,
     ) -> EcosystemAnalysis {
         let projects: Vec<String> = project_analyses
             .iter()
@@ -814,7 +814,7 @@ fn classify_call(call: &str, has_feign: bool, has_rest: bool) -> (String, String
 /// (0.1) and capped at 2048 tokens.  Returns the model's text response
 /// or an error string.
 async fn summarize_via_llm(
-    client: &InferClient,
+    client: &SiliconFlowChatClient,
     system_prompt: &str,
     data_json: &str,
 ) -> Result<String, String> {

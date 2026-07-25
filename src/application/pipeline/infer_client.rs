@@ -1,8 +1,6 @@
-//! HTTP client for the `dt-inference-server` (Python, localhost:50052).
+//! HTTP client for the SiliconFlow cloud API (OpenAI‑compatible).
 //!
-//! The inference server is the only GPU‑backed component in the system.  All
-//! LLM chat, NLP analysis (HanLP), and text‑embedding requests flow through
-//! this client.
+//! All LLM chat and text‑embedding requests flow through this client.
 //!
 //! # Concurrency
 //!
@@ -12,7 +10,6 @@
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -37,19 +34,6 @@ pub struct Choice {
 #[derive(Debug, Deserialize)]
 pub struct Message {
     pub content: String,
-}
-
-/// NLP analysis result (HanLP).
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NlpResponse {
-    pub entities: Vec<NamedEntity>,
-    pub keywords: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NamedEntity {
-    pub text: String,
-    pub tag: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -77,13 +61,6 @@ struct EmbedRequest {
     input: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct HanlpRequest {
-    text: String,
-    tasks: Vec<String>,
-    custom_entities: HashMap<String, Vec<String>>,
-}
-
 #[derive(Debug, Deserialize)]
 struct EmbedResponse {
     data: Vec<EmbedDatum>,
@@ -102,7 +79,7 @@ struct EmbedDatum {
 ///
 /// All public methods return `Result<T, String>` — the error string is
 /// always safe to log or propagate as an internal error message.
-pub struct InferClient {
+pub struct SiliconFlowChatClient {
     client: Client,
     base_url: String,
     api_key: String,
@@ -110,7 +87,7 @@ pub struct InferClient {
     semaphore: Arc<Semaphore>,
 }
 
-impl InferClient {
+impl SiliconFlowChatClient {
     /// Build a new client that targets `base_url` and allows at most
     /// `max_concurrent` in‑flight requests at any time.
     ///
@@ -215,51 +192,6 @@ impl InferClient {
             .map_err(|e| format!("chat response parse failed: {e}"))
     }
 
-    /// NLP analysis via the HanLP endpoint.
-    ///
-    /// Sends a `POST /v1/nlp/hanlp` request with the given text, tasks,
-    /// and custom entity dictionaries.  The inference server uses the
-    /// custom dictionaries to improve NER recall for project-specific
-    /// entity types (service names, components, business terms, etc.).
-    pub async fn hanlp_analyze(
-        &self,
-        text: &str,
-        tasks: &[String],
-        custom_entities: &HashMap<String, Vec<String>>,
-    ) -> Result<NlpResponse, String> {
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
-            .map_err(|e| format!("semaphore acquire failed: {e}"))?;
-
-        let url = format!("{}/v1/nlp/hanlp", self.base_url);
-
-        let body = HanlpRequest {
-            text: text.to_string(),
-            tasks: tasks.to_vec(),
-            custom_entities: custom_entities.clone(),
-        };
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("hanlp request failed: {e}"))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text_body = resp.text().await.unwrap_or_default();
-            return Err(format!("hanlp returned HTTP {status}: {text_body}"));
-        }
-
-        resp.json::<NlpResponse>()
-            .await
-            .map_err(|e| format!("hanlp response parse failed: {e}"))
-    }
-
     /// Embed a batch of texts via `POST /v1/embeddings`.
     ///
     /// Returns one `Vec<f32>` vector per input text in the same order.
@@ -309,22 +241,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn infer_client_can_be_constructed() {
-        let client = InferClient::new("http://localhost:50052".into(), 8);
+    fn silicon_flow_chat_client_can_be_constructed() {
+        let client = SiliconFlowChatClient::new(SILICONFLOW_DEFAULT_URL.into(), 8);
         // Spot-check that the semaphore was created with the requested permits.
         assert!(client.semaphore.available_permits() <= 16);
-    }
-
-    #[tokio::test]
-    async fn hanlp_analyze_returns_error_for_now() {
-        let client = InferClient::new("http://localhost:50052".into(), 4);
-        let custom = HashMap::new();
-        let result = client
-            .hanlp_analyze("hello", &["ner".into()], &custom)
-            .await;
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.contains("hanlp"));
     }
 
     #[test]
@@ -335,12 +255,4 @@ mod tests {
         assert_eq!(resp.choices[0].message.content, "Hello!");
     }
 
-    #[test]
-    fn nlp_response_roundtrip() {
-        let json = r#"{"entities":[{"text":"Apple","tag":"ORG"}],"keywords":["business"]}"#;
-        let resp: NlpResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.entities.len(), 1);
-        assert_eq!(resp.entities[0].text, "Apple");
-        assert_eq!(resp.keywords, vec!["business"]);
-    }
 }

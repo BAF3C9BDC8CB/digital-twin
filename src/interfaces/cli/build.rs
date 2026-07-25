@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::application::pipeline::config::PipelineConfig;
 use crate::application::pipeline::engine::ProcessorEngine;
-use crate::application::pipeline::infer_client::InferClient;
+use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::processors::{
     ChunkProcessor, HanlpClientProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
 };
@@ -274,7 +274,7 @@ async fn run_pipeline_analysis(
     tracing::info!("Pipeline analysis starting for {project_name}...");
 
     // ── 2. Connect to SiliconFlow cloud API ─────────────────────
-    let infer_client = Arc::new(InferClient::new(
+    let infer_client = Arc::new(SiliconFlowChatClient::new(
         "https://api.siliconflow.cn/v1".to_string(),
         2, // max concurrent — conservatively low for cloud API
     ));
@@ -496,7 +496,7 @@ pub async fn handle_search(
     // ── Config world: vector search on config_chunks (Qdrant) ────────────
     // Uses full-chunk text embeddings to bridge the Chinese→English gap
     // that prevented effective vector search on individual ConfigKey names.
-    // Falls back to keyword search when dt-embed is unavailable.
+    // Falls back to keyword search when SiliconFlow API is unavailable.
     if world == "config" {
         // Attempt vector search on config_chunks + project _semantic
         if let Some(vec_repo) = &vector {

@@ -9,7 +9,7 @@
 //! reading `config.yaml`.  If either backend is unreachable, the
 //! corresponding field in [`AppComponents`] is set to `None` — callers
 //! (e.g. the gRPC server) must fall back to no-op implementations.
-//! The dt-embed service is also connected here; if unavailable it falls
+//! The SiliconFlow API client is also connected here; if unavailable it falls
 //! back to [`NoopEmbedService`] (zero-vector embedding).
 
 use crate::application::hooks::engine::HookEngine;
@@ -112,7 +112,7 @@ pub struct AppComponents {
     pub graph: Option<Arc<dyn GraphRepository>>,
     /// Qdrant vector repository (None if connection failed).
     pub vector: Option<Arc<dyn VectorRepository>>,
-    /// dt-embed gRPC service (None if unavailable — callers fall back).
+    /// SiliconFlow embed service (None if unavailable — callers fall back).
     pub embed: Option<Arc<dyn EmbedService>>,
     /// Hook engine for event-driven knowledge graph writes.
     /// None if event-hooks.yaml is missing or malformed.
@@ -299,7 +299,7 @@ async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     }
 }
 
-/// Connect to the Xinference embedding service (always succeeds
+/// Connect to the SiliconFlow embedding API (always succeeds
 /// since the client is a thin HTTP wrapper that makes lazy calls).
 async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     use crate::infrastructure::siliconflow::SiliconFlowClient;

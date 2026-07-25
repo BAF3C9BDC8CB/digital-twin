@@ -51,7 +51,7 @@ const fn default_enabled() -> bool {
 pub struct InferenceServerConfig {
     /// HTTP(S) URL of the inference server.
     ///
-    /// Default: `"http://localhost:50052"`.
+    /// Default: `"https://api.siliconflow.cn/v1"`.
     #[serde(default = "default_infer_url")]
     pub url: String,
 
@@ -68,7 +68,7 @@ pub struct InferenceServerConfig {
 }
 
 fn default_infer_url() -> String {
-    "http://localhost:50052".into()
+    "https://api.siliconflow.cn/v1".into()
 }
 
 const fn default_max_concurrent() -> usize {
@@ -239,7 +239,7 @@ mod tests {
     fn default_config_is_valid() {
         let cfg = PipelineConfig::default();
         assert!(cfg.enabled);
-        assert_eq!(cfg.inference_server.url, "http://localhost:50052");
+        assert_eq!(cfg.inference_server.url, "https://api.siliconflow.cn/v1");
         assert_eq!(cfg.inference_server.max_concurrent, 16);
         assert!(cfg.processors.tree_sitter);
         assert!(!cfg.processors.ocr);

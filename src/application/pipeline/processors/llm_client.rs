@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::application::pipeline::config::LlmConfig;
 use crate::application::pipeline::context::PipelineContext;
-use crate::application::pipeline::infer_client::InferClient;
+use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::prompt::PromptRegistry;
@@ -26,11 +26,11 @@ use crate::domain::error::DtError;
 
 /// LLM-powered analysis processor.
 ///
-/// Uses the configured [`InferClient`] to call the inference server's
+/// Uses the configured [`SiliconFlowChatClient`] to call SiliconFlow's
 /// chat endpoint.  The prompt template is selected dynamically based
 /// on which prior processors produced output.
 pub struct LlmClientProcessor {
-    client: Arc<InferClient>,
+        client: Arc<SiliconFlowChatClient>,
     prompt_registry: Arc<PromptRegistry>,
     llm_config: LlmConfig,
 }
@@ -38,7 +38,7 @@ pub struct LlmClientProcessor {
 impl LlmClientProcessor {
     /// Create a new LLM analysis processor.
     pub fn new(
-        client: Arc<InferClient>,
+    client: Arc<SiliconFlowChatClient>,
         prompt_registry: Arc<PromptRegistry>,
         llm_config: LlmConfig,
     ) -> Self {
@@ -237,7 +237,7 @@ mod tests {
         // Use a dummy path that doesn't exist — PromptRegistry::load will fail.
         let prompts = PromptRegistry::load(Path::new("/nonexistent/prompts")).ok();
         if let Some(registry) = prompts {
-            let client = Arc::new(InferClient::new("http://localhost:50052".into(), 4));
+            let client = Arc::new(SiliconFlowChatClient::new("https://api.siliconflow.cn/v1".into(), 4));
             let processor =
                 LlmClientProcessor::new(client, Arc::new(registry), llm_cfg);
             assert_eq!(processor.name(), "llm");

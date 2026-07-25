@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::pipeline::context::PipelineContext;
-use crate::application::pipeline::infer_client::InferClient;
+use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
@@ -72,8 +72,8 @@ impl Default for CustomEntityConfig {
 /// 2. Dynamic service/component names queried from Memgraph (fallible;
 ///    failures are silently downgraded to the static lists only).
 pub struct HanlpClientProcessor {
-    client: Arc<InferClient>,
-    config: CustomEntityConfig,
+        client: Arc<SiliconFlowChatClient>,
+        config: CustomEntityConfig,
     graph: Option<Arc<dyn GraphRepository>>,
 }
 
@@ -81,7 +81,7 @@ impl HanlpClientProcessor {
     /// Create a new processor that sends NLP requests to the given
     /// inference server.
     pub fn new(base_url: String) -> Self {
-        let client = Arc::new(InferClient::new(base_url, 4));
+        let client = Arc::new(SiliconFlowChatClient::new(base_url, 4));
         Self {
             client,
             config: CustomEntityConfig::default(),
@@ -97,7 +97,7 @@ impl HanlpClientProcessor {
     ///                        discovery.  When `None` only static entities
     ///                        are used.
     pub fn with_config(
-        client: Arc<InferClient>,
+    client: Arc<SiliconFlowChatClient>,
         config: CustomEntityConfig,
         graph: Option<Arc<dyn GraphRepository>>,
     ) -> Self {
@@ -109,7 +109,7 @@ impl HanlpClientProcessor {
     }
 
     /// Create a processor from an existing shared client.
-    pub fn with_client(client: Arc<InferClient>) -> Self {
+    pub fn with_client(client: Arc<SiliconFlowChatClient>) -> Self {
         Self {
             client,
             config: CustomEntityConfig::default(),
@@ -222,45 +222,13 @@ impl Processor for HanlpClientProcessor {
             return Ok(output);
         }
 
-        // Build the custom-entities dictionary (static config + Memgraph).
-        let custom_entities = self.build_custom_entities().await;
-
-        // Call the inference server.  If the endpoint is unreachable or
-        // returns an error, we emit a graceful error output so downstream
-        // stages can still proceed.
-        match self
-            .client
-            .hanlp_analyze(
-                text,
-                &["ner".to_string(), "keyword".to_string()],
-                &custom_entities,
-            )
-            .await
-        {
-            Ok(nlp_response) => {
-                let entities: Vec<serde_json::Value> = nlp_response
-                    .entities
-                    .iter()
-                    .map(|e| {
-                        serde_json::json!({
-                            "text": e.text,
-                            "tag": e.tag,
-                        })
-                    })
-                    .collect();
-                output.set("entities", entities);
-                output.set("keywords", nlp_response.keywords);
-                output.set("status", "ok");
-            }
-            Err(err) => {
-                // Return empty results with an error status so the
-                // pipeline can continue.
-                output.set("entities", serde_json::Value::Array(vec![]));
-                output.set("keywords", serde_json::Value::Array(vec![]));
-                output.set("status", "error");
-                output.set("error", err);
-            }
-        }
+        // The HanLP endpoint is not available on SiliconFlow, so this
+        // processor always returns an error status. The processor is kept
+        // for structural compatibility (pipeline registration).
+        output.set("entities", serde_json::Value::Array(vec![]));
+        output.set("keywords", serde_json::Value::Array(vec![]));
+        output.set("status", "error");
+        output.set("error", "HanLP endpoint not available on SiliconFlow");
 
         Ok(output)
     }
@@ -281,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn matches_code_and_doc_extensions() {
-        let processor = HanlpClientProcessor::new("http://localhost:50052".into());
+        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
         assert!(processor.matches(Path::new("Main.java")));
         assert!(processor.matches(Path::new("app.py")));
         assert!(processor.matches(Path::new("readme.md")));
@@ -292,7 +260,7 @@ mod tests {
 
     #[tokio::test]
     async fn returns_error_when_server_unreachable() {
-        let processor = HanlpClientProcessor::new("http://localhost:50052".into());
+        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
         let ctx = make_context("test.java", "class Foo {}");
         let result = processor.execute(&ctx).await;
         assert!(result.is_ok());
@@ -306,11 +274,14 @@ mod tests {
         assert!(output.get("entities").is_some());
         assert!(output.get("keywords").is_some());
         assert!(output.get("error").is_some());
+        // Error should mention SiliconFlow, not hanlp (endpoint was removed)
+        let err_val = output.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(!err_val.is_empty());
     }
 
     #[tokio::test]
     async fn returns_empty_for_empty_text() {
-        let processor = HanlpClientProcessor::new("http://localhost:50052".into());
+        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
         let ctx = make_context("empty.txt", "   ");
         let result = processor.execute(&ctx).await;
         assert!(result.is_ok());
@@ -323,7 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn name_and_priority() {
-        let processor = HanlpClientProcessor::new("http://localhost:50052".into());
+        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
         assert_eq!(processor.name(), "hanlp");
         assert_eq!(processor.priority(), 80);
     }
@@ -355,7 +326,7 @@ mod tests {
             tech_components: vec!["Redis".into()],
             business_entities: vec!["用户".into()],
         };
-        let client = Arc::new(InferClient::new("http://localhost:50052".into(), 4));
+        let client = Arc::new(SiliconFlowChatClient::new("https://api.siliconflow.cn/v1".into(), 4));
         let processor =
             HanlpClientProcessor::with_config(client, cfg, None);
 
@@ -377,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn with_config_accepts_graph_none() {
         let cfg = CustomEntityConfig::default();
-        let client = Arc::new(InferClient::new("http://localhost:50052".into(), 4));
+        let client = Arc::new(SiliconFlowChatClient::new("https://api.siliconflow.cn/v1".into(), 4));
         let processor =
             HanlpClientProcessor::with_config(client, cfg, None);
         assert_eq!(processor.config.service_names.len(), 0);

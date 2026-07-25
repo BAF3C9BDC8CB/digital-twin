@@ -74,7 +74,7 @@ impl Default for AppConfig {
             memgraph_user: "memgraph".into(),
             memgraph_password: "password".into(),
             qdrant_uri: "http://localhost:6334".into(),
-            embed_uri: "http://localhost:50052".into(),
+            embed_uri: "https://api.siliconflow.cn/v1".into(),
             listen_addr: "127.0.0.1:50051".into(),
         }
     }
@@ -395,7 +395,7 @@ impl Default for ScanConfig {
             .collect(),
             max_file_size: 524_288, // 500 KB
             document_extensions: [
-                "md", "txt", "pdf",
+                "md", "txt", "pdf", "yaml", "yml", "properties",
             ]
             .iter()
             .map(|s| s.to_string())

@@ -26,9 +26,9 @@ pub async fn handle_sync(
         Status::unavailable("Qdrant vector backend not available")
     })?;
 
-    // Use real dt-embed if available, fall back to zero-vector noop.
+    // Use real SiliconFlow embed API if available, fall back to zero-vector noop.
     let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
-        tracing::warn!("dt-embed unavailable, sync will produce zero-vector embeddings");
+        tracing::warn!("SiliconFlow unavailable, sync will produce zero-vector embeddings");
         Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
     });
 

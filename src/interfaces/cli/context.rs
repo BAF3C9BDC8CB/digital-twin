@@ -51,7 +51,7 @@ pub async fn handle_context(
         RetrieverStage::new(
             g.clone(),
             None::<Arc<dyn VectorRepository>>,
-            embed, // real dt-embed if available, None → NoopEmbedService internally
+            embed, // real SiliconFlow embed if available, None → NoopEmbedService internally
         )
     } else {
         RetrieverStage::empty()

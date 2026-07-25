@@ -330,7 +330,7 @@ impl ConfigVectorizer {
         }
 
         let collection = format!("{}_semantic", project);
-        self.vector.ensure_collection(&collection, 384).await?;
+        self.vector.ensure_collection(&collection, 1024).await?;
 
         // Build search texts: concatenate key + value for richer semantics
         let texts: Vec<String> = entries
@@ -350,12 +350,16 @@ impl ConfigVectorizer {
                     "id": entry.entity_id,
                     "vector": vec,
                     "payload": {
+                        // ---- identity ----
                         "entity_id": entry.entity_id,
+                        // ---- key-value ----
                         "key": entry.key,
                         "value": entry.value,
+                        // ---- origin ----
                         "namespace": entry.namespace,
                         "data_id": entry.data_id,
                         "group": entry.group,
+                        // ---- metadata ----
                         "source_type": "nacos_config",
                         "project": project,
                     }
@@ -473,15 +477,19 @@ impl ConfigChunkVectorizer {
                     "id": id,
                     "vector": vec,
                     "payload": {
+                        // ---- section ----
                         "section_name": chunk.section_name,
+                        "config_type": config_type,
+                        // ---- origin ----
                         "namespace": namespace,
                         "data_id": data_id,
                         "group": group,
-                        "config_type": config_type,
-                        "text": build_chunk_text(chunk),
-                        "source_type": "config_chunk",
-                        "key_count": chunk.key_values.len(),
                         "environment": environment.unwrap_or(""),
+                        // ---- content ----
+                        "text": build_chunk_text(chunk),
+                        "key_count": chunk.key_values.len(),
+                        // ---- metadata ----
+                        "source_type": "config_chunk",
                     }
                 })
             })
@@ -1042,7 +1050,7 @@ mod tests {
     #[async_trait::async_trait]
     impl EmbedService for MockEmbed {
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-            Ok(texts.iter().map(|_| vec![0.0_f32; 384]).collect())
+            Ok(texts.iter().map(|_| vec![0.0_f32; 1024]).collect())
         }
         async fn health_check(&self) -> Result<crate::domain::types::HealthStatus, DtError> {
             Ok(crate::domain::types::HealthStatus::Healthy)

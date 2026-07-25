@@ -150,7 +150,7 @@ impl DefaultKnowledgeService {
         };
 
         let collection = format!("{}_semantic", experience.project);
-        vector.ensure_collection(&collection, 384).await?;
+        vector.ensure_collection(&collection, 1024).await?;
 
         let text = format!("{}: {}", experience.title, experience.summary);
         let vectors = embed.embed_batch(std::slice::from_ref(&text)).await?;
@@ -163,11 +163,14 @@ impl DefaultKnowledgeService {
             "id": experience.experience_id,
             "vector": vec,
             "payload": {
+                // ---- identity ----
                 "entity_id": experience.experience_id,
                 "title": experience.title,
+                // ---- content ----
                 "summary": experience.summary,
                 "domain": experience.domain,
                 "severity": experience.severity.as_str(),
+                // ---- metadata ----
                 "project": experience.project,
                 "source_type": "experience",
                 "search_text": text,
@@ -1022,7 +1025,7 @@ mod tests {
     #[async_trait]
     impl EmbedService for MockEmbed {
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-            Ok(texts.iter().map(|_| vec![0.0_f32; 384]).collect())
+            Ok(texts.iter().map(|_| vec![0.0_f32; 1024]).collect())
         }
         async fn health_check(&self) -> Result<HealthStatus, DtError> {
             Ok(HealthStatus::Healthy)

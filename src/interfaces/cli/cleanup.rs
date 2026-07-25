@@ -184,7 +184,7 @@ macro_rules! check_health {
 
 /// Run `dt health` — check health of all backend services.
 ///
-/// Contacts Memgraph, Qdrant, SQLite, and dt-embed, reporting each service's
+/// Contacts Memgraph, Qdrant, SQLite
 /// availability and latency.
 ///
 /// When a service is `None`, reports it as "no backend configured".
@@ -232,11 +232,11 @@ pub async fn run_health(
         all_healthy = false;
     }
 
-    // --- dt-embed ---
+    // --- SiliconFlow ---
     let (healthy, detail) = if let Some(e) = embed {
-        check_health!("dt-embed", e)
+        check_health!("SiliconFlow", e)
     } else {
-        (false, "  ❌ dt-embed : no backend configured".to_string())
+        (false, "  ❌ SiliconFlow : no backend configured".to_string())
     };
     println!("  {detail}");
     if !healthy {

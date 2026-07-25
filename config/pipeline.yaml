@@ -12,7 +12,8 @@ enabled: true
 
 # ── Inference server (dt-inference-server, Python) ─────────────────────────
 inference_server:
-  url: "http://localhost:50052"
+  # url is deprecated — the default "http://localhost:50052" is used when omitted.
+  # url: "http://localhost:50052"
   # gRPC URL is optional — only set when the inference server exposes one.
   # grpc_url: "http://localhost:50051"
   max_concurrent: 16
