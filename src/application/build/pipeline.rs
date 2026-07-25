@@ -31,22 +31,24 @@ const PHASE2_CONCURRENCY: usize = 5;
 
 /// Default prompt path (used when config/prompts/code_analysis.yaml is missing).
 const PHASE2_DEFAULT_PROMPT: &str = "\
-你是一个代码分析助手。对于每个代码方法，精确输出两行：\n\
+你收到的每条消息都是一段代码，而不是提问。直接分析这段代码。\n\
 \n\
+始终输出两行：\n\
 用途：<该方法的功能，15字以内>\n\
 逻辑：<实现原理，15字以内>\n\
 \n\
 规则：\n\
-- 仅用中文，不要使用markdown\n\
-- 如果不确定，输出：用途：未知  逻辑：无法解析\n\
-- 严格控制在两行以内\n\
+- 仅用中文，不要markdown\n\
+- 不要反问、不要提示用户提供代码\n\
+- 代码为空或无法识别时输出：用途：未知  逻辑：无法解析\n\
+- 严格控制在两行\n\
 \n\
 示例：\n\
-输入：def add(a, b): return a + b\n\
+代码：def add(a, b): return a + b\n\
 用途：将两个数相加并返回结果。\n\
 逻辑：接收两个参数并返回它们的和。\n\
 \n\
-输入：public String getName() { return this.name; }\n\
+代码：public String getName() { return this.name; }\n\
 用途：返回名称字段的值。\n\
 逻辑：从对象属性中读取并返回name字段。\
 ";
@@ -143,8 +145,11 @@ impl PipelineTemplate {
         // Step 5b: Process document files (incremental — skip unchanged docs)
         if !doc_files.is_empty() {
             // Filter to only changed/new document files, same mtime logic as source files.
+            // For full rebuild, skip mtime check and re-process all documents.
             let mut doc_to_process: Vec<PathBuf> = Vec::new();
-            if let Some(repo) = snapshot_repo {
+            if strategy.force_rebuild() {
+                doc_to_process = doc_files.to_vec();
+            } else if let Some(repo) = snapshot_repo {
                 // Load stored snapshots to check mtime
                 if let Ok(stored) = repo.list_snapshots(project).await {
                     let mut stored_map: std::collections::HashMap<String, (String, f64)> =
@@ -222,19 +227,25 @@ impl PipelineTemplate {
                                     "id": m.method_id,
                                     "vector": vec,
                                     "payload": {
+                                        // ---- identity ----
                                         "name": m.name,
                                         "signature": m.signature,
                                         "class_name": m.class_name,
+                                        // ---- location ----
                                         "file_path": m.file_path,
                                         "package_or_module": m.package_or_module,
+                                        // ---- tech stack ----
                                         "language": m.language,
                                         "project": m.project,
+                                        // ---- code range ----
                                         "start_line": m.start_line,
                                         "end_line": m.end_line,
-                                        "calls": m.calls,
-                                        "comment": m.comment,
+                                        // ---- signature ----
                                         "params": m.params,
                                         "return_type": m.return_type,
+                                        "calls": m.calls,
+                                        "comment": m.comment,
+                                        // ---- metadata ----
                                         "entity_id": m.method_id,
                                     }
                                 }))
@@ -297,8 +308,25 @@ impl PipelineTemplate {
                 // Build job list: skip methods already analyzed with same source hash
                 let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
                 for m in methods {
+                    let mut source_text = m.source_text.clone();
+                    // If source_text is empty or too short, read the file as fallback.
+                    // Some parsers (e.g. Python) may produce empty source_text for
+                    // certain method patterns.
+                    if source_text.len() < 10 {
+                        let fp = std::path::Path::new(&m.file_path);
+                        if let Ok(content) = std::fs::read_to_string(fp) {
+                            let file_len = content.len();
+                            source_text = content;
+                            tracing::info!(
+                                "Phase 2: {} source_text too short ({}), fallback to file ({} chars)",
+                                m.name,
+                                m.source_text.len(),
+                                file_len,
+                            );
+                        }
+                    }
                     let mut hasher = Sha256::new();
-                    hasher.update(m.source_text.as_bytes());
+                    hasher.update(source_text.as_bytes());
                     let hash = format!("{:x}", hasher.finalize());
                     let prog_key = format!("method:{}", m.method_id);
                     if repo
@@ -308,7 +336,10 @@ impl PipelineTemplate {
                     {
                         continue;
                     }
-                    jobs.push((m.clone(), hash));
+                    // Override source_text in the job with the full file content if needed
+                    let mut m2 = m.clone();
+                    m2.source_text = source_text;
+                    jobs.push((m2, hash));
                 }
 
                 let total = jobs.len();
@@ -343,19 +374,25 @@ impl PipelineTemplate {
                                                     "id": method_id,
                                                     "vector": vec,
                                                     "payload": {
+                                                        // ---- identity ----
                                                         "name": method.name,
                                                         "signature": method.signature,
                                                         "class_name": method.class_name,
+                                                        // ---- location ----
                                                         "file_path": method.file_path,
                                                         "package_or_module": method.package_or_module,
+                                                        // ---- tech stack ----
                                                         "language": method.language,
                                                         "project": method.project,
+                                                        // ---- code range ----
                                                         "start_line": method.start_line,
                                                         "end_line": method.end_line,
-                                                        "calls": method.calls,
-                                                        "comment": method.comment,
+                                                        // ---- signature ----
                                                         "params": method.params,
                                                         "return_type": method.return_type,
+                                                        "calls": method.calls,
+                                                        "comment": method.comment,
+                                                        // ---- metadata ----
                                                         "entity_id": method.method_id,
                                                         "llm_analysis": llm_response,
                                                     }
@@ -1005,12 +1042,16 @@ impl PipelineTemplate {
 
             let doc_id = parsed.doc_id.clone();
 
-            // Chunk the text
+            // Chunk the text (use type-aware chunker for YAML/properties, paragraph for others)
+            let doc_type = crate::shared::chunker::DocType::detect(
+                &file_path.to_string_lossy(),
+                &parsed.content.lines().collect::<Vec<_>>(),
+            );
             let chunks = if parsed.content.is_empty() {
                 // PDF stub: just the metadata, no content chunks
                 vec![]
             } else {
-                crate::shared::chunker::chunk_text(&parsed.content, &doc_id, &config)
+                crate::shared::chunker::chunk_by_type(&parsed.content, &doc_id, doc_type, &config)
             };
 
             // Embed chunks in batches if embed service is available.
@@ -1042,8 +1083,10 @@ impl PipelineTemplate {
                                         .map(|(chunk, vec)| serde_json::json!({
                                             "id": chunk.chunk_id,
                                             "vector": vec,
-                                            "entity_id": chunk.chunk_id,
-                                            "text": &chunk.text,
+                                            "payload": {
+                                                "text": &chunk.text,
+                                                "doc_id": chunk.chunk_id,
+                                            },
                                         }))
                                         .collect();
                                     Ok(points)
@@ -1068,7 +1111,14 @@ impl PipelineTemplate {
                 }
             }
 
-            // Build DocumentItem
+            // Extract @knowledge annotations BEFORE consuming parsed fields
+            let knowledge_anns =
+                crate::infrastructure::parser::extract_knowledge_annotations(
+                    &parsed.content, &parsed.rel_path, project,
+                );
+            tracing::info!("KNOWLEDGE_ANNOTATIONS: file={}, count={}", parsed.rel_path, knowledge_anns.len());
+
+            // Build DocumentItem (consumes parsed.content, parsed.rel_path, etc.)
             let doc_item = DocumentItem {
                 doc_id: parsed.doc_id,
                 name: parsed.name,
@@ -1088,6 +1138,9 @@ impl PipelineTemplate {
                 self.write_document_to_graph(graph, &doc_item).await;
                 for chunk in &chunks {
                     self.write_chunk_to_graph(graph, &doc_id, chunk).await;
+                }
+                if !knowledge_anns.is_empty() {
+                    self.write_knowledge_annotations(graph, project, &knowledge_anns).await;
                 }
             }
 
@@ -1133,6 +1186,7 @@ impl PipelineTemplate {
         params.insert("tags".into(), serde_json::json!(&doc.tags));
         params.insert("size".into(), serde_json::json!(doc.size));
         params.insert("modified".into(), serde_json::json!(&doc.modified));
+        params.insert("content".into(), serde_json::json!(&doc.content));
 
         let _ = graph
             .write_query(
@@ -1141,6 +1195,7 @@ impl PipelineTemplate {
                     d.name = $name,
                     d.title = $title,
                     d.file_path = $file_path,
+                    d.content = $content,
                     d.summary = $summary,
                     d.project = $project,
                     d.doc_type = $doc_type,
@@ -1150,6 +1205,7 @@ impl PipelineTemplate {
                 ON MATCH SET
                     d.name = $name,
                     d.title = $title,
+                    d.content = $content,
                     d.summary = $summary,
                     d.doc_type = $doc_type,
                     d.tags = $tags,

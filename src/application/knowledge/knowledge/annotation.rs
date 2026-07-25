@@ -170,6 +170,8 @@ pub fn extract_knowledge_annotations(
 
     // Step 2: Find @knowledge in single-line comments.
     // Match: /// ... @knowledge ...   or  // ... @knowledge ...  or  # ... @knowledge ...
+    // Also match lines that start with @knowledge directly (e.g., after markdown
+    // stripping where the # prefix has been removed by the markdown parser).
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed
@@ -180,10 +182,17 @@ pub fn extract_knowledge_annotations(
             let rest = rest.trim();
             if rest.starts_with("@knowledge") {
                 if let Some(ann) = parse_annotation_from_line(rest, file_path, idx + 1) {
-                    // Don't double-count if already captured in a block comment
                     if !annotations.iter().any(|a| a.line_number == idx + 1) {
                         annotations.push(ann);
                     }
+                }
+            }
+        } else if trimmed.starts_with("@knowledge") {
+            // Direct @knowledge line (no comment prefix) — e.g., from markdown
+            // documents where strip_markdown removed the # prefix.
+            if let Some(ann) = parse_annotation_from_line(trimmed, file_path, idx + 1) {
+                if !annotations.iter().any(|a| a.line_number == idx + 1) {
+                    annotations.push(ann);
                 }
             }
         }
@@ -511,6 +520,45 @@ mod tests {
         // value gets truncated. This is expected — the caller should use a
         // different delimiter strategy for multi-value fields.
         assert_eq!(m.get("confidence"), Some(&"0.9".to_string()));
+    }
+
+    #[test]
+    fn extract_knowledge_from_markdown_hash_comment() {
+        // # @knowledge format (markdown-style line comment)
+        let source = "\
+# Docker MySQL 时区踩坑
+
+# @knowledge domain=\"运维\" concept=\"docker-mysql-timezone\" definition=\"Docker MySQL 时区设置\"
+# @knowledge domain=\"运维\" concept=\"docker-mysql-timezone\" pitfall=\"Docker MySQL 容器默认时区是 UTC\"
+# @knowledge domain=\"运维\" concept=\"docker-mysql-timezone\" experience=\"启动 MySQL 容器必须加 TZ=Asia/Shanghai\"
+
+## 问题
+Docker 启动 MySQL 后时间不对。";
+        let anns = extract_knowledge_annotations(source, "fixtures/knowledge/test.md", "test");
+        assert_eq!(anns.len(), 3, "should extract 3 annotations from markdown");
+        assert_eq!(anns[0].domain.as_deref(), Some("运维"));
+        assert_eq!(anns[0].concept.as_deref(), Some("docker-mysql-timezone"));
+        assert_eq!(anns[0].definition.as_deref(), Some("Docker MySQL 时区设置"));
+        assert_eq!(anns[1].pitfall.as_deref(), Some("Docker MySQL 容器默认时区是 UTC"));
+        assert_eq!(anns[2].experience.as_deref(), Some("启动 MySQL 容器必须加 TZ=Asia/Shanghai"));
+    }
+
+    #[test]
+    fn extract_knowledge_after_markdown_strip() {
+        // After strip_markdown removes # prefix, content starts directly with @knowledge
+        let source = "\
+Docker MySQL 时区踩坑
+
+@knowledge domain=\"运维\" concept=\"docker-mysql-timezone\" definition=\"Docker MySQL 时区设置\"
+@knowledge domain=\"运维\" concept=\"docker-mysql-timezone\" pitfall=\"Docker MySQL 容器默认时区是 UTC\"
+
+## 问题
+Docker 启动 MySQL 后时间不对。";
+        let anns = extract_knowledge_annotations(source, "fixtures/knowledge/test.md", "test");
+        assert_eq!(anns.len(), 2, "should extract 2 annotations without # prefix");
+        assert_eq!(anns[0].domain.as_deref(), Some("运维"));
+        assert_eq!(anns[0].concept.as_deref(), Some("docker-mysql-timezone"));
+        assert_eq!(anns[1].pitfall.as_deref(), Some("Docker MySQL 容器默认时区是 UTC"));
     }
 
     #[test]
