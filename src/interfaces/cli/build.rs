@@ -704,7 +704,7 @@ pub async fn handle_search(
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
     // ── Vector search path: code / all worlds ───────────────────────
-    let did_vector_search = if (world == "code" || world == "all" || world == "doc") && vector.is_some() {
+    let did_vector_search = if (world == "code" || world == "all" || world == "doc" || world == "knowledge") && vector.is_some() {
         let vec_repo = vector.as_ref().unwrap();
 
         let embed: Option<Arc<dyn EmbedService>> = {
@@ -769,13 +769,30 @@ pub async fn handle_search(
                                 .collect()
                         }
                     }
+                    "knowledge" => {
+                        if let Some(ref proj) = project {
+                            vec![format!("{}_knowledge", proj)]
+                        } else {
+                            let collections = match vec_repo.list_collections().await {
+                                Ok(cols) => cols,
+                                Err(e) => {
+                                    tracing::warn!("Failed to list Qdrant collections: {e}");
+                                    vec![]
+                                }
+                            };
+                            collections.into_iter()
+                                .filter(|c| c.ends_with("_knowledge"))
+                                .collect()
+                        }
+                    }
                     "all" => {
                         let mut cols = vec!["kg_nodes".to_string()];
                         if let Some(ref proj) = project {
                             cols.push(format!("{}_methods", proj));
                             cols.push(format!("{}_semantic", proj));
+                            cols.push(format!("{}_knowledge", proj));
                         } else if let Ok(all_cols) = vec_repo.list_collections().await {
-                            cols.extend(all_cols.into_iter().filter(|c| c.ends_with("_methods") || c.ends_with("_semantic")));
+                            cols.extend(all_cols.into_iter().filter(|c| c.ends_with("_methods") || c.ends_with("_semantic") || c.ends_with("_knowledge")));
                         }
                         cols
                     }
@@ -802,6 +819,7 @@ pub async fn handle_search(
                                         // Infer from collection name for code search
                                         if col.ends_with("_methods") { Some("Method") }
                                         else if col.ends_with("_semantic") { Some("Doc") }
+                                        else if col.ends_with("_knowledge") { Some("Knowledge") }
                                         else { None }
                                     })
                                     .unwrap_or("?").to_string();

@@ -1054,14 +1054,20 @@ impl PipelineTemplate {
                 crate::shared::chunker::chunk_by_type(&parsed.content, &doc_id, doc_type, &config)
             };
 
+            // Determine target collection: knowledge files go to {project}_knowledge
+            let rel_path = scanner::rel_path(root, file_path);
+            let is_knowledge_file = rel_path.contains("/knowledge/") || rel_path.starts_with("knowledge/");
+            let collection = if is_knowledge_file {
+                format!("{project}_knowledge")
+            } else {
+                format!("{project}_semantic")
+            };
+
             // Embed chunks in batches if embed service is available.
-            // Large documents can generate thousands of chunks; batching by 256
-            // keeps each gRPC call well under 4 MB. 8 concurrent streams for throughput.
             if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
                 if !chunks.is_empty() {
                     let doc_embed_batch = self.batch_config.embed;
                     let doc_concurrent = self.batch_config.embed_concurrency;
-                    let collection = format!("{project}_semantic");
                     vector_repo.ensure_collection(&collection, 1024).await?;
 
                     let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> = chunks
