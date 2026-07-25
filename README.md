@@ -57,7 +57,9 @@ cargo build --release
 
 ### 搜索
 
-| `dt search` | 跨世界语义搜索 |
+| `dt search` | 跨世界语义搜索（CrossWorldSearch 统一入口） |
+| `dt search-expand` | 多变体查询扩展（低级模型推荐） |
+| `dt search-kg` | KG 节点向量语义搜索 |
 
 ### 知识
 
@@ -85,6 +87,74 @@ cargo build --release
 | `dt schema` | Schema 管理 (`dt schema init`) |
 | `dt health` | 健康检查 |
 | `dt metrics` | 指标查询 |
+
+## 搜索架构
+
+### CrossWorldSearch — 统一搜索入口
+
+所有搜索走 `CrossWorldSearch` 服务（`src/application/context/search_mcp.rs`），按 `world` 参数分派到不同数据源：
+
+```
+MCP/CLI → gRPC Search RPC → CrossWorldSearch.search()
+                               ├─ world=code → Qdrant {project}_methods
+                               ├─ world=knowledge → Memgraph (Concept/Decision/...)
+                               └─ world=doc → Qdrant kg_nodes
+```
+
+### 两个 Qdrant Collection
+
+| Collection | 数据来源 | 内容 | 搜索工具 |
+|------------|---------|------|---------|
+| `{project}_methods` | `dt build` 代码索引 | 方法级源码向量（含 start_line/end_line/calls/llm_analysis） | `dt search` / `dt search-expand` |
+| `kg_nodes` | `dt kg-sync` KG 节点同步 | 业务实体向量（Server/DB/NacosConfig/Knowledge/Decision 等） | `dt search-kg` |
+
+**关键：两者职责分离，不交叉。** 代码搜索直接走 `{project}_methods`，KG 搜索走 `kg_nodes`。
+
+### SearchHit 返回字段
+
+代码搜索返回完整的搜索命中，包含关联信息：
+
+```json
+{
+  "title": "updateOrderStatus",
+  "file_path": "src/service/order.rs",
+  "start_line": 42,
+  "end_line": 78,
+  "signature": "pub fn update_order_status(...)",
+  "calls": ["save_log", "notify_user"],
+  "element_id": "4:abc123",
+  "score": 0.85
+}
+```
+
+- `calls` — 静态调用列表（来自索引时的分析）
+- `element_id` — KG 节点 ID，可传入 `dt dependency` 深查调用链
+
+### 代码搜索流程
+
+1. MCP 层 `--path` → 解析为项目名（从 config.yaml）
+2. embed query → 向量
+3. 仅搜索 `{project}_methods` collection（按 project 过滤，修 #3）
+4. 读完整 payload（name/file_path/start_line/end_line/signature/calls/method_id，修 #2）
+5. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤（修 #10）
+6. 兜底：vector 不可用时用全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`（修 #6）
+
+### 依赖分析 (`dt dependency`)
+
+通过 Memgraph 知识图谱中的 `:CALLS` / `:DEPENDS_ON` / `:IMPORTS` 关系，用 Cypher 可变长路径实现多跳调用链遍历：
+
+```cypher
+MATCH p = (caller)-[:CALLS|DEPENDS_ON|IMPORTS*1..5]->(target)
+RETURN caller, length(p) AS distance
+```
+
+- `max_depth` 参数实际生效（上限 5 防爆炸，修 #4）
+- 返回 `DependencyGraph`：上游 callers + 下游 callees + impact analysis
+- 统一解析函数支持 Bolt + HTTP 两种 graph 返回格式（修 #7）
+
+### 关联：搜索 → KG 关系
+
+代码搜索返回 `element_id`，用户可传入 `dt dependency --target <element_id>` 展开完整调用链。搜索结果还附带 `calls` 静态调用列表，无需额外查询即可了解方法调用关系（修 #9）。
 
 ## 项目结构
 
@@ -118,6 +188,7 @@ digital-twin-v2/
 │   ├── application/
 │   │   ├── build/              # dt build / update / watch
 │   │   ├── context/            # Context Builder 管道 (6 world)
+│   │   │   ├── graph_parse.rs   # 统一 graph 结果解析 (Bolt+HTTP)
 │   │   ├── knowledge/          # memorize / learn / event
 │   │   ├── pipeline/           # Pipeline Engine (processor orchestration)
 │   │   │   ├── engine.rs       # ProcessorEngine: analyze_file / analyze_batch
@@ -159,7 +230,8 @@ digital-twin-v2/
 │   └── superpowers/specs/
 │       ├── 2026-07-22-unstructured-data-pipeline-design.md
 │       ├── 2026-07-22-inference-server-refactor-design.md
-│       └── 2026-07-22-build-test-design.md
+│       ├── 2026-07-22-build-test-design.md
+│       └── 2026-07-25-search-dependency-fix-design.md
 ├── services/
 │   └── inference-server/       # dt-inference-server (Python, BGE-M3 + BGE-reranker + Qwen3-4B)
 ├── test/
@@ -188,6 +260,7 @@ digital-twin-v2/
 | [2026-07-22-inference-server-refactor-design.md](docs/superpowers/specs/2026-07-22-inference-server-refactor-design.md) | 推理服务重构: dt-embed → dt-inference-server |
 | [2026-07-22-unstructured-data-pipeline-design.md](docs/superpowers/specs/2026-07-22-unstructured-data-pipeline-design.md) | Pipeline Engine: 非结构化数据处理器编排 |
 | [2026-07-22-build-test-design.md](docs/superpowers/specs/2026-07-22-build-test-design.md) | 管线集成测试设计 |
+| [2026-07-25-search-dependency-fix-design.md](docs/superpowers/specs/2026-07-25-search-dependency-fix-design.md) | 搜索与依赖分析架构修复 |
 
 ## dt-inference-server
 

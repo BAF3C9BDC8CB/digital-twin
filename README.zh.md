@@ -209,6 +209,30 @@ dt search-kg "MySQL 正式环境 账号 密码" --limit 10
 dt build-call-graph --name user-center
 ```
 
+### 搜索架构（v2 修复后）
+
+**CrossWorldSearch 统一搜索入口**，所有搜索走 `CrossWorldSearch` 服务（`src/application/context/search_mcp.rs`），按 world 参数分派：
+
+| 搜索工具 | world | 数据源 | 返回内容 |
+|---------|-------|--------|---------|
+| `dt search` | code | Qdrant {project}_methods | 方法源码（含 start_line/end_line/calls/element_id） |
+| `dt search` | knowledge | Memgraph（Concept/Decision 等） | 知识条目 |
+| `dt search-kg` | — | Qdrant kg_nodes | 业务实体（Server/DB/NacosConfig 等） |
+
+**两个 Qdrant Collection**：
+
+| Collection | 数据来源 | 内容 |
+|------------|---------|------|
+| `{project}_methods` | dt build 代码索引 | 方法级源码向量（含静态调用关系） |
+| `kg_nodes` | dt kg-sync KG 同步 | 业务实体向量 |
+
+**依赖分析**：Cypher 可变长路径 `*1..N`（上限 5）实现多跳调用链遍历。
+
+**搜索关联**：代码搜索结果附带 `calls`（静态调用列表）和 `element_id`（KG 节点 ID），可传入 `dt dependency` 展开完整调用链。
+
+- 环境变量 `DT_SEARCH_MIN_SCORE` 控制搜索 score 阈值（默认 0.3）。
+- 向量搜索不可用时，兜底使用 Memgraph 全文索引 `db.index.fulltext.queryNodes`。
+
 ### Nacos 配置同步
 
 ```bash
@@ -374,6 +398,7 @@ digital-twin-v2/
 │   ├── application/             # 应用层
 │   │   ├── build/               # dt build / update / watch
 │   │   ├── context/             # 六世界上下文构建
+│   │   │   ├── graph_parse.rs   # 统一 graph 结果解析 (Bolt+HTTP)
 │   │   ├── knowledge/           # memorize / learn / event
 │   │   ├── pipeline/            # Pipeline Engine 处理器编排
 │   │   │   ├── engine.rs        # ProcessorEngine (analyze_file/batch)
@@ -425,7 +450,8 @@ digital-twin-v2/
 │   └── superpowers/specs/
 │       ├── 2026-07-22-inference-server-refactor-design.md
 │       ├── 2026-07-22-unstructured-data-pipeline-design.md
-│       └── 2026-07-22-build-test-design.md
+│       ├── 2026-07-22-build-test-design.md
+│       └── 2026-07-25-search-dependency-fix-design.md
 │
 ├── test/
 │   └── fixtures/                # 测试夹具
