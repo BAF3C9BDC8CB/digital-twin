@@ -755,6 +755,82 @@ fn build_qdrant_point(node: &KgNode, vector: &[f32]) -> serde_json::Value {
     })
 }
 
+/// Embed a single KG node and upsert it into the Qdrant `kg_nodes` collection.
+///
+/// This is the **immediate embedding** entry point — called right after a
+/// knowledge/concept/experience node is written to the graph, so the vector
+/// index is always current without needing a separate `dt kg-sync` run.
+///
+/// # Arguments
+/// - `graph` — graph repository (for marking `_kg_synced_at`)
+/// - `embed` — embedding service (BGE-M3)
+/// - `vector` — vector repository (Qdrant)
+/// - `label` — primary business label (e.g. "Knowledge", "Concept", "Experience")
+/// - `id_field` — the node's unique ID property name (e.g. "knowledge_id")
+/// - `id_value` — the node's unique ID value
+/// - `properties` — full property map of the node (used to build search text)
+///
+/// # Flow
+/// 1. Construct a temporary `KgNode` from the given properties
+/// 2. Build search text via `build_search_text`
+/// 3. Embed the text via `embed.embed_batch`
+/// 4. Build Qdrant point via `build_qdrant_point`
+/// 5. Upsert into `kg_nodes` collection
+/// 6. Mark the node `_kg_synced_at = datetime()` in the graph
+pub async fn embed_kg_node(
+    graph: &dyn GraphRepository,
+    embed: &dyn EmbedService,
+    vector: &dyn VectorRepository,
+    label: &str,
+    id_field: &str,
+    id_value: &str,
+    properties: &serde_json::Value,
+) -> Result<(), DtError> {
+    // Only embed business-label nodes
+    if !BUSINESS_LABELS.contains(&label) {
+        tracing::debug!("[embed_kg_node] skip non-business label: {label}");
+        return Ok(());
+    }
+
+    // 1. Construct temporary KgNode
+    let node = KgNode {
+        element_id: format!("{label}/{id_field}={id_value}"),
+        labels: vec![label.to_string()],
+        properties: properties.clone(),
+    };
+
+    // 2. Build search text
+    let text = build_search_text(&node);
+
+    // 3. Embed
+    let vectors = embed.embed_batch(std::slice::from_ref(&text)).await?;
+    let vec = match vectors.into_iter().next() {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+
+    // 4. Build Qdrant point
+    let point = build_qdrant_point(&node, &vec);
+
+    // 5. Upsert to Qdrant
+    vector.ensure_collection(KG_COLLECTION, VECTOR_DIM).await?;
+    vector.upsert(KG_COLLECTION, vec![point]).await?;
+
+    // 6. Mark synced in graph
+    let cypher = format!(
+        "MATCH (n:{label} {{{id_field}: $value}}) SET n._kg_synced_at = datetime()"
+    );
+    let mut params = HashMap::new();
+    params.insert(
+        "value".to_string(),
+        serde_json::Value::String(id_value.to_string()),
+    );
+    graph.write_query(&cypher, params).await?;
+
+    tracing::debug!("[embed_kg_node] embedded {label} {id_field}={id_value}");
+    Ok(())
+}
+
 /// Build the Qdrant payload from node properties.
 ///
 /// The payload contains lightweight metadata for filtering and display.
@@ -1305,5 +1381,105 @@ mod tests {
         assert!(text.contains("/api/v1/users"));
         assert!(text.contains("GET"));
         assert!(text.contains("UserController"));
+    }
+
+    // ------------------------------------------------------------------
+    // embed_kg_node
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn embed_kg_node_function_exists() {
+        // 验证函数签名存在（编译时检查）。
+        //
+        // `pub async fn` 被脱糖为 `fn(...) -> impl Future<Output=...>`，
+        // 无法直接 `as` cast 到 `fn(...) -> Pin<Box<dyn Future + Send>>`
+        // (E0605: `impl Future` ≠ `Pin<Box<dyn Future + Send>>`)。如实
+        // 写一份 function-fit 检查时 HRTB 与 `impl Future` 也无法精确
+        // 匹配（E0308, "one type is more general than the other"）。
+        //
+        // 因此改用「无捕获闭包包裹 + Box::pin」的方式：闭包形式上写明
+        // brief 中要求的 7 个参数类型与返回 `Pin<Box<dyn Future<Output=
+        // Result<(), DtError>> + Send>>` 的目标形状；闭包体内调用
+        // `embed_kg_node(...)` 并 `Box::pin` 装入 HRTB 的 `Send + '_`
+        // 容器。该闭包可隐式 coerce 为 `for<...> fn(...) -> Pin<Box...>`
+        // 形式的 fn 指针，赋给显式 fn 指针类型变量即可在编译期同时验证：
+        //   1. `embed_kg_node` 函数符号存在
+        //   2. 7 个参数类型与 brief 完全一致
+        //   3. 返回类型为 `Future<Output = Result<(), DtError>> + Send`
+        //      （通过 `Pin<Box<... + Send + '_>>` 表达）
+        let wrapper: for<'a> fn(
+            &'a (dyn GraphRepository + 'a),
+            &'a (dyn EmbedService + 'a),
+            &'a (dyn VectorRepository + 'a),
+            &'a str,                // label
+            &'a str,                // id_field
+            &'a str,                // id_value
+            &'a serde_json::Value,   // properties
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), DtError>> + Send + 'a>,
+        > = |g, e, v, lbl, fid, vid, p| Box::pin(embed_kg_node(g, e, v, lbl, fid, vid, p));
+        let _ = wrapper;
+    }
+
+    // ------------------------------------------------------------------
+    // build_search_text — regression coverage for the immediate-embedding
+    // labels used by `embed_kg_node` (Knowledge / Concept / Experience).
+    // `build_search_text` 已有实现，这里加测验证其正确性。ref: brief Step 5/6
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn build_search_text_for_knowledge_node() {
+        let node = KgNode {
+            element_id: "test".into(),
+            labels: vec!["Knowledge".into()],
+            properties: serde_json::json!({
+                "name": "payment-migration",
+                "title": "支付平台迁移模式",
+                "domain": "支付",
+                "summary": "通联→银盛切换的标准模式",
+                "content": "# 支付平台迁移\n详细内容..."
+            }),
+        };
+        let text = build_search_text(&node);
+        assert!(text.contains("payment-migration"));
+        assert!(text.contains("支付平台迁移模式"));
+        assert!(text.contains("支付"));
+        assert!(text.contains("通联→银盛切换的标准模式"));
+    }
+
+    #[test]
+    fn build_search_text_for_concept_node() {
+        let node = KgNode {
+            element_id: "test".into(),
+            labels: vec!["Concept".into()],
+            properties: serde_json::json!({
+                "name": "ifCode",
+                "definition": "支付渠道编码",
+                "domain": "支付",
+                "description": "用于路由到不同支付平台"
+            }),
+        };
+        let text = build_search_text(&node);
+        assert!(text.contains("ifCode"));
+        assert!(text.contains("支付渠道编码"));
+        assert!(text.contains("用于路由到不同支付平台"));
+    }
+
+    #[test]
+    fn build_search_text_for_experience_node() {
+        let node = KgNode {
+            element_id: "test".into(),
+            labels: vec!["Experience".into()],
+            properties: serde_json::json!({
+                "name": "docker-mysql-timezone-pitfall",
+                "title": "Docker MySQL 时区坑",
+                "description": "Docker MySQL 容器默认时区是 UTC",
+                "domain": "运维"
+            }),
+        };
+        let text = build_search_text(&node);
+        assert!(text.contains("docker-mysql-timezone-pitfall"));
+        assert!(text.contains("Docker MySQL 时区坑"));
+        assert!(text.contains("运维"));
     }
 }
