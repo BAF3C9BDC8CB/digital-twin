@@ -800,11 +800,11 @@ impl PipelineTemplate {
                             MATCH (d:Domain {domain_id: $domain_id})
                             MERGE (d)-[:CONTAINS]->(c)"#,
                             link_params,
-                        )
-                        .await;
+                    )
+                    .await;
                 }
 
-                // Link Concept to source file
+                // Link Concept to source file (Method, if exists)
                 let mut file_params = std::collections::HashMap::new();
                 file_params.insert("concept_id".into(), serde_json::json!(&concept_id));
                 file_params.insert(
@@ -820,6 +820,8 @@ impl PipelineTemplate {
                         file_params,
                     )
                     .await;
+                // Also link Concept to source Document (if the concept came from a document/knowledge file)
+                self.link_to_document(graph, project, &concept_id, &ann.file_path).await;
             }
 
             // Write Knowledge node if pitfall is present
@@ -876,6 +878,9 @@ impl PipelineTemplate {
                         params,
                     )
                     .await;
+
+                // Link Knowledge pitfall to source Document
+                self.link_to_document(graph, project, &knowledge_id, &ann.file_path).await;
             }
 
             // Write Experience node if experience field is present
@@ -922,6 +927,9 @@ impl PipelineTemplate {
                         params,
                     )
                     .await;
+
+                // Link Experience to source Document
+                self.link_to_document(graph, project, &experience_id, &ann.file_path).await;
             }
         }
     }
@@ -1258,6 +1266,32 @@ impl PipelineTemplate {
                 WITH c
                 MATCH (d:Document {doc_id: $doc_id})
                 MERGE (d)-[:CONTAINS]->(c)"#,
+                params,
+            )
+            .await;
+    }
+
+    /// Link a knowledge entity (Knowledge/Concept/Experience) to its source Document.
+    /// Uses `file_path` to find the Document — safe no-op if no matching Document exists.
+    async fn link_to_document(
+        &self,
+        graph: &dyn GraphRepository,
+        project: &str,
+        entity_id: &str,
+        file_path: &str,
+    ) {
+        let mut params = std::collections::HashMap::new();
+        params.insert("entity_id".into(), serde_json::json!(entity_id));
+        params.insert("file_path".into(), serde_json::json!(file_path));
+        params.insert("project".into(), serde_json::json!(project));
+        let _ = graph
+            .write_query(
+                r#"MATCH (e)
+                WHERE e.knowledge_id = $entity_id
+                   OR e.experience_id = $entity_id
+                   OR e.concept_id = $entity_id
+                MATCH (d:Document {file_path: $file_path, project: $project})
+                MERGE (e)-[:FROM_DOC]->(d)"#,
                 params,
             )
             .await;
