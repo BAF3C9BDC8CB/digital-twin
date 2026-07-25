@@ -32,7 +32,7 @@ src/
 
 - Memgraph 5.x (Bolt :7687)
 - Qdrant (gRPC :6334)
-- dt-inference-server (Python, BGE-M3 + BGE-reranker + Qwen3-4B; gRPC :50051, REST :50052)
+- SiliconFlow API (BGE-M3 embed + BGE-reranker + Qwen2.5 LLM)
 
 ### 构建
 
@@ -179,7 +179,7 @@ digital-twin-v2/
 │   │   ├── traits.rs           # GraphRepository, VectorRepository, EmbedService, ...
 │   │   └── types.rs            # 六世界实体类型定义
 │   ├── infrastructure/
-│   │   ├── embedder.rs         # dt-inference-server gRPC client
+│   │   ├── embedder.rs         # NoopEmbedService (fallback)
 │   │   ├── memgraph/           # Memgraph Bolt 驱动
 │   │   ├── parser/             # tree-sitter 多语言解析器
 │   │   ├── qdrant/             # Qdrant gRPC 驱动
@@ -196,13 +196,13 @@ digital-twin-v2/
 │   │   │   ├── processor.rs    # Processor trait
 │   │   │   ├── config.rs       # PipelineConfig
 │   │   │   ├── context.rs      # PipelineContext (共享状态)
-│   │   │   ├── infer_client.rs # InferClient (HTTP → inference-server)
+│   │   │   ├── infer_client.rs # SiliconFlowChatClient (HTTP → SiliconFlow API)
 │   │   │   ├── prompt.rs       # PromptRegistry (YAML templates)
 │   │   │   ├── output.rs       # 输出类型
 │   │   │   ├── processors/
 │   │   │   │   ├── tree_sitter.rs   # AST 解析
 │   │   │   │   ├── chunk.rs         # 文档分块
-│   │   │   │   ├── hanlp_client.rs  # HanLP NLP 标注
+│   │   │   │   ├── hanlp_client.rs  # HanLP NLP（已禁用，端点不可用）
 │   │   │   │   ├── llm_client.rs    # LLM 摘要/标签
 │   │   │   │   └── store.rs         # 写入 Memgraph + Qdrant
 │   │   │   └── test/
@@ -232,8 +232,6 @@ digital-twin-v2/
 │       ├── 2026-07-22-inference-server-refactor-design.md
 │       ├── 2026-07-22-build-test-design.md
 │       └── 2026-07-25-search-dependency-fix-design.md
-├── services/
-│   └── inference-server/       # dt-inference-server (Python, BGE-M3 + BGE-reranker + Qwen3-4B)
 ├── test/
 │   └── fixtures/               # 测试夹具
 │       ├── java/OrderController.java
@@ -257,31 +255,23 @@ digital-twin-v2/
 | [architecture-v2-pipeline-impl.md](docs/architecture-v2-pipeline-impl.md) | 管道实现细节 |
 | [architecture-v2-project-structure.md](docs/architecture-v2-project-structure.md) | 项目结构设计 |
 | [architecture-v2-mcp-api-spec.md](docs/architecture-v2-mcp-api-spec.md) | 12 个 MCP 工具 API 规范 |
-| [2026-07-22-inference-server-refactor-design.md](docs/superpowers/specs/2026-07-22-inference-server-refactor-design.md) | 推理服务重构: dt-embed → dt-inference-server |
+| [2026-07-22-inference-server-refactor-design.md](docs/superpowers/specs/2026-07-22-inference-server-refactor-design.md) | 推理服务: SiliconFlow API 集成 |
 | [2026-07-22-unstructured-data-pipeline-design.md](docs/superpowers/specs/2026-07-22-unstructured-data-pipeline-design.md) | Pipeline Engine: 非结构化数据处理器编排 |
 | [2026-07-22-build-test-design.md](docs/superpowers/specs/2026-07-22-build-test-design.md) | 管线集成测试设计 |
 | [2026-07-25-search-dependency-fix-design.md](docs/superpowers/specs/2026-07-25-search-dependency-fix-design.md) | 搜索与依赖分析架构修复 |
 
-## dt-inference-server
+## SiliconFlow API 集成
 
-统一模型推理服务，合并旧 `dt-embed` (Python + BGE-M3) 为单一服务，新增 Rerank (BGE-reranker) 和 LLM Chat (Qwen3-4B) 能力。
+所有模型推理（embed/rerank/chat）通过 SiliconFlow 云 API 完成，无需本地推理服务。
 
-**端口：**
-- `:50051` — gRPC Embed 服务 (旧版兼容，Rust dt-daemon 直连)
-- `:50052` — REST API (chat/rerank/embed/health/metrics/nlp)
+**模型配置**（`~/.config/digital-twin/config.yaml`）：
+- `model_embed`: BAAI/bge-m3（1024 维）
+- `model_reranker`: BAAI/bge-reranker-v2-m3
+- `model_llm`: Qwen/Qwen2.5-14B-Instruct
 
-**启动：**
-```bash
-cd services/inference-server/src
-python3 server.py --port 50051 --llm-port 50052
-```
-
-**核心组件：**
-- **TaskRouter** — 三级优先级队列 (HIGH/NORMAL/LOW)，LOW 优先级支持自动攒批 (64条 或 0.5s)
-- **ModelRegistry** — 模型懒加载 + 空闲自动卸载，支持 `BGE-M3` / `BGE-reranker-large` / `Qwen3-4B`
-- **gRPC endpoint** — 兼容旧 `dt-embed` 协议，`dt build` 无需修改即可使用
-
-详见 [services/inference-server/README.md](services/inference-server/README.md)。
+**Rust 客户端**：
+- `SiliconFlowClient`（`src/infrastructure/siliconflow.rs`）— 实现 EmbedService trait，用于 embed/rerank/chat
+- `SiliconFlowChatClient`（`src/application/pipeline/infer_client.rs`）— Pipeline 引擎用的 HTTP 客户端
 
 ## Pipeline Engine
 
@@ -295,7 +285,7 @@ File → TreeSitterProcessor → ChunkProcessor → HanlpClientProcessor → Llm
 **核心组件：**
 - **Processor trait** — 通用处理器接口，支持 `priority()` 排序自动编排
 - **ProcessorEngine** — `analyze_file()` / `analyze_batch()` 入口，CPU/GPU 阶段分离
-- **InferClient** — HTTP 客户端连接 dt-inference-server (embed/rerank/chat)
+- **SiliconFlowChatClient** — HTTP 客户端连接 SiliconFlow API (chat/embed)
 - **PromptRegistry** — YAML 模板管理 (code_with_ast, document_with_nlp, raw_text)
 - **PipelineConfig** — `config/pipeline.yaml` 配置
 
