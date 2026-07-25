@@ -294,7 +294,7 @@ async def list_tools():
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
-                    "world": {"type": "string", "description": "搜索世界: code/knowledge/doc/all", "default": "code"},
+                    "world": {"type": "string", "description": "搜索世界: code/knowledge/doc/config/all", "default": "code"},
                     "limit": {"type": "integer", "description": "返回数量", "default": 10},
                     "path": {"type": "string", "description": "搜索范围路径"}
                 }, "required": ["query"]

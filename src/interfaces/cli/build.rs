@@ -171,6 +171,29 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
     files
 }
 
+/// Create a SiliconFlowClient for embedding, reading config from
+/// `~/.config/digital-twin/config.yaml` with env var fallback.
+/// This is used by search (code/doc/kg) and must read from config,
+/// unlike `api_key_from_env()` which only reads from env vars.
+fn create_search_embed_client() -> Arc<dyn EmbedService> {
+    let api_key = load_siliconflow_api_key();
+    let base_url = load_siliconflow_config_str("url")
+        .or_else(|| std::env::var("SILICONFLOW_BASE_URL").ok())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
+    let embed_model = load_siliconflow_config_str("model_embed")
+        .or_else(|| std::env::var("SILICONFLOW_EMBED_MODEL").ok())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "BAAI/bge-m3".to_string());
+    let reranker_model = load_siliconflow_config_str("model_reranker")
+        .or_else(|| std::env::var("SILICONFLOW_RERANKER_MODEL").ok())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "BAAI/bge-reranker-v2-m3".to_string());
+    Arc::new(SiliconFlowClient::new(
+        base_url, api_key, embed_model, reranker_model, String::new(),
+    )) as Arc<dyn EmbedService>
+}
+
 /// Read the SiliconFlow API key from `~/.config/digital-twin/config.yaml`,
 /// falling back to `SILICONFLOW_API_KEY` env var.
 fn load_siliconflow_api_key() -> String {
@@ -475,15 +498,9 @@ pub async fn handle_search(
     // that prevented effective vector search on individual ConfigKey names.
     // Falls back to keyword search when dt-embed is unavailable.
     if world == "config" {
-        // Attempt vector search on config_chunks
+        // Attempt vector search on config_chunks + project _semantic
         if let Some(vec_repo) = &vector {
-            let embed = Arc::new(SiliconFlowClient::new(
-                crate::infrastructure::siliconflow::base_url_from_env(),
-                crate::infrastructure::siliconflow::api_key_from_env(),
-                crate::infrastructure::siliconflow::embed_model_from_env(),
-                crate::infrastructure::siliconflow::reranker_model_from_env(),
-                crate::infrastructure::siliconflow::llm_model_from_env(),
-            )) as Arc<dyn EmbedService>;
+            let embed = create_search_embed_client();
             // Build query variants for multi-vector fusion
             let queries: Vec<String> = {
                 let mut qs = vec![query.clone()];
@@ -501,40 +518,120 @@ pub async fn handle_search(
             if let Ok(all_vectors) = embed.embed_batch(&queries).await {
                 use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
                 let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
-                for qvec in &all_vectors {
-                    if let Ok(results) = vec_repo.search(
-                        "config_chunks", qvec.clone(), (limit * 2) as u64,
-                    ).await {
-                        let list: Vec<RankedItem> = results.iter().map(|r| {
-                            let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            let payload = r.get("payload").unwrap_or(r);
-                            let section = payload.get("section_name").and_then(|v| v.as_str()).unwrap_or("");
-                            let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                            let data_id = payload.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
-                            let ns = payload.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-                            RankedItem {
-                                id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
-                                title: format!("[{}:{}] ({} keys)",
-                                    data_id, section,
-                                    payload.get("key_count").and_then(|v| v.as_u64()).unwrap_or(0)),
-                                snippet: text.to_string(),
-                                source_world: "vector/config_chunks".into(),
-                                entity_type: "ConfigChunk".into(),
-                                score,
-                            }
-                        }).collect();
-                        if !list.is_empty() { rank_lists.push(list); }
+
+                // Collect collections to search
+                let mut collections = vec!["config_chunks".to_string()];
+                if let Some(ref proj) = project {
+                    collections.push(format!("{}_semantic", proj));
+                }
+
+                for col in &collections {
+                    for qvec in &all_vectors {
+                        if let Ok(results) = vec_repo.search(col, qvec.clone(), (limit * 2) as u64).await {
+                            let list: Vec<RankedItem> = results.iter().filter_map(|r| {
+                                let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                if score <= 0.0 { return None; }
+                                let payload = r.get("payload").unwrap_or(r);
+                                if col == "config_chunks" {
+                                    let section = payload.get("section_name").and_then(|v| v.as_str()).unwrap_or("");
+                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                    let data_id = payload.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    Some(RankedItem {
+                                        id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
+                                        title: format!("[{}:{}] ({} keys)",
+                                            data_id, section,
+                                            payload.get("key_count").and_then(|v| v.as_u64()).unwrap_or(0)),
+                                        snippet: text.to_string(),
+                                        source_world: "vector/config_chunks".into(),
+                                        entity_type: "ConfigChunk".into(),
+                                        score,
+                                    })
+                                } else {
+                                    // _semantic collection: only include config sections (#section-), not doc chunks
+                                    let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    if !doc_id.contains("#section-") {
+                                        return None;
+                                    }
+                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                    let section_name = doc_id.rsplit_once("#section-")
+                                        .map(|(_, name)| name.to_string())
+                                        .unwrap_or_default();
+                                    let file_path = doc_id
+                                        .strip_prefix("dt://doc/")
+                                        .and_then(|s| s.split_once("#section-"))
+                                        .map(|(path, _)| path.to_string())
+                                        .unwrap_or_default();
+                                    // Store full text for keyword filtering; display shows first line
+                                    let display_line = format!("{}  {}", file_path, text.lines().next().unwrap_or("").chars().take(80).collect::<String>());
+                                    let snippet = format!("{}\n{}", text, display_line);
+                                    Some(RankedItem {
+                                        id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
+                                        title: section_name,
+                                        snippet,
+                                        source_world: format!("vector/{}", col),
+                                        entity_type: "Config".into(),
+                                        score,
+                                    })
+                                }
+                            }).collect();
+                            if !list.is_empty() { rank_lists.push(list); }
+                        }
                     }
                 }
                 if !rank_lists.is_empty() {
-                    let fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
-                    print_config_chunk_results(&fused);
+                    let mut fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
+                    // For config search, filter results by ASCII keyword presence
+                    // (vector search returns too many low-score noise hits)
+                    let keywords: Vec<String> = extract_ascii_words(&query).into_iter()
+                        .map(|w| w.to_lowercase())
+                        .filter(|w| w.len() >= 3)
+                        .collect();
+                    if !keywords.is_empty() {
+                        fused.retain(|item| {
+                            let combined = format!("{} {}", item.title, item.snippet).to_lowercase();
+                            keywords.iter().any(|kw| combined.contains(kw))
+                        });
+                    }
+                    let mut seen = std::collections::HashSet::new();
+                    for item in &fused {
+                        if !seen.insert(item.title.clone()) { continue; }
+                        println!("  [{:.4}] {}", item.score, item.title);
+                        // Show the full config content (not just one line)
+                        // snippet format for _semantic: "full_text\ndisplay_line"
+                        // snippet format for config_chunks: "text"
+                        let lines: Vec<&str> = item.snippet.lines().collect();
+                        if lines.len() > 1 {
+                            // _semantic: lines[0..-1] = full text, lines[-1] = display_line
+                            let content_lines: Vec<&str> = lines[..lines.len()-1].iter().copied().collect();
+                            let content = content_lines.join("\n");
+                            // Show up to 10 lines of YAML content
+                            for (i, line) in content_lines.iter().enumerate() {
+                                if i >= 10 { break; }
+                                println!("         {}", line);
+                            }
+                            if content_lines.len() > 10 {
+                                println!("         ... ({} more lines)", content_lines.len() - 10);
+                            }
+                            // Show file path from last line
+                            let display = lines[lines.len()-1].trim();
+                            if !display.is_empty() && !content.contains(display.split_once(' ').map(|(p,_)| p).unwrap_or(display)) {
+                                println!("         ── {}", display);
+                            }
+                        } else {
+                            let display = lines.last().map(|s| s.trim()).unwrap_or("");
+                            if !display.is_empty() {
+                                println!("         {}", display);
+                            }
+                        }
+                    }
                     return Ok(());
                 }
             }
         }
         // Fallback: CONTAINS keyword search on ConfigKey nodes
-        println!("  (vector search unavailable — falling back to keyword search)");
+        if vector.is_some() {
+            println!("  (vector search returned no results — falling back to keyword search)");
+        }
         if let Some(graph_ref) = &graph {
             let keywords = get_keywords(&query);
             if !keywords.is_empty() {
@@ -560,10 +657,13 @@ pub async fn handle_search(
                         .collect::<Vec<_>>().join(" OR "))
                 };
                 let display_limit = if limit > 200 { limit } else { limit.max(50) };
+                let project_filter = project.as_ref()
+                    .map(|p| format!(" AND n.project = '{}' ", p.replace('\'', "\\'")))
+                    .unwrap_or_default();
                 let cypher = format!(
                     "MATCH (n) WHERE (n:ConfigKey OR n:Server \
                      OR n:Database OR n:NacosConfig OR n:NacosService) \
-                     AND {} \
+                     AND {}{project_filter}\
                      RETURN labels(n)[0] AS type, coalesce(n.name, '') AS name, \
                             coalesce(n.value, n.summary, n.description, '') AS snippet, \
                             coalesce(n.namespace, n.environment, n.project, '') AS source \
@@ -604,18 +704,12 @@ pub async fn handle_search(
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
     // ── Vector search path: code / all worlds ───────────────────────
-    let did_vector_search = if (world == "code" || world == "all") && vector.is_some() {
+    let did_vector_search = if (world == "code" || world == "all" || world == "doc") && vector.is_some() {
         let vec_repo = vector.as_ref().unwrap();
 
         let embed: Option<Arc<dyn EmbedService>> = {
-            tracing::info!("Xinference client created for vector search");
-            Some(Arc::new(SiliconFlowClient::new(
-                crate::infrastructure::siliconflow::base_url_from_env(),
-                crate::infrastructure::siliconflow::api_key_from_env(),
-                crate::infrastructure::siliconflow::embed_model_from_env(),
-                crate::infrastructure::siliconflow::reranker_model_from_env(),
-                crate::infrastructure::siliconflow::llm_model_from_env(),
-            )) as Arc<dyn EmbedService>)
+            tracing::info!("Search embed client created");
+            Some(create_search_embed_client())
         };
 
         if let Some(embed_svc) = embed {
@@ -633,8 +727,13 @@ pub async fn handle_search(
                 qs
             };
 
-            let all_query_vectors = embed_svc.embed_batch(&queries_to_embed).await
-                .map_err(|e| anyhow::anyhow!("embed failed: {e}"))?;
+            let all_query_vectors = match embed_svc.embed_batch(&queries_to_embed).await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Embed failed (non-fatal), falling back to keyword search: {e}");
+                    vec![]
+                }
+            };
 
             if !all_query_vectors.is_empty() {
                 let collections_to_search: Vec<String> = match world.as_str() {
@@ -651,6 +750,22 @@ pub async fn handle_search(
                             };
                             collections.into_iter()
                                 .filter(|c| c.ends_with("_methods"))
+                                .collect()
+                        }
+                    }
+                    "doc" => {
+                        if let Some(ref proj) = project {
+                            vec![format!("{}_semantic", proj)]
+                        } else {
+                            let collections = match vec_repo.list_collections().await {
+                                Ok(cols) => cols,
+                                Err(e) => {
+                                    tracing::warn!("Failed to list Qdrant collections: {e}");
+                                    vec![]
+                                }
+                            };
+                            collections.into_iter()
+                                .filter(|c| c.ends_with("_semantic"))
                                 .collect()
                         }
                     }
@@ -676,14 +791,17 @@ pub async fn handle_search(
                                 if score <= 0.0 { continue; }
                                 let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
                                 let id = r.get("id").map(|v| v.to_string()).unwrap_or_default();
-                                let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let name = payload.get("name").and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .or_else(|| payload.get("text").and_then(|v| v.as_str()))
+                                    .unwrap_or("").to_string();
                                 let entity_type = payload.get("labels")
                                     .and_then(|v| v.as_array()).and_then(|arr| arr.first()).and_then(|v| v.as_str())
                                     .or_else(|| payload.get("label").and_then(|v| v.as_str()))
                                     .or_else(|| {
                                         // Infer from collection name for code search
                                         if col.ends_with("_methods") { Some("Method") }
-                                        else if col.ends_with("_semantic") { Some("Code") }
+                                        else if col.ends_with("_semantic") { Some("Doc") }
                                         else { None }
                                     })
                                     .unwrap_or("?").to_string();
@@ -694,6 +812,16 @@ pub async fn handle_search(
                                     let sig = payload.get("signature").and_then(|v| v.as_str()).unwrap_or("");
                                     let cls = payload.get("class_name").and_then(|v| v.as_str()).unwrap_or("");
                                     format!("{}  {}::{}  L{}-{}", file, cls, sig, start, end)
+                                } else if col.ends_with("_semantic") {
+                                    // Doc chunks: extract file path from doc_id, show first line as summary
+                                    let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    let chunk_path = doc_id
+                                        .strip_prefix("dt://doc/")
+                                        .and_then(|s| s.rsplit_once('#'))
+                                        .map(|(path, _)| path.to_string())
+                                        .unwrap_or_default();
+                                    let first_line = name.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+                                    format!("{}  {}", chunk_path, first_line)
                                 } else {
                                     payload.get("description").or(payload.get("summary"))
                                         .or(payload.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string()
@@ -766,28 +894,34 @@ pub async fn handle_search(
     // ── Fuse vector + keyword with RRF ─────────────────────────────
     if !all_rank_lists.is_empty() {
         let mut fused = reciprocal_rank_fusion(all_rank_lists, 60.0, limit);
-        if world != "code" {
+        if world != "code" && world != "doc" {
             fused.retain(|item| item.entity_type != "Document");
         }
         if !fused.is_empty() {
             let mut seen_titles = std::collections::HashSet::new();
             for item in &fused {
                 if !seen_titles.insert(item.title.clone()) { continue; }
-                println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
-                if world == "code" && !item.snippet.is_empty() {
-                    // snippet format: "file_path  Class::signature  Lline-line"
-                    for line in item.snippet.lines() {
-                        println!("         {}", line);
-                    }
+                if (world == "doc" || world == "all") && item.entity_type == "Doc" {
+                    // Document search: show like code — file path + summary line
+                    let snippet_line = item.snippet.lines().next().unwrap_or("");
+                    println!("  [{:.4}] [Doc] {}", item.score, snippet_line);
                 } else {
-                    let short_snippet = if item.snippet.chars().count() > 80 {
-                        let truncated: String = item.snippet.chars().take(80).collect();
-                        format!("{}…", truncated)
-                    } else {
-                        item.snippet.clone()
-                    };
-                    if !short_snippet.is_empty() {
-                        println!("         {}", short_snippet);
+                    println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
+                    if world == "code" && !item.snippet.is_empty() {
+                        // snippet format: "file_path  Class::signature  Lline-line"
+                        for line in item.snippet.lines() {
+                            println!("         {}", line);
+                        }
+                    } else if world != "doc" {
+                        let short_snippet = if item.snippet.chars().count() > 80 {
+                            let truncated: String = item.snippet.chars().take(80).collect();
+                            format!("{}…", truncated)
+                        } else {
+                            item.snippet.clone()
+                        };
+                        if !short_snippet.is_empty() {
+                            println!("         {}", short_snippet);
+                        }
                     }
                 }
             }
@@ -814,6 +948,15 @@ pub async fn handle_search(
                          AND (n.name CONTAINS $q OR n.file_path CONTAINS $q){project_filter}\
                          RETURN labels(n)[0] AS type, coalesce(n.name, n.method_name, n.class_name, '') AS name, \
                                 coalesce(n.file_path, '') AS source \
+                         LIMIT {limit}"
+                    )
+                },
+                "doc" => {
+                    format!(
+                        "MATCH (d:Document) \
+                         WHERE d.name = $q \
+                         RETURN 'Document' AS type, coalesce(d.title, d.name) AS name, \
+                                substring(coalesce(d.content, ''), 0, 200) AS desc \
                          LIMIT {limit}"
                     )
                 },
@@ -983,13 +1126,7 @@ pub async fn handle_search_kg(
     // ── 2. Vector search on kg_nodes + _semantic collections ─────────
     if let Some(vec_repo) = &vector {
         {
-            let embed = Arc::new(SiliconFlowClient::new(
-                crate::infrastructure::siliconflow::base_url_from_env(),
-                crate::infrastructure::siliconflow::api_key_from_env(),
-                crate::infrastructure::siliconflow::embed_model_from_env(),
-                crate::infrastructure::siliconflow::reranker_model_from_env(),
-                crate::infrastructure::siliconflow::llm_model_from_env(),
-            )) as Arc<dyn EmbedService>;
+            let embed = create_search_embed_client();
             let rewriter = crate::application::search::rewrite::QueryRewriter::with_defaults();
             let candidates = rewriter.rewrite(&query);
             let mut queries_to_embed = vec![query.clone()];
