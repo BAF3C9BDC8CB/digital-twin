@@ -8,3 +8,5 @@ pub mod history;
 pub mod dependency;
 pub mod verify;
 pub mod context_service;
+pub mod graph_parse;
+pub mod search_mcp;

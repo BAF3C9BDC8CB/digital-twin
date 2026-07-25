@@ -49,6 +49,18 @@ pub struct SearchHit {
     pub score: f64,
     /// Source file or reference URL.
     pub source_ref: Option<String>,
+    /// Source file path (code world).
+    pub file_path: Option<String>,
+    /// Start line number (code world).
+    pub start_line: Option<u32>,
+    /// End line number (code world).
+    pub end_line: Option<u32>,
+    /// Function/method signature (code world).
+    pub signature: Option<String>,
+    /// Called function names (code world).
+    pub calls: Vec<String>,
+    /// Element ID from the knowledge graph.
+    pub element_id: Option<String>,
 }
 
 /// Output of cross-world search.
@@ -104,10 +116,15 @@ impl CrossWorldSearch {
     }
 
     /// Search the Reality World (code entities) via Qdrant vector search.
+    ///
+    /// Queries `{project}_methods` collections (or all `*_methods` when no project
+    /// is specified) and extracts full payload fields including start_line, end_line,
+    /// calls, and method_id.  Score threshold is read from `DT_SEARCH_MIN_SCORE`
+    /// (default 0.3).
     async fn search_code(
         &self,
         query: &str,
-        _project: Option<&str>,
+        project: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SearchHit>, DtError> {
         let (Some(ref vector), Some(ref embed)) = (&self.vector, &self.embed) else {
@@ -119,40 +136,103 @@ impl CrossWorldSearch {
             return Ok(Vec::new());
         };
 
-        let results = vector.search("kg_nodes", query_vec, limit as u64).await?;
-
-        let hits = results
+        // Discover method collections – filter by project when given
+        let collections = vector.list_collections().await?;
+        let method_cols: Vec<String> = collections
             .into_iter()
-            .filter(|hit| {
-                let labels = hit["payload"]["labels"].as_array();
-                labels.map_or(false, |l| {
-                    l.iter().any(|v| {
-                        v.as_str().map_or(false, |s| {
-                            matches!(s, "Method" | "Class" | "Module" | "Service" | "Endpoint" | "ConfigKey")
-                        })
-                    })
-                })
-            })
-            .map(|hit| {
-                let payload = &hit["payload"];
-                let labels = payload["labels"]
-                    .as_array()
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                SearchHit {
-                    id: hit["id"].as_str().unwrap_or("?").to_string(),
-                    title: payload["name"].as_str().unwrap_or("?").to_string(),
-                    snippet: payload["description"].as_str().unwrap_or("").to_string(),
-                    source_world: "code".into(),
-                    entity_type: labels.to_string(),
-                    score: hit["score"].as_f64().unwrap_or(0.0),
-                    source_ref: None,
-                }
-            })
+            .filter(|c| c.ends_with("_methods"))
+            .filter(|c| project.map_or(true, |p| c == &format!("{}_methods", p)))
             .collect();
 
-        Ok(hits)
+        if method_cols.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Score threshold from environment (default 0.3)
+        let min_score = std::env::var("DT_SEARCH_MIN_SCORE")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.3);
+
+        let mut all_hits = Vec::new();
+        for col in &method_cols {
+            match vector.search(col, query_vec.clone(), limit as u64).await {
+                Ok(results) => {
+                    for hit in results {
+                        let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        if score < min_score {
+                            continue;
+                        }
+                        let payload =
+                            hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
+                        let name =
+                            payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if name.is_empty() || name == "?" {
+                            continue;
+                        }
+
+                        let calls: Vec<String> = payload
+                            .get("calls")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        all_hits.push(SearchHit {
+                            id: hit
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .to_string(),
+                            title: name.to_string(),
+                            snippet: payload
+                                .get("signature")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            source_world: "code".into(),
+                            entity_type: "Method".into(),
+                            score,
+                            source_ref: None,
+                            file_path: payload
+                                .get("file_path")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            start_line: payload
+                                .get("start_line")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32),
+                            end_line: payload
+                                .get("end_line")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32),
+                            signature: payload
+                                .get("signature")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            calls,
+                            element_id: payload
+                                .get("method_id")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                        });
+                    }
+                }
+                Err(e) => tracing::warn!("Qdrant search on {col}: {e}"),
+            }
+        }
+
+        // Sort by score descending, cap to limit
+        all_hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_hits.truncate(limit);
+        Ok(all_hits)
     }
 
     /// Search the Knowledge World via graph.
@@ -189,7 +269,45 @@ impl CrossWorldSearch {
         params.insert("limit".to_string(), serde_json::json!(limit as i64));
 
         let result = graph.read_query(cypher, params).await?;
-        Ok(Self::parse_graph_hits(&result, "knowledge"))
+        let rows = crate::application::context::graph_parse::parse_graph_rows(&result);
+        let hits: Vec<SearchHit> = rows
+            .into_iter()
+            .map(|row| SearchHit {
+                id: row
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                title: row
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                snippet: row
+                    .get("snippet")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                source_world: "knowledge".into(),
+                entity_type: row
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5),
+                source_ref: row
+                    .get("source_ref")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                file_path: None,
+                start_line: None,
+                end_line: None,
+                signature: None,
+                calls: vec![],
+                element_id: None,
+            })
+            .collect();
+        Ok(hits)
     }
 
     /// Search the vector store via Qdrant.
@@ -221,6 +339,12 @@ impl CrossWorldSearch {
                     entity_type: "Document".into(),
                     score: hit["score"].as_f64().unwrap_or(0.0),
                     source_ref: None,
+                    file_path: None,
+                    start_line: None,
+                    end_line: None,
+                    signature: None,
+                    calls: vec![],
+                    element_id: None,
                 }
             })
             .collect();
@@ -228,57 +352,7 @@ impl CrossWorldSearch {
         Ok(hits)
     }
 
-    /// Convert graph results to SearchHit list.
-    ///
-    /// Supports two response formats:
-    /// 1. Bolt driver — `Value::Array` of row objects
-    /// 2. HTTP API — `{"results":[{"data":[{"row":[...]}]}]}` (legacy)
-    fn parse_graph_hits(raw: &serde_json::Value, world: &str) -> Vec<SearchHit> {
-        // Try Bolt driver format first (Array of row objects).
-        if let Some(rows) = raw.as_array() {
-            return rows
-                .iter()
-                .filter_map(|row| {
-                    Some(SearchHit {
-                        id: row.get("id")?.as_str().unwrap_or("?").to_string(),
-                        title: row.get("title")?.as_str().unwrap_or("?").to_string(),
-                        snippet: row.get("snippet")?.as_str().unwrap_or("").to_string(),
-                        source_world: world.into(),
-                        entity_type: row.get("type")?.as_str().unwrap_or("?").to_string(),
-                        score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5),
-                        source_ref: row.get("source_ref").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                    })
-                })
-                .collect();
-        }
 
-        // Fall back to HTTP API format.
-        let rows = raw
-            .get("results")
-            .and_then(|r| r.as_array())
-            .and_then(|results| results.first())
-            .and_then(|first| first.get("data"))
-            .and_then(|data| data.as_array());
-
-        let Some(rows) = rows else {
-            return Vec::new();
-        };
-
-        rows.iter()
-            .filter_map(|row_val| {
-                let row = row_val.get("row")?.as_array()?;
-                Some(SearchHit {
-                    id: row.first()?.as_str().unwrap_or("?").to_string(),
-                    title: row.get(1)?.as_str().unwrap_or("?").to_string(),
-                    snippet: row.get(2)?.as_str().unwrap_or("").to_string(),
-                    source_world: world.into(),
-                    entity_type: row.get(3)?.as_str().unwrap_or("?").to_string(),
-                    score: row.get(5).and_then(|v| v.as_f64()).unwrap_or(0.5),
-                    source_ref: row.get(4).and_then(|v| v.as_str()).map(|s| s.to_string()),
-                })
-            })
-            .collect()
-    }
 }
 
 #[async_trait::async_trait]
@@ -354,9 +428,17 @@ mod tests {
             entity_type: "Service".into(),
             score: 0.95,
             source_ref: Some("src/payment.rs".into()),
+            file_path: Some("src/payment.rs".into()),
+            start_line: Some(10),
+            end_line: Some(45),
+            signature: Some("pub fn process()".into()),
+            calls: vec!["validate".into(), "save".into()],
+            element_id: Some("4:xyz".into()),
         };
         assert_eq!(hit.source_world, "code");
         assert!(hit.score > 0.9);
+        assert_eq!(hit.start_line, Some(10));
+        assert_eq!(hit.calls.len(), 2);
     }
 
     #[test]
@@ -388,6 +470,12 @@ mod tests {
                 entity_type: "Service".into(),
                 score: 0.98,
                 source_ref: None,
+                file_path: None,
+                start_line: None,
+                end_line: None,
+                signature: None,
+                calls: vec![],
+                element_id: None,
             }],
             total: 8,
             per_world_counts: counts,

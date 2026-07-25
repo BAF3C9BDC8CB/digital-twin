@@ -110,16 +110,21 @@ impl DependencyService {
     async fn query_upstream(
         &self,
         target: &str,
-        _max_depth: u32,
+        max_depth: u32,
     ) -> Result<Vec<DepEntity>, DtError> {
-        let cypher = r#"
-            MATCH (caller)-[:CALLS|DEPENDS_ON|IMPORTS]->(target)
+        let depth = max_depth.min(5);
+        let cypher = format!(
+            r#"
+            MATCH p = (caller)-[:CALLS|DEPENDS_ON|IMPORTS*1..{depth}]->(target)
             WHERE target.name CONTAINS $target OR target.source_file CONTAINS $target
+            WITH caller, length(p) AS dist
             RETURN coalesce(caller.name, caller.method_name, caller.class_name, '') AS name,
                    labels(caller)[0] AS type,
-                   coalesce(caller.source_file, '') AS source_file
-            LIMIT 30
-        "#;
+                   coalesce(caller.source_file, '') AS source_file,
+                   dist AS distance
+            ORDER BY dist LIMIT 100
+        "#
+        );
 
         let mut params = std::collections::HashMap::new();
         params.insert(
@@ -127,24 +132,29 @@ impl DependencyService {
             serde_json::Value::String(target.to_string()),
         );
 
-        let result = self.graph.read_query(cypher, params).await?;
-        Self::parse_entity_rows(&result, 1)
+        let result = self.graph.read_query(&cypher, params).await?;
+        Self::parse_entity_rows(&result)
     }
 
     /// Query downstream (callees / entities that the target depends on).
     async fn query_downstream(
         &self,
         target: &str,
-        _max_depth: u32,
+        max_depth: u32,
     ) -> Result<Vec<DepEntity>, DtError> {
-        let cypher = r#"
-            MATCH (target)-[:CALLS|DEPENDS_ON|IMPORTS]->(callee)
+        let depth = max_depth.min(5);
+        let cypher = format!(
+            r#"
+            MATCH p = (target)-[:CALLS|DEPENDS_ON|IMPORTS*1..{depth}]->(callee)
             WHERE target.name CONTAINS $target OR target.source_file CONTAINS $target
+            WITH callee, length(p) AS dist
             RETURN coalesce(callee.name, callee.method_name, callee.class_name, '') AS name,
                    labels(callee)[0] AS type,
-                   coalesce(callee.source_file, '') AS source_file
-            LIMIT 30
-        "#;
+                   coalesce(callee.source_file, '') AS source_file,
+                   dist AS distance
+            ORDER BY dist LIMIT 100
+        "#
+        );
 
         let mut params = std::collections::HashMap::new();
         params.insert(
@@ -152,39 +162,38 @@ impl DependencyService {
             serde_json::Value::String(target.to_string()),
         );
 
-        let result = self.graph.read_query(cypher, params).await?;
-        Self::parse_entity_rows(&result, 1)
+        let result = self.graph.read_query(&cypher, params).await?;
+        Self::parse_entity_rows(&result)
     }
 
-    /// Parse graph results into DepEntity list.
-    fn parse_entity_rows(raw: &serde_json::Value, distance: u32) -> Result<Vec<DepEntity>, DtError> {
-        let rows = raw
-            .get("results")
-            .and_then(|r| r.as_array())
-            .and_then(|results| results.first())
-            .and_then(|first| first.get("data"))
-            .and_then(|data| data.as_array());
-
-        let Some(rows) = rows else {
-            return Ok(Vec::new());
-        };
-
-        let mut entities = Vec::new();
-        for row_val in rows {
-            let row = row_val.get("row").and_then(|r| r.as_array());
-            if let Some(row) = row {
-                let name = row.first().and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                let etype = row.get(1).and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                let source = row.get(2).and_then(|v| v.as_str()).map(|s| s.to_string());
-                entities.push(DepEntity {
-                    name,
-                    entity_type: etype,
-                    distance,
-                    source_file: source,
-                    notes: None,
-                });
-            }
-        }
+    /// Parse graph query results into DepEntity list.
+    /// Uses [`graph_parse::parse_graph_rows`] for unified Bolt + HTTP format support.
+    fn parse_entity_rows(raw: &serde_json::Value) -> Result<Vec<DepEntity>, DtError> {
+        let rows = super::graph_parse::parse_graph_rows(raw);
+        let entities = rows
+            .into_iter()
+            .map(|row| DepEntity {
+                name: row
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                entity_type: row
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                distance: row
+                    .get("distance")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1) as u32,
+                source_file: row
+                    .get("source_file")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                notes: None,
+            })
+            .collect();
         Ok(entities)
     }
 

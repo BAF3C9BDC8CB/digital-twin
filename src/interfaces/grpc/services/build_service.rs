@@ -3,6 +3,7 @@
 //! These handlers delegate to [`BuildServiceImpl`] and the vector/graph
 //! repository respectively, converting gRPC messages to/from domain types.
 
+use crate::application::context::search_mcp::CrossWorldSearchTrait;
 use crate::domain::traits::{
     BuildService, EmbedService, GraphRepository, VectorRepository,
 };
@@ -75,6 +76,9 @@ pub async fn handle_build(
 // ---------------------------------------------------------------------------
 
 /// Handler for `Search` RPC — semantic code search.
+///
+/// Delegates to [`CrossWorldSearch`] which searches the code world via
+/// vector store (Qdrant) with a fallback to the knowledge graph.
 pub async fn handle_search(
     req: SearchRequest,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -82,24 +86,54 @@ pub async fn handle_search(
 ) -> Result<SearchResponse, Status> {
     let start = Instant::now();
 
-    let limit: u64 = if req.limit > 0 {
-        req.limit as u64
+    let limit: usize = if req.limit > 0 {
+        req.limit as usize
     } else {
         10
     };
 
-    // Try vector search first — fall back to graph-based Cypher search.
-    let results = if let Some(ref vec_repo) = vector {
-        search_via_vector(vec_repo.as_ref(), &req.query, limit).await?
-    } else if let Some(ref graph_repo) = graph {
-        search_via_graph(graph_repo.as_ref(), &req.query, limit).await?
-    } else {
-        return Ok(SearchResponse {
-            results: vec![],
-            total: 0,
-            elapsed_secs: start.elapsed().as_secs_f64(),
-        });
+    // Build embed service from environment variables
+    let embed_svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
+        crate::infrastructure::siliconflow::base_url_from_env(),
+        crate::infrastructure::siliconflow::api_key_from_env(),
+        crate::infrastructure::siliconflow::embed_model_from_env(),
+        crate::infrastructure::siliconflow::reranker_model_from_env(),
+        crate::infrastructure::siliconflow::llm_model_from_env(),
+    );
+    let embed: Option<Arc<dyn EmbedService>> = Some(Arc::new(embed_svc));
+
+    // Build CrossWorldSearch and delegate
+    let cws =
+        crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed);
+    let cws_req = crate::application::context::search_mcp::SearchRequest {
+        query: req.query,
+        world: Some("code".into()),
+        limit: Some(limit),
+        project: if req.project.is_empty() {
+            None
+        } else {
+            Some(req.project)
+        },
     };
+
+    let cws_result = cws
+        .search(&cws_req)
+        .await
+        .map_err(|e| Status::internal(format!("Search failed: {e}")))?;
+
+    // Convert CrossWorldSearch hits to gRPC SearchResults,
+    // reading start_line from the hit payload (no longer hardcoded 0).
+    let results: Vec<SearchResult> = cws_result
+        .hits
+        .into_iter()
+        .map(|hit| SearchResult {
+            score: hit.score as f32,
+            name: hit.title,
+            file_path: hit.file_path.unwrap_or_default(),
+            start_line: hit.start_line.map(|l| l as i32).unwrap_or(0),
+            signature: hit.signature.unwrap_or_default(),
+        })
+        .collect();
 
     let total = results.len() as i32;
     let elapsed = start.elapsed().as_secs_f64();
@@ -115,6 +149,7 @@ pub async fn handle_search(
 ///
 /// Embeds the query text, discovers all `*_methods` collections,
 /// searches each one, merges results by score, and returns the top matches.
+#[deprecated(note = "Use CrossWorldSearch instead")]
 async fn search_via_vector(
     vec_repo: &dyn VectorRepository,
     query: &str,
@@ -188,26 +223,29 @@ async fn search_via_vector(
     Ok(results)
 }
 
-/// Fallback search using the graph database (Cypher CONTAINS query).
+/// Fallback search using the graph database (fulltext index).
+#[deprecated(note = "Use CrossWorldSearch instead")]
 async fn search_via_graph(
     graph: &dyn GraphRepository,
     query: &str,
     limit: u64,
 ) -> Result<Vec<SearchResult>, Status> {
-    let cypher = format!(
-        "MATCH (n) \
-         WHERE (n:Method OR n:Class OR n:Interface OR n:Module) \
-           AND (n.name CONTAINS $q OR n.source_file CONTAINS $q OR n.signature CONTAINS $q) \
-         RETURN coalesce(n.name, n.method_name, n.class_name, '') AS name, \
-                coalesce(n.source_file, '') AS file_path, \
-                coalesce(n.start_line, 0) AS start_line, \
-                coalesce(n.signature, '') AS signature \
-         ORDER BY name \
-         LIMIT {limit}"
-    );
+    let cypher = r#"
+        CALL db.index.fulltext.queryNodes('infra_search', $q)
+        YIELD node, score
+        WHERE any(lbl IN labels(node) WHERE lbl IN ['Method', 'Class', 'Interface', 'Module'])
+        RETURN coalesce(node.name, node.method_name, node.class_name, '') AS name,
+               coalesce(node.source_file, '') AS file_path,
+               coalesce(node.start_line, 0) AS start_line,
+               coalesce(node.signature, '') AS signature,
+               score
+        ORDER BY score DESC
+        LIMIT $limit
+    "#;
 
     let mut params = std::collections::HashMap::new();
     params.insert("q".into(), serde_json::Value::String(query.to_string()));
+    params.insert("limit".into(), serde_json::json!(limit as i64));
 
     match graph.read_query(&cypher, params).await {
         Ok(result) => {
@@ -215,7 +253,10 @@ async fn search_via_graph(
             let results: Vec<SearchResult> = rows
                 .iter()
                 .map(|row| SearchResult {
-                    score: 1.0,
+                    score: row
+                        .get("score")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0) as f32,
                     name: row
                         .get("name")
                         .and_then(|v| v.as_str())
