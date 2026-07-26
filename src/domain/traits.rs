@@ -116,6 +116,52 @@ pub trait EmbedService: Send + Sync + 'static {
     async fn health_check(&self) -> Result<HealthStatus, DtError>;
 }
 
+/// LLM (chat completion) service abstraction.
+#[async_trait]
+pub trait LlmService: Send + Sync + 'static {
+    /// Send a chat completion request.
+    async fn chat(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        temperature: f32,
+        max_tokens: u32,
+    ) -> Result<String, DtError>;
+
+    /// Check service health.
+    async fn health_check(&self) -> Result<HealthStatus, DtError>;
+
+    /// Return this provider's capabilities.
+    fn capabilities(&self) -> LlmCapabilities;
+}
+
+/// Rerank service abstraction.
+#[async_trait]
+pub trait RerankService: Send + Sync + 'static {
+    /// Rerank documents against a query. Returns relevance scores in original order.
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<f32>, DtError>;
+
+    /// Check service health.
+    async fn health_check(&self) -> Result<HealthStatus, DtError>;
+}
+
+/// Provider capability declaration.
+#[derive(Debug, Clone, Default)]
+pub struct LlmCapabilities {
+    /// Supports embedding.
+    pub embed: bool,
+    /// Supports reranking.
+    pub rerank: bool,
+    /// Supports LLM chat completion.
+    pub chat: bool,
+    /// Maximum tokens per response.
+    pub max_tokens: u32,
+}
+
 /// Parse strategy trait — implemented per programming language.
 ///
 /// Each language parser can independently determine if it can handle a file
@@ -167,5 +213,7 @@ mod tests {
         fn _accept_snapshot(_: &dyn SnapshotRepository) {}
         fn _accept_embed(_: &dyn EmbedService) {}
         fn _accept_parse(_: &dyn ParseStrategy) {}
+        fn _accept_llm(_: &dyn LlmService) {}
+        fn _accept_rerank(_: &dyn RerankService) {}
     }
 }

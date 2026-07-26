@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::EmbedService;
+use crate::domain::traits::{EmbedService, LlmService, RerankService, LlmCapabilities};
 use crate::domain::types::HealthStatus;
 
 /// Maximum number of retry attempts for rate-limited requests.
@@ -407,6 +407,54 @@ impl EmbedService for SiliconFlowClient {
 }
 
 // ---------------------------------------------------------------------------
+// LlmService / RerankService trait implementations
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl LlmService for SiliconFlowClient {
+    async fn chat(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        temperature: f32,
+        max_tokens: u32,
+    ) -> Result<String, DtError> {
+        // Delegate to existing chat() method
+        SiliconFlowClient::chat(self, system_prompt, user_prompt, temperature, max_tokens).await
+    }
+
+    async fn health_check(&self) -> Result<HealthStatus, DtError> {
+        // Delegate to existing EmbedService::health_check
+        <Self as EmbedService>::health_check(self).await
+    }
+
+    fn capabilities(&self) -> LlmCapabilities {
+        LlmCapabilities {
+            embed: true,
+            rerank: true,
+            chat: !self.model_llm.is_empty(),
+            max_tokens: 4096,
+        }
+    }
+}
+
+#[async_trait]
+impl RerankService for SiliconFlowClient {
+    async fn rerank(
+        &self,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<f32>, DtError> {
+        // Delegate to existing rerank() method
+        SiliconFlowClient::rerank(self, query, documents).await
+    }
+
+    async fn health_check(&self) -> Result<HealthStatus, DtError> {
+        <Self as EmbedService>::health_check(self).await
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -463,5 +511,31 @@ mod tests {
             built.headers().get("Authorization").unwrap().to_str().unwrap(),
             "Bearer sk-key"
         );
+    }
+
+    #[test]
+    fn capabilities_reflects_model_llm_config() {
+        use crate::domain::traits::LlmService;
+        let with_llm = SiliconFlowClient::new(
+            "https://api.siliconflow.cn/v1",
+            "sk-key",
+            "bge-m3",
+            "reranker",
+            "Qwen/Qwen3-8B",
+        );
+        let caps = with_llm.capabilities();
+        assert!(caps.embed);
+        assert!(caps.rerank);
+        assert!(caps.chat);
+        assert_eq!(caps.max_tokens, 4096);
+
+        let no_llm = SiliconFlowClient::new(
+            "https://api.siliconflow.cn/v1",
+            "sk-key",
+            "bge-m3",
+            "reranker",
+            "",
+        );
+        assert!(!no_llm.capabilities().chat);
     }
 }
