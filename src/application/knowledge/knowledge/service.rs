@@ -1200,7 +1200,11 @@ mod tests {
     impl GraphRepository for CountingRepoVector {
         async fn read_query(&self, _q: &str, _p: std::collections::HashMap<String, serde_json::Value>) -> Result<serde_json::Value, DtError> {
             self.read_count.fetch_add(1, Ordering::SeqCst);
-            Ok(serde_json::json!([{"version": 1}]))
+            // Response must include an "eid" field so that
+            // `embed_kg_node` (called by auto_vectorize_*) can fetch the
+            // real Memgraph elementId after the C1 fix. The legacy
+            // "version" field is preserved for any consumer that reads it.
+            Ok(serde_json::json!([{"version": 1, "eid": "4:1:mock-experience"}]))
         }
         async fn write_query(&self, _q: &str, _p: std::collections::HashMap<String, serde_json::Value>) -> Result<serde_json::Value, DtError> {
             self.write_count.fetch_add(1, Ordering::SeqCst);

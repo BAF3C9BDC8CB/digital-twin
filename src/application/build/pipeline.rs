@@ -797,12 +797,18 @@ impl PipelineTemplate {
                     .await;
 
                 // 即时嵌入 Concept 节点到 kg_nodes
+                // Property map mirrors service.rs::auto_vectorize_concept so the
+                // search text + payload fields stay consistent across the two
+                // write paths. We reuse the `summary` computed above (defaults
+                // to `definition` when `ann.description` is empty) for the
+                // `description` slot — exactly what auto_vectorize_concept
+                // writes (it uses `concept.summary`, which is the same value).
                 if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
                     let concept_props = serde_json::json!({
                         "name": concept_name,
                         "definition": definition,
                         "domain": domain,
-                        "description": ann.description,
+                        "description": summary,
                     });
                     if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
                         graph,
@@ -984,10 +990,12 @@ impl PipelineTemplate {
                     .await;
 
                 // 即时嵌入 Experience 节点到 kg_nodes
+                // Property map mirrors service.rs::auto_vectorize_experience
+                // (which uses `experience.title` as `name`). Here `exp_title`
+                // is the closest equivalent.
                 if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
-                    let concept_key = ann.concept.as_deref().unwrap_or("unknown");
                     let experience_props = serde_json::json!({
-                        "name": concept_key,
+                        "name": exp_title,
                         "title": exp_title,
                         "description": ann.description,
                         "domain": domain,

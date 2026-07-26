@@ -90,11 +90,10 @@ pub mod expansion {
             OPTIONAL MATCH (n)-[r{path_pattern}]-(related)
             WITH n, related, relationships(r) AS rels
             UNWIND rels AS rel
-            WITH n, related, type(rel) AS rel_type,
-                 CASE WHEN startNode(rel)=n OR endNode(rel)=n THEN 'out' ELSE 'in' END AS dir
+            WITH n, related, type(rel) AS rel_type
             RETURN DISTINCT elementId(related) AS eid, labels(related) AS labels,
                    coalesce(related.name, related.title, '') AS name,
-                   collect(DISTINCT rel_type)[0] AS rel_type, dir
+                   collect(DISTINCT rel_type)[0] AS rel_type
             LIMIT $limit
             "#
         );
@@ -187,14 +186,16 @@ pub mod expansion {
                 _params: HashMap<String, serde_json::Value>,
             ) -> Result<serde_json::Value, crate::domain::error::DtError> {
                 *self.captured_query.lock().unwrap() = query.to_string();
-                // Simulate Memgraph Bolt response: array of row objects
+                // Simulate Memgraph Bolt response: array of row objects.
+                // NOTE: `dir` column was dropped from the production Cypher
+                // (it caused duplicate rows for multi-hop paths and was
+                // never consumed by ExpandedNode).
                 Ok(serde_json::json!([
                     {
                         "eid": "4:1:abc",
                         "labels": ["Method"],
                         "name": "createPay",
-                        "rel_type": "CALLS",
-                        "dir": "out"
+                        "rel_type": "CALLS"
                     }
                 ]))
             }

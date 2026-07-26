@@ -792,42 +792,70 @@ pub async fn embed_kg_node(
         return Ok(());
     }
 
-    // 1. Construct temporary KgNode
+    // 1. Fetch the real Memgraph elementId for this node. The Qdrant payload's
+    //    "elementId" field must be a real graph element ID (format "4:xxx:yyy")
+    //    so that `expand_nodes` (which uses `WHERE elementId(n) IN $ids`) can
+    //    match against it. Constructing a synthetic id breaks graph expansion.
+    let fetch_cypher = format!(
+        "MATCH (n:{label} {{{id_field}: $value}}) RETURN elementId(n) AS eid"
+    );
+    let mut fetch_params = HashMap::new();
+    fetch_params.insert(
+        "value".to_string(),
+        serde_json::Value::String(id_value.to_string()),
+    );
+    let fetch_result = graph.read_query(&fetch_cypher, fetch_params).await?;
+    let real_element_id = fetch_result
+        .as_array()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("eid"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or_else(|| {
+            DtError::Repository(format!(
+                "embed_kg_node: node not found {label} {id_field}={id_value}"
+            ))
+        })?;
+
+    // 2. Construct KgNode with the REAL elementId
     let node = KgNode {
-        element_id: format!("{label}/{id_field}={id_value}"),
+        element_id: real_element_id.clone(),
         labels: vec![label.to_string()],
         properties: properties.clone(),
     };
 
-    // 2. Build search text
+    // 3. Build search text
     let text = build_search_text(&node);
 
-    // 3. Embed
+    // 4. Embed
     let vectors = embed.embed_batch(std::slice::from_ref(&text)).await?;
     let vec = match vectors.into_iter().next() {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    // 4. Build Qdrant point
+    // 5. Build Qdrant point (build_payload writes node.element_id into "elementId")
     let point = build_qdrant_point(&node, &vec);
 
-    // 5. Upsert to Qdrant
+    // 6. Upsert to Qdrant
     vector.ensure_collection(KG_COLLECTION, VECTOR_DIM).await?;
     vector.upsert(KG_COLLECTION, vec![point]).await?;
 
-    // 6. Mark synced in graph
-    let cypher = format!(
+    // 7. Mark synced in graph
+    let mark_cypher = format!(
         "MATCH (n:{label} {{{id_field}: $value}}) SET n._kg_synced_at = datetime()"
     );
-    let mut params = HashMap::new();
-    params.insert(
+    let mut mark_params = HashMap::new();
+    mark_params.insert(
         "value".to_string(),
         serde_json::Value::String(id_value.to_string()),
     );
-    graph.write_query(&cypher, params).await?;
+    graph.write_query(&mark_cypher, mark_params).await?;
 
-    tracing::debug!("[embed_kg_node] embedded {label} {id_field}={id_value}");
+    tracing::debug!(
+        "[embed_kg_node] embedded {label} {id_field}={id_value} (eid={})",
+        real_element_id
+    );
     Ok(())
 }
 
@@ -1004,6 +1032,8 @@ fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::types::{CollectionInfo, HealthStatus};
+    use async_trait::async_trait;
 
     // ------------------------------------------------------------------
     // make_point_id
@@ -1419,6 +1449,169 @@ mod tests {
             Box<dyn std::future::Future<Output = Result<(), DtError>> + Send + 'a>,
         > = |g, e, v, lbl, fid, vid, p| Box::pin(embed_kg_node(g, e, v, lbl, fid, vid, p));
         let _ = wrapper;
+    }
+
+    // ------------------------------------------------------------------
+    // embed_kg_node — behavioural test (C1 regression)
+    //
+    // Verifies that embed_kg_node:
+    //   1. Issues a read_query to fetch the REAL Memgraph elementId
+    //   2. Calls embed_batch
+    //   3. Upserts a Qdrant point whose payload "elementId" is the REAL
+    //      Memgraph element id (format "4:xxx:yyy") — NOT the synthetic
+    //      "<label>/<id_field>=<id_value>" string that previously broke
+    //      `expand_nodes` lookups.
+    //   4. Issues a write_query to mark _kg_synced_at.
+    // ------------------------------------------------------------------
+
+    /// Mock graph: returns a fixed real Memgraph elementId, counts writes.
+    struct MockGraph {
+        write_count: std::sync::Mutex<usize>,
+    }
+
+    #[async_trait]
+    impl GraphRepository for MockGraph {
+        async fn read_query(
+            &self,
+            _query: &str,
+            _params: HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
+            // Simulate Memgraph Bolt response: array of row objects with the
+            // real elementId under the "eid" key (matches the fetch Cypher:
+            //   MATCH (n:Knowledge {knowledge_id: $value}) RETURN elementId(n) AS eid
+            Ok(serde_json::json!([{"eid": "4:1:abc123"}]))
+        }
+        async fn write_query(
+            &self,
+            _query: &str,
+            _params: HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
+            *self.write_count.lock().unwrap() += 1;
+            Ok(serde_json::json!([]))
+        }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    /// Mock embed: returns a single 1024-dim vector.
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbedService for MockEmbed {
+        async fn embed_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+            Ok(vec![vec![0.1_f32; 1024]])
+        }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    /// Mock vector: captures upserted Qdrant points for inspection.
+    struct MockVector {
+        upserted: std::sync::Mutex<Vec<serde_json::Value>>,
+    }
+
+    #[async_trait]
+    impl VectorRepository for MockVector {
+        async fn ensure_collection(&self, _c: &str, _d: u32) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _c: &str,
+            _v: Vec<f32>,
+            _l: u64,
+        ) -> Result<Vec<serde_json::Value>, DtError> {
+            Ok(vec![])
+        }
+        async fn upsert(
+            &self,
+            _c: &str,
+            points: Vec<serde_json::Value>,
+        ) -> Result<(), DtError> {
+            self.upserted.lock().unwrap().extend(points);
+            Ok(())
+        }
+        async fn delete_by_filter(
+            &self,
+            _c: &str,
+            _f: serde_json::Value,
+        ) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn list_collections(&self) -> Result<Vec<String>, DtError> {
+            Ok(vec![])
+        }
+        async fn collection_info(&self, _n: &str) -> Result<CollectionInfo, DtError> {
+            Ok(CollectionInfo {
+                name: "kg_nodes".to_string(),
+                points_count: 0,
+                vector_dim: 1024,
+                model_version: "bge-m3".to_string(),
+            })
+        }
+        async fn delete_collection(&self, _n: &str) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    #[tokio::test]
+    async fn embed_kg_node_fetches_real_element_id_and_embeds() {
+        let graph = MockGraph {
+            write_count: std::sync::Mutex::new(0),
+        };
+        let embed = MockEmbed;
+        let vector = MockVector {
+            upserted: std::sync::Mutex::new(vec![]),
+        };
+
+        let props = serde_json::json!({
+            "name": "test",
+            "summary": "test summary",
+            "title": "Test Knowledge"
+        });
+        let result = embed_kg_node(
+            &graph as &dyn GraphRepository,
+            &embed as &dyn EmbedService,
+            &vector as &dyn VectorRepository,
+            "Knowledge",
+            "knowledge_id",
+            "dt://knowledge/test/test/test",
+            &props,
+        )
+        .await;
+
+        assert!(result.is_ok(), "embed_kg_node should succeed: {:?}", result.err());
+
+        // 1. write_query must have been called once (to mark _kg_synced_at).
+        assert_eq!(
+            *graph.write_count.lock().unwrap(),
+            1,
+            "marking query should be called exactly once"
+        );
+
+        // 2. Exactly one Qdrant point should have been upserted.
+        let upserted = vector.upserted.lock().unwrap();
+        assert_eq!(upserted.len(), 1, "one point should be upserted");
+
+        // 3. The payload's "elementId" field MUST be the real Memgraph element
+        //    id returned by the mock read query — NOT the synthetic
+        //    `Knowledge/knowledge_id=dt://knowledge/test/test/test` string
+        //    that the previous implementation wrote (and which broke
+        //    `expand_nodes` lookups).
+        let payload = upserted[0].get("payload").expect("point must have payload");
+        let element_id = payload
+            .get("elementId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(
+            element_id, "4:1:abc123",
+            "should use real Memgraph elementId; got: {element_id}"
+        );
     }
 
     // ------------------------------------------------------------------
