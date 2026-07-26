@@ -1637,6 +1637,8 @@ async fn main() -> anyhow::Result<()> {
 
         // ---- CLI mode: dt kg-sync ----
         Some(Commands::KgSync { full, labels, config_chunks }) => {
+            eprintln!("⚠️  Deprecated: `dt kg-sync` is deprecated. Use `dt build --source knowledge` instead.");
+            eprintln!("   The command still works but will be removed in a future release.");
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let queue = embed.map(|e| Arc::new(

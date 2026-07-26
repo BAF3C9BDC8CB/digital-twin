@@ -153,6 +153,7 @@ pub async fn handle_kg_sync(
     graph: Option<Arc<dyn GraphRepository>>,
     queue: Option<Arc<crate::application::sync::queue::VectorQueue>>,
 ) -> anyhow::Result<()> {
+    tracing::warn!("dt kg-sync is deprecated — use `dt build --source knowledge` instead");
     tracing::info!(
         "dt-daemon CLI: kg-sync --incremental {incremental} --labels {:?}",
         labels,
