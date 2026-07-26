@@ -105,7 +105,7 @@ impl PipelineTemplate {
         root: &Path,
         strategy: &dyn BuildStrategy,
         scan_config: &ScanConfig,
-        snapshot_repo: Option<&dyn SnapshotRepository>,
+        snapshot_repo: Option<Arc<dyn SnapshotRepository>>,
         graph: Option<&dyn GraphRepository>,
         embed: Option<Arc<dyn EmbedService>>,
         vector: Option<Arc<dyn VectorRepository>>,
@@ -121,7 +121,7 @@ impl PipelineTemplate {
 
         // Step 2: Select files via strategy
         let (files_to_process, deleted) = strategy
-            .select_files(root, &all_files, snapshot_repo, project)
+            .select_files(root, &all_files, snapshot_repo.as_deref(), project)
             .await?;
         let files_changed = files_to_process.len();
 
@@ -149,7 +149,7 @@ impl PipelineTemplate {
             let mut doc_to_process: Vec<PathBuf> = Vec::new();
             if strategy.force_rebuild() {
                 doc_to_process = doc_files.to_vec();
-            } else if let Some(repo) = snapshot_repo {
+            } else if let Some(repo) = snapshot_repo.as_deref() {
                 // Load stored snapshots to check mtime
                 if let Ok(stored) = repo.list_snapshots(project).await {
                     let mut stored_map: std::collections::HashMap<String, (String, f64)> =
@@ -181,7 +181,7 @@ impl PipelineTemplate {
             if !doc_to_process.is_empty() {
                 if let Some(graph) = graph {
                     let _documents_written = self
-                        .process_documents(project, root, &doc_to_process, Some(graph), embed.clone(), vector.clone(), snapshot_repo)
+                        .process_documents(project, root, &doc_to_process, Some(graph), embed.clone(), vector.clone(), snapshot_repo.as_deref())
                         .await?;
                 }
             }
@@ -286,28 +286,21 @@ impl PipelineTemplate {
         }
 
         // Step 9: Update SQLite snapshots
-        if let Some(repo) = snapshot_repo {
+        if let Some(repo) = snapshot_repo.as_deref() {
             tracing::info!("updating {} snapshots...", extraction.snapshots.len());
             strategy.update_snapshots(repo, project, &extraction.snapshots).await?;
             tracing::info!("snapshot update complete");
         }
 
-        // ── Phase 2: Per-method LLM analysis (resumable, concurrent) ──
-        // Each method's source_text is sent to the LLM. The explanation is embedded
-        // and stored directly in the `_methods` Qdrant point as `llm_analysis`.
+        // ── Phase 2: Per-method LLM analysis (background, non-blocking) ──
+        // LLM analysis is submitted as a background tokio task so the build
+        // returns immediately. The task processes methods concurrently and
+        // updates Qdrant points with llm_analysis field.
         if let (Some(ref client), Some(ref embed_svc), Some(ref vector_repo), Some(repo)) =
             (&self.siliconflow, &embed, &vector, snapshot_repo)
         {
             let methods = &extraction.methods;
-            if methods.is_empty() {
-                tracing::info!("Phase 2: no methods to analyze");
-            } else {
-                tracing::info!(
-                    "Phase 2: LLM analyzing {} methods (concurrent={})...",
-                    methods.len(),
-                    PHASE2_CONCURRENCY,
-                );
-
+            if !methods.is_empty() {
                 let system_prompt = load_code_analysis_prompt();
                 let collection = format!("{}_methods", project);
 
@@ -315,20 +308,10 @@ impl PipelineTemplate {
                 let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
                 for m in methods {
                     let mut source_text = m.source_text.clone();
-                    // If source_text is empty or too short, read the file as fallback.
-                    // Some parsers (e.g. Python) may produce empty source_text for
-                    // certain method patterns.
                     if source_text.len() < 10 {
                         let fp = std::path::Path::new(&m.file_path);
                         if let Ok(content) = std::fs::read_to_string(fp) {
-                            let file_len = content.len();
                             source_text = content;
-                            tracing::info!(
-                                "Phase 2: {} source_text too short ({}), fallback to file ({} chars)",
-                                m.name,
-                                m.source_text.len(),
-                                file_len,
-                            );
                         }
                     }
                     let mut hasher = Sha256::new();
@@ -342,7 +325,6 @@ impl PipelineTemplate {
                     {
                         continue;
                     }
-                    // Override source_text in the job with the full file content if needed
                     let mut m2 = m.clone();
                     m2.source_text = source_text;
                     jobs.push((m2, hash));
@@ -350,96 +332,99 @@ impl PipelineTemplate {
 
                 let total = jobs.len();
                 let skipped = methods.len() - total;
-                tracing::info!("Phase 2: {} to analyze, {} up-to-date", total, skipped);
+                tracing::info!(
+                    "Phase 2: {} to analyze, {} up-to-date (background, non-blocking)",
+                    total, skipped,
+                );
 
-                // Process methods concurrently
-                let results: Vec<(String, bool)> = stream::iter(
-                    jobs.into_iter().map(|(method, hash)| {
-                        let cli = client.clone();
-                        let svc = embed_svc.clone();
-                        let repo_vec = vector_repo.clone();
-                        let sp = system_prompt.clone();
-                        let coll = collection.clone();
-                        let proj = project.to_string();
-                        async move {
-                            let t0 = std::time::Instant::now();
-                            let method_name = method.name.clone();
-                            let method_id = method.method_id.clone();
+                if total > 0 {
+                    // Spawn background task — build returns immediately
+                    let client = client.clone();
+                    let embed_svc = embed_svc.clone();
+                    let vector_repo = vector_repo.clone();
+                    let repo = repo.clone();  // Arc clone
+                    let proj = project.to_string();
 
-                            match cli.chat(&sp, &method.source_text, 0.1, 100).await {
-                                Ok(llm_response) => {
-                                    let _ = repo
-                                        .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
-                                        .await;
+                    tokio::spawn(async move {
+                        tracing::info!("Phase 2 background worker started: {} methods", total);
 
-                                    // Embed the LLM explanation and re-upsert method point
-                                    match svc.embed_batch(&[llm_response.clone()]).await {
-                                        Ok(embeddings) => {
-                                            if let Some(vec) = embeddings.first() {
-                                                let point = serde_json::json!({
-                                                    "id": method_id,
-                                                    "vector": vec,
-                                                    "payload": {
-                                                        // ---- identity ----
-                                                        "name": method.name,
-                                                        "signature": method.signature,
-                                                        "class_name": method.class_name,
-                                                        // ---- location ----
-                                                        "file_path": method.file_path,
-                                                        "package_or_module": method.package_or_module,
-                                                        // ---- tech stack ----
-                                                        "language": method.language,
-                                                        "project": method.project,
-                                                        // ---- code range ----
-                                                        "start_line": method.start_line,
-                                                        "end_line": method.end_line,
-                                                        // ---- signature ----
-                                                        "params": method.params,
-                                                        "return_type": method.return_type,
-                                                        "calls": method.calls,
-                                                        "comment": method.comment,
-                                                        // ---- metadata ----
-                                                        "entity_id": method.method_id,
-                                                        "llm_analysis": llm_response,
+                        let results: Vec<(String, bool)> = stream::iter(
+                            jobs.into_iter().map(|(method, hash)| {
+                                let cli = client.clone();
+                                let svc = embed_svc.clone();
+                                let repo_vec = vector_repo.clone();
+                                let repo_snap = repo.clone();
+                                let sp = system_prompt.clone();
+                                let coll = collection.clone();
+                                let proj = proj.clone();
+                                async move {
+                                    let method_name = method.name.clone();
+                                    let method_id = method.method_id.clone();
+
+                                    match cli.chat(&sp, &method.source_text, 0.1, 100).await {
+                                        Ok(llm_response) => {
+                                            let _ = repo_snap
+                                                .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
+                                                .await;
+
+                                            match svc.embed_batch(&[llm_response.clone()]).await {
+                                                Ok(embeddings) => {
+                                                    if let Some(vec) = embeddings.first() {
+                                                        let point = serde_json::json!({
+                                                            "id": method_id,
+                                                            "vector": vec,
+                                                            "payload": {
+                                                                "name": method.name,
+                                                                "signature": method.signature,
+                                                                "class_name": method.class_name,
+                                                                "file_path": method.file_path,
+                                                                "package_or_module": method.package_or_module,
+                                                                "language": method.language,
+                                                                "project": method.project,
+                                                                "start_line": method.start_line,
+                                                                "end_line": method.end_line,
+                                                                "params": method.params,
+                                                                "return_type": method.return_type,
+                                                                "calls": method.calls,
+                                                                "comment": method.comment,
+                                                                "entity_id": method.method_id,
+                                                                "llm_analysis": llm_response,
+                                                            }
+                                                        });
+                                                        if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
+                                                            tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
+                                                        }
                                                     }
-                                                });
-                                                if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
-                                                    tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
                                                 }
                                             }
+
+                                            tracing::info!("Phase 2 done {}", method_name);
+                                            (method_name, true)
                                         }
                                         Err(e) => {
-                                            tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
+                                            tracing::warn!("Phase 2 failed {}: {}", method_name, e);
+                                            (method_name, false)
                                         }
                                     }
-
-                                    tracing::info!("Phase 2 done {} ({:?})", method_name, t0.elapsed());
-                                    (method_name, true)
                                 }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Phase 2 failed {} ({:?}): {}",
-                                        method_name,
-                                        t0.elapsed(),
-                                        e,
-                                    );
-                                    (method_name, false)
-                                }
-                            }
-                        }
-                    }),
-                )
-                .buffer_unordered(PHASE2_CONCURRENCY)
-                .collect::<Vec<_>>()
-                .await;
+                            }),
+                        )
+                        .buffer_unordered(PHASE2_CONCURRENCY)
+                        .collect::<Vec<_>>()
+                        .await;
 
-                let analyzed = results.iter().filter(|(_, ok)| *ok).count();
-                tracing::info!(
-                    "Phase 2 complete: {} analyzed, {} up-to-date, {} errors",
-                    analyzed,
-                    skipped,
-                    total - analyzed,
-                );
+                        let analyzed = results.iter().filter(|(_, ok)| *ok).count();
+                        tracing::info!(
+                            "Phase 2 background complete: {} analyzed, {} up-to-date, {} errors",
+                            analyzed, skipped, total - analyzed,
+                        );
+                    });
+
+                    tracing::info!("Phase 2: {} methods submitted for background LLM analysis", total);
+                }
             }
         }
 

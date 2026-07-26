@@ -91,8 +91,6 @@ impl BuildService for BuildServiceImpl {
         );
         let strategy = self.select_strategy();
 
-        let snapshot_ref: Option<&dyn SnapshotRepository> =
-            self.snapshot.as_ref().map(|r| r.as_ref());
         let graph_ref: Option<&dyn GraphRepository> = self.graph.as_ref().map(|r| r.as_ref());
 
         pipeline
@@ -101,7 +99,7 @@ impl BuildService for BuildServiceImpl {
                 root,
                 strategy.as_ref(),
                 &self.scan_config,
-                snapshot_ref,
+                self.snapshot.clone(),
                 graph_ref,
                 self.embed.clone(),
                 self.vector.clone(),
