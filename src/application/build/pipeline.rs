@@ -268,11 +268,11 @@ impl PipelineTemplate {
                     all_points.extend(result?);
                 }
 
-                vector_repo.ensure_collection(&format!("{}_methods", project), 1024).await?;
+                vector_repo.ensure_collection(crate::shared::collections::CODE_METHODS, crate::shared::collections::VECTOR_DIM).await?;
                 // Upsert in batches to avoid Qdrant timeouts with large payloads
                 let upsert_batch = self.batch_config.upsert;
                 for chunk in all_points.chunks(upsert_batch) {
-                    vector_repo.upsert(&format!("{}_methods", project), chunk.to_vec()).await?;
+                    vector_repo.upsert(crate::shared::collections::CODE_METHODS, chunk.to_vec()).await?;
                 }
                 tracing::info!("upserted {} vectors to Qdrant ({} concurrent batches)", extraction.methods.len(), (extraction.methods.len() + embed_batch - 1) / embed_batch);
             }
@@ -302,7 +302,7 @@ impl PipelineTemplate {
             let methods = &extraction.methods;
             if !methods.is_empty() {
                 let system_prompt = load_code_analysis_prompt();
-                let collection = format!("{}_methods", project);
+                let collection = crate::shared::collections::CODE_METHODS.to_string();
 
                 // Build job list: skip methods already analyzed with same source hash
                 let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
@@ -1138,9 +1138,9 @@ impl PipelineTemplate {
             let rel_path = scanner::rel_path(root, file_path);
             let is_knowledge_file = rel_path.contains("/knowledge/") || rel_path.starts_with("knowledge/");
             let collection = if is_knowledge_file {
-                format!("{project}_knowledge")
+                crate::shared::collections::KG_NODES.to_string()
             } else {
-                format!("{project}_semantic")
+                crate::shared::collections::DOC_CHUNKS.to_string()
             };
 
             // Embed chunks in batches if embed service is available.
@@ -1172,6 +1172,7 @@ impl PipelineTemplate {
                                             "payload": {
                                                 "text": &chunk.text,
                                                 "doc_id": chunk.chunk_id,
+                                                "project": project,
                                             },
                                         }))
                                         .collect();
