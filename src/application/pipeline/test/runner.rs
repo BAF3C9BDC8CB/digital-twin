@@ -500,7 +500,9 @@ pub async fn verify_test_data(
     }
 
     // ── Step 6: Qdrant checks ───────────────────────────────────────────
-    let method_coll = format!("{}_methods", TEST_PROJECT);
+    // Phase 5+6: methods are now in the global code_methods collection
+    // (project is a payload tag, not part of the collection name).
+    let method_coll = crate::shared::collections::CODE_METHODS.to_string();
 
     match vector.list_collections().await {
         Ok(collections) => {
