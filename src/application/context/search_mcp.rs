@@ -140,8 +140,8 @@ impl CrossWorldSearch {
         let collections = vector.list_collections().await?;
         let method_cols: Vec<String> = collections
             .into_iter()
-            .filter(|c| c.ends_with("_methods"))
-            .filter(|c| project.map_or(true, |p| c == &format!("{}_methods", p)))
+            .filter(|c| c == crate::shared::collections::CODE_METHODS || c.ends_with("_methods"))
+            .filter(|c| project.map_or(true, |p| c == crate::shared::collections::CODE_METHODS || c == &format!("{}_methods", p)))
             .collect();
 
         if method_cols.is_empty() {

@@ -177,7 +177,7 @@ async fn search_via_vector(
     let collections = vec_repo.list_collections().await
         .map_err(|e| Status::internal(format!("list collections: {e}")))?;
     let method_cols: Vec<&str> = collections.iter()
-        .filter(|c| c.ends_with("_methods"))
+        .filter(|c| c.as_str() == crate::shared::collections::CODE_METHODS || c.ends_with("_methods"))
         .map(|s| s.as_str())
         .collect();
 

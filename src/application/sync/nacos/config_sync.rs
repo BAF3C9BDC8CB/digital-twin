@@ -329,7 +329,7 @@ impl ConfigVectorizer {
             return Ok(0);
         }
 
-        let collection = format!("{}_semantic", project);
+        let collection = crate::shared::collections::DOC_CHUNKS.to_string();
         self.vector.ensure_collection(&collection, 1024).await?;
 
         // Build search texts: concatenate key + value for richer semantics
