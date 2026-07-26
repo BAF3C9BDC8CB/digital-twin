@@ -88,13 +88,10 @@ pub mod expansion {
             r#"
             MATCH (n) WHERE elementId(n) IN $ids
             OPTIONAL MATCH (n)-[r{path_pattern}]-(related)
-            WITH n, r AS path
-            UNWIND path AS rel
-            WITH n, rel, startNode(rel) AS sn, endNode(rel) AS en
-            WITH n,
-                 CASE WHEN sn = n THEN endNode(rel) ELSE startNode(rel) END AS related,
-                 type(rel) AS rel_type,
-                 CASE WHEN sn = n THEN 'out' ELSE 'in' END AS dir
+            WITH n, related, relationships(r) AS rels
+            UNWIND rels AS rel
+            WITH n, related, type(rel) AS rel_type,
+                 CASE WHEN startNode(rel)=n OR endNode(rel)=n THEN 'out' ELSE 'in' END AS dir
             RETURN DISTINCT elementId(related) AS eid, labels(related) AS labels,
                    coalesce(related.name, related.title, '') AS name,
                    collect(DISTINCT rel_type)[0] AS rel_type, dir
@@ -170,17 +167,26 @@ pub mod expansion {
         use async_trait::async_trait;
         use std::collections::HashMap;
 
-        /// Mock graph that returns a fixed Cypher response simulating
-        /// a Method node with one CALLS relationship.
-        struct MockGraph;
+        /// Mock graph that captures the Cypher query and returns a fixed response
+        /// simulating a Method node with one CALLS relationship.
+        struct MockGraph {
+            captured_query: std::sync::Mutex<String>,
+        }
+
+        impl MockGraph {
+            fn new() -> Self {
+                Self { captured_query: std::sync::Mutex::new(String::new()) }
+            }
+        }
 
         #[async_trait]
         impl GraphRepository for MockGraph {
             async fn read_query(
                 &self,
-                _query: &str,
+                query: &str,
                 _params: HashMap<String, serde_json::Value>,
             ) -> Result<serde_json::Value, crate::domain::error::DtError> {
+                *self.captured_query.lock().unwrap() = query.to_string();
                 // Simulate Memgraph Bolt response: array of row objects
                 Ok(serde_json::json!([
                     {
@@ -206,7 +212,7 @@ pub mod expansion {
 
         #[tokio::test]
         async fn expand_nodes_returns_related_nodes() {
-            let graph = MockGraph;
+            let graph = MockGraph::new();
             let ids = vec!["4:0:source".to_string()];
             let result = expand_nodes(
                 &graph as &dyn GraphRepository,
@@ -218,9 +224,16 @@ pub mod expansion {
             .expect("expand_nodes should succeed");
 
             assert!(!result.is_empty(), "should return at least one related node");
+            assert_eq!(result[0].element_id, "4:1:abc");
             assert_eq!(result[0].name, "createPay");
             assert_eq!(result[0].label, "Method");
             assert_eq!(result[0].relation_type, "CALLS");
+
+            // Verify the Cypher query contains key fragments
+            let captured = graph.captured_query.lock().unwrap().clone();
+            assert!(captured.contains("*1..2"), "depth=2 should produce *1..2, got: {captured}");
+            assert!(captured.contains("elementId(n) IN $ids"), "should filter by elementId, got: {captured}");
+            assert!(captured.contains("LIMIT $limit"), "should have LIMIT, got: {captured}");
         }
     }
 }
