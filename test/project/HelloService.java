@@ -22,8 +22,3 @@ public class HelloService {
         EmailService.send(r);
     }
 }
-
-class OrderRequest {
-    private String id;
-    private double amount;
-}

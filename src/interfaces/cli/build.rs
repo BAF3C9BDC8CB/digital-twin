@@ -1189,23 +1189,14 @@ pub async fn handle_search_kg(
                                     if score <= 0.0 { continue; }
                                     let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
                                     let id = r.get("id").map(|v| v.to_string()).unwrap_or_default();
-                                    // For _semantic collections, use text as title/desc
+                                    // For doc_chunks: extract file path from doc_id; for kg_nodes: use name as title
                                     let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                    let name = if !text.is_empty() {
-                                        text.chars().take(120).collect()
-                                    } else {
-                                        payload.get("name").and_then(|v| v.as_str())
-                                            .filter(|s| !s.is_empty())
-                                            .or_else(|| payload.get("key").and_then(|v| v.as_str()))
-                                            .unwrap_or("?").to_string()
-                                    };
                                     // Unified entity_type: prefer labels[] (kg_nodes), then doc_type, then infer from collection
                                     let label = payload.get("labels").and_then(|v| v.as_array())
                                         .and_then(|arr| arr.first()).and_then(|v| v.as_str())
                                         .or_else(|| payload.get("label").and_then(|v| v.as_str()))
                                         .or_else(|| payload.get("doc_type").and_then(|v| v.as_str()))
                                         .unwrap_or_else(|| {
-                                            // Infer from collection name or doc_id prefix
                                             if col == "doc_chunks" || col == crate::shared::collections::DOC_CHUNKS {
                                                 "Doc"
                                             } else if col == "kg_nodes" {
@@ -1214,10 +1205,45 @@ pub async fn handle_search_kg(
                                                 "?"
                                             }
                                         }).to_string();
-                                    let desc = if !text.is_empty() { text.to_string() }
-                                        else { payload.get("description").or(payload.get("summary"))
-                                            .or(payload.get("value")).or(payload.get("text"))
-                                            .and_then(|v| v.as_str()).unwrap_or("").to_string() };
+
+                                    // Build title and snippet based on entity type
+                                    let (name, desc) = if col == "doc_chunks" || col == crate::shared::collections::DOC_CHUNKS {
+                                        // Doc chunks: extract file path from doc_id, show path + first line
+                                        let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                        let chunk_path = doc_id
+                                            .strip_prefix("dt://doc/")
+                                            .and_then(|s| s.rsplit_once('#'))
+                                            .map(|(path, _)| path.to_string())
+                                            .unwrap_or_default();
+                                        let first_line: String = text.lines().next().unwrap_or("").chars().take(80).collect();
+                                        let title = if first_line.is_empty() { chunk_path.clone() } else { first_line.clone() };
+                                        (title, format!("{}  {}", chunk_path, first_line))
+                                    } else if col == "kg_nodes" {
+                                        // KG nodes: name as title, description/summary as snippet
+                                        let n = payload.get("name").and_then(|v| v.as_str())
+                                            .filter(|s| !s.is_empty())
+                                            .or_else(|| payload.get("title").and_then(|v| v.as_str()))
+                                            .unwrap_or("?").to_string();
+                                        let d = payload.get("description").or(payload.get("summary"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        (n, d)
+                                    } else {
+                                        // Legacy _semantic: use text as title
+                                        let t = if !text.is_empty() {
+                                            text.chars().take(120).collect()
+                                        } else {
+                                            payload.get("name").and_then(|v| v.as_str())
+                                                .filter(|s| !s.is_empty())
+                                                .or_else(|| payload.get("key").and_then(|v| v.as_str()))
+                                                .unwrap_or("?").to_string()
+                                        };
+                                        let d = if !text.is_empty() { text.to_string() }
+                                            else { payload.get("description").or(payload.get("summary"))
+                                                .or(payload.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string() };
+                                        (t, d)
+                                    };
                                     rank_list.push(RankedItem { id, title: name, snippet: desc, source_world: format!("vector/{}", col), entity_type: label, score });
                                 }
                                 if !rank_list.is_empty() { all_rank_lists.push(rank_list); }
@@ -1239,20 +1265,26 @@ pub async fn handle_search_kg(
         if fused.is_empty() {
             println!("  (no results)");
         } else {
-            // Deduplicate and truncate snippets for clean display
+            // Deduplicate and display with type-aware formatting
             let mut seen_titles = std::collections::HashSet::new();
             for item in &fused {
                 if !seen_titles.insert(item.title.clone()) { continue; }
-                let short_snippet = if item.snippet.chars().count() > 80 {
-                    let truncated: String = item.snippet.chars().take(80).collect();
-                    format!("{}…", truncated)
-                } else {
-                    item.snippet.clone()
-                };
-                println!("  [{:.4}] [{}] {}",
-                    item.score, item.entity_type, item.title);
-                if !short_snippet.is_empty() {
-                    println!("         {}", short_snippet);
+                println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
+
+                // Type-aware snippet display:
+                // - Doc: snippet is "file_path  first_line" — show as path reference
+                // - Concept/Knowledge/Experience/Domain: show description (no file path)
+                // - ConfigKey/NacosConfig/Server: show content (no local file)
+                // - Method: snippet is "file_path  Class::sig  Lline-line"
+                let snippet = &item.snippet;
+                if !snippet.is_empty() {
+                    let short = if snippet.chars().count() > 100 {
+                        let truncated: String = snippet.chars().take(100).collect();
+                        format!("{}…", truncated)
+                    } else {
+                        snippet.clone()
+                    };
+                    println!("         {}", short);
                 }
             }
         }

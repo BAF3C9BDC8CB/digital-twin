@@ -29,10 +29,6 @@
         {
           "name": "HelloService",
           "kind": "Class"
-        },
-        {
-          "name": "OrderRequest",
-          "kind": "Class"
         }
       ]
     },
@@ -256,6 +252,10 @@
         },
         {
           "name": "Order",
+          "kind": "Class"
+        },
+        {
+          "name": "OrderRequest",
           "kind": "Class"
         },
         {

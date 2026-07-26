@@ -797,7 +797,7 @@ impl PipelineTemplate {
                         "definition": definition,
                         "domain": domain,
                         "summary": summary,
-                        "description": summary,
+                        "description": if summary.is_empty() || summary == "/" { definition.clone() } else { summary.clone() },
                     });
                     if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
                         graph,
