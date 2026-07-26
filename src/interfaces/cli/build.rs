@@ -520,10 +520,10 @@ pub async fn handle_search(
                 let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
                 // Collect collections to search
-                let mut collections = vec!["config_chunks".to_string()];
-                if let Some(ref proj) = project {
-                    collections.push(format!("{}_semantic", proj));
-                }
+                let collections = vec![
+                    "config_chunks".to_string(),
+                    crate::shared::collections::DOC_CHUNKS.to_string(),
+                ];
 
                 for col in &collections {
                     for qvec in &all_vectors {
@@ -738,63 +738,20 @@ pub async fn handle_search(
             if !all_query_vectors.is_empty() {
                 let collections_to_search: Vec<String> = match world.as_str() {
                     "code" => {
-                        if let Some(ref proj) = project {
-                            vec![format!("{}_methods", proj)]
-                        } else {
-                            let collections = match vec_repo.list_collections().await {
-                                Ok(cols) => cols,
-                                Err(e) => {
-                                    tracing::warn!("Failed to list Qdrant collections: {e}");
-                                    vec![]
-                                }
-                            };
-                            collections.into_iter()
-                                .filter(|c| c.ends_with("_methods"))
-                                .collect()
-                        }
+                        vec![crate::shared::collections::CODE_METHODS.to_string()]
                     }
                     "doc" => {
-                        if let Some(ref proj) = project {
-                            vec![format!("{}_semantic", proj)]
-                        } else {
-                            let collections = match vec_repo.list_collections().await {
-                                Ok(cols) => cols,
-                                Err(e) => {
-                                    tracing::warn!("Failed to list Qdrant collections: {e}");
-                                    vec![]
-                                }
-                            };
-                            collections.into_iter()
-                                .filter(|c| c.ends_with("_semantic"))
-                                .collect()
-                        }
+                        vec![crate::shared::collections::DOC_CHUNKS.to_string()]
                     }
                     "knowledge" => {
-                        if let Some(ref proj) = project {
-                            vec![format!("{}_knowledge", proj)]
-                        } else {
-                            let collections = match vec_repo.list_collections().await {
-                                Ok(cols) => cols,
-                                Err(e) => {
-                                    tracing::warn!("Failed to list Qdrant collections: {e}");
-                                    vec![]
-                                }
-                            };
-                            collections.into_iter()
-                                .filter(|c| c.ends_with("_knowledge"))
-                                .collect()
-                        }
+                        vec![crate::shared::collections::KG_NODES.to_string()]
                     }
                     "all" => {
-                        let mut cols = vec!["kg_nodes".to_string()];
-                        if let Some(ref proj) = project {
-                            cols.push(format!("{}_methods", proj));
-                            cols.push(format!("{}_semantic", proj));
-                            cols.push(format!("{}_knowledge", proj));
-                        } else if let Ok(all_cols) = vec_repo.list_collections().await {
-                            cols.extend(all_cols.into_iter().filter(|c| c.ends_with("_methods") || c.ends_with("_semantic") || c.ends_with("_knowledge")));
-                        }
-                        cols
+                        vec![
+                            crate::shared::collections::CODE_METHODS.to_string(),
+                            crate::shared::collections::DOC_CHUNKS.to_string(),
+                            crate::shared::collections::KG_NODES.to_string(),
+                        ]
                     }
                     _ => vec![],
                 };
@@ -829,20 +786,18 @@ pub async fn handle_search(
                                     .or_else(|| payload.get("label").and_then(|v| v.as_str()))
                                     .or_else(|| {
                                         // Infer from collection name for code search
-                                        if col.ends_with("_methods") { Some("Method") }
-                                        else if col.ends_with("_semantic") { Some("Doc") }
-                                        else if col.ends_with("_knowledge") { Some("Knowledge") }
-                                        else { None }
+                                        let t = crate::shared::collections::entity_type_from_collection(col);
+                                        (t != "?").then_some(t)
                                     })
                                     .unwrap_or("?").to_string();
-                                let desc = if col.ends_with("_methods") {
+                                let desc = if col == crate::shared::collections::CODE_METHODS || col.ends_with("_methods") {
                                     let file = payload.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
                                     let start = payload.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0);
                                     let end = payload.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0);
                                     let sig = payload.get("signature").and_then(|v| v.as_str()).unwrap_or("");
                                     let cls = payload.get("class_name").and_then(|v| v.as_str()).unwrap_or("");
                                     format!("{}  {}::{}  L{}-{}", file, cls, sig, start, end)
-                                } else if col.ends_with("_semantic") {
+                                } else if col == crate::shared::collections::DOC_CHUNKS || col.ends_with("_semantic") {
                                     // Doc chunks: extract file path from doc_id, show first line as summary
                                     let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
                                     let chunk_path = doc_id
