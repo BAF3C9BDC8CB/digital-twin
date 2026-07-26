@@ -807,7 +807,19 @@ pub async fn handle_search(
                                 let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                 if score <= 0.0 { continue; }
                                 let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
-                                let id = r.get("id").map(|v| v.to_string()).unwrap_or_default();
+                                // For kg_nodes, the Qdrant point `id` is a SHA-256 UUID that does NOT
+                                // match Memgraph's elementId. expand_nodes uses `WHERE elementId(n)
+                                // IN $ids`, so we must carry the real Memgraph elementId from the
+                                // payload here. Other collections keep the Qdrant point id.
+                                let id = if col == "kg_nodes" {
+                                    payload.get("elementId")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from)
+                                        .or_else(|| r.get("id").map(|v| v.to_string()))
+                                        .unwrap_or_default()
+                                } else {
+                                    r.get("id").map(|v| v.to_string()).unwrap_or_default()
+                                };
                                 let name = payload.get("name").and_then(|v| v.as_str())
                                     .filter(|s| !s.is_empty())
                                     .or_else(|| payload.get("text").and_then(|v| v.as_str()))
