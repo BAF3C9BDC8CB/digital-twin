@@ -54,6 +54,7 @@ pub mod fusion {
 
 pub mod expansion {
     use crate::domain::traits::GraphRepository;
+    use std::collections::HashMap;
 
     /// A graph node returned by expand_nodes.
     #[derive(Debug, Clone)]
@@ -65,13 +66,162 @@ pub mod expansion {
     }
 
     /// Expand graph nodes from vector search element IDs.
+    ///
+    /// Traverses 1-2 hop relationships from the given element IDs to find
+    /// related nodes (e.g. Method→CALLS→Method, Concept→IMPLEMENTED_BY→Method).
     pub async fn expand_nodes(
-        _graph: &(dyn GraphRepository + 'static),
-        _element_ids: &Vec<String>,
-        _depth: usize,
-        _limit: usize,
+        graph: &(dyn GraphRepository + 'static),
+        element_ids: &Vec<String>,
+        depth: usize,
+        limit: usize,
     ) -> anyhow::Result<Vec<ExpandedNode>> {
-        Ok(vec![])
+        if element_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Use variable-length path *1..N syntax (Memgraph supports this).
+        // depth=2 → *1..2
+        let max_hops = depth.max(1).min(3); // cap at 3 hops for performance
+        let path_pattern = format!("*1..{}", max_hops);
+
+        let cypher = format!(
+            r#"
+            MATCH (n) WHERE elementId(n) IN $ids
+            OPTIONAL MATCH (n)-[r{path_pattern}]-(related)
+            WITH n, r AS path
+            UNWIND path AS rel
+            WITH n, rel, startNode(rel) AS sn, endNode(rel) AS en
+            WITH n,
+                 CASE WHEN sn = n THEN endNode(rel) ELSE startNode(rel) END AS related,
+                 type(rel) AS rel_type,
+                 CASE WHEN sn = n THEN 'out' ELSE 'in' END AS dir
+            RETURN DISTINCT elementId(related) AS eid, labels(related) AS labels,
+                   coalesce(related.name, related.title, '') AS name,
+                   collect(DISTINCT rel_type)[0] AS rel_type, dir
+            LIMIT $limit
+            "#
+        );
+
+        let mut params = HashMap::new();
+        params.insert(
+            "ids".to_string(),
+            serde_json::Value::Array(
+                element_ids
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
+        );
+        params.insert(
+            "limit".to_string(),
+            serde_json::Value::from(limit as i64),
+        );
+
+        let result = graph
+            .read_query(&cypher, params)
+            .await
+            .map_err(|e| anyhow::anyhow!("expand_nodes query failed: {e}"))?;
+
+        let rows = result.as_array().ok_or_else(|| {
+            anyhow::anyhow!("expand_nodes: expected array response, got: {result}")
+        })?;
+
+        let nodes: Vec<ExpandedNode> = rows
+            .iter()
+            .filter_map(|row| {
+                let element_id = row.get("eid").and_then(|v| v.as_str())?.to_string();
+                let labels = row
+                    .get("labels")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let label = labels.first().cloned().unwrap_or_else(|| "Unknown".into());
+                let name = row
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let relation_type = row
+                    .get("rel_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(ExpandedNode {
+                    element_id,
+                    name,
+                    label,
+                    relation_type,
+                })
+            })
+            .collect();
+
+        Ok(nodes)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::domain::traits::GraphRepository;
+        use crate::domain::types::HealthStatus;
+        use async_trait::async_trait;
+        use std::collections::HashMap;
+
+        /// Mock graph that returns a fixed Cypher response simulating
+        /// a Method node with one CALLS relationship.
+        struct MockGraph;
+
+        #[async_trait]
+        impl GraphRepository for MockGraph {
+            async fn read_query(
+                &self,
+                _query: &str,
+                _params: HashMap<String, serde_json::Value>,
+            ) -> Result<serde_json::Value, crate::domain::error::DtError> {
+                // Simulate Memgraph Bolt response: array of row objects
+                Ok(serde_json::json!([
+                    {
+                        "eid": "4:1:abc",
+                        "labels": ["Method"],
+                        "name": "createPay",
+                        "rel_type": "CALLS",
+                        "dir": "out"
+                    }
+                ]))
+            }
+            async fn write_query(
+                &self,
+                _query: &str,
+                _params: HashMap<String, serde_json::Value>,
+            ) -> Result<serde_json::Value, crate::domain::error::DtError> {
+                Ok(serde_json::json!([]))
+            }
+            async fn health_check(&self) -> Result<HealthStatus, crate::domain::error::DtError> {
+                Ok(HealthStatus::Healthy)
+            }
+        }
+
+        #[tokio::test]
+        async fn expand_nodes_returns_related_nodes() {
+            let graph = MockGraph;
+            let ids = vec!["4:0:source".to_string()];
+            let result = expand_nodes(
+                &graph as &dyn GraphRepository,
+                &ids,
+                2,   // depth
+                50,  // limit
+            )
+            .await
+            .expect("expand_nodes should succeed");
+
+            assert!(!result.is_empty(), "should return at least one related node");
+            assert_eq!(result[0].name, "createPay");
+            assert_eq!(result[0].label, "Method");
+            assert_eq!(result[0].relation_type, "CALLS");
+        }
     }
 }
 
