@@ -191,8 +191,14 @@ impl PipelineTemplate {
         let knowledge_count = extraction.knowledge_annotations.len();
         if let Some(graph) = graph {
             if knowledge_count > 0 {
-                self.write_knowledge_annotations(graph, project, &extraction.knowledge_annotations)
-                    .await;
+                self.write_knowledge_annotations(
+                    graph,
+                    project,
+                    &extraction.knowledge_annotations,
+                    embed.as_deref(),
+                    vector.as_deref(),
+                )
+                .await;
             }
         }
 
@@ -730,6 +736,8 @@ impl PipelineTemplate {
         graph: &dyn GraphRepository,
         project: &str,
         annotations: &[crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation],
+        embed: Option<&dyn EmbedService>,
+        vector: Option<&dyn VectorRepository>,
     ) {
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -787,6 +795,29 @@ impl PipelineTemplate {
                         params,
                     )
                     .await;
+
+                // 即时嵌入 Concept 节点到 kg_nodes
+                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
+                    let concept_props = serde_json::json!({
+                        "name": concept_name,
+                        "definition": definition,
+                        "domain": domain,
+                        "description": ann.description,
+                    });
+                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
+                        graph,
+                        embed_svc,
+                        vector_repo,
+                        "Concept",
+                        "concept_id",
+                        &concept_id,
+                        &concept_props,
+                    )
+                    .await
+                    {
+                        tracing::warn!("embed Concept {} failed: {}", concept_id, e);
+                    }
+                }
 
                 // Link Concept to Domain
                 if let Some(ref domain) = ann.domain {
@@ -879,6 +910,30 @@ impl PipelineTemplate {
                     )
                     .await;
 
+                // 即时嵌入 Knowledge 节点到 kg_nodes
+                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
+                    let knowledge_props = serde_json::json!({
+                        "name": name,
+                        "title": title,
+                        "domain": domain,
+                        "summary": pitfall,
+                        "content": pitfall,
+                    });
+                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
+                        graph,
+                        embed_svc,
+                        vector_repo,
+                        "Knowledge",
+                        "knowledge_id",
+                        &knowledge_id,
+                        &knowledge_props,
+                    )
+                    .await
+                    {
+                        tracing::warn!("embed Knowledge {} failed: {}", knowledge_id, e);
+                    }
+                }
+
                 // Link Knowledge pitfall to source Document
                 self.link_to_document(graph, project, &knowledge_id, &ann.file_path).await;
             }
@@ -927,6 +982,30 @@ impl PipelineTemplate {
                         params,
                     )
                     .await;
+
+                // 即时嵌入 Experience 节点到 kg_nodes
+                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
+                    let concept_key = ann.concept.as_deref().unwrap_or("unknown");
+                    let experience_props = serde_json::json!({
+                        "name": concept_key,
+                        "title": exp_title,
+                        "description": ann.description,
+                        "domain": domain,
+                    });
+                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
+                        graph,
+                        embed_svc,
+                        vector_repo,
+                        "Experience",
+                        "experience_id",
+                        &experience_id,
+                        &experience_props,
+                    )
+                    .await
+                    {
+                        tracing::warn!("embed Experience {} failed: {}", experience_id, e);
+                    }
+                }
 
                 // Link Experience to source Document
                 self.link_to_document(graph, project, &experience_id, &ann.file_path).await;
@@ -1154,7 +1233,14 @@ impl PipelineTemplate {
                     self.write_chunk_to_graph(graph, &doc_id, chunk).await;
                 }
                 if !knowledge_anns.is_empty() {
-                    self.write_knowledge_annotations(graph, project, &knowledge_anns).await;
+                    self.write_knowledge_annotations(
+                        graph,
+                        project,
+                        &knowledge_anns,
+                        embed.as_deref(),
+                        vector.as_deref(),
+                    )
+                    .await;
                 }
             }
 
