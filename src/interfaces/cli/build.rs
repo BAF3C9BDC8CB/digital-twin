@@ -909,6 +909,58 @@ pub async fn handle_search(
         }
     }
 
+    // ── KG graph expansion: expand vector hits via relationships ──
+    if let Some(graph_ref) = &graph {
+        // Collect elementIds from vector search results
+        let element_ids: Vec<String> = all_rank_lists
+            .iter()
+            .flat_map(|list| list.iter())
+            .filter_map(|item| {
+                // kg_nodes collection results have elementId in payload
+                if item.source_world.contains("kg_nodes") {
+                    Some(item.id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !element_ids.is_empty() {
+            match crate::application::search::expansion::expand_nodes(
+                graph_ref.as_ref(),
+                &element_ids,
+                2,   // depth: 2 hops
+                50,  // limit
+            )
+            .await
+            {
+                Ok(expanded) => {
+                    if !expanded.is_empty() {
+                        let expansion_list: Vec<RankedItem> = expanded
+                            .iter()
+                            .map(|node| RankedItem {
+                                id: node.element_id.clone(),
+                                title: format!("[{}] {} (via {})", node.label, node.name, node.relation_type),
+                                snippet: String::new(),
+                                source_world: "graph/expansion".into(),
+                                entity_type: node.label.clone(),
+                                score: 0.0,
+                            })
+                            .collect();
+                        all_rank_lists.push(expansion_list);
+                        tracing::info!(
+                            "KG graph expansion: {} related nodes found",
+                            expanded.len()
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("KG graph expansion failed (non-fatal): {e}");
+                }
+            }
+        }
+    }
+
     // ── Fuse vector + keyword with RRF ─────────────────────────────
     if !all_rank_lists.is_empty() {
         let mut fused = reciprocal_rank_fusion(all_rank_lists, 60.0, limit);
