@@ -322,14 +322,17 @@ impl KgBridge {
                         "id": format!("{}#{}", config_id, section_name),
                         "vector": vec,
                         "payload": {
-                            "section_name": section_name,
+                            // ---- origin ----
                             "namespace": namespace,
                             "data_id": data_id,
                             "group": group,
+                            // ---- content ----
+                            "section_name": section_name,
                             "config_type": config_type,
                             "text": text,
-                            "source_type": "config_chunk",
                             "key_count": pairs.len(),
+                            // ---- metadata ----
+                            "source_type": "config_chunk",
                         }
                     })
                 })
@@ -688,11 +691,13 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
         "NacosInstance" => concat_props(props, &["instance_id", "service_name", "ip", "port", "namespace"]),
 
         // ── Knowledge ──────────────────────────────────────────────
-        "Knowledge" => concat_props(props, &["name", "title", "domain", "summary", "content"]),
-        "Concept" => concat_props(props, &["name", "definition", "domain", "description"]),
-        "Playbook" => concat_props(props, &["name", "title", "description", "domain"]),
-        "Experience" => concat_props(props, &["name", "title", "description", "domain"]),
-        "Domain" => concat_props(props, &["name", "description"]),
+        // Enhanced: include all semantically rich fields for better vector quality.
+        // summary/content carry the pitfall text; definition carries the concept definition.
+        "Knowledge" => concat_props(props, &["name", "title", "domain", "summary", "content", "definition", "description"]),
+        "Concept" => concat_props(props, &["name", "definition", "domain", "summary", "description", "content"]),
+        "Playbook" => concat_props(props, &["name", "title", "description", "domain", "content"]),
+        "Experience" => concat_props(props, &["name", "title", "description", "domain", "content", "summary"]),
+        "Domain" => concat_props(props, &["name", "description", "summary"]),
 
         // ── Documents & data ───────────────────────────────────────
         "Document" => concat_props(props, &["title", "content", "source_file", "description"]),
@@ -866,15 +871,18 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
     let props = &node.properties;
 
     serde_json::json!({
+        // ---- identity ----
         "elementId": node.element_id,
         "name": props.get("name").cloned().unwrap_or(serde_json::Value::Null),
         "labels": node.labels,
+        // ---- properties ----
         "service_type": props.get("service_type").cloned().unwrap_or(serde_json::Value::Null),
         "environment": props.get("environment").cloned().unwrap_or(serde_json::Value::Null),
         "description": props.get("description")
             .and_then(|v| v.as_str())
             .map(|s| &s[..s.len().min(200)])
             .unwrap_or(""),
+        // ---- metadata ----
         "source": "kg",
     })
 }

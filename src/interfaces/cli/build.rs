@@ -1174,11 +1174,12 @@ pub async fn handle_search_kg(
             }
             if let Ok(all_vectors) = embed.embed_batch(&queries_to_embed).await {
                 if !all_vectors.is_empty() {
-                    // Collect all vector collections to search: kg_nodes + all *_semantic
-                    let mut vector_collections = vec!["kg_nodes".to_string()];
-                    if let Ok(cols) = vec_repo.list_collections().await {
-                        vector_collections.extend(cols.into_iter().filter(|c| c.ends_with("_semantic")));
-                    }
+                    // Collect vector collections: kg_nodes (business nodes) + doc_chunks (global docs)
+                    // Phase 5+6: only search global collections to avoid noise from legacy _semantic
+                    let vector_collections = vec![
+                        "kg_nodes".to_string(),
+                        crate::shared::collections::DOC_CHUNKS.to_string(),
+                    ];
                     for col in &vector_collections {
                         for qvec in &all_vectors {
                             if let Ok(results) = vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await {
@@ -1198,11 +1199,21 @@ pub async fn handle_search_kg(
                                             .or_else(|| payload.get("key").and_then(|v| v.as_str()))
                                             .unwrap_or("?").to_string()
                                     };
-                                    let label = payload.get("doc_type").and_then(|v| v.as_str())
+                                    // Unified entity_type: prefer labels[] (kg_nodes), then doc_type, then infer from collection
+                                    let label = payload.get("labels").and_then(|v| v.as_array())
+                                        .and_then(|arr| arr.first()).and_then(|v| v.as_str())
                                         .or_else(|| payload.get("label").and_then(|v| v.as_str()))
-                                        .or_else(|| payload.get("labels").and_then(|v| v.as_array())
-                                            .and_then(|arr| arr.first()).and_then(|v| v.as_str()))
-                                        .unwrap_or("?").to_string();
+                                        .or_else(|| payload.get("doc_type").and_then(|v| v.as_str()))
+                                        .unwrap_or_else(|| {
+                                            // Infer from collection name or doc_id prefix
+                                            if col == "doc_chunks" || col == crate::shared::collections::DOC_CHUNKS {
+                                                "Doc"
+                                            } else if col == "kg_nodes" {
+                                                "KG"
+                                            } else {
+                                                "?"
+                                            }
+                                        }).to_string();
                                     let desc = if !text.is_empty() { text.to_string() }
                                         else { payload.get("description").or(payload.get("summary"))
                                             .or(payload.get("value")).or(payload.get("text"))
@@ -1238,7 +1249,7 @@ pub async fn handle_search_kg(
                 } else {
                     item.snippet.clone()
                 };
-                println!("  [{:.4}] {} → {}",
+                println!("  [{:.4}] [{}] {}",
                     item.score, item.entity_type, item.title);
                 if !short_snippet.is_empty() {
                     println!("         {}", short_snippet);

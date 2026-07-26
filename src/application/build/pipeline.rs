@@ -796,6 +796,7 @@ impl PipelineTemplate {
                         "name": concept_name,
                         "definition": definition,
                         "domain": domain,
+                        "summary": summary,
                         "description": summary,
                     });
                     if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
