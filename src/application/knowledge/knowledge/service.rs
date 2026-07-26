@@ -8,12 +8,17 @@
 //!
 //! [`DefaultKnowledgeService`] is the canonical production implementation.
 //!
-//! # Experience vectorisation
+//! # Node vectorisation
 //!
-//! When `write_experience()` is called on a [`DefaultKnowledgeService`]
+//! When any `write_*()` method is called on a [`DefaultKnowledgeService`]
 //! that has been configured with an [`EmbedService`] and [`VectorRepository`],
-//! the experience's title + summary text is automatically embedded and
-//! upserted into the Qdrant `{project}_semantic` collection.
+//! the node's text (name / title / summary / content / definition as
+//! applicable) is automatically embedded via [`embed_kg_node`] and upserted
+//! into the unified Qdrant `kg_nodes` collection. This covers Knowledge,
+//! Experience, Concept, and Playbook nodes. Vectorisation failures are
+//! logged as warnings and do not fail the underlying graph write.
+//!
+//! [`embed_kg_node`]: crate::application::sync::kg_bridge::embed_kg_node
 
 use async_trait::async_trait;
 use crate::domain::error::DtError;
@@ -84,19 +89,24 @@ pub trait KnowledgeService: Send + Sync {
 /// # Lifecycle
 ///
 /// ```text
-/// write_knowledge → MERGE (:Knowledge {knowledge_id}) SET ...
-/// write_experience → MERGE (:Experience {experience_id}) SET ...
-///                    → embed(title + summary) → Qdrant upsert (if configured)
-/// update_knowledge → 1. MATCH old node
-///                    2. CREATE new version node
-///                    3. CREATE (new)-[:EVOLVED_FROM]->(old)
-///                    4. CREATE (:KnowledgeVersion)-[:RECORDS]->(new)
+/// write_knowledge   → MERGE (:Knowledge {knowledge_id}) SET ...
+///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+/// write_experience  → MERGE (:Experience {experience_id}) SET ...
+///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+/// write_concept     → MERGE (:Concept {concept_id}) SET ...
+///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+/// write_playbook    → MERGE (:Playbook {playbook_id}) SET ...
+///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+/// update_knowledge  → 1. MATCH old node
+///                     2. CREATE new version node
+///                     3. CREATE (new)-[:EVOLVED_FROM]->(old)
+///                     4. CREATE (:KnowledgeVersion)-[:RECORDS]->(new)
 /// ```
 pub struct DefaultKnowledgeService {
     graph: Arc<dyn GraphRepository>,
-    /// Optional embedding service for auto-vectorising experiences.
+    /// Optional embedding service for auto-vectorising knowledge-world nodes.
     embed: Option<Arc<dyn EmbedService>>,
-    /// Optional vector repository for storing experience vectors.
+    /// Optional vector repository for storing knowledge-world node vectors.
     vector: Option<Arc<dyn VectorRepository>>,
 }
 
@@ -132,10 +142,14 @@ impl DefaultKnowledgeService {
         self.embed.is_some() && self.vector.is_some()
     }
 
-    /// Auto-vectorise an experience's title + summary into Qdrant.
+    /// Auto-vectorise an experience's title + summary into Qdrant `kg_nodes`.
     ///
     /// Called automatically by [`write_experience`] when both
     /// `embed` and `vector` backends are configured. No-op otherwise.
+    ///
+    /// Writes to the unified `kg_nodes` collection via [`embed_kg_node`]
+    /// (instead of the legacy `{project}_semantic` collection) so that all
+    /// knowledge-world nodes share a single searchable index.
     async fn auto_vectorize_experience(
         &self,
         experience: &Experience,
@@ -149,36 +163,123 @@ impl DefaultKnowledgeService {
             None => return Ok(()),
         };
 
-        let collection = format!("{}_semantic", experience.project);
-        vector.ensure_collection(&collection, 1024).await?;
+        let props = serde_json::json!({
+            "name": experience.title,
+            "title": experience.title,
+            "description": experience.summary,
+            "domain": experience.domain,
+        });
 
-        let text = format!("{}: {}", experience.title, experience.summary);
-        let vectors = embed.embed_batch(std::slice::from_ref(&text)).await?;
-        let vec = match vectors.into_iter().next() {
+        crate::application::sync::kg_bridge::embed_kg_node(
+            self.graph.as_ref(),
+            embed.as_ref(),
+            vector.as_ref(),
+            "Experience",
+            "experience_id",
+            &experience.experience_id,
+            &props,
+        )
+        .await
+    }
+
+    /// Auto-vectorise a knowledge node's name + title + summary into Qdrant kg_nodes.
+    async fn auto_vectorize_knowledge(
+        &self,
+        knowledge: &Knowledge,
+    ) -> Result<(), DtError> {
+        let embed = match &self.embed {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        let vector = match &self.vector {
             Some(v) => v,
             None => return Ok(()),
         };
 
-        let point = serde_json::json!({
-            "id": experience.experience_id,
-            "vector": vec,
-            "payload": {
-                // ---- identity ----
-                "entity_id": experience.experience_id,
-                "title": experience.title,
-                // ---- content ----
-                "summary": experience.summary,
-                "domain": experience.domain,
-                "severity": experience.severity.as_str(),
-                // ---- metadata ----
-                "project": experience.project,
-                "source_type": "experience",
-                "search_text": text,
-            }
+        let props = serde_json::json!({
+            "name": knowledge.name,
+            "title": knowledge.title,
+            "domain": knowledge.domain,
+            "summary": knowledge.summary,
+            "content": knowledge.content,
         });
 
-        vector.upsert(&collection, vec![point]).await?;
-        Ok(())
+        crate::application::sync::kg_bridge::embed_kg_node(
+            self.graph.as_ref(),
+            embed.as_ref(),
+            vector.as_ref(),
+            "Knowledge",
+            "knowledge_id",
+            &knowledge.knowledge_id,
+            &props,
+        )
+        .await
+    }
+
+    /// Auto-vectorise a concept node into Qdrant kg_nodes.
+    async fn auto_vectorize_concept(
+        &self,
+        concept: &Concept,
+    ) -> Result<(), DtError> {
+        let embed = match &self.embed {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        let vector = match &self.vector {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let props = serde_json::json!({
+            "name": concept.name,
+            "definition": concept.definition,
+            "domain": concept.domain,
+            "description": concept.summary,
+        });
+
+        crate::application::sync::kg_bridge::embed_kg_node(
+            self.graph.as_ref(),
+            embed.as_ref(),
+            vector.as_ref(),
+            "Concept",
+            "concept_id",
+            &concept.concept_id,
+            &props,
+        )
+        .await
+    }
+
+    /// Auto-vectorise a playbook node into Qdrant kg_nodes.
+    async fn auto_vectorize_playbook(
+        &self,
+        playbook: &Playbook,
+    ) -> Result<(), DtError> {
+        let embed = match &self.embed {
+            Some(e) => e,
+            None => return Ok(()),
+        };
+        let vector = match &self.vector {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        let props = serde_json::json!({
+            "name": playbook.name,
+            "title": playbook.name,
+            "description": playbook.description,
+            "domain": playbook.domain,
+        });
+
+        crate::application::sync::kg_bridge::embed_kg_node(
+            self.graph.as_ref(),
+            embed.as_ref(),
+            vector.as_ref(),
+            "Playbook",
+            "playbook_id",
+            &playbook.playbook_id,
+            &props,
+        )
+        .await
     }
 }
 
@@ -274,6 +375,12 @@ impl KnowledgeService for DefaultKnowledgeService {
         );
 
         self.graph.write_query(cypher, params).await?;
+
+        if self.has_vectorization() {
+            if let Err(e) = self.auto_vectorize_knowledge(knowledge).await {
+                tracing::warn!("auto_vectorize_knowledge failed: {e}");
+            }
+        }
         Ok(())
     }
 
@@ -380,6 +487,12 @@ impl KnowledgeService for DefaultKnowledgeService {
         );
 
         self.graph.write_query(cypher, params).await?;
+
+        if self.has_vectorization() {
+            if let Err(e) = self.auto_vectorize_concept(concept).await {
+                tracing::warn!("auto_vectorize_concept failed: {e}");
+            }
+        }
         Ok(())
     }
 
@@ -479,6 +592,12 @@ impl KnowledgeService for DefaultKnowledgeService {
         );
 
         self.graph.write_query(cypher, params).await?;
+
+        if self.has_vectorization() {
+            if let Err(e) = self.auto_vectorize_playbook(playbook).await {
+                tracing::warn!("auto_vectorize_playbook failed: {e}");
+            }
+        }
         Ok(())
     }
 

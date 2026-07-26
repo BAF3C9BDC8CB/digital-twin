@@ -33,6 +33,8 @@ use super::knowledge::entities::{
     Experience, ExperienceSeverity, Knowledge, KnowledgeSource, Playbook, Step,
 };
 use super::knowledge::service::KnowledgeService;
+use crate::application::knowledge::knowledge::service::DefaultKnowledgeService;
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
 // ---------------------------------------------------------------------------
 // Request / Report
@@ -105,6 +107,31 @@ pub struct LearnServiceImpl<S: KnowledgeService> {
 impl<S: KnowledgeService> LearnServiceImpl<S> {
     pub fn new(knowledge: Arc<S>) -> Self {
         Self { knowledge }
+    }
+}
+
+/// Constructor for [`LearnServiceImpl`] backed by a [`DefaultKnowledgeService`]
+/// configured with vectorisation support.
+///
+/// Call this when `embed` / `vector` backends are available — the underlying
+/// service will auto-embed Knowledge, Experience, Concept, and Playbook nodes
+/// into the unified `kg_nodes` Qdrant collection on every write.
+///
+/// This is only implemented for `DefaultKnowledgeService` (not generic `S`)
+/// because it relies on that concrete type's [`with_vectorization`]
+/// constructor.
+///
+/// [`with_vectorization`]: DefaultKnowledgeService::with_vectorization
+impl LearnServiceImpl<DefaultKnowledgeService> {
+    pub fn with_vectorization(
+        graph: Arc<dyn GraphRepository>,
+        embed: Arc<dyn EmbedService>,
+        vector: Arc<dyn VectorRepository>,
+    ) -> Self {
+        let svc = Arc::new(
+            DefaultKnowledgeService::with_vectorization(graph, embed, vector),
+        );
+        Self::new(svc)
     }
 }
 
