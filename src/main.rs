@@ -1372,14 +1372,16 @@ async fn main() -> anyhow::Result<()> {
                 // e. Run build (incremental by default — first run detects no snapshots
                 //    and processes all files; subsequent runs skip unchanged files).
                 //    full=false: use incremental strategy — relies on SQLite snapshots for mtime comparison.
-                //    pipeline=false: post-build pipeline disabled (inference server removed, _entities unused).
+                //    pipeline=true: post-build pipeline ENABLED — same code path as production build,
+                //    including LLM background analysis (Phase 2). This ensures --test exercises the
+                //    exact same pipeline as real builds. LLM runs in background (non-blocking).
                 //    Use `dt clean --test` to force a full rebuild from scratch.
                 dt_daemon::interfaces::cli::build::handle_build(
                     PathBuf::from("/data/myProject/digital-twin-v2/test"),
                     Some("test-pipeline".to_string()),
                     None,  // file
                     false, // full: use incremental strategy (SQLite snapshots → mtime comparison)
-                    false, // pipeline: post-build pipeline disabled
+                    true,  // pipeline: ENABLED — same code path as production build (Phase 4 change)
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),
