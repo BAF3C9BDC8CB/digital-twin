@@ -227,6 +227,11 @@ enum Commands {
         /// Use `dt clean --test` to manually clean test data.
         #[arg(long = "test")]
         test: bool,
+
+        /// Source type to build: code (default), knowledge (sync KG nodes to vectors).
+        /// Use "knowledge" as a replacement for `dt kg-sync`.
+        #[arg(long = "source")]
+        source: Option<String>,
     },
 
     /// Semantic code search across worlds.
@@ -1321,7 +1326,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full, no_pipeline, test }) => {
+        Some(Commands::Build { path, name, file, full, no_pipeline, test, source }) => {
             // ── dt build --test: run self-contained pipeline integration test ──
             if test {
                 tracing::info!("dt build --test: starting pipeline integration test");
@@ -1393,6 +1398,38 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
                 return Ok(());
+            }
+
+            // ── dt build --source knowledge: replace dt kg-sync ──
+            if let Some(ref src) = source {
+                if src == "knowledge" {
+                    tracing::info!("dt build --source knowledge: syncing KG nodes to vectors");
+                    let graph = connect_graph().await;
+                    let embed = connect_embed().await;
+                    let vector = connect_vector().await;
+
+                    if graph.is_none() || embed.is_none() || vector.is_none() {
+                        eprintln!("error: build --source knowledge requires Memgraph + Qdrant + embed backends");
+                        std::process::exit(1);
+                    }
+
+                    let graph = graph.unwrap();
+                    let embed = embed.unwrap();
+                    let vector = vector.unwrap();
+
+                    let queue = Arc::new(
+                        dt_daemon::application::sync::queue::VectorQueue::spawn(embed.clone()),
+                    );
+
+                    let incremental = !full;
+                    dt_daemon::interfaces::cli::sync::handle_kg_sync(
+                        incremental, None, false, Some(graph), Some(queue),
+                    ).await?;
+                    return Ok(());
+                } else {
+                    eprintln!("error: unknown source type '{src}'. Supported: knowledge");
+                    std::process::exit(1);
+                }
             }
 
             // No args at all → build all projects from config.yaml
