@@ -187,7 +187,15 @@ impl PipelineTemplate {
             }
         }
 
-        // Step 6: Write knowledge annotations (@knowledge comments)
+        // Step 6: Write graph (methods, classes, modules, relationships)
+        // NOTE: Must be done BEFORE write_knowledge_annotations so that
+        // IMPLEMENTED_BY relationships can match Method nodes in the graph.
+        if let Some(graph) = graph {
+            self.write_graph(graph, project, &extraction).await?;
+        }
+
+        // Step 6b: Write knowledge annotations (@knowledge comments)
+        // Now that Method nodes exist in the graph, IMPLEMENTED_BY can match.
         let knowledge_count = extraction.knowledge_annotations.len();
         if let Some(graph) = graph {
             if knowledge_count > 0 {
@@ -200,11 +208,6 @@ impl PipelineTemplate {
                 )
                 .await;
             }
-        }
-
-        // Step 7: Write graph (methods, classes, modules, relationships)
-        if let Some(graph) = graph {
-            self.write_graph(graph, project, &extraction).await?;
         }
 
         // Step 7b: Embed methods and write to Qdrant
@@ -837,7 +840,8 @@ impl PipelineTemplate {
                 let _ = graph
                     .write_query(
                         r#"MATCH (c:Concept {concept_id: $concept_id})
-                        MATCH (m:Method {file_path: $file_path, project: $project})
+                        MATCH (m:Method {project: $project})
+                        WHERE m.file_path = $file_path OR m.file_path ENDS WITH $file_path
                         MERGE (c)-[:IMPLEMENTED_BY]->(m)"#,
                         file_params,
                     )
