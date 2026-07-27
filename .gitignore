@@ -41,3 +41,4 @@ services/embed-server/models/
 # Logs
 *.log
 /tmp/
+config/config.yaml.bak

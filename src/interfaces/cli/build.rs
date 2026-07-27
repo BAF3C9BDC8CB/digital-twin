@@ -171,27 +171,42 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
     files
 }
 
-/// Create a SiliconFlowClient for embedding, reading config from
+/// Create an embed client for search, reading config from
 /// `~/.config/digital-twin/config.yaml` with env var fallback.
-/// This is used by search (code/doc/kg) and must read from config,
-/// unlike `api_key_from_env()` which only reads from env vars.
+/// Uses the provider router to support both SiliconFlow and XInference.
 fn create_search_embed_client() -> Arc<dyn EmbedService> {
+    use crate::infrastructure::embedder::{ProviderConfig, create_embed_router};
+
+    // Try to load full config first
+    if let Some(cfg) = load_full_embed_config() {
+        return create_embed_router(cfg);
+    }
+
+    // Fallback: env-var based SiliconFlow client
     let api_key = load_siliconflow_api_key();
-    let base_url = load_siliconflow_config_str("url")
-        .or_else(|| std::env::var("SILICONFLOW_BASE_URL").ok())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
-    let embed_model = load_siliconflow_config_str("model_embed")
-        .or_else(|| std::env::var("SILICONFLOW_EMBED_MODEL").ok())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "BAAI/bge-m3".to_string());
-    let reranker_model = load_siliconflow_config_str("model_reranker")
-        .or_else(|| std::env::var("SILICONFLOW_RERANKER_MODEL").ok())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "BAAI/bge-reranker-v2-m3".to_string());
-    Arc::new(SiliconFlowClient::new(
-        base_url, api_key, embed_model, reranker_model, String::new(),
-    )) as Arc<dyn EmbedService>
+    let base_url = std::env::var("SILICONFLOW_BASE_URL")
+        .unwrap_or_else(|_| "https://api.siliconflow.cn/v1".to_string());
+    let embed_model = std::env::var("SILICONFLOW_EMBED_MODEL")
+        .unwrap_or_else(|_| "BAAI/bge-m3".to_string());
+    let reranker_model = std::env::var("SILICONFLOW_RERANKER_MODEL")
+        .unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".to_string());
+
+    let cfg = ProviderConfig {
+        siliconflow_url: base_url,
+        siliconflow_api_key: api_key,
+        siliconflow_model_embed: embed_model,
+        siliconflow_model_reranker: reranker_model,
+        siliconflow_model_llm: String::new(),
+        xinference_url: String::new(),
+        xinference_api_key: String::new(),
+        xinference_model_embed: String::new(),
+        xinference_model_reranker: String::new(),
+        xinference_model_llm: String::new(),
+        embed_provider: "siliconflow".into(),
+        rerank_provider: "siliconflow".into(),
+        llm_provider: "siliconflow".into(),
+    };
+    create_embed_router(cfg)
 }
 
 /// Read the SiliconFlow API key from `~/.config/digital-twin/config.yaml`,
@@ -248,6 +263,54 @@ fn load_siliconflow_config_str(field: &str) -> Option<String> {
                         return Some(v);
                     }
                 }
+            }
+        }
+    }
+    None
+}
+
+/// Load full embed provider config from `~/.config/digital-twin/config.yaml`.
+///
+/// Reads both SiliconFlow and XInference sections to build a
+/// [`ProviderConfig`] for the router factory.
+fn load_full_embed_config() -> Option<crate::infrastructure::embedder::ProviderConfig> {
+    let config_paths = [
+        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("config.yaml")),
+        Some(std::path::PathBuf::from("config/config.yaml")),
+    ];
+    for config_path in config_paths.iter().flatten() {
+        if let Ok(content) = std::fs::read_to_string(config_path) {
+            use serde::Deserialize;
+            #[derive(Deserialize)]
+            struct SfCfg { url: Option<String>, api_key: Option<String>, model_embed: Option<String>, model_reranker: Option<String>, model_llm: Option<String> }
+            #[derive(Deserialize, Default)]
+            struct XiCfg { url: Option<String>, api_key: Option<String>, model_embed: Option<String>, model_reranker: Option<String>, model_llm: Option<String> }
+            #[derive(Deserialize, Default)]
+            struct EmbedCfg { embed_provider: Option<String>, rerank_provider: Option<String>, llm_provider: Option<String> }
+            #[derive(Deserialize)]
+            struct Services { siliconflow: Option<SfCfg>, xinference: Option<XiCfg>, embed: Option<EmbedCfg> }
+            #[derive(Deserialize)]
+            struct Cfg { services: Option<Services> }
+            if let Ok(cfg) = serde_yaml::from_str::<Cfg>(&content) {
+                let services = cfg.services?;
+                let sf = services.siliconflow;
+                let xi = services.xinference.unwrap_or_default();
+                let embed = services.embed.unwrap_or_default();
+                return Some(crate::infrastructure::embedder::ProviderConfig {
+                    siliconflow_url: sf.as_ref().and_then(|c| c.url.clone()).unwrap_or_else(|| "https://api.siliconflow.cn/v1".into()),
+                    siliconflow_api_key: sf.as_ref().and_then(|c| c.api_key.clone()).unwrap_or_default(),
+                    siliconflow_model_embed: sf.as_ref().and_then(|c| c.model_embed.clone()).unwrap_or_else(|| "BAAI/bge-m3".into()),
+                    siliconflow_model_reranker: sf.as_ref().and_then(|c| c.model_reranker.clone()).unwrap_or_else(|| "BAAI/bge-reranker-v2-m3".into()),
+                    siliconflow_model_llm: sf.as_ref().and_then(|c| c.model_llm.clone()).unwrap_or_default(),
+                    xinference_url: xi.url.unwrap_or_default(),
+                    xinference_api_key: xi.api_key.unwrap_or_default(),
+                    xinference_model_embed: xi.model_embed.unwrap_or_default(),
+                    xinference_model_reranker: xi.model_reranker.unwrap_or_default(),
+                    xinference_model_llm: xi.model_llm.unwrap_or_default(),
+                    embed_provider: embed.embed_provider.unwrap_or_else(|| "siliconflow".into()),
+                    rerank_provider: embed.rerank_provider.unwrap_or_else(|| "siliconflow".into()),
+                    llm_provider: embed.llm_provider.unwrap_or_else(|| "siliconflow".into()),
+                });
             }
         }
     }
@@ -794,12 +857,14 @@ pub async fn handle_search(
                                     let file = payload.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
                                     let start = payload.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0);
                                     let end = payload.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let sig = payload.get("signature").and_then(|v| v.as_str()).unwrap_or("");
-                                    let cls = payload.get("class_name").and_then(|v| v.as_str()).unwrap_or("");
-                                    format!("{}  {}::{}  L{}-{}", file, cls, sig, start, end)
+                                    format!("{}: L{}-{}", file, start, end)
                                 } else if col == crate::shared::collections::DOC_CHUNKS || col.ends_with("_semantic") {
                                     // Doc chunks: extract file path from doc_id, show first line as summary
                                     let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    // Skip config sections (#section-) when searching doc world
+                                    if world == "doc" && doc_id.contains("#section-") {
+                                        continue;
+                                    }
                                     let chunk_path = doc_id
                                         .strip_prefix("dt://doc/")
                                         .and_then(|s| s.rsplit_once('#'))
@@ -944,20 +1009,24 @@ pub async fn handle_search(
                     println!("  [{:.4}] [Doc] {}", item.score, snippet_line);
                 } else {
                     println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
-                    if world == "code" && !item.snippet.is_empty() {
-                        // snippet format: "file_path  Class::signature  Lline-line"
-                        for line in item.snippet.lines() {
-                            println!("         {}", line);
-                        }
-                    } else if world != "doc" {
-                        let short_snippet = if item.snippet.chars().count() > 80 {
-                            let truncated: String = item.snippet.chars().take(80).collect();
-                            format!("{}…", truncated)
+                    if !item.snippet.is_empty() {
+                        if item.entity_type == "Method" {
+                            // Method: snippet is "file_path  Class::signature  Lline-line"
+                            // Show full snippet (path + sig + line numbers) without truncation
+                            for line in item.snippet.lines() {
+                                println!("         {}", line);
+                            }
                         } else {
-                            item.snippet.clone()
-                        };
-                        if !short_snippet.is_empty() {
-                            println!("         {}", short_snippet);
+                            // Other types: truncate to 100 chars
+                            let short_snippet = if item.snippet.chars().count() > 100 {
+                                let truncated: String = item.snippet.chars().take(100).collect();
+                                format!("{}…", truncated)
+                            } else {
+                                item.snippet.clone()
+                            };
+                            if !short_snippet.is_empty() {
+                                println!("         {}", short_snippet);
+                            }
                         }
                     }
                 }

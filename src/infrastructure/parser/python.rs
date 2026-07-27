@@ -112,7 +112,16 @@ impl ParseStrategy for PythonParser {
 
             let full_match = caps.get(0).unwrap();
             let start_byte = full_match.start();
-            let start_line = source[..start_byte].lines().count() + 1;
+            let start_line = {
+                let raw_line = source[..start_byte].lines().count() + 1;
+                // Skip blank lines that `(?m)^\s*` ambiguously matched before the def
+                let src_lines: Vec<&str> = source.lines().collect();
+                let mut adjusted = raw_line;
+                while adjusted <= src_lines.len() && src_lines[adjusted - 1].trim().is_empty() {
+                    adjusted += 1;
+                }
+                adjusted
+            };
 
             // Find which class contains this function
             let current_class = classes
@@ -131,7 +140,7 @@ impl ParseStrategy for PythonParser {
 
             let signature = format!("def {}({}){} -> {}", func_name, params, return_annotation, ret_type);
 
-            let end_line = start_line + body.lines().count();
+            let end_line = start_line + body.chars().filter(|&c| c == '\n').count();
 
             methods.push(MethodBlock {
                 method_id,
@@ -181,6 +190,10 @@ fn extract_python_body(source: &str, def_line_idx: usize, indent: usize) -> Stri
             break;
         }
     }
+    // Trim trailing blank lines so end_line points to the last actual code/comment line
+    while body_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        body_lines.pop();
+    }
     body_lines.join("\n")
 }
 
@@ -206,5 +219,31 @@ mod tests {
     fn can_parse_py() {
         assert!(PythonParser.can_parse(&PathBuf::from("main.py")));
         assert!(!PythonParser.can_parse(&PathBuf::from("main.java")));
+    }
+
+    #[test]
+    fn check_payment_line_numbers() {
+        let source = std::fs::read_to_string(
+            "/data/myProject/digital-twin-v2/test/project/payment.py"
+        ).expect("read payment.py");
+        let result = PythonParser.parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
+            .expect("parse");
+        let methods: Vec<String> = result.methods.iter()
+            .map(|m| format!("{} L{}-{}", m.name, m.start_line, m.end_line))
+            .collect();
+        println!("Python methods: {:?}", methods);
+        assert_eq!(result.methods.len(), 3, "Expected 3 methods");
+        let pm = &result.methods[0];
+        assert_eq!(pm.name, "process_payment");
+        assert_eq!(pm.start_line, 9, "process_payment should start at line 9");
+        assert_eq!(pm.end_line, 12, "process_payment should end at line 12");
+        let cm = &result.methods[1];
+        assert_eq!(cm.name, "_call_provider");
+        assert_eq!(cm.start_line, 15, "_call_provider should start at line 15");
+        assert_eq!(cm.end_line, 17, "_call_provider should end at line 17");
+        let rm = &result.methods[2];
+        assert_eq!(rm.name, "refund_payment");
+        assert_eq!(rm.start_line, 20, "refund_payment should start at line 20");
+        assert_eq!(rm.end_line, 22, "refund_payment should end at line 22");
     }
 }

@@ -299,20 +299,32 @@ async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     }
 }
 
-/// Connect to the SiliconFlow embedding API (always succeeds
-/// since the client is a thin HTTP wrapper that makes lazy calls).
+/// Connect to the embedding service using the provider router.
+///
+/// Reads config from env vars with sensible defaults, building a
+/// [`EmbedProviderRouter`] that supports both SiliconFlow and XInference.
 async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
-    use crate::infrastructure::siliconflow::SiliconFlowClient;
-    use crate::infrastructure::siliconflow::{base_url_from_env, api_key_from_env, embed_model_from_env, reranker_model_from_env, llm_model_from_env};
-    let client = SiliconFlowClient::new(
-        base_url_from_env(),
-        api_key_from_env(),
-        embed_model_from_env(),
-        reranker_model_from_env(),
-        llm_model_from_env(),
-    );
-    tracing::info!("SiliconFlow client created");
-    Some(Arc::new(client) as Arc<dyn EmbedService>)
+    use crate::infrastructure::embedder::ProviderConfig;
+
+    let provider_cfg = ProviderConfig {
+        siliconflow_url: std::env::var("SILICONFLOW_BASE_URL").unwrap_or_else(|_| "https://api.siliconflow.cn/v1".into()),
+        siliconflow_api_key: std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
+        siliconflow_model_embed: std::env::var("SILICONFLOW_EMBED_MODEL").unwrap_or_else(|_| "BAAI/bge-m3".into()),
+        siliconflow_model_reranker: std::env::var("SILICONFLOW_RERANKER_MODEL").unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".into()),
+        siliconflow_model_llm: std::env::var("SILICONFLOW_LLM_MODEL").unwrap_or_default(),
+        xinference_url: String::new(),
+        xinference_api_key: String::new(),
+        xinference_model_embed: String::new(),
+        xinference_model_reranker: String::new(),
+        xinference_model_llm: String::new(),
+        embed_provider: "siliconflow".into(),
+        rerank_provider: "siliconflow".into(),
+        llm_provider: "siliconflow".into(),
+    };
+
+    let router = crate::infrastructure::embedder::create_embed_router(provider_cfg);
+    tracing::info!("Embed provider router created (siliconflow, from env)");
+    Some(router)
 }
 
 // ---------------------------------------------------------------------------

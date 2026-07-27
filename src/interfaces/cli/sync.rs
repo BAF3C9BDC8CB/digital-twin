@@ -184,16 +184,24 @@ pub async fn handle_kg_sync(
             (q.embed_service().clone(), v)
         } else {
             let embed: Arc<dyn EmbedService> = {
-                use crate::infrastructure::siliconflow::{base_url_from_env, api_key_from_env, embed_model_from_env, reranker_model_from_env, llm_model_from_env};
-                let svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
-                    base_url_from_env(),
-                    api_key_from_env(),
-                    embed_model_from_env(),
-                    reranker_model_from_env(),
-                    llm_model_from_env(),
-                );
-                tracing::info!("SiliconFlow client connected for kg-sync");
-                Arc::new(svc)
+                let cfg = crate::infrastructure::embedder::ProviderConfig {
+                    siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
+                    siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
+                    siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
+                    siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+                    siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
+                    xinference_url: String::new(),
+                    xinference_api_key: String::new(),
+                    xinference_model_embed: String::new(),
+                    xinference_model_reranker: String::new(),
+                    xinference_model_llm: String::new(),
+                    embed_provider: "siliconflow".into(),
+                    rerank_provider: "siliconflow".into(),
+                    llm_provider: "siliconflow".into(),
+                };
+                let svc = crate::infrastructure::embedder::create_embed_router(cfg);
+                tracing::info!("Embed provider router created for kg-sync");
+                svc
             };
             let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
             let vector: Arc<dyn VectorRepository> = match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {

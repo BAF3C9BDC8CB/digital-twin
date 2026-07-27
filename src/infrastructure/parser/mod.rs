@@ -14,6 +14,14 @@ pub mod javascript;
 pub mod php;
 pub mod python;
 pub mod rust_parser;
+pub mod tree_sitter_utils;
+pub mod ts_go;
+pub mod ts_java;
+pub mod ts_javascript;
+pub mod ts_php;
+pub mod ts_python;
+pub mod ts_rust;
+pub mod ts_typescript;
 pub mod typescript;
 
 use crate::domain::error::DtError;
@@ -28,6 +36,34 @@ use self::javascript::JavaScriptParser;
 use self::php::PhpParser;
 use self::python::PythonParser;
 use self::rust_parser::RustParser;
+
+/// Find the closing brace that matches the opening brace at `open_byte`.
+/// Returns the 1-based line number of the closing brace.
+/// `source` is the full file source text, `open_byte` is the byte offset of `{`.
+pub fn find_brace_end_line(source: &str, open_byte: usize) -> usize {
+    let bytes = source.as_bytes();
+    if open_byte >= bytes.len() || bytes[open_byte] != b'{' {
+        // No brace found — fall back to counting lines from open_byte
+        return source[open_byte..].lines().count();
+    }
+    let mut depth = 1u32;
+    let mut end_byte = open_byte;
+    for (i, &b) in bytes.iter().enumerate().skip(open_byte + 1) {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end_byte = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    // Count newlines from the opening brace to the closing brace
+    source[open_byte..=end_byte].chars().filter(|&c| c == '\n').count()
+}
 use self::typescript::TypeScriptParser;
 
 // Re-export knowledge annotation extraction for pipeline use.
@@ -45,6 +81,15 @@ impl ParserRegistry {
     pub fn new() -> Self {
         Self {
             parsers: vec![
+                // Tree-sitter backed parsers (priority)
+                Box::new(self::ts_java::TsJavaParser),
+                Box::new(self::ts_python::TsPythonParser),
+                Box::new(self::ts_javascript::TsJavaScriptParser),
+                Box::new(self::ts_typescript::TsTypeScriptParser),
+                Box::new(self::ts_go::TsGoParser),
+                Box::new(self::ts_rust::TsRustParser),
+                Box::new(self::ts_php::TsPhpParser),
+                // Regex fallback parsers
                 Box::new(JavaParser),
                 Box::new(TypeScriptParser),
                 Box::new(PythonParser),

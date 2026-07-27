@@ -50,6 +50,16 @@ walkdir = "2"
 # Regex
 regex = "1"
 
+# Tree-sitter AST parsing
+tree-sitter = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-php = "0.24"
+
 # Bolt protocol driver (Memgraph-compatible, wraps neo4rs crate)
 bolt-driver = { package = "neo4rs", version = "0.8", features = ["json"] }
 

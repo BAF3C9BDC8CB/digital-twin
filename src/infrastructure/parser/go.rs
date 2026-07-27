@@ -91,7 +91,9 @@ impl ParseStrategy for GoParser {
                     .map(|c| c.name.clone()).next().unwrap_or_else(|| "_module_".to_string())
             };
 
-            let body = source.lines().skip(start_line - 1).take(30).collect::<Vec<_>>().join("\n");
+            let brace_pos = caps.get(0).unwrap().end() - 1;
+            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, &current_class, &func_name, start_line);
 
@@ -106,7 +108,7 @@ impl ParseStrategy for GoParser {
                 return_type, class_name: current_class,
                 file_path: file_path.clone(), package_or_module: module.clone(),
                 language: "go".into(), project: project.to_string(),
-                start_line, end_line: start_line + body.lines().count(),
+                start_line, end_line: end_line_calc,
                 calls, comment: String::new(), source_text: body,
             });
         }

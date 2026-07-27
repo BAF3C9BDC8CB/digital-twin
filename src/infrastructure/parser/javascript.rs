@@ -72,7 +72,9 @@ impl ParseStrategy for JavaScriptParser {
             let params = caps[4].to_string();
             let start_byte = caps.get(0).unwrap().start();
             let start_line = source[..start_byte].lines().count() + 1;
-            let body = source.lines().skip(start_line - 1).take(20).collect::<Vec<_>>().join("\n");
+            let brace_pos = caps.get(0).unwrap().end() - 1;
+            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, "_module_", &name, start_line);
             methods.push(MethodBlock {
@@ -81,7 +83,7 @@ impl ParseStrategy for JavaScriptParser {
                 params, return_type: "any".into(), class_name: "_module_".into(),
                 file_path: file_path.clone(), package_or_module: module.clone(),
                 language: "javascript".into(), project: project.to_string(),
-                start_line, end_line: start_line + body.lines().count(),
+                start_line, end_line: end_line_calc,
                 calls, comment: String::new(), source_text: body,
             });
         }
@@ -91,7 +93,9 @@ impl ParseStrategy for JavaScriptParser {
             let name = caps[3].to_string();
             let start_byte = caps.get(0).unwrap().start();
             let start_line = source[..start_byte].lines().count() + 1;
-            let body = source.lines().skip(start_line - 1).take(20).collect::<Vec<_>>().join("\n");
+            let brace_pos = caps.get(0).unwrap().end() - 1;
+            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, "_module_", &name, start_line);
             methods.push(MethodBlock {
@@ -100,7 +104,7 @@ impl ParseStrategy for JavaScriptParser {
                 params: "...".into(), return_type: "any".into(), class_name: "_module_".into(),
                 file_path: file_path.clone(), package_or_module: module.clone(),
                 language: "javascript".into(), project: project.to_string(),
-                start_line, end_line: start_line + body.lines().count(),
+                start_line, end_line: end_line_calc,
                 calls, comment: String::new(), source_text: body,
             });
         }
@@ -111,10 +115,22 @@ impl ParseStrategy for JavaScriptParser {
             let params = caps[4].to_string();
             if method_name == "class" || method_name == "function" || method_name == "if" { continue; }
             let start_byte = caps.get(0).unwrap().start();
-            let start_line = source[..start_byte].lines().count() + 1;
+            let start_line = {
+                let raw = source[..start_byte].lines().count() + 1;
+                // Skip blank lines: `(?m)^\s*(\w+)` can match starting from a blank line
+                // because `\s*` greedily consumes blank-line newlines.
+                let src_lines: Vec<&str> = source.lines().collect();
+                let mut adj = raw;
+                while adj <= src_lines.len() && src_lines[adj - 1].trim().is_empty() {
+                    adj += 1;
+                }
+                adj
+            };
             let current_class = classes.iter().filter(|c| c.start_line <= start_line && c.end_line >= start_line)
                 .map(|c| c.name.clone()).next().unwrap_or_else(|| "_module_".to_string());
-            let body = source.lines().skip(start_line - 1).take(20).collect::<Vec<_>>().join("\n");
+            let brace_pos = caps.get(0).unwrap().end() - 1;
+            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, &current_class, &method_name, start_line);
             methods.push(MethodBlock {
@@ -123,7 +139,7 @@ impl ParseStrategy for JavaScriptParser {
                 params, return_type: "any".into(), class_name: current_class,
                 file_path: file_path.clone(), package_or_module: module.clone(),
                 language: "javascript".into(), project: project.to_string(),
-                start_line, end_line: start_line + body.lines().count(),
+                start_line, end_line: end_line_calc,
                 calls, comment: String::new(), source_text: body,
             });
         }

@@ -153,7 +153,18 @@ impl ParseStrategy for JavaParser {
 
             let full_match = caps.get(0).unwrap();
             let start_byte = full_match.start();
-            let start_line = source[..start_byte].lines().count() + 1;
+            let start_line = {
+                // Compute line from byte position
+                let raw_line = source[..start_byte].lines().count() + 1;
+                // Skip blank lines: when a method is preceded by a blank line, `(?m)^`
+                // matches at the blank line's start, inflating start_line by 1.
+                // Walk forward to the first non-blank line.
+                let mut adjusted = raw_line;
+                while adjusted <= lines.len() && lines[adjusted - 1].trim().is_empty() {
+                    adjusted += 1;
+                }
+                adjusted
+            };
 
             // Determine which class contains this method (crude heuristic)
             if current_class.is_empty() {
@@ -202,7 +213,8 @@ impl ParseStrategy for JavaParser {
             let end_line = if body.is_empty() {
                 start_line
             } else {
-                start_line + body.lines().count()
+                // Count newlines in body text (from { to }) to get actual end line
+                start_line + body.chars().filter(|&c| c == '\n').count()
             };
 
             methods.push(MethodBlock {
@@ -225,6 +237,20 @@ impl ParseStrategy for JavaParser {
 
             current_class.clear();
         }
+
+        // Filter out phantom methods caused by regex matching method body calls.
+        // Build ranges for all methods that actually have a body ({ ... }), i.e. end_line > start_line.
+        let concrete_ranges: Vec<(usize, usize)> = methods.iter()
+            .filter(|m| m.end_line > m.start_line)
+            .map(|m| (m.start_line, m.end_line))
+            .collect();
+        methods.retain(|m| {
+            // A method that falls entirely within another method's body is a false positive
+            // (e.g. `saveToDb(request);` matched as a `;`-terminated "method").
+            !concrete_ranges.iter().any(|&(outer_start, outer_end)| {
+                outer_start < m.start_line && outer_end >= m.end_line
+            })
+        });
 
         // Populate class method_ids by matching method.class_name to class.name
         for c in &mut classes {

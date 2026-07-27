@@ -4,7 +4,7 @@
 //! This ensures the test runner is self-contained and leaves no trace by
 //! default (unless `--keep` is passed).
 
-use crate::domain::traits::{GraphRepository, VectorRepository};
+use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub async fn cleanup_test_data(
     graph: &Arc<dyn GraphRepository>,
     vector: &Arc<dyn VectorRepository>,
+    snapshot: Option<&Arc<dyn SnapshotRepository>>,
 ) -> Result<usize, String> {
     let mut total_cleaned = 0usize;
 
@@ -35,6 +36,12 @@ pub async fn cleanup_test_data(
                 total_cleaned += c as usize;
             }
         }
+    }
+
+    // Clear SQLite snapshots so full rebuild re-processes all files including documents
+    if let Some(snapshot) = snapshot {
+        let _ = snapshot.delete_project("test-pipeline").await;
+        let _ = snapshot.clear_llm_progress("test-pipeline").await;
     }
 
     tracing::info!(deleted = total_cleaned, "Cleaned up test data (graph)");

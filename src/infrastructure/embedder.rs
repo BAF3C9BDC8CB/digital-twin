@@ -1,9 +1,11 @@
 //! Embedding service implementations — text → vector conversion.
 //!
-//! Currently provides [`NoopEmbedService`] for testing/failover (zero-vectors).
-//! Production embedding is handled by [`SiliconFlowClient`].
+//! Provides [`NoopEmbedService`] for testing/failover, and a factory
+//! function [`create_embed_router`] that builds a provider router from
+//! configuration (SiliconFlow + XInference).
 
 use async_trait::async_trait;
+use std::sync::Arc;
 use crate::domain::error::DtError;
 use crate::domain::traits::EmbedService;
 use crate::domain::types::HealthStatus;
@@ -43,6 +45,73 @@ impl EmbedService for NoopEmbedService {
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
         Ok(HealthStatus::Healthy)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Factory function — build EmbedProviderRouter from config
+// ---------------------------------------------------------------------------
+
+/// Provider configuration for creating an [`EmbedProviderRouter`].
+///
+/// Each provider is optional — only the configured one needs to be present.
+pub struct ProviderConfig {
+    /// SiliconFlow client configuration.
+    pub siliconflow_url: String,
+    pub siliconflow_api_key: String,
+    pub siliconflow_model_embed: String,
+    pub siliconflow_model_reranker: String,
+    pub siliconflow_model_llm: String,
+    /// XInference client configuration.
+    pub xinference_url: String,
+    pub xinference_api_key: String,
+    pub xinference_model_embed: String,
+    pub xinference_model_reranker: String,
+    pub xinference_model_llm: String,
+    /// Routing configuration.
+    pub embed_provider: String,
+    pub rerank_provider: String,
+    pub llm_provider: String,
+}
+
+/// Build an [`EmbedProviderRouter`] from provider configuration.
+///
+/// Creates `SiliconFlowClient` and `XInferenceClient` as configured,
+/// then wraps them in a router with the specified routing rules.
+pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
+    use crate::infrastructure::provider_router::{EmbedProviderRouter, ProviderRouterConfig};
+
+    let siliconflow = if !cfg.siliconflow_url.is_empty() {
+        Some(Arc::new(crate::infrastructure::siliconflow::SiliconFlowClient::new(
+            cfg.siliconflow_url,
+            cfg.siliconflow_api_key,
+            cfg.siliconflow_model_embed,
+            cfg.siliconflow_model_reranker,
+            cfg.siliconflow_model_llm,
+        )))
+    } else {
+        None
+    };
+
+    let xinference = if !cfg.xinference_url.is_empty() {
+        Some(Arc::new(crate::infrastructure::xinference::XInferenceClient::new(
+            cfg.xinference_url,
+            cfg.xinference_api_key,
+            cfg.xinference_model_embed,
+            cfg.xinference_model_reranker,
+            cfg.xinference_model_llm,
+        )))
+    } else {
+        None
+    };
+
+    let router_config = ProviderRouterConfig {
+        embed_provider: cfg.embed_provider,
+        rerank_provider: cfg.rerank_provider,
+        llm_provider: cfg.llm_provider,
+    };
+
+    let router = EmbedProviderRouter::new(siliconflow, xinference, router_config);
+    Arc::new(router)
 }
 
 // ---------------------------------------------------------------------------

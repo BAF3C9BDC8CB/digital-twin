@@ -79,6 +79,8 @@ pub fn parse_document(
     let (doc_type, title, content) = match extension.as_str() {
         "md" | "markdown" => parse_markdown(&raw_content, &name),
         "txt" | "text" => ("text".to_string(), name.clone(), raw_content),
+        "yaml" | "yml" => ("yaml".to_string(), name.clone(), raw_content),
+        "properties" => ("properties".to_string(), name.clone(), raw_content),
         other => return Err(format!("unsupported document type: .{}", other)),
     };
 

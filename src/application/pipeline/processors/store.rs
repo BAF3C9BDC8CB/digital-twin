@@ -362,11 +362,14 @@ async fn write_to_vector(
                 "id": idx as u64,
                 "vector": emb,
                 "payload": {
+                    // ---- identity ----
                     "name": entity.name,
-                    "source": entity.source,
                     "entity_type": entity.entity_type,
+                    // ---- source ----
                     "file_path": entity.file_path,
                     "project": ctx.project_name,
+                    "source": entity.source,
+                    // ---- content ----
                     "text": entity.text_for_embedding,
                 }
             })

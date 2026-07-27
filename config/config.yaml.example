@@ -5,10 +5,27 @@ server:
   hostname: my-server
 
 services:
-  embed_server:
-    url: http://localhost:8001
-    dim: 1024
-    model: BAAI/bge-m3
+  # ── Embed providers (can configure multiple, route via services.embed) ──
+  siliconflow:
+    url: https://api.siliconflow.cn/v1
+    api_key: "your-api-key"
+    model_embed: BAAI/bge-m3
+    model_reranker: BAAI/bge-reranker-v2-m3
+    model_llm: Qwen/Qwen3.5-9B
+
+  xinference:
+    url: http://localhost:9997/v1
+    api_key: ""
+    model_embed: BAAI/bge-m3
+    model_reranker: BAAI/bge-reranker-v2-m3
+    model_llm: ""
+
+  # Routing: assign each capability to a provider ("siliconflow" or "xinference")
+  embed:
+    embed_provider: siliconflow    # text embedding
+    rerank_provider: siliconflow   # re-ranking
+    llm_provider: siliconflow      # LLM chat
+
   graph:
     url: bolt://localhost:7688
     user: memgraph

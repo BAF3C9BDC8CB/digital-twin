@@ -18,6 +18,10 @@ impl BuildStrategy for FullRebuildStrategy {
         "full"
     }
 
+    fn force_rebuild(&self) -> bool {
+        true
+    }
+
     async fn select_files(
         &self,
         _root: &Path,

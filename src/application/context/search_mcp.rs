@@ -188,11 +188,25 @@ impl CrossWorldSearch {
                                 .unwrap_or("?")
                                 .to_string(),
                             title: name.to_string(),
-                            snippet: payload
-                                .get("signature")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
+                            snippet: {
+                                let fp = payload
+                                    .get("file_path")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let sl = payload
+                                    .get("start_line")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                let el = payload
+                                    .get("end_line")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                if fp.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("{}: L{}-{}", fp, sl, el)
+                                }
+                            },
                             source_world: "code".into(),
                             entity_type: "Method".into(),
                             score,

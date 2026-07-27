@@ -22,7 +22,7 @@ inference_server:
 processors:
   tree_sitter: true    # AST parsing
   hanlp: true          # Chinese NLP (HanLP)
-  llm: true            # LLM‑based analysis
+  llm: false           # LLM‑based analysis — disabled for testing
   chunk: true          # Text chunking / splitting
   extract_text: true   # Raw text extraction
   ocr: false           # OCR (off by default)

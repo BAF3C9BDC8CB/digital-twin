@@ -236,12 +236,12 @@ enum Commands {
 
     /// Semantic code search across worlds.
     ///
-    /// Usage: dt search <query> [--world code|knowledge|doc|all] [--limit 10]
+    /// Usage: dt search <query> [--world code|knowledge|doc|config|all] [--limit 10]
     Search {
         /// Search query string.
         query: String,
 
-        /// Which world to search: code, knowledge, doc, all.
+        /// Which world to search: code, knowledge, doc, config, all.
         #[arg(long = "world", default_value = "code")]
         world: String,
 
@@ -602,6 +602,10 @@ struct ServiceConfig {
     sqlite: SqliteConfig,
     #[serde(default)]
     siliconflow: SiliconFlowConfig,
+    #[serde(default)]
+    xinference: XInferenceConfig,
+    #[serde(default)]
+    embed: EmbedRouterConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -705,6 +709,44 @@ fn default_siliconflow_api_key() -> String { "".to_string() }
 fn default_model_embed() -> String { "BAAI/bge-m3".to_string() }
 fn default_model_reranker() -> String { "BAAI/bge-reranker-v2-m3".to_string() }
 fn default_model_llm() -> String { "Qwen/Qwen3.5-9B".to_string() }
+
+/// XInference service configuration from config.yaml `services.xinference`.
+#[derive(Debug, Deserialize, Default)]
+struct XInferenceConfig {
+    /// Base URL (e.g. http://localhost:9997/v1).
+    #[serde(default)]
+    url: String,
+    /// API key (optional, typically empty for local).
+    #[serde(default)]
+    api_key: String,
+    /// Embedding model name (e.g. BAAI/bge-m3).
+    #[serde(default)]
+    model_embed: String,
+    /// Reranker model name (e.g. BAAI/bge-reranker-v2-m3).
+    #[serde(default)]
+    model_reranker: String,
+    /// LLM model name (e.g. Qwen/Qwen3-8B).
+    #[serde(default)]
+    model_llm: String,
+}
+
+/// Embed provider routing configuration from config.yaml `services.embed`.
+#[derive(Debug, Deserialize, Default)]
+struct EmbedRouterConfig {
+    /// Which provider to use for embedding ("siliconflow" or "xinference").
+    #[serde(default = "default_embed_provider")]
+    embed_provider: String,
+    /// Which provider to use for reranking ("siliconflow" or "xinference").
+    #[serde(default = "default_rerank_provider")]
+    rerank_provider: String,
+    /// Which provider to use for LLM chat ("siliconflow" or "xinference").
+    #[serde(default = "default_llm_provider")]
+    llm_provider: String,
+}
+
+fn default_embed_provider() -> String { "siliconflow".to_string() }
+fn default_rerank_provider() -> String { "siliconflow".to_string() }
+fn default_llm_provider() -> String { "siliconflow".to_string() }
 
 #[derive(Debug, Deserialize)]
 struct ProjectGroup {
@@ -886,10 +928,16 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
     }
 }
 
-/// Connect to the SiliconFlow embedding API.
+/// Connect to the embedding service using the provider router.
+///
+/// Reads both SiliconFlow and XInference config from config.yaml,
+/// then builds a [`EmbedProviderRouter`] that routes requests to the
+/// configured provider per capability.
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
     let cfg = load_config();
-    let (url, api_key, model_embed, model_reranker, model_llm) = cfg
+    let (sf_url, sf_key, sf_embed, sf_rerank, sf_llm,
+         xi_url, xi_key, xi_embed, xi_rerank, xi_llm,
+         emb_provider, rerank_provider, llm_provider) = cfg
         .as_ref()
         .map(|c| (
             c.services.siliconflow.url.clone(),
@@ -897,6 +945,14 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
             c.services.siliconflow.model_embed.clone(),
             c.services.siliconflow.model_reranker.clone(),
             c.services.siliconflow.model_llm.clone(),
+            c.services.xinference.url.clone(),
+            c.services.xinference.api_key.clone(),
+            c.services.xinference.model_embed.clone(),
+            c.services.xinference.model_reranker.clone(),
+            c.services.xinference.model_llm.clone(),
+            c.services.embed.embed_provider.clone(),
+            c.services.embed.rerank_provider.clone(),
+            c.services.embed.llm_provider.clone(),
         ))
         .unwrap_or_else(|| (
             default_siliconflow_url(),
@@ -904,12 +960,33 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
             default_model_embed(),
             default_model_reranker(),
             default_model_llm(),
+            String::new(),  // xinference url
+            String::new(),  // xinference api_key
+            String::new(),  // xinference model_embed
+            String::new(),  // xinference model_reranker
+            String::new(),  // xinference model_llm
+            default_embed_provider(),
+            default_rerank_provider(),
+            default_llm_provider(),
         ));
 
-    let client = dt_daemon::infrastructure::siliconflow::SiliconFlowClient::new(
-        url, api_key, model_embed, model_reranker, model_llm,
-    );
-    Some(Arc::new(client) as Arc<dyn dt_daemon::domain::traits::EmbedService>)
+    let cfg = dt_daemon::infrastructure::embedder::ProviderConfig {
+        siliconflow_url: sf_url,
+        siliconflow_api_key: sf_key,
+        siliconflow_model_embed: sf_embed,
+        siliconflow_model_reranker: sf_rerank,
+        siliconflow_model_llm: sf_llm,
+        xinference_url: xi_url,
+        xinference_api_key: xi_key,
+        xinference_model_embed: xi_embed,
+        xinference_model_reranker: xi_rerank,
+        xinference_model_llm: xi_llm,
+        embed_provider: emb_provider,
+        rerank_provider: rerank_provider,
+        llm_provider: llm_provider,
+    };
+
+    Some(dt_daemon::infrastructure::embedder::create_embed_router(cfg))
 }
 
 /// Build an optional KgBridge for auto-syncing nodes to Qdrant after writes.

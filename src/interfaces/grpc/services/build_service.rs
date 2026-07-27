@@ -92,15 +92,25 @@ pub async fn handle_search(
         10
     };
 
-    // Build embed service from environment variables
-    let embed_svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
-        crate::infrastructure::siliconflow::base_url_from_env(),
-        crate::infrastructure::siliconflow::api_key_from_env(),
-        crate::infrastructure::siliconflow::embed_model_from_env(),
-        crate::infrastructure::siliconflow::reranker_model_from_env(),
-        crate::infrastructure::siliconflow::llm_model_from_env(),
+    // Build embed service from environment variables using the provider router
+    let embed_svc = crate::infrastructure::embedder::create_embed_router(
+        crate::infrastructure::embedder::ProviderConfig {
+            siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
+            siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
+            siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
+            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+            siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
+            xinference_url: String::new(),
+            xinference_api_key: String::new(),
+            xinference_model_embed: String::new(),
+            xinference_model_reranker: String::new(),
+            xinference_model_llm: String::new(),
+            embed_provider: "siliconflow".into(),
+            rerank_provider: "siliconflow".into(),
+            llm_provider: "siliconflow".into(),
+        },
     );
-    let embed: Option<Arc<dyn EmbedService>> = Some(Arc::new(embed_svc));
+    let embed: Option<Arc<dyn EmbedService>> = Some(embed_svc);
 
     // Build CrossWorldSearch and delegate
     let cws =
@@ -155,15 +165,25 @@ async fn search_via_vector(
     query: &str,
     limit: u64,
 ) -> Result<Vec<SearchResult>, Status> {
-    // 1. Connect to embed service
-    let embed_svc = crate::infrastructure::siliconflow::SiliconFlowClient::new(
-        crate::infrastructure::siliconflow::base_url_from_env(),
-        crate::infrastructure::siliconflow::api_key_from_env(),
-        crate::infrastructure::siliconflow::embed_model_from_env(),
-        crate::infrastructure::siliconflow::reranker_model_from_env(),
-        crate::infrastructure::siliconflow::llm_model_from_env(),
+    // 1. Connect to embed service via provider router
+    let embed_svc = crate::infrastructure::embedder::create_embed_router(
+        crate::infrastructure::embedder::ProviderConfig {
+            siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
+            siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
+            siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
+            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+            siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
+            xinference_url: String::new(),
+            xinference_api_key: String::new(),
+            xinference_model_embed: String::new(),
+            xinference_model_reranker: String::new(),
+            xinference_model_llm: String::new(),
+            embed_provider: "siliconflow".into(),
+            rerank_provider: "siliconflow".into(),
+            llm_provider: "siliconflow".into(),
+        },
     );
-    let embed: Arc<dyn EmbedService> = Arc::new(embed_svc);
+    let embed: Arc<dyn EmbedService> = embed_svc;
 
     // 2. Generate query vector
     let vectors = embed.embed_batch(&[query.to_string()]).await

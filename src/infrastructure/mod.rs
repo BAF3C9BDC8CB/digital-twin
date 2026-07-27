@@ -4,5 +4,6 @@ pub mod sqlite;
 pub mod embedder;
 pub mod siliconflow;
 pub mod xinference;
+pub mod provider_router;
 pub mod scanner;
 pub mod parser;

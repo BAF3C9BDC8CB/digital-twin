@@ -44,4 +44,10 @@ pub trait BuildStrategy: Send + Sync {
         project: &str,
         snapshots: &[FileSnapshot],
     ) -> Result<(), DtError>;
+
+    /// Whether this strategy forces a full rebuild.
+    /// When true, document processing skips mtime checks and re-processes all files.
+    fn force_rebuild(&self) -> bool {
+        false
+    }
 }
