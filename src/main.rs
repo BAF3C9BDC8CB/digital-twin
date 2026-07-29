@@ -9,7 +9,9 @@
 //!    `search`), executes the command and exits.
 
 use clap::{Parser, Subcommand};
-use dt_daemon::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use dt_daemon::domain::traits::{
+    EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
+};
 use dt_daemon::domain::types::{AppConfig, BatchConfig};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -606,6 +608,8 @@ struct ServiceConfig {
     xinference: XInferenceConfig,
     #[serde(default)]
     embed: EmbedRouterConfig,
+    #[serde(default)]
+    hanlp: HanlpConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -676,7 +680,9 @@ struct SqliteConfig {
 
 impl Default for SqliteConfig {
     fn default() -> Self {
-        Self { path: default_sqlite_path() }
+        Self {
+            path: default_sqlite_path(),
+        }
     }
 }
 
@@ -704,11 +710,21 @@ struct SiliconFlowConfig {
     model_llm: String,
 }
 
-fn default_siliconflow_url() -> String { "https://api.siliconflow.cn/v1".to_string() }
-fn default_siliconflow_api_key() -> String { "".to_string() }
-fn default_model_embed() -> String { "BAAI/bge-m3".to_string() }
-fn default_model_reranker() -> String { "BAAI/bge-reranker-v2-m3".to_string() }
-fn default_model_llm() -> String { "Qwen/Qwen3.5-9B".to_string() }
+fn default_siliconflow_url() -> String {
+    "https://api.siliconflow.cn/v1".to_string()
+}
+fn default_siliconflow_api_key() -> String {
+    "".to_string()
+}
+fn default_model_embed() -> String {
+    "BAAI/bge-m3".to_string()
+}
+fn default_model_reranker() -> String {
+    "BAAI/bge-reranker-v2-m3".to_string()
+}
+fn default_model_llm() -> String {
+    "Qwen/Qwen3.5-9B".to_string()
+}
 
 /// XInference service configuration from config.yaml `services.xinference`.
 #[derive(Debug, Deserialize, Default)]
@@ -744,9 +760,26 @@ struct EmbedRouterConfig {
     llm_provider: String,
 }
 
-fn default_embed_provider() -> String { "siliconflow".to_string() }
-fn default_rerank_provider() -> String { "siliconflow".to_string() }
-fn default_llm_provider() -> String { "siliconflow".to_string() }
+fn default_embed_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_rerank_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_llm_provider() -> String {
+    "siliconflow".to_string()
+}
+
+/// HanLP service configuration from config.yaml `services.hanlp`.
+#[derive(Debug, Deserialize, Default)]
+struct HanlpConfig {
+    /// Base URL (e.g. http://localhost:8765).
+    #[serde(default)]
+    url: String,
+    /// API key (optional, typically empty for local).
+    #[serde(default)]
+    api_key: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct ProjectGroup {
@@ -764,16 +797,16 @@ fn load_config() -> Option<DaemonConfig> {
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
             Ok(cfg) => {
-                tracing::info!("loaded config from {}", path.display());
+                tracing::info!("已加载配置: {}", path.display());
                 Some(cfg)
             }
             Err(e) => {
-                tracing::warn!("failed to parse {}: {e}", path.display());
+                tracing::warn!("解析配置失败 {}: {e}", path.display());
                 None
             }
         },
         Err(e) => {
-            tracing::warn!("failed to read {}: {e}", path.display());
+            tracing::warn!("读取配置文件失败 {}: {e}", path.display());
             None
         }
     }
@@ -845,17 +878,15 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(
-        &bolt_url, user, password,
-    )
-    .await
+    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
+        .await
     {
         Ok(client) => {
-            tracing::info!("Memgraph connected: {}", bolt_url);
+            tracing::info!("Memgraph 已连接: {}", bolt_url);
             Some(Arc::new(client) as Arc<dyn GraphRepository>)
         }
         Err(e) => {
-            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph 连接失败 (将使用 noop): {}", e);
             None
         }
     }
@@ -868,14 +899,14 @@ async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::Hook
     let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
     match dt_daemon::application::hooks::HookRegistry::from_file(&path) {
         Ok(registry) => {
-            tracing::info!("HookRegistry loaded from {}", path.display());
+            tracing::info!("HookRegistry 已加载: {}", path.display());
             Some(Arc::new(dt_daemon::application::hooks::HookEngine::new(
                 Arc::new(registry),
                 graph,
             )))
         }
         Err(e) => {
-            tracing::warn!("failed to load {}: {e}", path.display());
+            tracing::warn!("加载 HookRegistry 失败 {}: {e}", path.display());
             None
         }
     }
@@ -888,17 +919,15 @@ async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::Memgr
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(
-        &bolt_url, user, password,
-    )
-    .await
+    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
+        .await
     {
         Ok(client) => {
-            tracing::info!("Memgraph connected: {}", bolt_url);
+            tracing::info!("Memgraph 已连接: {}", bolt_url);
             Some(client)
         }
         Err(e) => {
-            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph 连接失败 (将使用 noop): {}", e);
             None
         }
     }
@@ -917,12 +946,12 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
 
     match dt_daemon::infrastructure::qdrant::QdrantClient::connect(qdrant_uri).await {
         Ok(client) => {
-            tracing::info!("Qdrant connected: {}", qdrant_uri);
+            tracing::info!("Qdrant 已连接: {}", qdrant_uri);
             let repo = dt_daemon::infrastructure::qdrant::QdrantRepo::new(client);
             Some(Arc::new(repo) as Arc<dyn dt_daemon::domain::traits::VectorRepository>)
         }
         Err(e) => {
-            tracing::warn!("Qdrant connection failed (will use noop): {}", e);
+            tracing::warn!("Qdrant 连接失败 (将使用 noop): {}", e);
             None
         }
     }
@@ -935,40 +964,56 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
 /// configured provider per capability.
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
     let cfg = load_config();
-    let (sf_url, sf_key, sf_embed, sf_rerank, sf_llm,
-         xi_url, xi_key, xi_embed, xi_rerank, xi_llm,
-         emb_provider, rerank_provider, llm_provider) = cfg
+    let (
+        sf_url,
+        sf_key,
+        sf_embed,
+        sf_rerank,
+        sf_llm,
+        xi_url,
+        xi_key,
+        xi_embed,
+        xi_rerank,
+        xi_llm,
+        emb_provider,
+        rerank_provider,
+        llm_provider,
+    ) = cfg
         .as_ref()
-        .map(|c| (
-            c.services.siliconflow.url.clone(),
-            c.services.siliconflow.api_key.clone(),
-            c.services.siliconflow.model_embed.clone(),
-            c.services.siliconflow.model_reranker.clone(),
-            c.services.siliconflow.model_llm.clone(),
-            c.services.xinference.url.clone(),
-            c.services.xinference.api_key.clone(),
-            c.services.xinference.model_embed.clone(),
-            c.services.xinference.model_reranker.clone(),
-            c.services.xinference.model_llm.clone(),
-            c.services.embed.embed_provider.clone(),
-            c.services.embed.rerank_provider.clone(),
-            c.services.embed.llm_provider.clone(),
-        ))
-        .unwrap_or_else(|| (
-            default_siliconflow_url(),
-            default_siliconflow_api_key(),
-            default_model_embed(),
-            default_model_reranker(),
-            default_model_llm(),
-            String::new(),  // xinference url
-            String::new(),  // xinference api_key
-            String::new(),  // xinference model_embed
-            String::new(),  // xinference model_reranker
-            String::new(),  // xinference model_llm
-            default_embed_provider(),
-            default_rerank_provider(),
-            default_llm_provider(),
-        ));
+        .map(|c| {
+            (
+                c.services.siliconflow.url.clone(),
+                c.services.siliconflow.api_key.clone(),
+                c.services.siliconflow.model_embed.clone(),
+                c.services.siliconflow.model_reranker.clone(),
+                c.services.siliconflow.model_llm.clone(),
+                c.services.xinference.url.clone(),
+                c.services.xinference.api_key.clone(),
+                c.services.xinference.model_embed.clone(),
+                c.services.xinference.model_reranker.clone(),
+                c.services.xinference.model_llm.clone(),
+                c.services.embed.embed_provider.clone(),
+                c.services.embed.rerank_provider.clone(),
+                c.services.embed.llm_provider.clone(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                default_siliconflow_url(),
+                default_siliconflow_api_key(),
+                default_model_embed(),
+                default_model_reranker(),
+                default_model_llm(),
+                String::new(), // xinference url
+                String::new(), // xinference api_key
+                String::new(), // xinference model_embed
+                String::new(), // xinference model_reranker
+                String::new(), // xinference model_llm
+                default_embed_provider(),
+                default_rerank_provider(),
+                default_llm_provider(),
+            )
+        });
 
     let cfg = dt_daemon::infrastructure::embedder::ProviderConfig {
         siliconflow_url: sf_url,
@@ -982,11 +1027,29 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
         xinference_model_reranker: xi_rerank,
         xinference_model_llm: xi_llm,
         embed_provider: emb_provider,
-        rerank_provider: rerank_provider,
-        llm_provider: llm_provider,
+        rerank_provider,
+        llm_provider,
     };
 
-    Some(dt_daemon::infrastructure::embedder::create_embed_router(cfg))
+    Some(dt_daemon::infrastructure::embedder::create_embed_router(
+        cfg,
+    ))
+}
+
+/// Connect to the HanLP local NLP service from config.yaml.
+async fn connect_hanlp() -> Option<Arc<dt_daemon::infrastructure::hanlp::HanlpClient>> {
+    let cfg = load_config()?;
+    let url = cfg.services.hanlp.url.clone();
+    let api_key = cfg.services.hanlp.api_key.clone();
+    if url.is_empty() {
+        tracing::info!("HanLP 未配置 — 跳过");
+        return None;
+    }
+    let client = Arc::new(dt_daemon::infrastructure::hanlp::HanlpClient::new(
+        url, api_key,
+    ));
+    tracing::info!("HanLP 客户端已创建");
+    Some(client)
 }
 
 /// Build an optional KgBridge for auto-syncing nodes to Qdrant after writes.
@@ -1027,18 +1090,20 @@ async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::Snapsho
 
     match dt_daemon::infrastructure::sqlite::SqliteRepo::open(&db_path) {
         Ok(repo) => {
-            tracing::info!("SQLite snapshot store connected: {db_path}");
+            tracing::info!("SQLite 快照存储已连接: {db_path}");
             Some(Arc::new(repo) as Arc<dyn dt_daemon::domain::traits::SnapshotRepository>)
         }
         Err(e) => {
-            tracing::warn!("SQLite snapshot store unavailable: {e} — incremental builds disabled");
+            tracing::warn!("SQLite 快照存储不可用: {e} — 增量构建已禁用");
             None
         }
     }
 }
 
 /// Build a resolved K8sSyncConfig from config.yaml services.k8s.
-fn resolve_k8s_config(config: &Option<DaemonConfig>) -> Option<dt_daemon::application::sync::k8s::K8sSyncConfig> {
+fn resolve_k8s_config(
+    config: &Option<DaemonConfig>,
+) -> Option<dt_daemon::application::sync::k8s::K8sSyncConfig> {
     config.as_ref().and_then(|c| {
         let k8s = &c.services.k8s;
         let server = k8s.server.as_deref().unwrap_or("");
@@ -1070,14 +1135,21 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         // ---- CLI mode: dt clean ----
-        Some(Commands::Clean { confirm, dry_run, targets, test }) => {
+        Some(Commands::Clean {
+            confirm,
+            dry_run,
+            targets,
+            test,
+        }) => {
             // Handle --test: clean test- prefixed data (fail-fast, no Noop fallback)
             if test {
                 // a. Connect to real Memgraph — fail fast if unavailable
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
-                        eprintln!("error: Memgraph unavailable — clean --test requires real backends");
+                        eprintln!(
+                            "error: Memgraph unavailable — clean --test requires real backends"
+                        );
                         std::process::exit(1);
                     }
                 };
@@ -1086,7 +1158,9 @@ async fn main() -> anyhow::Result<()> {
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
-                        eprintln!("error: Qdrant unavailable — clean --test requires real backends");
+                        eprintln!(
+                            "error: Qdrant unavailable — clean --test requires real backends"
+                        );
                         std::process::exit(1);
                     }
                 };
@@ -1095,8 +1169,12 @@ async fn main() -> anyhow::Result<()> {
                 let snapshot = connect_snapshot().await;
 
                 let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
-                    &graph, &vector, snapshot.as_ref(),
-                ).await.map_err(|e| anyhow::anyhow!(e))?;
+                    &graph,
+                    &vector,
+                    snapshot.as_ref(),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
                 println!("Cleaned {} test- nodes and collections", deleted);
                 return Ok(());
             }
@@ -1109,14 +1187,20 @@ async fn main() -> anyhow::Result<()> {
             let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_clean(
                 confirm,
-                memgraph.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                memgraph
+                    .as_ref()
+                    .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
             )
             .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt cleanup (tiered cleanup) ----
-        Some(Commands::Cleanup { dry_run, execute, targets }) => {
+        Some(Commands::Cleanup {
+            dry_run,
+            execute,
+            targets,
+        }) => {
             let is_dry_run = dry_run || !execute;
 
             if targets.iter().any(|t| t == "all") {
@@ -1167,7 +1251,11 @@ async fn main() -> anyhow::Result<()> {
                     println!("  Location:   {}", report.location.display());
                     println!(
                         "  Memgraph:   {} ({} bytes)",
-                        if report.targets.memgraph { "✓" } else { "✗" },
+                        if report.targets.memgraph {
+                            "✓"
+                        } else {
+                            "✗"
+                        },
                         report.targets.memgraph_size_bytes,
                     );
                     println!(
@@ -1180,10 +1268,7 @@ async fn main() -> anyhow::Result<()> {
                         if report.targets.sqlite { "✓" } else { "✗" },
                         report.targets.sqlite_size_bytes,
                     );
-                    println!(
-                        "  Duration:   {:.1}s",
-                        report.duration_seconds,
-                    );
+                    println!("  Duration:   {:.1}s", report.duration_seconds,);
                 }
                 BackupAction::List => {
                     println!("=== dt backup list ===");
@@ -1192,10 +1277,7 @@ async fn main() -> anyhow::Result<()> {
                     if entries.is_empty() {
                         println!("No backups found.");
                     } else {
-                        println!(
-                            " {:<12}  {:<10}  {:>8}",
-                            "DATE", "SIZE", "FILES"
-                        );
+                        println!(" {:<12}  {:<10}  {:>8}", "DATE", "SIZE", "FILES");
                         println!(
                             " {:<12}  {:<10}  {:>8}",
                             "------------", "----------", "--------"
@@ -1203,9 +1285,7 @@ async fn main() -> anyhow::Result<()> {
                         for entry in &entries {
                             println!(
                                 " {:<12}  {:>8} B  {:>8}",
-                                entry.date,
-                                entry.total_size_bytes,
-                                entry.file_count,
+                                entry.date, entry.total_size_bytes, entry.file_count,
                             );
                         }
                         println!();
@@ -1219,7 +1299,8 @@ async fn main() -> anyhow::Result<()> {
                 }
                 BackupAction::Verify { date } => {
                     println!("=== dt backup verify {date} ===");
-                    let report = dt_daemon::interfaces::cli::backup::verify_backup_files(&date).await?;
+                    let report =
+                        dt_daemon::interfaces::cli::backup::verify_backup_files(&date).await?;
 
                     println!();
                     if report.all_valid {
@@ -1237,10 +1318,7 @@ async fn main() -> anyhow::Result<()> {
                             &file.expected[..32.min(file.expected.len())],
                         );
                     }
-                    println!(
-                        "  Duration: {:.1}s",
-                        report.duration_seconds,
-                    );
+                    println!("  Duration: {:.1}s", report.duration_seconds,);
                 }
             }
 
@@ -1248,7 +1326,11 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt archive ----
-        Some(Commands::Archive { before, execute, list: list_flag }) => {
+        Some(Commands::Archive {
+            before,
+            execute,
+            list: list_flag,
+        }) => {
             if list_flag {
                 println!("=== dt archive --list ===");
                 let entries = dt_daemon::interfaces::cli::archive::list_archives().await?;
@@ -1256,10 +1338,7 @@ async fn main() -> anyhow::Result<()> {
                 if entries.is_empty() {
                     println!("No archives found.");
                 } else {
-                    println!(
-                        " {:<30}  {:>8}  {:>6}",
-                        "DATE RANGE", "SIZE", "EVENTS"
-                    );
+                    println!(" {:<30}  {:>8}  {:>6}", "DATE RANGE", "SIZE", "EVENTS");
                     println!(
                         " {:<30}  {:>8}  {:>6}",
                         "------------------------------", "--------", "------"
@@ -1267,9 +1346,7 @@ async fn main() -> anyhow::Result<()> {
                     for entry in &entries {
                         println!(
                             " {:<30}  {:>7}B  {:>6}",
-                            entry.date_range,
-                            entry.size_bytes,
-                            entry.events_count,
+                            entry.date_range, entry.size_bytes, entry.events_count,
                         );
                     }
                     println!();
@@ -1280,7 +1357,9 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let dry_run = !execute;
-            let report = dt_daemon::interfaces::cli::archive::run_archive(before.as_deref(), dry_run).await?;
+            let report =
+                dt_daemon::interfaces::cli::archive::run_archive(before.as_deref(), dry_run)
+                    .await?;
 
             if !dry_run {
                 println!();
@@ -1298,7 +1377,9 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Schema(SchemaAction::Init)) => {
             let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_schema_init(
-                memgraph.as_ref().map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                memgraph
+                    .as_ref()
+                    .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
             )
             .await?;
             return Ok(());
@@ -1331,9 +1412,8 @@ async fn main() -> anyhow::Result<()> {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue = embed.map(|e| Arc::new(
-                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
-            ));
+            let queue =
+                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
             let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
             dt_daemon::interfaces::cli::memorize::handle_memorize(
                 knowledge_type,
@@ -1349,17 +1429,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt event ----
-        Some(Commands::Event {
-            hook_name,
-            context,
-        }) => {
+        Some(Commands::Event { hook_name, context }) => {
             let hook_engine = connect_hook_engine().await;
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue = embed.map(|e| Arc::new(
-                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
-            ));
+            let queue =
+                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
             let kg_bridge = build_kg_bridge(graph, vector, queue).await;
             dt_daemon::interfaces::cli::event::handle_event(
                 hook_name,
@@ -1385,20 +1461,11 @@ async fn main() -> anyhow::Result<()> {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue = embed.map(|e| Arc::new(
-                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
-            ));
+            let queue =
+                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
             let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
             dt_daemon::interfaces::cli::learn::handle_learn(
-                task,
-                entities,
-                pattern,
-                pitfalls,
-                decisions,
-                thread_id,
-                success,
-                project,
-                graph,
+                task, entities, pattern, pitfalls, decisions, thread_id, success, project, graph,
                 sync_acc,
             )
             .await?;
@@ -1406,16 +1473,26 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt build ----
-        Some(Commands::Build { path, name, file, full, no_pipeline, test, source }) => {
+        Some(Commands::Build {
+            path,
+            name,
+            file,
+            full,
+            no_pipeline,
+            test,
+            source,
+        }) => {
             // ── dt build --test: run self-contained pipeline integration test ──
             if test {
-                tracing::info!("dt build --test: starting pipeline integration test");
+                tracing::info!("dt build --test: 启动流水线集成测试");
 
                 // a. Connect to real Memgraph — fail fast if unavailable
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
-                        eprintln!("error: Memgraph unavailable — build --test requires real backends");
+                        eprintln!(
+                            "error: Memgraph unavailable — build --test requires real backends"
+                        );
                         std::process::exit(1);
                     }
                 };
@@ -1424,18 +1501,19 @@ async fn main() -> anyhow::Result<()> {
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
-                        eprintln!("error: Qdrant unavailable — build --test requires real backends");
+                        eprintln!(
+                            "error: Qdrant unavailable — build --test requires real backends"
+                        );
                         std::process::exit(1);
                     }
                 };
 
                 // c. Connect to SiliconFlow (fallback to Noop if unavailable — embed quality doesn't affect test validity)
-                let embed: Arc<dyn EmbedService> = connect_embed().await
-                    .unwrap_or_else(|| {
-                        tracing::warn!("SiliconFlow unavailable, using NoopEmbedService");
-                        Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
-                            as Arc<dyn EmbedService>
-                    });
+                let embed: Arc<dyn EmbedService> = connect_embed().await.unwrap_or_else(|| {
+                    tracing::warn!("SiliconFlow 不可用，使用 NoopEmbedService");
+                    Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
+                        as Arc<dyn EmbedService>
+                });
 
                 // d. Connect to real SQLite snapshot store — fail fast if unavailable
                 let snapshot: Arc<dyn SnapshotRepository> = match connect_snapshot().await {
@@ -1458,12 +1536,13 @@ async fn main() -> anyhow::Result<()> {
                     Some("test-pipeline".to_string()),
                     None,  // file
                     false, // full: use incremental strategy (SQLite snapshots → mtime comparison)
-                    true,  // pipeline: ENABLED — same code path as production build (Phase 4 change)
+                    true, // pipeline: ENABLED — same code path as production build (Phase 4 change)
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),
                     Some(snapshot.clone()),
                     BatchConfig::default(),
+                    connect_hanlp().await,
                 )
                 .await?;
 
@@ -1485,7 +1564,7 @@ async fn main() -> anyhow::Result<()> {
             // ── dt build --source knowledge: replace dt kg-sync ──
             if let Some(ref src) = source {
                 if src == "knowledge" {
-                    tracing::info!("dt build --source knowledge: syncing KG nodes to vectors");
+                    tracing::info!("dt build --source knowledge: 同步 KG 节点到向量库");
                     let graph = connect_graph().await;
                     let embed = connect_embed().await;
                     let vector = connect_vector().await;
@@ -1499,14 +1578,19 @@ async fn main() -> anyhow::Result<()> {
                     let embed = embed.unwrap();
                     let vector = vector.unwrap();
 
-                    let queue = Arc::new(
-                        dt_daemon::application::sync::queue::VectorQueue::spawn(embed.clone()),
-                    );
+                    let queue = Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(
+                        embed.clone(),
+                    ));
 
                     let incremental = !full;
                     dt_daemon::interfaces::cli::sync::handle_kg_sync(
-                        incremental, None, false, Some(graph), Some(queue),
-                    ).await?;
+                        incremental,
+                        None,
+                        false,
+                        Some(graph),
+                        Some(queue),
+                    )
+                    .await?;
                     return Ok(());
                 } else {
                     eprintln!("error: unknown source type '{src}'. Supported: knowledge");
@@ -1538,7 +1622,14 @@ async fn main() -> anyhow::Result<()> {
                 let batch_config = cfg.batch.clone();
                 let pipeline = !no_pipeline;
                 dt_daemon::interfaces::cli::build::handle_build_all(
-                    projects, full, pipeline, graph, vector, embed, snapshot, batch_config,
+                    projects,
+                    full,
+                    pipeline,
+                    graph,
+                    vector,
+                    embed,
+                    snapshot,
+                    batch_config,
                 )
                 .await?;
                 return Ok(());
@@ -1568,20 +1659,34 @@ async fn main() -> anyhow::Result<()> {
                 path.expect("--path is required")
             };
 
-            let batch_config = load_config()
-                .map(|c| c.batch)
-                .unwrap_or_default();
+            let batch_config = load_config().map(|c| c.batch).unwrap_or_default();
 
             let pipeline = !no_pipeline;
             dt_daemon::interfaces::cli::build::handle_build(
-                actual_path, name, file, full, pipeline, graph, vector, embed, snapshot, batch_config,
+                actual_path,
+                name,
+                file,
+                full,
+                pipeline,
+                graph,
+                vector,
+                embed,
+                snapshot,
+                batch_config,
+                connect_hanlp().await,
             )
             .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt search ----
-        Some(Commands::Search { query, world, limit, path, project }) => {
+        Some(Commands::Search {
+            query,
+            world,
+            limit,
+            path,
+            project,
+        }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             dt_daemon::interfaces::cli::build::handle_search(
@@ -1596,15 +1701,18 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("dt-daemon CLI: search-kg \"{query}\" --limit {limit}");
             let graph = connect_graph().await;
             let vector = connect_vector().await;
-            dt_daemon::interfaces::cli::build::handle_search_kg(
-                query, limit, graph, vector,
-            )
-            .await?;
+            dt_daemon::interfaces::cli::build::handle_search_kg(query, limit, graph, vector)
+                .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt context ----
-        Some(Commands::Context { task, worlds, max_tokens, thread_id }) => {
+        Some(Commands::Context {
+            task,
+            worlds,
+            max_tokens,
+            thread_id,
+        }) => {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             dt_daemon::interfaces::cli::context::handle_context(
@@ -1615,37 +1723,49 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt plan ----
-        Some(Commands::Plan { task, context, thread_id }) => {
+        Some(Commands::Plan {
+            task,
+            context,
+            thread_id,
+        }) => {
             let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_plan(
-                task, context, thread_id, graph,
-            )
-            .await?;
+            dt_daemon::interfaces::cli::context::handle_plan(task, context, thread_id, graph)
+                .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt domain ----
-        Some(Commands::Domain { name, depth, include_code }) => {
+        Some(Commands::Domain {
+            name,
+            depth,
+            include_code,
+        }) => {
             let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_domain(
-                name, depth, include_code, graph,
-            )
-            .await?;
+            dt_daemon::interfaces::cli::context::handle_domain(name, depth, include_code, graph)
+                .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt history ----
-        Some(Commands::History { task, domain, days, limit }) => {
+        Some(Commands::History {
+            task,
+            domain,
+            days,
+            limit,
+        }) => {
             let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_history(
-                task, domain, days, limit, graph,
-            )
-            .await?;
+            dt_daemon::interfaces::cli::context::handle_history(task, domain, days, limit, graph)
+                .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt dependency ----
-        Some(Commands::Dependency { target, direction, depth, dep_type }) => {
+        Some(Commands::Dependency {
+            target,
+            direction,
+            depth,
+            dep_type,
+        }) => {
             let graph = connect_graph().await;
             dt_daemon::interfaces::cli::context::handle_dependency(
                 target, direction, depth, dep_type, graph,
@@ -1655,17 +1775,30 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt verify ----
-        Some(Commands::Verify { files, check_config, check_db, check_api }) => {
+        Some(Commands::Verify {
+            files,
+            check_config,
+            check_db,
+            check_api,
+        }) => {
             let graph = connect_graph().await;
             dt_daemon::interfaces::cli::context::handle_verify(
-                files, check_config, check_db, check_api, graph,
+                files,
+                check_config,
+                check_db,
+                check_api,
+                graph,
             )
             .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt metrics ----
-        Some(Commands::Metrics { watch, interval, filter }) => {
+        Some(Commands::Metrics {
+            watch,
+            interval,
+            filter,
+        }) => {
             tracing::info!(
                 "dt-daemon CLI: metrics --watch {watch} --interval {interval} --filter {:?}",
                 filter,
@@ -1682,7 +1815,7 @@ async fn main() -> anyhow::Result<()> {
                     println!("  filter: {f}");
                 }
             }
-            tracing::info!("metrics query complete (placeholder)");
+            tracing::info!("metrics 查询完成 (占位符)");
 
             return Ok(());
         }
@@ -1718,16 +1851,26 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt kg-sync ----
-        Some(Commands::KgSync { full, labels, config_chunks }) => {
+        Some(Commands::KgSync {
+            full,
+            labels,
+            config_chunks,
+        }) => {
             eprintln!("⚠️  Deprecated: `dt kg-sync` is deprecated. Use `dt build --source knowledge` instead.");
             eprintln!("   The command still works but will be removed in a future release.");
             let graph = connect_graph().await;
             let embed = connect_embed().await;
-            let queue = embed.map(|e| Arc::new(
-                dt_daemon::application::sync::queue::VectorQueue::spawn(e),
-            ));
+            let queue =
+                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
             let incremental = !full;
-            dt_daemon::interfaces::cli::sync::handle_kg_sync(incremental, labels, config_chunks, graph, queue).await?;
+            dt_daemon::interfaces::cli::sync::handle_kg_sync(
+                incremental,
+                labels,
+                config_chunks,
+                graph,
+                queue,
+            )
+            .await?;
             return Ok(());
         }
 
@@ -1754,21 +1897,60 @@ async fn main() -> anyhow::Result<()> {
             let (action_str, name, description, thread_id, session_id, decision_id) =
                 match action.unwrap_or(ThreadAction::List) {
                     ThreadAction::List => ("list".into(), None, None, None, None, None),
-                    ThreadAction::Get { thread_id } => ("get".into(), None, None, Some(thread_id), None, None),
-                    ThreadAction::Create { name, description } => ("create".into(), Some(name), description, None, None, None),
-                    ThreadAction::Close { thread_id } => ("close".into(), None, None, Some(thread_id), None, None),
-                    ThreadAction::AddSession { thread_id, session_id } => ("add-session".into(), None, None, Some(thread_id), Some(session_id), None),
-                    ThreadAction::AddDecision { thread_id, decision_id } => ("add-decision".into(), None, None, Some(thread_id), None, Some(decision_id)),
+                    ThreadAction::Get { thread_id } => {
+                        ("get".into(), None, None, Some(thread_id), None, None)
+                    }
+                    ThreadAction::Create { name, description } => {
+                        ("create".into(), Some(name), description, None, None, None)
+                    }
+                    ThreadAction::Close { thread_id } => {
+                        ("close".into(), None, None, Some(thread_id), None, None)
+                    }
+                    ThreadAction::AddSession {
+                        thread_id,
+                        session_id,
+                    } => (
+                        "add-session".into(),
+                        None,
+                        None,
+                        Some(thread_id),
+                        Some(session_id),
+                        None,
+                    ),
+                    ThreadAction::AddDecision {
+                        thread_id,
+                        decision_id,
+                    } => (
+                        "add-decision".into(),
+                        None,
+                        None,
+                        Some(thread_id),
+                        None,
+                        Some(decision_id),
+                    ),
                 };
             dt_daemon::interfaces::cli::thread::handle_thread(
-                action_str, name, description, thread_id, session_id, decision_id, graph,
+                action_str,
+                name,
+                description,
+                thread_id,
+                session_id,
+                decision_id,
+                graph,
             )
             .await?;
             return Ok(());
         }
 
         // ---- CLI mode: dt kub ----
-        Some(Commands::Kub { action, namespace, pod, since, output, resource }) => {
+        Some(Commands::Kub {
+            action,
+            namespace,
+            pod,
+            since,
+            output,
+            resource,
+        }) => {
             let config = load_config();
             match resolve_k8s_config(&config) {
                 Some(cfg) => {
@@ -1785,14 +1967,23 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI mode: dt jcli ----
-        Some(Commands::Jcli { action, job, build, limit, params, env }) => {
+        Some(Commands::Jcli {
+            action,
+            job,
+            build,
+            limit,
+            params,
+            env,
+        }) => {
             let config = load_config();
             let jenkins_creds = config.as_ref().and_then(|c| {
                 let j = &c.services.jenkins;
                 let url = j.url.as_deref()?;
                 let user = j.user.as_deref()?;
                 let token = j.token.as_deref()?;
-                if url.is_empty() { return None; }
+                if url.is_empty() {
+                    return None;
+                }
                 Some((url.to_string(), user.to_string(), token.to_string()))
             });
 
@@ -1819,7 +2010,9 @@ async fn main() -> anyhow::Result<()> {
                 let url = j.url.as_deref()?;
                 let user = j.user.as_deref()?;
                 let token = j.token.as_deref()?;
-                if url.is_empty() { return None; }
+                if url.is_empty() {
+                    return None;
+                }
                 Some((url.to_string(), user.to_string(), token.to_string()))
             });
 
@@ -1842,7 +2035,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Daemon { action }) => {
             match action.as_str() {
                 "status" => {
-                    tracing::info!("dt-daemon CLI: daemon status");
+                    tracing::info!("dt-daemon CLI: 守护进程状态");
                     let memgraph = connect_memgraph().await;
                     let qdrant = connect_vector().await;
                     let snapshot = connect_snapshot().await;
@@ -1852,7 +2045,8 @@ async fn main() -> anyhow::Result<()> {
                         qdrant.as_deref().map(|c| c as &dyn VectorRepository),
                         snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
                         embed.as_deref().map(|c| c as &dyn EmbedService),
-                    ).await?;
+                    )
+                    .await?;
                 }
                 _ => {
                     // start — fall through to server mode
@@ -1864,7 +2058,7 @@ async fn main() -> anyhow::Result<()> {
 
         // ---- Server mode (default / dt daemon start) ----
         None => {
-            tracing::info!("dt-daemon starting (server mode)");
+            tracing::info!("dt-daemon 启动中 (服务器模式)");
 
             let config = AppConfig {
                 listen_addr: std::env::var("DT_LISTEN_ADDR")
@@ -1875,18 +2069,18 @@ async fn main() -> anyhow::Result<()> {
             // Listen for Ctrl+C so we can shut down gracefully
             let shutdown = tokio::spawn(async {
                 tokio::signal::ctrl_c().await.ok();
-                tracing::info!("received shutdown signal");
+                tracing::info!("收到关闭信号");
             });
 
             // Run server (blocks until error or explicit shutdown)
             tokio::select! {
                 result = dt_daemon::interfaces::grpc::server::run(config) => {
                     if let Err(e) = result {
-                        tracing::error!("server error: {}", e);
+                        tracing::error!("服务器错误: {}", e);
                     }
                 }
                 _ = shutdown => {
-                    tracing::info!("dt-daemon shutting down");
+                    tracing::info!("dt-daemon 关闭中");
                 }
             }
         }
