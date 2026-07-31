@@ -138,6 +138,13 @@ engine: 一次 execute/文件
 即：**块不独立走管线，而是在 llm 处理器内部循环**；`block_index` 直接取
 `chunk.chunk_index`，Consolidate 据此关联 `doc_chunks` payload 的 `block_index`。
 
+**块级调用的并发策略（默认）**：块级循环**串行**。理由：engine 在 GPU 阶段已按文件
+粒度做 semaphore 并发（`engine.rs:307-315`），多文件的大文档天然互相填满 GPU 容量；
+块内串行实现最简单且块间无数据依赖问题（每块独立抽取）。若日后 profiling 表明"单
+大文档阻塞管线"成为瓶颈，可选升级为**块级有界并发**（如 3）：直接复用
+`infer_client` 内按 in-flight HTTP 请求限流的共享 `Semaphore`
+（`infer_client.rs:83-102`），无需新建并发设施。
+
 ### 5.3 统一产出结构 `ExtractedGraph`
 
 新增 `src/application/knowledge/extract/model.rs`：
@@ -170,13 +177,20 @@ pub struct ExtractedRelation {
     pub head: String,      // 必须等于某实体的 canonical_name
     pub relation: String,  // 规范动词，如 routes_to / depends_on / configured_by
     pub tail: String,
-    pub evidence: String,  // 原文证据句
-    pub confidence: f32,   // 0~1
+    // Option 是必要的：prompt 规则允许"不确定设 null"（§5.4），
+    // serde 把显式 null 反序列化到 String/f32 会直接失败、误触发 §5.5 降级。
+    // Option 字段自动同时容忍"字段缺失"和"显式 null"。
+    pub evidence: Option<String>,
+    pub confidence: Option<f32>,
 }
 ```
 
 LLM 返回词表外的 type 时归一为 `Other`（记录原值到 `aliases`），保证 §6.1 的
 "type 一致"是强约束而不是宽松匹配。
+
+字段为空的消费规则（Consolidate 层归一化时执行）：`confidence.unwrap_or(0.5)`、
+`evidence.unwrap_or_default()`；`canonical_name`/`summary` 为 null 的实体属于无效
+产出，**整条丢弃并记日志**（不误判为降级块）。
 
 ### 5.4 Prompt 重写：`config/prompts/document_with_nlp.yaml`
 
@@ -354,7 +368,19 @@ MERGE (a)-[r:SAME_AS]->(b)
 
 ### 6.5 实体生命周期（增量构建下的更新/删除）
 
-有意采取**"边随文档走、实体按引用存活"**的策略，而不是无脑只增不删：
+有意采取**"边随文档走、实体按引用存活"**的策略，而不是无脑只增不删。
+
+**触发入口（两个，按事件类型分开）**：
+
+- **文档被修改/新增** → 增量策略的 SHA1 diff 会把它放进 `changed_paths`
+  （`strategy/incremental.rs:74-84`）→ 文档正常进入管线 → **Consolidate 层入口自
+  治**：任何文档开始抽取写入前，先执行本条第 1 点的清除 Cypher，再写入新产物。
+  清除是幂等的（文档首次构建时无旧产物，清除为无操作），因此不需要 strategy 层
+  传任何标记——"进管线即先清后写"。
+- **文档被删除** → 增量策略产出 `deleted_paths`（同处），这些文档**不进管线**，
+  Consolidate 没机会自治 → **由 build 编排层消费 `deleted_paths`**，对其中每个
+  `doc_id` 执行本条第 2 点的删除清理。
+- **FullRebuild**：整库清空前无需逐文档清理（`full_rebuild.rs` 的 wipe 已覆盖）。
 
 1. **文档被修改/重建**：先按溯源精确清除该文档的旧产物，再走正常抽取写入——
    ```cypher
@@ -470,6 +496,11 @@ fn search_knowledge(query, project, limit):
   2. 图扩展: MATCH (e:Entity)-[r:RELATES]-(nb) WHERE e.entity_id IN $seed_ids
             → 1~2 跳邻居和关系边纳入候选（捞回向量漏掉但结构相关的）
             → SAME_AS 邻居视为同一实体（§6.4）
+            → 边去重：RELATES 的 MERGE key 含 doc_id（§6.2），同一
+              (head, rel_type, tail) 可能有多条边（证据来自不同文档）。
+              候选集按 (head, rel_type, tail) 去重，保留 confidence 最高
+              的一条，其余边的 evidence 聚合为该条的补充证据——避免同一
+              关系重复计数、挤占 limit 名额
   3. 重排:  bge-reranker-v2-m3 对 (query, 候选 name+summary) 打分
             （rerank_provider 配置已存在）
   4. 融合:  语义分 + 图距离衰减 + rerank 分 → 排序截断 limit
@@ -549,7 +580,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | 步骤 | 内容 | 验证方式 |
 |------|------|----------|
 | **S1** | 定义 `ExtractedGraph` + 重写 `document_with_nlp.yaml`；llm_client 解析 JSON | 固定 ≥5 个真实文档的测试集，可量化门槛：① JSON 解析成功率 ≥90%（含一次重试）；② relation 的 head/tail 在 entities 中的覆盖率 ≥95%；③ 抽 20 个实体人工核对，准确率 ≥80% |
-| **S2** | 重写 `store.rs` 为 Consolidate 层：两级消歧 + 写 Entity/RELATES/MENTIONED_IN + 双写向量（含 I1-I5 改进）；建 `entity_id` 索引 | `dt build --test` 对 `test/expected.json` 验证；Cypher 抽查 Entity/RELATES；Qdrant 抽查 payload |
+| **S2** | 重写 `store.rs` 为 Consolidate 层：两级消歧 + 写 Entity/RELATES/MENTIONED_IN + 双写向量（含 I1-I5 改进）；建 `entity_id` 索引 + 唯一约束 | **同步更新 `test/expected.json`**：加入 Entity 节点数、RELATES 边数、MENTIONED_IN 边数的预期值和关键字段抽样断言——不更新的话 `dt build --test` 只能回归旧字段，验证不到新功能。然后 `dt build --test` 全绿；Cypher 抽查 Entity/RELATES；Qdrant 抽查 payload |
 | **S3** | `process_documents` 接入 pipeline engine | `dt build --test` 全量；对比同一文档重复 build 的实体去重效果 |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支 + learn 停用 | `cargo build && cargo test && cargo clippy --all-targets` 全绿 |
 | **S5**（延后） | 检索层：`search_knowledge` 重写为向量召回 + 图扩展 + rerank | 语义查询命中非字面匹配实体（如"渠道怎么路由"命中 ifCode） |
@@ -573,3 +604,13 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
    无损失）。
 7. **实体只增不删的长期健康**：已定义生命周期策略（§6.5）：边随文档走、实体按引用存
    活、孤儿周期清理，非无脑累积。
+8. **`Other` 类型的同名误并（有界低频风险）**：`entity_id` 命名空间含 type，但 `Other`
+   无区分度——两个语义不同、规范名恰好相同的实体若都被归为 `Other`，会在**第一级精
+   确 MERGE** 被错误合并。对策（明确不采用某些方案，理由如下）：
+   - **不采用**"提高 Other 的 cos 阈值"：碰撞发生在第一级（名字精确匹配），与第二级
+     向量阈值无关，药不对症。
+   - **不采用** `entity_id` 追加 `hash(summary)`：同一实体两次提及的 summary 措辞略不
+     同就会产生不同 ID，合法去重被整体破坏，代价大于收益。
+   - **采用**的缓解：① prompt 引导尽量归入具体词表类型、把 `Other` 当最后手段（压低
+     `Other` 占比即压低碰撞面）；② 出错后走 §6.4 人工 Cypher 纠正（拆点、重建边）。
+     该风险频率低、后果可逆，接受。
