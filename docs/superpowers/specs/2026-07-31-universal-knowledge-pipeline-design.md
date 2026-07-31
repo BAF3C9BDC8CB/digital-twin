@@ -129,8 +129,11 @@ processor 按优先级顺序各执行一次）。chunk processor 一次产出**�
 ```
 engine: 一次 execute/文件
   chunk 处理器 → outputs["chunk"]: { doc_id, chunks[{chunk_index, text, ...}] }
-  hanlp 处理器 → 逐块跑（或全文跑一次后按块切分，实现时择一，默认逐块）
+  hanlp 处理器 → 逐块跑，输出与 chunks 按 block_index 对齐：
+                 outputs["hanlp"]: hanlp_blocks[{block_index, entities, keywords}]
   llm 处理器   → 遍历 chunks[]，每块一次 LLM 调用
+                 → 渲染第 i 块 prompt 时注入 hanlp_blocks[i] 的候选
+                  （不是全文候选——块级对齐是本数据流的硬约束）
                  → 每块产出一个 ExtractedGraph { doc_id, block_index = chunk_index, ... }
   store/consolidate → 消费 Vec<ExtractedGraph>，逐块落库
 ```
@@ -244,6 +247,12 @@ prompt: |
 （`prompt.rs:143`），不会报错。现有 yaml 写的 `${hanlp.entities}` 今天就是坏的——
 HanLP 候选从未真正进入 prompt。重写时一并修正，实现者不要再踩。
 
+**`build_render_context` 同步改为按块渲染**：现在它把整个 hanlp 输出整体注入；新数
+据流下每次渲染第 i 块，上下文为
+`{ file_path, file_text: chunks[i].text, entities: hanlp_blocks[i].entities,
+keywords: hanlp_blocks[i].keywords }`（§5.2 块级对齐）。`file_text` 也从全文改为块
+文本——这同时把单次 LLM 调用的 token 消耗降到块级。
+
 ### 5.5 LLM 响应解析与降级
 
 LLM 响应不再当整块文本，而是**解析 JSON → `ExtractedGraph`**。解析失败时：
@@ -268,12 +277,22 @@ LLM 逐块抽取会产出大量重复实体（同一"支付网关"出现在 10 �
 let canonical = normalize(&entity.canonical_name); // 小写、trim、全半角统一
 
 // 第二级（准）：向量近邻消歧，复用 embed 服务
-let hits = qdrant.search("kg_nodes", embed(canonical + summary),
+let hits = qdrant.search("kg_nodes", embed(&entity_embed_text(&entity)),
                          k = 5, filter = project);
 if hits.top.score > 0.92 && type 一致 {
     // MERGE 到已有 entity_id，合并 aliases / summary
 } else {
     // 新建 entity_id = dt://entity/{project}/{type}/{canonical}
+}
+```
+
+**消歧查询与入库存储必须使用同一个文本构造函数**（硬约束）：
+
+```rust
+/// 消歧查询（§6.1）和实体入库（§6.3）共用，禁止两处各写各的拼接。
+/// 构造方式不同的向量在同一空间算余弦会有系统性偏差，0.92 阈值失真。
+fn entity_embed_text(e: &ExtractedEntity) -> String {
+    format!("{}。{}。关键词: {}", e.canonical_name, e.summary, e.keywords.join(" "))
 }
 ```
 
@@ -309,11 +328,14 @@ MERGE (d:Document {doc_id: $doc_id})
                 d.doc_type = $doc_type
 
 // 1. 实体：以稳定业务键为主键
+//    aliases 必须去重合并（REDUCE 实现）——无条件 append 会让同一 mention
+//    在每次增量 build 重复入列，aliases 随构建次数线性膨胀
 MERGE (e:Entity {entity_id: $entity_id})
   ON CREATE SET e.name = $name, e.type = $type, e.summary = $summary,
                 e.keywords = $keywords, e.project = $project, e.aliases = [$mention]
   ON MATCH  SET e.summary = $summary,
-                e.aliases = coalesce(e.aliases, []) + $new_aliases
+                e.aliases = REDUCE(acc = coalesce(e.aliases, []), x IN $new_aliases |
+                              CASE WHEN x IN acc THEN acc ELSE acc + x END)
 
 // 2. 关系：单一 RELATES 类型 + type 属性（Memgraph 不支持参数化边类型，务实取舍）
 //    r.doc_id 是边级溯源：增量重建时按它精确清除该文档产生的旧关系（§6.5）
@@ -337,7 +359,7 @@ CREATE CONSTRAINT ON (e:Entity) ASSERT e.entity_id IS UNIQUE;  // 并发安全�
 
 ```
 Entity MERGE 成功
-  → embed(text = canonical_name + summary + keywords.join(" "))
+  → embed(text = entity_embed_text(entity))   // 与 §6.1 消歧查询同一构造函数，硬约束
   → upsert kg_nodes（payload 见 §7.2）
   → 图节点标记 _kg_synced_at
 
@@ -345,6 +367,11 @@ Block 处理完成
   → embed(text = block_summary + 原文块)   // 降级块：只用原文块（§5.5）
   → upsert doc_chunks（payload 带 entity_ids，见 §7.3；降级块带 "degraded": true）
 ```
+
+**embed 与 upsert 解耦批量化**：消歧的"边写边查"约束的是 **upsert 落库顺序**，不是
+embed 顺序。因此 embed 可按块批量——`embed_batch(块内全部实体的 entity_embed_text)`
+一次 API 往返拿回全部向量，随后逐实体执行"近邻查询 → 写图 → upsert"。10 块×5 实体
+的文档，实体 embed 从 50 次串行往返压到 10 次批量调用，消歧正确性不受影响。
 
 ### 6.4 `SAME_AS` 边（消歧安全阀，最小定义）
 
@@ -387,6 +414,9 @@ MERGE (a)-[r:SAME_AS]->(b)
    MATCH ()-[r:RELATES {doc_id: $doc_id}]->() DELETE r;
    MATCH ()-[m:MENTIONED_IN]->(:Document {doc_id: $doc_id}) DELETE m;
    ```
+   同时**按 `doc_id` 删除该文档全部旧 `doc_chunks` 向量点**
+   （`delete_by_filter(doc_id=...)`）再写新块——否则块数变少时（10 块→8 块），
+   旧 `block_index` 的点会残留成孤儿，新构建覆盖不到它们。
    （这正是 §6.2 给 `RELATES` 加 `doc_id` 属性的原因。）
 2. **文档被删除**：同上清除边 + 删 `Document` 节点 + 删 `doc_chunks` 向量点。
 3. **实体节点**：只要还存在任何 `MENTIONED_IN` 或被其他实体的 `RELATES` 引用就保留
@@ -492,8 +522,15 @@ GraphRAG 式混合检索：
 fn search_knowledge(query, project, limit):
   1. 召回:  q_vec = embed(query)
             hits = qdrant.search("kg_nodes", q_vec, k = limit*3, filter = project)
-            → top-3K 个 business_id + 语义分
-  2. 图扩展: MATCH (e:Entity)-[r:RELATES]-(nb) WHERE e.entity_id IN $seed_ids
+            → top-3K 个 {business_id, labels} + 语义分
+  2. 图扩展: 种子按键类型分流（硬约束）：kg_nodes 是异构库（§7.2），
+            business_id 对抽取 Entity 是 entity_id，对 learned/manual
+            业务节点是 knowledge_id 等——一律按 entity_id 过滤会让后者
+            全部掉队。按 payload.labels 分组后分别扩展：
+              Entity      → MATCH (e:Entity)-[r:RELATES]-(nb)
+                            WHERE e.entity_id IN $entity_seeds
+              其他业务节点 → 按其各自 id 字段（knowledge_id 等）定位后
+                            取 1 跳邻居
             → 1~2 跳邻居和关系边纳入候选（捞回向量漏掉但结构相关的）
             → SAME_AS 邻居视为同一实体（§6.4）
             → 边去重：RELATES 的 MERGE key 含 doc_id（§6.2），同一
@@ -589,8 +626,10 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 
 ## 12. 风险与注意点
 
-1. **边写边查的性能**：逐实体 upsert + 近邻查询比批量慢。可接受（文档量级小）；若成瓶
-   颈，按文档维度做"块内批量、文档间写穿"的折中，消歧阈值内结果不变。
+1. **边写边查的性能**：embed 已按块批量（§6.3，与 upsert 解耦），网络往返大头已消
+   除；剩余成本是逐实体的"近邻查询 + 写图 + upsert"，可接受（文档量级小）。注意
+   **upsert 不能批量化**——消歧依赖单实体落库后立即可查，批量攒写会破坏正确性，
+   这不是性能上可做的折中。
 2. **并发漏合并**（不是重复节点）：同名实体靠确定性 `entity_id` + 唯一约束 + `MERGE`
    原子性保证安全；真实风险是近重复实体的漏合并窗口，分析与对策见 §6.1。
 3. **LLM JSON 稳定性**：解析失败 → 重试一次 → 降级（`degraded=true`，只进 doc_chunks，
