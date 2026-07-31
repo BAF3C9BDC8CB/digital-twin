@@ -1,35 +1,37 @@
 name: document_with_nlp
-description: "带NLP分析的文档分析 — 提取文档中的实体、关键词和摘要"
+description: "通用文档知识抽取 — 实体(规范名/类型/摘要) + 关系三元组(带证据)"
 system: |
-  你是一个文档分析助手。分析以下文档内容，返回JSON格式结果。
+  你是知识抽取助手。基于给定的 NLP 候选和文档内容，抽取结构化知识，仅输出 JSON。
 
   输出格式：
   {
-    "summary": "文档内容概述（20字以内）",
-    "category": "文档分类（如：技术文档、需求文档、设计文档、操作手册等）",
-    "tags": ["标签1", "标签2"],
+    "block_summary": "本块内容概述（50字以内）",
     "entities": [
-      {"name": "实体名称", "type": "person|org|tech|product|other", "description": "说明"}
+      {"mention": "原文提法", "canonical_name": "规范名",
+       "type": "Service|Channel|Config|Table|Api|Concept|Person|Org|Product|Other",
+       "summary": "一句话说明它是什么/做什么", "keywords": ["关键词"]}
     ],
     "relations": [
-      {"from": "实体A", "to": "实体B", "type": "depends|contains|relates"}
+      {"head": "规范名A", "relation": "规范动词如 routes_to/depends_on/contains",
+       "tail": "规范名B", "evidence": "原文证据句", "confidence": 0.0}
     ]
   }
 
   规则：
-  - 仅输出JSON，不要markdown，不要额外说明
-  - 标签不超过5个
-  - 如果不确定某个字段，设为null
+  - 仅输出 JSON，不要 markdown，不要额外说明
+  - type 必须从给定词表中选择，词表外的归入 Other
+  - canonical_name 用于跨块指同一实体，同一实体必须使用同一个规范名
+  - relation 的 head/tail 必须引用 entities 里的 canonical_name
+  - NLP 候选仅供召回参考，你可确认、合并、补充或丢弃
+  - confidence 反映证据充分程度；不确定的字段设 null
 prompt: |
   文件：${file_path}
 
-  NLP实体：
-  ${hanlp.entities}
+  NLP 实体候选：
+  ${entities}
 
   关键词：
-  ${hanlp.keywords}
+  ${keywords}
 
   文档内容：
   ${file_text}
-
-  提取：entities（实体）、relations（关系）、summary（概述）、tags（标签）、category（分类）

@@ -2,24 +2,27 @@
 //!
 //! Extracted from main.rs to keep the entrypoint lean.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::application::pipeline::config::PipelineConfig;
 use crate::application::pipeline::engine::ProcessorEngine;
-use crate::application::pipeline::infer_client::SiliconFlowChatClient;
+use crate::application::pipeline::infer_client::{
+    ChatClient, SiliconFlowChatClient, XInferenceChatClient,
+};
 use crate::application::pipeline::processors::{
     ChunkProcessor, HanlpClientProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
 };
 use crate::application::pipeline::prompt::PromptRegistry;
 use crate::application::pipeline::registry::ProcessorRegistry;
-use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
-use crate::domain::types::BatchConfig;
 use crate::application::search::fusion::RankedItem;
+use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::types::{BatchConfig, HealthStatus};
+use crate::infrastructure::hanlp::HanlpClient;
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::siliconflow::SiliconFlowClient;
+use sha2::{Digest, Sha256};
 
 /// Handle `dt build` — index a project into the knowledge graph.
 ///
@@ -36,6 +39,7 @@ pub async fn handle_build(
     embed: Option<Arc<dyn EmbedService>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     batch_config: BatchConfig,
+    hanlp: Option<Arc<HanlpClient>>,
 ) -> anyhow::Result<()> {
     // Determine project name
     let project_name = name.unwrap_or_else(|| {
@@ -46,18 +50,18 @@ pub async fn handle_build(
 
     if let Some(f) = &file {
         tracing::info!(
-            "Build: project={}, path={}, file={} (full build; single-file hint unused)",
+            "构建: project={}, path={}, file={} (全量构建; 单文件提示未使用)",
             project_name,
             path.display(),
             f.display(),
         );
     } else {
-        tracing::info!(
-            "Build: project={}, path={}",
-            project_name,
-            path.display(),
-        );
+        tracing::info!("构建: project={}, path={}", project_name, path.display(),);
     }
+
+    // Load pipeline config for embed settings
+    let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let skip_embed = !pipeline_config.processors.embed;
 
     // Execute build via BuildCommand
     let cmd = crate::application::build::builder::BuildCommand {
@@ -65,33 +69,83 @@ pub async fn handle_build(
         project_name: project_name.clone(),
         full,
         verbose: true,
+        skip_embed,
     };
 
     // Clone for pipeline use since BuildDependencies consumes the originals.
-    let pipeline_graph = graph.as_ref().map(|g| Arc::clone(g) as Arc<dyn GraphRepository>);
-    let pipeline_vector = vector.as_ref().map(|v| Arc::clone(v) as Arc<dyn VectorRepository>);
-    let pipeline_embed = embed.as_ref().map(|e| Arc::clone(e) as Arc<dyn EmbedService>);
+    let pipeline_graph = graph
+        .as_ref()
+        .map(|g| Arc::clone(g) as Arc<dyn GraphRepository>);
+    let pipeline_vector = vector
+        .as_ref()
+        .map(|v| Arc::clone(v) as Arc<dyn VectorRepository>);
+    let pipeline_embed = embed
+        .as_ref()
+        .map(|e| Arc::clone(e) as Arc<dyn EmbedService>);
 
-    // Create SiliconFlow client for Phase 2 (LLM analysis)
+    // Clone snapshots for pipeline use (consumed by BuildDependencies)
+    let pipeline_snapshot = snapshot
+        .as_ref()
+        .map(|s| Arc::clone(s) as Arc<dyn SnapshotRepository>);
+
+    // Create Phase 2 LLM client using the configured llm_provider.
+    // Resolves provider (XInference / SiliconFlow) and model name from
+    // pipeline.yaml, matching the same logic in run_pipeline_analysis.
     let siliconflow = {
         use crate::infrastructure::siliconflow::SiliconFlowClient;
-        let api_key = load_siliconflow_api_key();
-        let base_url = load_siliconflow_config_str("url")
-            .or_else(|| std::env::var("SILICONFLOW_BASE_URL").ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
-        let llm_model = load_siliconflow_config_str("model_llm")
-            .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_default();
-        let client = SiliconFlowClient::new(
-            base_url,
-            api_key,
-            String::new(), // embed model — not needed for chat
-            String::new(), // reranker model — not needed for chat
-            llm_model,
-        );
-        Some(Arc::new(client))
+
+        let llm_provider = pipeline_config
+            .providers
+            .as_ref()
+            .map(|p| p.llm_provider.clone())
+            .unwrap_or_else(|| "siliconflow".to_string());
+
+        match llm_provider.as_str() {
+            "xinference" => {
+                let xi_cfg = pipeline_config
+                    .providers
+                    .as_ref()
+                    .and_then(|p| p.xinference.as_ref());
+
+                let base_url = xi_cfg
+                    .map(|c| c.url.as_str())
+                    .unwrap_or("http://localhost:9997/v1")
+                    .to_string();
+                let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
+                let llm_model = xi_cfg
+                    .map(|c| c.model_llm.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("qwen3.5")
+                    .to_string();
+
+                let client = SiliconFlowClient::new(
+                    base_url,
+                    api_key,
+                    String::new(), // embed model — not needed for chat
+                    String::new(), // reranker model — not needed for chat
+                    llm_model,
+                );
+                Some(Arc::new(client))
+            }
+            _ => {
+                // Default: SiliconFlow
+                let base_url = pipeline_config.inference_server.url.clone();
+                let api_key = load_siliconflow_api_key();
+                let llm_model = load_siliconflow_llm_model()
+                    .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_default();
+
+                let client = SiliconFlowClient::new(
+                    base_url,
+                    api_key,
+                    String::new(), // embed model — not needed for chat
+                    String::new(), // reranker model — not needed for chat
+                    llm_model,
+                );
+                Some(Arc::new(client))
+            }
+        }
     };
 
     let deps = crate::application::build::builder::BuildDependencies {
@@ -101,6 +155,7 @@ pub async fn handle_build(
         embed,
         siliconflow,
         batch_config: Some(batch_config),
+        skip_embed,
     };
 
     cmd.run(deps).await?;
@@ -113,10 +168,12 @@ pub async fn handle_build(
             pipeline_graph,
             pipeline_vector,
             pipeline_embed,
+            hanlp.clone(),
+            pipeline_snapshot,
         )
         .await
         {
-            tracing::warn!("Pipeline analysis failed (non-fatal): {e}");
+            tracing::warn!("流水线分析失败 (非致命): {e}");
         }
     }
 
@@ -147,16 +204,17 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
 
     for entry in walk.filter_map(|e| e.ok()) {
         if files.len() >= MAX_PIPELINE_FILES {
-            tracing::info!("Reached pipeline file limit ({MAX_PIPELINE_FILES}) — truncating");
+            tracing::info!("已达到流水线文件限制 ({MAX_PIPELINE_FILES}) — 截断");
             break;
         }
         if !entry.file_type().is_file() {
             continue;
         }
         // Skip common binary / non-text extensions.
-        let skip_ext = ["png", "jpg", "jpeg", "gif", "svg", "ico", "woff2",
-                        "ttf", "eot", "pdf", "zip", "jar", "class", "o", "so",
-                        "dylib", "dll", "exe", "bin", "db", "sqlite"];
+        let skip_ext = [
+            "png", "jpg", "jpeg", "gif", "svg", "ico", "woff2", "ttf", "eot", "pdf", "zip", "jar",
+            "class", "o", "so", "dylib", "dll", "exe", "bin", "db", "sqlite",
+        ];
         if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
             if skip_ext.contains(&ext) {
                 continue;
@@ -167,49 +225,80 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
         }
     }
 
-    tracing::debug!("Collected {} text files from {}", files.len(), root.display());
+    tracing::debug!("从 {} 收集了 {} 个文本文件", files.len(), root.display());
     files
 }
 
-/// Create an embed client for search, reading config from
-/// `~/.config/digital-twin/config.yaml` with env var fallback.
+/// Create an embed client for search, reading config from `config/pipeline.yaml`.
 /// Uses the provider router to support both SiliconFlow and XInference.
 fn create_search_embed_client() -> Arc<dyn EmbedService> {
-    use crate::infrastructure::embedder::{ProviderConfig, create_embed_router};
+    use crate::infrastructure::embedder::{create_embed_router, ProviderConfig};
 
-    // Try to load full config first
-    if let Some(cfg) = load_full_embed_config() {
-        return create_embed_router(cfg);
-    }
+    let pipeline_cfg = match PipelineConfig::load() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            tracing::warn!("无法加载 pipeline.yaml ({e})，使用默认配置");
+            return create_embed_router(ProviderConfig::default_siliconflow());
+        }
+    };
 
-    // Fallback: env-var based SiliconFlow client
-    let api_key = load_siliconflow_api_key();
-    let base_url = std::env::var("SILICONFLOW_BASE_URL")
-        .unwrap_or_else(|_| "https://api.siliconflow.cn/v1".to_string());
-    let embed_model = std::env::var("SILICONFLOW_EMBED_MODEL")
-        .unwrap_or_else(|_| "BAAI/bge-m3".to_string());
-    let reranker_model = std::env::var("SILICONFLOW_RERANKER_MODEL")
-        .unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".to_string());
+    let pcfg = match pipeline_cfg.providers {
+        Some(p) => p,
+        None => {
+            tracing::warn!("pipeline.yaml 中无 providers 配置，使用默认配置");
+            return create_embed_router(ProviderConfig::default_siliconflow());
+        }
+    };
+
+    let sf = pcfg.siliconflow.as_ref();
+    let xi = pcfg.xinference.as_ref();
+
+    let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
     let cfg = ProviderConfig {
-        siliconflow_url: base_url,
-        siliconflow_api_key: api_key,
-        siliconflow_model_embed: embed_model,
-        siliconflow_model_reranker: reranker_model,
-        siliconflow_model_llm: String::new(),
-        xinference_url: String::new(),
-        xinference_api_key: String::new(),
-        xinference_model_embed: String::new(),
-        xinference_model_reranker: String::new(),
-        xinference_model_llm: String::new(),
-        embed_provider: "siliconflow".into(),
-        rerank_provider: "siliconflow".into(),
-        llm_provider: "siliconflow".into(),
+        siliconflow_url: sf
+            .map(|s| s.url.as_str())
+            .unwrap_or("https://api.siliconflow.cn/v1")
+            .to_string(),
+        siliconflow_api_key: sf
+            .and_then(|s| {
+                if s.api_key.is_empty() {
+                    None
+                } else {
+                    Some(s.api_key.clone())
+                }
+            })
+            .unwrap_or_else(api_key_fallback),
+        siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
+        siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
+        siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        xinference_url: xi.map(|s| s.url.as_str()).unwrap_or("").to_string(),
+        xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
+        xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
+        xinference_model_reranker: xi.map(|s| s.model_reranker.clone()).unwrap_or_default(),
+        xinference_model_llm: xi.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        embed_provider: pcfg.embed_provider.clone(),
+        rerank_provider: pcfg.rerank_provider.clone(),
+        llm_provider: pcfg.llm_provider.clone(),
     };
     create_embed_router(cfg)
 }
 
-/// Read the SiliconFlow API key from `~/.config/digital-twin/config.yaml`,
+/// Read the SiliconFlow LLM model name from `config/pipeline.yaml`.
+fn load_siliconflow_llm_model() -> Option<String> {
+    if let Ok(cfg) = PipelineConfig::load() {
+        if let Some(providers) = cfg.providers {
+            if let Some(sf) = providers.siliconflow {
+                if !sf.model_llm.is_empty() {
+                    return Some(sf.model_llm);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Read the SiliconFlow API key from `config/pipeline.yaml`,
 /// falling back to `SILICONFLOW_API_KEY` env var.
 fn load_siliconflow_api_key() -> String {
     // Try env var first
@@ -218,103 +307,17 @@ fn load_siliconflow_api_key() -> String {
             return key;
         }
     }
-    // Try config file
-    load_siliconflow_config_str("api_key").unwrap_or_default()
-}
-
-/// Read a field from `services.siliconflow.<field>` in config.yaml.
-fn load_siliconflow_config_str(field: &str) -> Option<String> {
-    let config_paths = [
-        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("config.yaml")),
-        Some(std::path::PathBuf::from("config/config.yaml")),
-    ];
-    for config_path in config_paths.iter().flatten() {
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            use serde::Deserialize;
-            #[derive(Deserialize)]
-            struct SfCfg {
-                #[serde(default)]
-                url: Option<String>,
-                #[serde(default)]
-                api_key: Option<String>,
-                #[serde(default)]
-                model_embed: Option<String>,
-                #[serde(default)]
-                model_reranker: Option<String>,
-                #[serde(default)]
-                model_llm: Option<String>,
-            }
-            #[derive(Deserialize)]
-            struct Services { siliconflow: Option<SfCfg> }
-            #[derive(Deserialize)]
-            struct Cfg { services: Option<Services> }
-            if let Ok(cfg) = serde_yaml::from_str::<Cfg>(&content) {
-                let sf = cfg.services.and_then(|s| s.siliconflow)?;
-                let val = match field {
-                    "url" => sf.url,
-                    "api_key" => sf.api_key,
-                    "model_embed" => sf.model_embed,
-                    "model_reranker" => sf.model_reranker,
-                    "model_llm" => sf.model_llm,
-                    _ => None,
-                };
-                if let Some(v) = val {
-                    if !v.is_empty() {
-                        return Some(v);
-                    }
+    // Try pipeline.yaml
+    if let Ok(cfg) = PipelineConfig::load() {
+        if let Some(providers) = cfg.providers {
+            if let Some(sf) = providers.siliconflow {
+                if !sf.api_key.is_empty() {
+                    return sf.api_key;
                 }
             }
         }
     }
-    None
-}
-
-/// Load full embed provider config from `~/.config/digital-twin/config.yaml`.
-///
-/// Reads both SiliconFlow and XInference sections to build a
-/// [`ProviderConfig`] for the router factory.
-fn load_full_embed_config() -> Option<crate::infrastructure::embedder::ProviderConfig> {
-    let config_paths = [
-        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("config.yaml")),
-        Some(std::path::PathBuf::from("config/config.yaml")),
-    ];
-    for config_path in config_paths.iter().flatten() {
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            use serde::Deserialize;
-            #[derive(Deserialize)]
-            struct SfCfg { url: Option<String>, api_key: Option<String>, model_embed: Option<String>, model_reranker: Option<String>, model_llm: Option<String> }
-            #[derive(Deserialize, Default)]
-            struct XiCfg { url: Option<String>, api_key: Option<String>, model_embed: Option<String>, model_reranker: Option<String>, model_llm: Option<String> }
-            #[derive(Deserialize, Default)]
-            struct EmbedCfg { embed_provider: Option<String>, rerank_provider: Option<String>, llm_provider: Option<String> }
-            #[derive(Deserialize)]
-            struct Services { siliconflow: Option<SfCfg>, xinference: Option<XiCfg>, embed: Option<EmbedCfg> }
-            #[derive(Deserialize)]
-            struct Cfg { services: Option<Services> }
-            if let Ok(cfg) = serde_yaml::from_str::<Cfg>(&content) {
-                let services = cfg.services?;
-                let sf = services.siliconflow;
-                let xi = services.xinference.unwrap_or_default();
-                let embed = services.embed.unwrap_or_default();
-                return Some(crate::infrastructure::embedder::ProviderConfig {
-                    siliconflow_url: sf.as_ref().and_then(|c| c.url.clone()).unwrap_or_else(|| "https://api.siliconflow.cn/v1".into()),
-                    siliconflow_api_key: sf.as_ref().and_then(|c| c.api_key.clone()).unwrap_or_default(),
-                    siliconflow_model_embed: sf.as_ref().and_then(|c| c.model_embed.clone()).unwrap_or_else(|| "BAAI/bge-m3".into()),
-                    siliconflow_model_reranker: sf.as_ref().and_then(|c| c.model_reranker.clone()).unwrap_or_else(|| "BAAI/bge-reranker-v2-m3".into()),
-                    siliconflow_model_llm: sf.as_ref().and_then(|c| c.model_llm.clone()).unwrap_or_default(),
-                    xinference_url: xi.url.unwrap_or_default(),
-                    xinference_api_key: xi.api_key.unwrap_or_default(),
-                    xinference_model_embed: xi.model_embed.unwrap_or_default(),
-                    xinference_model_reranker: xi.model_reranker.unwrap_or_default(),
-                    xinference_model_llm: xi.model_llm.unwrap_or_default(),
-                    embed_provider: embed.embed_provider.unwrap_or_else(|| "siliconflow".into()),
-                    rerank_provider: embed.rerank_provider.unwrap_or_else(|| "siliconflow".into()),
-                    llm_provider: embed.llm_provider.unwrap_or_else(|| "siliconflow".into()),
-                });
-            }
-        }
-    }
-    None
+    String::new()
 }
 
 /// Run pipeline analysis on a project after the build completes.
@@ -327,52 +330,122 @@ async fn run_pipeline_analysis(
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
+    hanlp: Option<Arc<HanlpClient>>,
+    snapshot: Option<Arc<dyn SnapshotRepository>>,
 ) -> anyhow::Result<()> {
     // ── 1. Load pipeline config — skip if disabled ────────────────
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
     if !pipeline_config.enabled {
-        tracing::info!("Pipeline disabled (config/pipeline.yaml enabled=false)");
+        tracing::info!("流水线已禁用 (config/pipeline.yaml enabled=false)");
         return Ok(());
     }
-    tracing::info!("Pipeline analysis starting for {project_name}...");
+    tracing::info!("正在为 {project_name} 启动流水线分析...");
 
-    // ── 2. Connect to SiliconFlow cloud API ─────────────────────
-    let infer_client = Arc::new(SiliconFlowChatClient::new(
-        "https://api.siliconflow.cn/v1".to_string(),
-        2, // max concurrent — conservatively low for cloud API
-    ));
-    let api_key = std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
+    // ── 2. Check HanLP availability ──────────────────────────────
+    let hanlp_available = if let Some(ref hanlp_client) = hanlp {
+        match hanlp_client.health_check().await {
+            Ok(HealthStatus::Healthy) => {
+                tracing::info!("HanLP 服务器可用");
+                true
+            }
+            _ => {
+                tracing::info!("HanLP 服务器不可达 — 跳过 NLP 处理器");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    // ── 3. Connect to inference server based on llm_provider config ───────
+    let infer_max_concurrent = pipeline_config.inference_server.max_concurrent;
+
+    // Get the LLM provider from config
+    let llm_provider = pipeline_config
+        .providers
+        .as_ref()
+        .map(|p| p.llm_provider.clone())
+        .unwrap_or_else(|| "siliconflow".to_string());
+
+    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = match llm_provider.as_str() {
+        "xinference" => {
+            let xi_cfg = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.xinference.as_ref());
+
+            let base_url = xi_cfg
+                .map(|c| c.url.as_str())
+                .unwrap_or("http://localhost:9997/v1")
+                .to_string();
+            let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
+            let model = xi_cfg
+                .map(|c| c.model_llm.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("qwen3.5")
+                .to_string();
+
+            tracing::info!("使用 XInference LLM: {} @ {}", model, base_url);
+            let client = Arc::new(XInferenceChatClient::new(
+                base_url.to_string(),
+                api_key,
+                infer_max_concurrent,
+            ));
+            (client as Arc<dyn ChatClient>, model.to_string())
+        }
+        _ => {
+            let api_key = load_siliconflow_api_key();
+            let model = load_siliconflow_llm_model()
+                .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Qwen3-14B".to_string());
+
+            // R4: use the SiliconFlow provider URL — not the local
+            // inference_server.url. Empty falls back to the client's default.
+            let sf_url = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.siliconflow.as_ref())
+                .map(|s| s.url.clone())
+                .unwrap_or_default();
+            tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
+            let client = Arc::new(SiliconFlowChatClient::new(sf_url, infer_max_concurrent));
+            (client as Arc<dyn ChatClient>, model)
+        }
+    };
 
     let inference_available = match infer_client.health_check().await {
         Ok(true) => {
-            tracing::info!("Inference server available");
+            tracing::info!("推理服务器可用");
             true
         }
         Ok(false) => {
-            tracing::info!("Inference server not reachable — skipping GPU processors");
+            tracing::info!("推理服务器不可达 — 跳过 GPU 处理器");
             false
         }
         Err(e) => {
-            tracing::warn!("Inference server health check failed: {e} — skipping GPU processors");
+            tracing::warn!("推理服务器健康检查失败: {e} — 跳过 GPU 处理器");
             false
         }
     };
 
-    // ── 3. Build processor registry ───────────────────────────────
+    // ── 4. Build processor registry ───────────────────────────────
     let mut registry = ProcessorRegistry::new();
 
     if pipeline_config.processors.tree_sitter {
         let parser_registry = Arc::new(ParserRegistry::new());
         registry.register(Box::new(TreeSitterProcessor::new(parser_registry)));
-        tracing::info!("  Processor: TreeSitter");
+        tracing::info!("  处理器: TreeSitter");
     }
     if pipeline_config.processors.chunk {
         registry.register(Box::new(ChunkProcessor::default()));
-        tracing::info!("  Processor: Chunk");
+        tracing::info!("  处理器: Chunk");
     }
-    if pipeline_config.processors.hanlp && inference_available {
-        registry.register(Box::new(HanlpClientProcessor::with_client(infer_client.clone())));
-        tracing::info!("  Processor: Hanlp");
+    if pipeline_config.processors.hanlp && hanlp_available {
+        if let Some(ref hanlp_client) = hanlp {
+            registry.register(Box::new(HanlpClientProcessor::new(hanlp_client.clone())));
+            tracing::info!("  处理器: Hanlp");
+        }
     }
     if pipeline_config.processors.llm && inference_available {
         match PromptRegistry::load(Path::new("config/prompts")) {
@@ -380,23 +453,24 @@ async fn run_pipeline_analysis(
                 let llm_config = pipeline_config.llm.unwrap_or_default();
                 registry.register(Box::new(LlmClientProcessor::new(
                     infer_client.clone(),
+                    infer_model.clone(),
                     Arc::new(prompts),
                     llm_config,
                 )));
-                tracing::info!("  Processor: LlmClient");
+                tracing::info!("  处理器: LlmClient");
             }
             Err(e) => {
-                tracing::warn!("  Prompt registry unavailable: {e} — skipping LLM processor");
+                tracing::warn!("  提示词注册表不可用: {e} — 跳过 LLM 处理器");
             }
         }
     }
     if pipeline_config.processors.store {
         registry.register(Box::new(StoreProcessor::new(graph, vector, embed)));
-        tracing::info!("  Processor: Store");
+        tracing::info!("  处理器: Store");
     }
 
     if registry.is_empty() {
-        tracing::info!("No pipeline processors registered — skipping analysis");
+        tracing::info!("没有注册的流水线处理器 — 跳过分析");
         return Ok(());
     }
 
@@ -404,12 +478,181 @@ async fn run_pipeline_analysis(
     let registry = Arc::new(registry);
     let engine = ProcessorEngine::new(registry, pipeline_config.inference_server.max_concurrent);
 
-    let files = collect_project_files(project_path);
-    tracing::info!("Pipeline analyzing {} files...", files.len());
+    let all_files = collect_project_files(project_path);
+    let total_count = all_files.len();
 
-    let analyses = engine.analyze_batch(files, project_name.to_string()).await;
+    // ── Incremental skip: compute file hashes and build per-file, per-step skip map.
+    // Files where ALL steps are already done are excluded entirely.
+    // Files where SOME (but not all) steps are done get a skip map so the
+    // engine only executes the missing processors.
+    // Active step names correspond to the processors we registered above.
+    let active_steps: Vec<&str> = {
+        let mut steps = Vec::new();
+        if pipeline_config.processors.tree_sitter {
+            steps.push("tree_sitter");
+        }
+        if pipeline_config.processors.chunk {
+            steps.push("chunk");
+        }
+        if pipeline_config.processors.hanlp && hanlp_available {
+            steps.push("hanlp");
+        }
+        if pipeline_config.processors.llm && inference_available {
+            steps.push("llm");
+        }
+        if pipeline_config.processors.store {
+            steps.push("store");
+        }
+        steps
+    };
+
+    // (path, text, rel_path, file_hash, steps_to_skip)
+    type FileEntry = (PathBuf, String, String, String, HashSet<String>);
+
+    let (files_to_process, skip_map, skipped_count): (Vec<FileEntry>, _, usize) =
+        if let Some(ref snap) = snapshot {
+            let mut pending: Vec<FileEntry> = Vec::new();
+            let mut skipped = 0usize;
+            let mut skip: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+
+            for (path, text) in all_files {
+                let mut hasher = Sha256::new();
+                hasher.update(text.as_bytes());
+                let file_hash = format!("{:x}", hasher.finalize());
+
+                let rel_path = path
+                    .strip_prefix(project_path)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string();
+
+                let mut steps_to_skip: HashSet<String> = HashSet::new();
+                let mut all_done = true;
+
+                for step in &active_steps {
+                    match snap
+                        .is_step_done(project_name, &rel_path, step, &file_hash)
+                        .await
+                    {
+                        Ok(true) => {
+                            steps_to_skip.insert(step.to_string());
+                        }
+                        Ok(false) => {
+                            all_done = false;
+                        }
+                        Err(e) => {
+                            tracing::warn!("is_step_done failed for {}: {e}", rel_path);
+                            all_done = false;
+                        }
+                    }
+                }
+
+                // ── Dependency cascade: sink steps (store) depend on upstream producers.
+                // If a downstream step needs to run, its upstream producers must also run.
+                // Chain: store → {hanlp, llm} → chunk → tree_sitter
+                {
+                    let active_set: HashSet<&str> = active_steps.iter().copied().collect();
+                    if active_set.contains("store") && !steps_to_skip.contains("store") {
+                        steps_to_skip.remove("hanlp");
+                        steps_to_skip.remove("llm");
+                    }
+                    if active_set.contains("hanlp") && !steps_to_skip.contains("hanlp") {
+                        steps_to_skip.remove("chunk");
+                    }
+                    if active_set.contains("llm") && !steps_to_skip.contains("llm") {
+                        steps_to_skip.remove("chunk");
+                    }
+                    if active_set.contains("chunk") && !steps_to_skip.contains("chunk") {
+                        steps_to_skip.remove("tree_sitter");
+                    }
+                }
+
+                if all_done {
+                    skipped += 1;
+                } else {
+                    // Only record non-empty skip sets in the map
+                    if !steps_to_skip.is_empty() {
+                        skip.insert(path.clone(), steps_to_skip.clone());
+                    }
+                    pending.push((path, text, rel_path, file_hash, steps_to_skip));
+                }
+            }
+            (pending, skip, skipped)
+        } else {
+            // No snapshot → no incremental tracking; process all files
+            let pending: Vec<FileEntry> = all_files
+                .into_iter()
+                .map(|(p, t)| {
+                    let rel = p
+                        .strip_prefix(project_path)
+                        .unwrap_or(&p)
+                        .to_string_lossy()
+                        .to_string();
+                    let mut hasher = Sha256::new();
+                    hasher.update(t.as_bytes());
+                    let hash = format!("{:x}", hasher.finalize());
+                    (p, t, rel, hash, HashSet::new())
+                })
+                .collect();
+            (pending, HashMap::new(), 0)
+        };
+
+    if skipped_count > 0 {
+        let partial_count = files_to_process.len();
+        tracing::info!(
+            "{project_name} 增量跳过 {skipped_count} 个完全未变更文件, \
+             {partial_count} 个文件有步骤待执行",
+        );
+    }
+
+    tracing::info!("流水线正在分析 {} 个文件...", files_to_process.len());
+
+    if files_to_process.is_empty() {
+        tracing::info!("{project_name} 流水线分析完成: 所有文件均为最新 (已跳过 {total_count} 个)");
+        return Ok(());
+    }
+
+    // Extract just the (path, text) pairs for the engine
+    let engine_input: Vec<(PathBuf, String)> = files_to_process
+        .iter()
+        .map(|(p, t, _, _, _)| (p.clone(), t.clone()))
+        .collect();
+
+    // Build skip map for the engine: only pass non-empty skip sets
+    let engine_skip: Option<Arc<HashMap<PathBuf, HashSet<String>>>> = if skip_map.is_empty() {
+        None
+    } else {
+        Some(Arc::new(skip_map))
+    };
+
+    let analyses = engine
+        .analyze_batch(engine_input, project_name.to_string(), engine_skip)
+        .await;
     let success_count = analyses.iter().filter(|a| a.success).count();
     let error_count = analyses.len() - success_count;
+
+    // ── Mark successfully processed files' NEWLY EXECUTED steps as done.
+    // We only mark steps that were NOT in the per-file skip set (i.e. were
+    // actually executed by the engine), so that previously-skipped steps
+    // remain correctly recorded.
+    if let Some(ref snap) = snapshot {
+        for (path, _text, rel_path, file_hash, steps_to_skip) in &files_to_process {
+            let was_success = analyses.iter().any(|a| a.file_path == *path && a.success);
+            if was_success {
+                for step in &active_steps {
+                    if steps_to_skip.contains(*step) {
+                        continue; // already marked from a previous run
+                    }
+                    if let Err(e) = snap
+                        .mark_step_done(project_name, rel_path, step, file_hash)
+                        .await
+                    {
+                        tracing::warn!("mark_step_done failed for {} step {}: {e}", rel_path, step,);
+                    }
+                }
+            }
+        }
+    }
 
     // Log per-file errors at debug level
     for analysis in &analyses {
@@ -422,11 +665,12 @@ async fn run_pipeline_analysis(
     }
 
     tracing::info!(
-        "Pipeline analysis complete for {project_name}: \
-         {} files analyzed, {} OK, {} with errors",
+        "{project_name} 流水线分析完成: \
+         分析了 {} 个文件, {} 个成功, {} 个有错误 (跳过 {} 个未变更)",
         analyses.len(),
         success_count,
         error_count,
+        skipped_count,
     );
 
     Ok(())
@@ -468,6 +712,7 @@ pub async fn handle_build_all(
             embed.clone(),
             snapshot.clone(),
             batch_config.clone(),
+            None, // hanlp — not passed in build-all context
         )
         .await
         {
@@ -520,8 +765,8 @@ pub async fn handle_search(
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "dt-daemon CLI: search --query {query} --world {world} --limit {limit} --project {:?} --path {:?}",
-        project, path.as_ref().map(|p| p.display().to_string()),
+        "搜索: query={query} world={world} limit={limit} project={project:?} path={path:?}",
+        path = path.as_ref().map(|p| p.display().to_string()),
     );
 
     println!("Search: query=\"{query}\" world={world} limit={limit}");
@@ -539,7 +784,9 @@ pub async fn handle_search(
         let mut terms: Vec<String> = Vec::new();
         // Take original query words (extract embedded English terms like "Redis" from "Redis集群")
         for w in extract_ascii_words(q) {
-            if !terms.contains(&w) { terms.push(w); }
+            if !terms.contains(&w) {
+                terms.push(w);
+            }
         }
         // Take English-expanded terms (skip short/noisy ones like "db")
         for c in candidates.iter().skip(1) {
@@ -569,7 +816,9 @@ pub async fn handle_search(
                 let mut qs = vec![query.clone()];
                 let ascii_terms: Vec<String> = extract_ascii_words(&query);
                 for t in &ascii_terms {
-                    if *t != query && !qs.contains(t) { qs.push(t.clone()); }
+                    if *t != query && !qs.contains(t) {
+                        qs.push(t.clone());
+                    }
                 }
                 if !query.to_lowercase().contains("config") {
                     qs.push(format!("{} config", query));
@@ -579,7 +828,7 @@ pub async fn handle_search(
             };
 
             if let Ok(all_vectors) = embed.embed_batch(&queries).await {
-                use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
+                use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
                 let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
                 // Collect collections to search
@@ -590,54 +839,101 @@ pub async fn handle_search(
 
                 for col in &collections {
                     for qvec in &all_vectors {
-                        if let Ok(results) = vec_repo.search(col, qvec.clone(), (limit * 2) as u64).await {
-                            let list: Vec<RankedItem> = results.iter().filter_map(|r| {
-                                let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                if score <= 0.0 { return None; }
-                                let payload = r.get("payload").unwrap_or(r);
-                                if col == "config_chunks" {
-                                    let section = payload.get("section_name").and_then(|v| v.as_str()).unwrap_or("");
-                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                    let data_id = payload.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    Some(RankedItem {
-                                        id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
-                                        title: format!("[{}:{}] ({} keys)",
-                                            data_id, section,
-                                            payload.get("key_count").and_then(|v| v.as_u64()).unwrap_or(0)),
-                                        snippet: text.to_string(),
-                                        source_world: "vector/config_chunks".into(),
-                                        entity_type: "ConfigChunk".into(),
-                                        score,
-                                    })
-                                } else {
-                                    // _semantic collection: only include config sections (#section-), not doc chunks
-                                    let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
-                                    if !doc_id.contains("#section-") {
+                        if let Ok(results) =
+                            vec_repo.search(col, qvec.clone(), (limit * 2) as u64).await
+                        {
+                            let list: Vec<RankedItem> = results
+                                .iter()
+                                .filter_map(|r| {
+                                    let score =
+                                        r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    if score <= 0.0 {
                                         return None;
                                     }
-                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                    let section_name = doc_id.rsplit_once("#section-")
-                                        .map(|(_, name)| name.to_string())
-                                        .unwrap_or_default();
-                                    let file_path = doc_id
-                                        .strip_prefix("dt://doc/")
-                                        .and_then(|s| s.split_once("#section-"))
-                                        .map(|(path, _)| path.to_string())
-                                        .unwrap_or_default();
-                                    // Store full text for keyword filtering; display shows first line
-                                    let display_line = format!("{}  {}", file_path, text.lines().next().unwrap_or("").chars().take(80).collect::<String>());
-                                    let snippet = format!("{}\n{}", text, display_line);
-                                    Some(RankedItem {
-                                        id: r.get("id").map(|v| v.to_string()).unwrap_or_default(),
-                                        title: section_name,
-                                        snippet,
-                                        source_world: format!("vector/{}", col),
-                                        entity_type: "Config".into(),
-                                        score,
-                                    })
-                                }
-                            }).collect();
-                            if !list.is_empty() { rank_lists.push(list); }
+                                    let payload = r.get("payload").unwrap_or(r);
+                                    if col == "config_chunks" {
+                                        let section = payload
+                                            .get("section_name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        let text = payload
+                                            .get("text")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        let data_id = payload
+                                            .get("data_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        Some(RankedItem {
+                                            id: r
+                                                .get("id")
+                                                .map(|v| v.to_string())
+                                                .unwrap_or_default(),
+                                            title: format!(
+                                                "[{}:{}] ({} keys)",
+                                                data_id,
+                                                section,
+                                                payload
+                                                    .get("key_count")
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(0)
+                                            ),
+                                            snippet: text.to_string(),
+                                            source_world: "vector/config_chunks".into(),
+                                            entity_type: "ConfigChunk".into(),
+                                            score,
+                                        })
+                                    } else {
+                                        // _semantic collection: only include config sections (#section-), not doc chunks
+                                        let doc_id = payload
+                                            .get("doc_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        if !doc_id.contains("#section-") {
+                                            return None;
+                                        }
+                                        let text = payload
+                                            .get("text")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        let section_name = doc_id
+                                            .rsplit_once("#section-")
+                                            .map(|(_, name)| name.to_string())
+                                            .unwrap_or_default();
+                                        let file_path = doc_id
+                                            .strip_prefix("dt://doc/")
+                                            .and_then(|s| s.split_once("#section-"))
+                                            .map(|(path, _)| path.to_string())
+                                            .unwrap_or_default();
+                                        // Store full text for keyword filtering; display shows first line
+                                        let display_line = format!(
+                                            "{}  {}",
+                                            file_path,
+                                            text.lines()
+                                                .next()
+                                                .unwrap_or("")
+                                                .chars()
+                                                .take(80)
+                                                .collect::<String>()
+                                        );
+                                        let snippet = format!("{}\n{}", text, display_line);
+                                        Some(RankedItem {
+                                            id: r
+                                                .get("id")
+                                                .map(|v| v.to_string())
+                                                .unwrap_or_default(),
+                                            title: section_name,
+                                            snippet,
+                                            source_world: format!("vector/{}", col),
+                                            entity_type: "Config".into(),
+                                            score,
+                                        })
+                                    }
+                                })
+                                .collect();
+                            if !list.is_empty() {
+                                rank_lists.push(list);
+                            }
                         }
                     }
                 }
@@ -645,19 +941,23 @@ pub async fn handle_search(
                     let mut fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
                     // For config search, filter results by ASCII keyword presence
                     // (vector search returns too many low-score noise hits)
-                    let keywords: Vec<String> = extract_ascii_words(&query).into_iter()
+                    let keywords: Vec<String> = extract_ascii_words(&query)
+                        .into_iter()
                         .map(|w| w.to_lowercase())
                         .filter(|w| w.len() >= 3)
                         .collect();
                     if !keywords.is_empty() {
                         fused.retain(|item| {
-                            let combined = format!("{} {}", item.title, item.snippet).to_lowercase();
+                            let combined =
+                                format!("{} {}", item.title, item.snippet).to_lowercase();
                             keywords.iter().any(|kw| combined.contains(kw))
                         });
                     }
                     let mut seen = std::collections::HashSet::new();
                     for item in &fused {
-                        if !seen.insert(item.title.clone()) { continue; }
+                        if !seen.insert(item.title.clone()) {
+                            continue;
+                        }
                         println!("  [{:.4}] {}", item.score, item.title);
                         // Show the full config content (not just one line)
                         // snippet format for _semantic: "full_text\ndisplay_line"
@@ -665,19 +965,26 @@ pub async fn handle_search(
                         let lines: Vec<&str> = item.snippet.lines().collect();
                         if lines.len() > 1 {
                             // _semantic: lines[0..-1] = full text, lines[-1] = display_line
-                            let content_lines: Vec<&str> = lines[..lines.len()-1].iter().copied().collect();
+                            let content_lines: Vec<&str> =
+                                lines[..lines.len() - 1].iter().copied().collect();
                             let content = content_lines.join("\n");
                             // Show up to 10 lines of YAML content
                             for (i, line) in content_lines.iter().enumerate() {
-                                if i >= 10 { break; }
+                                if i >= 10 {
+                                    break;
+                                }
                                 println!("         {}", line);
                             }
                             if content_lines.len() > 10 {
                                 println!("         ... ({} more lines)", content_lines.len() - 10);
                             }
                             // Show file path from last line
-                            let display = lines[lines.len()-1].trim();
-                            if !display.is_empty() && !content.contains(display.split_once(' ').map(|(p,_)| p).unwrap_or(display)) {
+                            let display = lines[lines.len() - 1].trim();
+                            if !display.is_empty()
+                                && !content.contains(
+                                    display.split_once(' ').map(|(p, _)| p).unwrap_or(display),
+                                )
+                            {
                                 println!("         ── {}", display);
                             }
                         } else {
@@ -699,7 +1006,8 @@ pub async fn handle_search(
             let keywords = get_keywords(&query);
             if !keywords.is_empty() {
                 // Split keywords: original ASCII terms (must-have) vs expanded terms
-                let orig_ascii: Vec<String> = query.split_whitespace()
+                let orig_ascii: Vec<String> = query
+                    .split_whitespace()
                     .filter(|w| w.chars().all(|c| c.is_ascii()))
                     .map(|w| w.to_lowercase())
                     .filter(|w| !w.is_empty())
@@ -710,17 +1018,30 @@ pub async fn handle_search(
                 // - For Chinese-only queries: use all expanded English terms
                 let must_have = if !orig_ascii.is_empty() {
                     // Use original ASCII terms only (e.g. "redis" → spring.redis.*)
-                    format!("({})", orig_ascii.iter().enumerate()
-                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                        .collect::<Vec<_>>().join(" OR "))
+                    format!(
+                        "({})",
+                        orig_ascii
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                            .collect::<Vec<_>>()
+                            .join(" OR ")
+                    )
                 } else {
                     // Chinese-only query: use all expanded English terms
-                    format!("({})", keywords.iter().enumerate()
-                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                        .collect::<Vec<_>>().join(" OR "))
+                    format!(
+                        "({})",
+                        keywords
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                            .collect::<Vec<_>>()
+                            .join(" OR ")
+                    )
                 };
                 let display_limit = if limit > 200 { limit } else { limit.max(50) };
-                let project_filter = project.as_ref()
+                let project_filter = project
+                    .as_ref()
                     .map(|p| format!(" AND n.project = '{}' ", p.replace('\'', "\\'")))
                     .unwrap_or_default();
                 let cypher = format!(
@@ -746,9 +1067,16 @@ pub async fn handle_search(
                                 let ty = row.get("type").and_then(|v| v.as_str()).unwrap_or("?");
                                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                                 // Deduplicate: only show first occurrence of each config name
-                                if !seen_names.insert(name.to_string()) { continue; }
-                                let snippet = row.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
-                                let display = if snippet.is_empty() { String::new() } else { format!(": {}", snippet) };
+                                if !seen_names.insert(name.to_string()) {
+                                    continue;
+                                }
+                                let snippet =
+                                    row.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
+                                let display = if snippet.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(": {}", snippet)
+                                };
                                 println!("  [{ty}] {name}{display}");
                             }
                             return Ok(());
@@ -763,15 +1091,20 @@ pub async fn handle_search(
     }
 
     // ── Shared: RankedItem collection from vector search + keyword ────
-    use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
+    use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
     // ── Vector search path: code / all worlds ───────────────────────
-    let did_vector_search = if (world == "code" || world == "all" || world == "doc" || world == "knowledge") && vector.is_some() {
+    let did_vector_search = if (world == "code"
+        || world == "all"
+        || world == "doc"
+        || world == "knowledge")
+        && vector.is_some()
+    {
         let vec_repo = vector.as_ref().unwrap();
 
         let embed: Option<Arc<dyn EmbedService>> = {
-            tracing::info!("Search embed client created");
+            tracing::info!("搜索嵌入客户端已创建");
             Some(create_search_embed_client())
         };
 
@@ -793,7 +1126,7 @@ pub async fn handle_search(
             let all_query_vectors = match embed_svc.embed_batch(&queries_to_embed).await {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!("Embed failed (non-fatal), falling back to keyword search: {e}");
+                    tracing::warn!("嵌入失败 (非致命), 回退到关键词搜索: {e}");
                     vec![]
                 }
             };
@@ -821,18 +1154,23 @@ pub async fn handle_search(
 
                 for qvec in &all_query_vectors {
                     for col in &collections_to_search {
-                        if let Ok(results) = vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await {
+                        if let Ok(results) =
+                            vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await
+                        {
                             let mut rank_list: Vec<RankedItem> = Vec::new();
                             for r in results {
                                 let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                if score <= 0.0 { continue; }
+                                if score <= 0.0 {
+                                    continue;
+                                }
                                 let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
                                 // For kg_nodes, the Qdrant point `id` is a SHA-256 UUID that does NOT
                                 // match Memgraph's elementId. expand_nodes uses `WHERE elementId(n)
                                 // IN $ids`, so we must carry the real Memgraph elementId from the
                                 // payload here. Other collections keep the Qdrant point id.
                                 let id = if col == "kg_nodes" {
-                                    payload.get("elementId")
+                                    payload
+                                        .get("elementId")
                                         .and_then(|v| v.as_str())
                                         .map(String::from)
                                         .or_else(|| r.get("id").map(|v| v.to_string()))
@@ -840,27 +1178,53 @@ pub async fn handle_search(
                                 } else {
                                     r.get("id").map(|v| v.to_string()).unwrap_or_default()
                                 };
-                                let name = payload.get("name").and_then(|v| v.as_str())
+                                let name = payload
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
                                     .filter(|s| !s.is_empty())
                                     .or_else(|| payload.get("text").and_then(|v| v.as_str()))
-                                    .unwrap_or("").to_string();
-                                let entity_type = payload.get("labels")
-                                    .and_then(|v| v.as_array()).and_then(|arr| arr.first()).and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let entity_type = payload
+                                    .get("labels")
+                                    .and_then(|v| v.as_array())
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|v| v.as_str())
                                     .or_else(|| payload.get("label").and_then(|v| v.as_str()))
                                     .or_else(|| {
                                         // Infer from collection name for code search
-                                        let t = crate::shared::collections::entity_type_from_collection(col);
+                                        let t =
+                                            crate::shared::collections::entity_type_from_collection(
+                                                col,
+                                            );
                                         (t != "?").then_some(t)
                                     })
-                                    .unwrap_or("?").to_string();
-                                let desc = if col == crate::shared::collections::CODE_METHODS || col.ends_with("_methods") {
-                                    let file = payload.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
-                                    let start = payload.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let end = payload.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    .unwrap_or("?")
+                                    .to_string();
+                                let desc = if col == crate::shared::collections::CODE_METHODS
+                                    || col.ends_with("_methods")
+                                {
+                                    let file = payload
+                                        .get("file_path")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let start = payload
+                                        .get("start_line")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+                                    let end = payload
+                                        .get("end_line")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
                                     format!("{}: L{}-{}", file, start, end)
-                                } else if col == crate::shared::collections::DOC_CHUNKS || col.ends_with("_semantic") {
+                                } else if col == crate::shared::collections::DOC_CHUNKS
+                                    || col.ends_with("_semantic")
+                                {
                                     // Doc chunks: extract file path from doc_id, show first line as summary
-                                    let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                    let doc_id = payload
+                                        .get("doc_id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
                                     // Skip config sections (#section-) when searching doc world
                                     if world == "doc" && doc_id.contains("#section-") {
                                         continue;
@@ -870,15 +1234,35 @@ pub async fn handle_search(
                                         .and_then(|s| s.rsplit_once('#'))
                                         .map(|(path, _)| path.to_string())
                                         .unwrap_or_default();
-                                    let first_line = name.lines().next().unwrap_or("").chars().take(80).collect::<String>();
+                                    let first_line = name
+                                        .lines()
+                                        .next()
+                                        .unwrap_or("")
+                                        .chars()
+                                        .take(80)
+                                        .collect::<String>();
                                     format!("{}  {}", chunk_path, first_line)
                                 } else {
-                                    payload.get("description").or(payload.get("summary"))
-                                        .or(payload.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string()
+                                    payload
+                                        .get("description")
+                                        .or(payload.get("summary"))
+                                        .or(payload.get("value"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string()
                                 };
-                                rank_list.push(RankedItem { id, title: name, snippet: desc, source_world: format!("vector/{}", col), entity_type, score });
+                                rank_list.push(RankedItem {
+                                    id,
+                                    title: name,
+                                    snippet: desc,
+                                    source_world: format!("vector/{}", col),
+                                    entity_type,
+                                    score,
+                                });
                             }
-                            if !rank_list.is_empty() { all_rank_lists.push(rank_list); }
+                            if !rank_list.is_empty() {
+                                all_rank_lists.push(rank_list);
+                            }
                         }
                     }
                 }
@@ -894,19 +1278,32 @@ pub async fn handle_search(
         if let Some(graph_ref) = &graph {
             let keywords = get_keywords(&query);
             if !keywords.is_empty() {
-                let orig_ascii: Vec<String> = query.split_whitespace()
+                let orig_ascii: Vec<String> = query
+                    .split_whitespace()
                     .filter(|w| w.chars().all(|c| c.is_ascii()))
                     .map(|w| w.to_lowercase())
                     .filter(|w| !w.is_empty())
                     .collect();
                 let must_have = if !orig_ascii.is_empty() {
-                    format!("({})", orig_ascii.iter().enumerate()
-                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                        .collect::<Vec<_>>().join(" OR "))
+                    format!(
+                        "({})",
+                        orig_ascii
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                            .collect::<Vec<_>>()
+                            .join(" OR ")
+                    )
                 } else {
-                    format!("({})", keywords.iter().enumerate()
-                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                        .collect::<Vec<_>>().join(" OR "))
+                    format!(
+                        "({})",
+                        keywords
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                            .collect::<Vec<_>>()
+                            .join(" OR ")
+                    )
                 };
                 let cypher = format!(
                     "MATCH (n) WHERE (n:ConfigKey OR n:ConfigSection OR n:Server \
@@ -924,17 +1321,36 @@ pub async fn handle_search(
                 }
                 if let Ok(result) = graph_ref.read_query(&cypher, params).await {
                     if let Some(rows) = result.as_array() {
-                        let list: Vec<RankedItem> = rows.iter().map(|row| {
-                            RankedItem {
-                                id: row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                title: row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                snippet: row.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        let list: Vec<RankedItem> = rows
+                            .iter()
+                            .map(|row| RankedItem {
+                                id: row
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                title: row
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                snippet: row
+                                    .get("snippet")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                                 source_world: "graph/config".into(),
-                                entity_type: row.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                                entity_type: row
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?")
+                                    .to_string(),
                                 score: 0.0,
-                            }
-                        }).collect();
-                        if !list.is_empty() { all_rank_lists.push(list); }
+                            })
+                            .collect();
+                        if !list.is_empty() {
+                            all_rank_lists.push(list);
+                        }
                     }
                 }
             }
@@ -961,8 +1377,8 @@ pub async fn handle_search(
             match crate::application::search::expansion::expand_nodes(
                 graph_ref.as_ref(),
                 &element_ids,
-                2,   // depth: 2 hops
-                50,  // limit
+                2,  // depth: 2 hops
+                50, // limit
             )
             .await
             {
@@ -972,7 +1388,10 @@ pub async fn handle_search(
                             .iter()
                             .map(|node| RankedItem {
                                 id: node.element_id.clone(),
-                                title: format!("[{}] {} (via {})", node.label, node.name, node.relation_type),
+                                title: format!(
+                                    "[{}] {} (via {})",
+                                    node.label, node.name, node.relation_type
+                                ),
                                 snippet: String::new(),
                                 source_world: "graph/expansion".into(),
                                 entity_type: node.label.clone(),
@@ -987,7 +1406,7 @@ pub async fn handle_search(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("KG graph expansion failed (non-fatal): {e}");
+                    tracing::warn!("KG 图扩展失败 (非致命): {e}");
                 }
             }
         }
@@ -1002,13 +1421,18 @@ pub async fn handle_search(
         if !fused.is_empty() {
             let mut seen_titles = std::collections::HashSet::new();
             for item in &fused {
-                if !seen_titles.insert(item.title.clone()) { continue; }
+                if !seen_titles.insert(item.title.clone()) {
+                    continue;
+                }
                 if (world == "doc" || world == "all") && item.entity_type == "Doc" {
                     // Document search: show like code — file path + summary line
                     let snippet_line = item.snippet.lines().next().unwrap_or("");
                     println!("  [{:.4}] [Doc] {}", item.score, snippet_line);
                 } else {
-                    println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
+                    println!(
+                        "  [{:.4}] [{}] {}",
+                        item.score, item.entity_type, item.title
+                    );
                     if !item.snippet.is_empty() {
                         if item.entity_type == "Method" {
                             // Method: snippet is "file_path  Class::signature  Lline-line"
@@ -1101,8 +1525,11 @@ pub async fn handle_search(
                             for row in rows {
                                 let ty = row.get("type").and_then(|v| v.as_str()).unwrap_or("?");
                                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                let desc = row.get("desc").or(row.get("source"))
-                                    .and_then(|v| v.as_str()).unwrap_or("");
+                                let desc = row
+                                    .get("desc")
+                                    .or(row.get("source"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
                                 println!("  [{ty}] {name}: {desc}");
                             }
                         }
@@ -1115,7 +1542,7 @@ pub async fn handle_search(
         }
         None => {
             if vector.is_none() {
-                tracing::warn!("Neither graph database nor Qdrant available — no search results");
+                tracing::warn!("图数据库和 Qdrant 都不可用 — 无搜索结果");
                 println!("  (No search backend available)");
             }
         }
@@ -1128,13 +1555,18 @@ pub async fn handle_search(
 fn print_config_chunk_results(items: &[RankedItem]) {
     let mut seen = std::collections::HashSet::new();
     for item in items {
-        if !seen.insert(item.title.clone()) { continue; }
+        if !seen.insert(item.title.clone()) {
+            continue;
+        }
         println!("  [{:.4}] {}", item.score, item.title);
         for line in item.snippet.lines().take(20) {
             println!("         {}", line);
         }
         if item.snippet.lines().count() > 20 {
-            println!("         ... ({} more lines)", item.snippet.lines().count() - 20);
+            println!(
+                "         ... ({} more lines)",
+                item.snippet.lines().count() - 20
+            );
         }
     }
 }
@@ -1151,11 +1583,11 @@ pub async fn handle_search_kg(
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
-    tracing::info!("dt-daemon CLI: search-kg \"{query}\" --limit {limit}");
+    tracing::info!("搜索-KG: \"{query}\" --limit {limit}");
 
     println!("Search-KG: query=\"{query}\" limit={limit}");
 
-    use crate::application::search::fusion::{RankedItem, reciprocal_rank_fusion};
+    use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
 
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 
@@ -1166,31 +1598,47 @@ pub async fn handle_search_kg(
         let candidates = rewriter.rewrite(&query);
         let mut keywords: Vec<String> = Vec::new();
         for w in extract_ascii_words(&query) {
-            if !keywords.contains(&w) { keywords.push(w); }
+            if !keywords.contains(&w) {
+                keywords.push(w);
+            }
         }
         for c in candidates.iter().skip(1) {
             if c.chars().all(|ch| ch.is_ascii()) {
                 for word in c.split_whitespace() {
                     let w = word.to_lowercase();
                     // Skip short/noisy expanded terms (e.g. "db" matches too much)
-                    if w.len() >= 3 && !keywords.contains(&w) { keywords.push(w); }
+                    if w.len() >= 3 && !keywords.contains(&w) {
+                        keywords.push(w);
+                    }
                 }
             }
         }
         keywords.truncate(5);
 
         if !keywords.is_empty() {
-                let orig_ascii: Vec<String> = extract_ascii_words(&query);
+            let orig_ascii: Vec<String> = extract_ascii_words(&query);
             // Strategy: if query has ASCII words, use only them (expanded terms
             // like "url"/"host" are too broad). Chinese-only queries use expanded.
             let must_have = if !orig_ascii.is_empty() {
-                format!("({})", orig_ascii.iter().enumerate()
-                    .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                    .collect::<Vec<_>>().join(" OR "))
+                format!(
+                    "({})",
+                    orig_ascii
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                        .collect::<Vec<_>>()
+                        .join(" OR ")
+                )
             } else {
-                format!("({})", keywords.iter().enumerate()
-                    .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                    .collect::<Vec<_>>().join(" OR "))
+                format!(
+                    "({})",
+                    keywords
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
+                        .collect::<Vec<_>>()
+                        .join(" OR ")
+                )
             };
             let cypher = format!(
                 "MATCH (n) WHERE (n:ConfigKey OR n:ConfigSection OR n:Server OR n:Database \
@@ -1202,7 +1650,8 @@ pub async fn handle_search_kg(
                         coalesce(n.value, n.summary, n.description, '') AS snippet \
                  ORDER BY size(n.name) \
                  LIMIT {}",
-                must_have, (limit * 3).max(30)
+                must_have,
+                (limit * 3).max(30)
             );
             let mut params: HashMap<String, serde_json::Value> = HashMap::new();
             for (i, k) in keywords.iter().enumerate() {
@@ -1211,17 +1660,36 @@ pub async fn handle_search_kg(
             match graph_ref.read_query(&cypher, params).await {
                 Ok(result) => {
                     if let Some(rows) = result.as_array() {
-                        let list: Vec<RankedItem> = rows.iter().map(|row| {
-                            RankedItem {
-                                id: row.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                title: row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                                snippet: row.get("snippet").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        let list: Vec<RankedItem> = rows
+                            .iter()
+                            .map(|row| RankedItem {
+                                id: row
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                title: row
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                snippet: row
+                                    .get("snippet")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
                                 source_world: "graph".into(),
-                                entity_type: row.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                                entity_type: row
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?")
+                                    .to_string(),
                                 score: 0.0,
-                            }
-                        }).collect();
-                        if !list.is_empty() { all_rank_lists.push(list); }
+                            })
+                            .collect();
+                        if !list.is_empty() {
+                            all_rank_lists.push(list);
+                        }
                     }
                 }
                 Err(e) => tracing::warn!("Search-KG graph query failed: {e}"),
@@ -1251,49 +1719,86 @@ pub async fn handle_search_kg(
                     ];
                     for col in &vector_collections {
                         for qvec in &all_vectors {
-                            if let Ok(results) = vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await {
+                            if let Ok(results) =
+                                vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await
+                            {
                                 let mut rank_list: Vec<RankedItem> = Vec::new();
                                 for r in results {
-                                    let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                    if score <= 0.0 { continue; }
-                                    let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
+                                    let score =
+                                        r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    if score <= 0.0 {
+                                        continue;
+                                    }
+                                    let payload =
+                                        r.get("payload").or(r.get("result")).unwrap_or(&r);
                                     let id = r.get("id").map(|v| v.to_string()).unwrap_or_default();
                                     // For doc_chunks: extract file path from doc_id; for kg_nodes: use name as title
-                                    let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                    let text =
+                                        payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
                                     // Unified entity_type: prefer labels[] (kg_nodes), then doc_type, then infer from collection
-                                    let label = payload.get("labels").and_then(|v| v.as_array())
-                                        .and_then(|arr| arr.first()).and_then(|v| v.as_str())
+                                    let label = payload
+                                        .get("labels")
+                                        .and_then(|v| v.as_array())
+                                        .and_then(|arr| arr.first())
+                                        .and_then(|v| v.as_str())
                                         .or_else(|| payload.get("label").and_then(|v| v.as_str()))
-                                        .or_else(|| payload.get("doc_type").and_then(|v| v.as_str()))
+                                        .or_else(|| {
+                                            payload.get("doc_type").and_then(|v| v.as_str())
+                                        })
                                         .unwrap_or_else(|| {
-                                            if col == "doc_chunks" || col == crate::shared::collections::DOC_CHUNKS {
+                                            if col == "doc_chunks"
+                                                || col == crate::shared::collections::DOC_CHUNKS
+                                            {
                                                 "Doc"
                                             } else if col == "kg_nodes" {
                                                 "KG"
                                             } else {
                                                 "?"
                                             }
-                                        }).to_string();
+                                        })
+                                        .to_string();
 
                                     // Build title and snippet based on entity type
-                                    let (name, desc) = if col == "doc_chunks" || col == crate::shared::collections::DOC_CHUNKS {
+                                    let (name, desc) = if col == "doc_chunks"
+                                        || col == crate::shared::collections::DOC_CHUNKS
+                                    {
                                         // Doc chunks: extract file path from doc_id, show path + first line
-                                        let doc_id = payload.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                                        let doc_id = payload
+                                            .get("doc_id")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
                                         let chunk_path = doc_id
                                             .strip_prefix("dt://doc/")
                                             .and_then(|s| s.rsplit_once('#'))
                                             .map(|(path, _)| path.to_string())
                                             .unwrap_or_default();
-                                        let first_line: String = text.lines().next().unwrap_or("").chars().take(80).collect();
-                                        let title = if first_line.is_empty() { chunk_path.clone() } else { first_line.clone() };
+                                        let first_line: String = text
+                                            .lines()
+                                            .next()
+                                            .unwrap_or("")
+                                            .chars()
+                                            .take(80)
+                                            .collect();
+                                        let title = if first_line.is_empty() {
+                                            chunk_path.clone()
+                                        } else {
+                                            first_line.clone()
+                                        };
                                         (title, format!("{}  {}", chunk_path, first_line))
                                     } else if col == "kg_nodes" {
                                         // KG nodes: name as title, description/summary as snippet
-                                        let n = payload.get("name").and_then(|v| v.as_str())
+                                        let n = payload
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
                                             .filter(|s| !s.is_empty())
-                                            .or_else(|| payload.get("title").and_then(|v| v.as_str()))
-                                            .unwrap_or("?").to_string();
-                                        let d = payload.get("description").or(payload.get("summary"))
+                                            .or_else(|| {
+                                                payload.get("title").and_then(|v| v.as_str())
+                                            })
+                                            .unwrap_or("?")
+                                            .to_string();
+                                        let d = payload
+                                            .get("description")
+                                            .or(payload.get("summary"))
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("")
                                             .to_string();
@@ -1303,19 +1808,41 @@ pub async fn handle_search_kg(
                                         let t = if !text.is_empty() {
                                             text.chars().take(120).collect()
                                         } else {
-                                            payload.get("name").and_then(|v| v.as_str())
+                                            payload
+                                                .get("name")
+                                                .and_then(|v| v.as_str())
                                                 .filter(|s| !s.is_empty())
-                                                .or_else(|| payload.get("key").and_then(|v| v.as_str()))
-                                                .unwrap_or("?").to_string()
+                                                .or_else(|| {
+                                                    payload.get("key").and_then(|v| v.as_str())
+                                                })
+                                                .unwrap_or("?")
+                                                .to_string()
                                         };
-                                        let d = if !text.is_empty() { text.to_string() }
-                                            else { payload.get("description").or(payload.get("summary"))
-                                                .or(payload.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string() };
+                                        let d = if !text.is_empty() {
+                                            text.to_string()
+                                        } else {
+                                            payload
+                                                .get("description")
+                                                .or(payload.get("summary"))
+                                                .or(payload.get("value"))
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("")
+                                                .to_string()
+                                        };
                                         (t, d)
                                     };
-                                    rank_list.push(RankedItem { id, title: name, snippet: desc, source_world: format!("vector/{}", col), entity_type: label, score });
+                                    rank_list.push(RankedItem {
+                                        id,
+                                        title: name,
+                                        snippet: desc,
+                                        source_world: format!("vector/{}", col),
+                                        entity_type: label,
+                                        score,
+                                    });
                                 }
-                                if !rank_list.is_empty() { all_rank_lists.push(rank_list); }
+                                if !rank_list.is_empty() {
+                                    all_rank_lists.push(rank_list);
+                                }
                             }
                         }
                     }
@@ -1337,8 +1864,13 @@ pub async fn handle_search_kg(
             // Deduplicate and display with type-aware formatting
             let mut seen_titles = std::collections::HashSet::new();
             for item in &fused {
-                if !seen_titles.insert(item.title.clone()) { continue; }
-                println!("  [{:.4}] [{}] {}", item.score, item.entity_type, item.title);
+                if !seen_titles.insert(item.title.clone()) {
+                    continue;
+                }
+                println!(
+                    "  [{:.4}] [{}] {}",
+                    item.score, item.entity_type, item.title
+                );
 
                 // Type-aware snippet display:
                 // - Doc: snippet is "file_path  first_line" — show as path reference

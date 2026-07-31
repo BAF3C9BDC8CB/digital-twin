@@ -1,191 +1,98 @@
-//! HanLP NLP processor — calls the inference server's NLP endpoint for
+//! HanLP NLP processor — calls a local HanLP REST API service for
 //! named-entity recognition and keyword extraction.
 //!
-//! Custom NER dictionaries are loaded from static configuration and
-//! dynamically from Memgraph service/component names, then passed to the
-//! inference server as request parameters.
+//! Block-level data flow (方案 §5.2 / R2): when the chunk processor has run,
+//! HanLP analyses each chunk so its candidates align with the chunks by
+//! `block_index` (= `chunk.chunk_index`). A single block's failure logs a
+//! warning and yields empty candidates for that block without interrupting
+//! the file. Without chunk output it falls back to analysing the whole text
+//! as a single block (block_index = 0, old behaviour).
 //!
 //! Produces a [`ProcessorOutput`] with:
-//! - `"entities"`  — array of `{text, tag}` named entities
-//! - `"keywords"`  — array of keyword strings
-//! - `"status"`    — `"ok"`, `"empty"`, or `"error"`
+//! - `"hanlp_blocks"` — array of `{block_index, entities[{text, tag,
+//!   frequency}], keywords}` aligned with chunks by `block_index`
+//! - `"status"`       — `"ok"` or `"empty"`
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::pipeline::context::PipelineContext;
-use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
-use crate::domain::traits::GraphRepository;
+use crate::infrastructure::hanlp::{HanlpClient, HanlpResult};
 
-/// Static configuration for custom named-entity dictionaries.
-///
-/// These entity lists are passed to the inference server alongside each
-/// NLP request so that HanLP can recognise project‑specific terms
-/// (service names, technology components, business entities, etc.)
-/// that are not present in its built‑in models.
-#[derive(Debug, Clone)]
-pub struct CustomEntityConfig {
-    /// Static list of known service / application names.
-    pub service_names: Vec<String>,
-    /// Technology components (e.g. "Redis", "Kafka", "MySQL", "Elasticsearch").
-    pub tech_components: Vec<String>,
-    /// Business‑domain entities in the project's language (e.g. "订单", "用户", "支付").
-    pub business_entities: Vec<String>,
-}
-
-impl Default for CustomEntityConfig {
-    fn default() -> Self {
-        Self {
-            service_names: Vec::new(),
-            tech_components: vec![
-                "Redis".into(),
-                "Kafka".into(),
-                "MySQL".into(),
-                "PostgreSQL".into(),
-                "MongoDB".into(),
-                "Elasticsearch".into(),
-                "RabbitMQ".into(),
-                "Nacos".into(),
-                "MinIO".into(),
-                "Docker".into(),
-                "Kubernetes".into(),
-            ],
-            business_entities: Vec::new(),
-        }
-    }
-}
-
-/// NLP processor that calls the inference server's HanLP endpoint.
-///
-/// Produces a [`ProcessorOutput`] with:
-/// - `"entities"`  — array of `{text, tag}` named entities
-/// - `"keywords"`  — array of keyword strings
-/// - `"status"`    — `"ok"`, `"empty"`, or `"error"`
-///
-/// Custom NER dictionaries are built from:
-/// 1. Static [`CustomEntityConfig`] entries (always used).
-/// 2. Dynamic service/component names queried from Memgraph (fallible;
-///    failures are silently downgraded to the static lists only).
+/// NLP processor that calls a local HanLP REST API for Chinese text analysis.
 pub struct HanlpClientProcessor {
-        client: Arc<SiliconFlowChatClient>,
-        config: CustomEntityConfig,
-    graph: Option<Arc<dyn GraphRepository>>,
+    client: Arc<HanlpClient>,
 }
 
 impl HanlpClientProcessor {
-    /// Create a new processor that sends NLP requests to the given
-    /// inference server.
-    pub fn new(base_url: String) -> Self {
-        let client = Arc::new(SiliconFlowChatClient::new(base_url, 4));
-        Self {
-            client,
-            config: CustomEntityConfig::default(),
-            graph: None,
-        }
+    /// Create a new processor backed by the given [`HanlpClient`].
+    pub fn new(client: Arc<HanlpClient>) -> Self {
+        Self { client }
     }
 
-    /// Create a processor with full configuration.
-    ///
-    /// * `client`           — shared inference-server client.
-    /// * `config`           — static entity lists (or [`Default::default`]).
-    /// * `graph`            — optional Memgraph handle for dynamic entity
-    ///                        discovery.  When `None` only static entities
-    ///                        are used.
-    pub fn with_config(
-    client: Arc<SiliconFlowChatClient>,
-        config: CustomEntityConfig,
-        graph: Option<Arc<dyn GraphRepository>>,
-    ) -> Self {
-        Self {
-            client,
-            config,
-            graph,
-        }
-    }
-
-    /// Create a processor from an existing shared client.
-    pub fn with_client(client: Arc<SiliconFlowChatClient>) -> Self {
-        Self {
-            client,
-            config: CustomEntityConfig::default(),
-            graph: None,
-        }
-    }
-
-    /// Build the custom-entities dictionary passed to the inference server.
-    ///
-    /// Merges static configuration with dynamic entities queried from
-    /// Memgraph.  If the graph query fails the error is logged (via the
-    /// return value) and only the static entries are used.
-    async fn build_custom_entities(&self) -> HashMap<String, Vec<String>> {
-        let mut custom = HashMap::new();
-
-        // ---- Static entries (always present) ----
-        custom.insert("SERVICE_NAME".into(), self.config.service_names.clone());
-        custom.insert("TECH_COMPONENT".into(), self.config.tech_components.clone());
-        custom.insert("BUSINESS_ENTITY".into(), self.config.business_entities.clone());
-
-        // ---- Dynamic entries from Memgraph ----
-        if let Some(graph) = &self.graph {
-            // Service names
-            if let Ok(result) = graph
-                .read_query(
-                    "MATCH (s:Service) RETURN s.name",
-                    HashMap::new(),
-                )
-                .await
-            {
-                if let Some(rows) = result.as_array() {
-                    let names: Vec<String> = rows
-                        .iter()
-                        .filter_map(|row| {
-                            row.get("s.name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
+    /// Map one block's HanLP result to its JSON output shape. A `None`
+    /// result (failed or empty block) yields empty candidate arrays.
+    fn block_to_json(block_index: u32, result: Option<&HanlpResult>) -> serde_json::Value {
+        let (entities, keywords) = match result {
+            Some(r) => (
+                r.entities
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "text": e.text,
+                            "tag": e.tag,
+                            "frequency": e.frequency,
                         })
-                        .collect();
-                    if !names.is_empty() {
-                        custom
-                            .entry("SERVICE_NAME".into())
-                            .or_insert_with(Vec::new)
-                            .extend(names);
-                    }
-                }
-            }
+                    })
+                    .collect::<Vec<_>>(),
+                r.keywords.clone(),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        serde_json::json!({
+            "block_index": block_index,
+            "entities": entities,
+            "keywords": keywords,
+        })
+    }
 
-            // Component names
-            if let Ok(result) = graph
-                .read_query(
-                    "MATCH (c:Component) RETURN c.name",
-                    HashMap::new(),
-                )
-                .await
-            {
-                if let Some(rows) = result.as_array() {
-                    let names: Vec<String> = rows
-                        .iter()
-                        .filter_map(|row| {
-                            row.get("c.name")
+    /// Collect `(block_index, text)` pairs from the chunk processor output.
+    /// Falls back to the whole file as a single block when there is no chunk
+    /// output. Returns an empty Vec when there is nothing to analyse.
+    fn collect_blocks(ctx: &PipelineContext) -> Vec<(u32, String)> {
+        if let Some(chunk_out) = ctx.get_output("chunk") {
+            return chunk_out
+                .get("chunks")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            let index = c
+                                .get("chunk_index")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(i as u64) as u32;
+                            let text = c
+                                .get("text")
                                 .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
+                                .unwrap_or_default()
+                                .to_string();
+                            (index, text)
                         })
-                        .collect();
-                    if !names.is_empty() {
-                        custom
-                            .entry("TECH_COMPONENT".into())
-                            .or_insert_with(Vec::new)
-                            .extend(names);
-                    }
-                }
-            }
+                        .collect()
+                })
+                .unwrap_or_default();
         }
 
-        custom
+        if ctx.file_text.trim().is_empty() {
+            Vec::new()
+        } else {
+            vec![(0, ctx.file_text.clone())]
+        }
     }
 }
 
@@ -200,35 +107,49 @@ impl Processor for HanlpClientProcessor {
     }
 
     fn matches(&self, file_path: &Path) -> bool {
-        // HanLP can run on any text file — source code and documents.
+        // HanLP is for document/text content — not structured code files.
+        // Aligned with the chunk processor's extension set.
         matches!(
             file_path.extension().and_then(|e| e.to_str()),
-            Some(
-                "java" | "py" | "rs" | "go" | "ts" | "tsx" | "js" | "jsx" | "php"
-                    | "md" | "txt" | "yaml" | "yml" | "properties"
-            )
+            Some("md" | "txt" | "markdown" | "rst" | "adoc" | "yaml" | "yml" | "properties")
         )
     }
 
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
-        let text = &ctx.file_text;
+        let fallback = ctx.get_output("chunk").is_none();
+        let blocks = Self::collect_blocks(ctx);
 
-        // Only attempt analysis on non-empty text.
-        if text.trim().is_empty() {
-            output.set("entities", serde_json::Value::Array(vec![]));
-            output.set("keywords", serde_json::Value::Array(vec![]));
+        if blocks.is_empty() {
+            output.set("hanlp_blocks", Vec::<serde_json::Value>::new());
             output.set("status", "empty");
             return Ok(output);
         }
 
-        // The HanLP endpoint is not available on SiliconFlow, so this
-        // processor always returns an error status. The processor is kept
-        // for structural compatibility (pipeline registration).
-        output.set("entities", serde_json::Value::Array(vec![]));
-        output.set("keywords", serde_json::Value::Array(vec![]));
-        output.set("status", "error");
-        output.set("error", "HanLP endpoint not available on SiliconFlow");
+        let mut hanlp_blocks = Vec::with_capacity(blocks.len());
+        for (block_index, text) in blocks {
+            let result = if text.trim().is_empty() {
+                None
+            } else {
+                match self.client.analyze(&text).await {
+                    Ok(r) => Some(r),
+                    Err(e) => {
+                        if fallback {
+                            // Old behaviour: a failed full-text analysis errors.
+                            return Err(DtError::Repository(format!("HanLP analysis failed: {e}")));
+                        }
+                        // Single-block failure: warn and leave the block's
+                        // candidates empty — do not interrupt the file.
+                        tracing::warn!("HanLP 块 {block_index} 分析失败, 该块候选为空: {e}");
+                        None
+                    }
+                }
+            };
+            hanlp_blocks.push(Self::block_to_json(block_index, result.as_ref()));
+        }
+
+        output.set("hanlp_blocks", hanlp_blocks);
+        output.set("status", "ok");
 
         Ok(output)
     }
@@ -241,116 +162,155 @@ impl Processor for HanlpClientProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::hanlp::NamedEntity;
     use std::path::PathBuf;
 
+    /// Unreachable HanLP endpoint — connection refused fails fast.
+    const UNREACHABLE: &str = "http://127.0.0.1:1";
+
     fn make_context(file_name: &str, text: &str) -> PipelineContext {
-        PipelineContext::new(PathBuf::from(file_name), text.to_string(), "test".to_string())
+        PipelineContext::new(
+            PathBuf::from(file_name),
+            text.to_string(),
+            "test".to_string(),
+        )
+    }
+
+    fn make_chunk_output(chunks: &[(u64, &str)]) -> ProcessorOutput {
+        let mut out = ProcessorOutput::new();
+        let chunk_values: Vec<serde_json::Value> = chunks
+            .iter()
+            .map(|(idx, text)| {
+                serde_json::json!({
+                    "chunk_id": format!("dt://doc/test/doc.md#{idx}"),
+                    "text": text,
+                    "chunk_index": idx,
+                })
+            })
+            .collect();
+        out.set("chunks", chunk_values);
+        out.set("doc_id", "dt://doc/test/doc.md");
+        out.set("chunk_count", chunks.len());
+        out
     }
 
     #[tokio::test]
-    async fn matches_code_and_doc_extensions() {
-        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
-        assert!(processor.matches(Path::new("Main.java")));
-        assert!(processor.matches(Path::new("app.py")));
+    async fn matches_doc_extensions_including_yaml() {
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
+        // Doc formats match — aligned with the chunk processor.
         assert!(processor.matches(Path::new("readme.md")));
+        assert!(processor.matches(Path::new("notes.txt")));
+        assert!(processor.matches(Path::new("docs.markdown")));
+        assert!(processor.matches(Path::new("guide.rst")));
+        assert!(processor.matches(Path::new("manual.adoc")));
         assert!(processor.matches(Path::new("config.yaml")));
+        assert!(processor.matches(Path::new("config.yml")));
+        assert!(processor.matches(Path::new("app.properties")));
+        // Structured code files do NOT match
+        assert!(!processor.matches(Path::new("Main.java")));
+        assert!(!processor.matches(Path::new("app.py")));
         assert!(!processor.matches(Path::new("image.png")));
         assert!(!processor.matches(Path::new("data.bin")));
     }
 
     #[tokio::test]
-    async fn returns_error_when_server_unreachable() {
-        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
-        let ctx = make_context("test.java", "class Foo {}");
-        let result = processor.execute(&ctx).await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        // The HanLP endpoint is not running locally, so status should be
-        // "error" and entity/keyword lists should be empty.
+    async fn returns_empty_for_empty_text_without_chunks() {
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
+        let ctx = make_context("empty.txt", "   ");
+        let output = processor.execute(&ctx).await.unwrap();
+        assert_eq!(output.get("status").and_then(|v| v.as_str()), Some("empty"));
         assert_eq!(
-            output.get("status").and_then(|v| v.as_str()),
-            Some("error")
+            output
+                .get("hanlp_blocks")
+                .and_then(|v| v.as_array())
+                .map(Vec::len),
+            Some(0)
         );
-        assert!(output.get("entities").is_some());
-        assert!(output.get("keywords").is_some());
-        assert!(output.get("error").is_some());
-        // Error should mention SiliconFlow, not hanlp (endpoint was removed)
-        let err_val = output.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(!err_val.is_empty());
     }
 
     #[tokio::test]
-    async fn returns_empty_for_empty_text() {
-        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
-        let ctx = make_context("empty.txt", "   ");
-        let result = processor.execute(&ctx).await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(
-            output.get("status").and_then(|v| v.as_str()),
-            Some("empty")
-        );
+    async fn returns_empty_for_empty_chunk_list() {
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
+        let mut ctx = make_context("empty.md", "");
+        ctx.add_output("chunk", make_chunk_output(&[]));
+        let output = processor.execute(&ctx).await.unwrap();
+        assert_eq!(output.get("status").and_then(|v| v.as_str()), Some("empty"));
     }
 
     #[tokio::test]
     async fn name_and_priority() {
-        let processor = HanlpClientProcessor::new("https://api.siliconflow.cn/v1".into());
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
         assert_eq!(processor.name(), "hanlp");
         assert_eq!(processor.priority(), 80);
     }
 
-    #[test]
-    fn custom_entity_config_default() {
-        let cfg = CustomEntityConfig::default();
-        assert!(cfg.service_names.is_empty());
-        assert!(cfg.tech_components.len() >= 8); // well-known tech list
-        assert!(cfg.business_entities.is_empty());
-    }
+    #[tokio::test]
+    async fn block_output_aligned_with_chunk_indices() {
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
+        let mut ctx = make_context("doc.md", "第一段内容\n\n第二段内容");
+        // Non-contiguous indices prove we use chunk.chunk_index, not position.
+        ctx.add_output(
+            "chunk",
+            make_chunk_output(&[(5, "第一段内容"), (7, "第二段内容")]),
+        );
 
-    #[test]
-    fn custom_entity_config_custom_values() {
-        let cfg = CustomEntityConfig {
-            service_names: vec!["order-service".into(), "user-api".into()],
-            tech_components: vec!["Redis".into()],
-            business_entities: vec!["订单".into(), "用户".into()],
-        };
-        assert_eq!(cfg.service_names.len(), 2);
-        assert_eq!(cfg.tech_components.len(), 1);
-        assert_eq!(cfg.business_entities.len(), 2);
+        let output = processor.execute(&ctx).await.unwrap();
+
+        assert_eq!(output.get("status").and_then(|v| v.as_str()), Some("ok"));
+        let blocks = output
+            .get("hanlp_blocks")
+            .and_then(|v| v.as_array())
+            .expect("hanlp_blocks must be an array");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["block_index"], serde_json::json!(5));
+        assert_eq!(blocks[1]["block_index"], serde_json::json!(7));
+        // Single-block failure (unreachable server) degrades to empty
+        // candidates without interrupting the file.
+        for b in blocks {
+            assert_eq!(b["entities"], serde_json::json!([]));
+            assert_eq!(b["keywords"], serde_json::json!([]));
+        }
     }
 
     #[tokio::test]
-    async fn build_custom_entities_without_graph() {
-        let cfg = CustomEntityConfig {
-            service_names: vec!["my-service".into()],
-            tech_components: vec!["Redis".into()],
-            business_entities: vec!["用户".into()],
-        };
-        let client = Arc::new(SiliconFlowChatClient::new("https://api.siliconflow.cn/v1".into(), 4));
-        let processor =
-            HanlpClientProcessor::with_config(client, cfg, None);
-
-        let entities = processor.build_custom_entities().await;
-        assert!(entities.contains_key("SERVICE_NAME"));
-        assert!(entities.contains_key("TECH_COMPONENT"));
-        assert!(entities.contains_key("BUSINESS_ENTITY"));
-
-        let services = entities.get("SERVICE_NAME").unwrap();
-        assert!(services.contains(&"my-service".to_string()));
-
-        let tech = entities.get("TECH_COMPONENT").unwrap();
-        assert!(tech.contains(&"Redis".to_string()));
-
-        let biz = entities.get("BUSINESS_ENTITY").unwrap();
-        assert!(biz.contains(&"用户".to_string()));
+    async fn fallback_without_chunk_output_errors_on_failure() {
+        let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
+        let processor = HanlpClientProcessor::new(client);
+        let ctx = make_context("notes.markdown", "没有 chunk 输出时回退到全文单块");
+        // Old behaviour preserved: a failed full-text analysis is an error.
+        assert!(processor.execute(&ctx).await.is_err());
     }
 
-    #[tokio::test]
-    async fn with_config_accepts_graph_none() {
-        let cfg = CustomEntityConfig::default();
-        let client = Arc::new(SiliconFlowChatClient::new("https://api.siliconflow.cn/v1".into(), 4));
-        let processor =
-            HanlpClientProcessor::with_config(client, cfg, None);
-        assert_eq!(processor.config.service_names.len(), 0);
+    #[test]
+    fn block_to_json_maps_result() {
+        let result = HanlpResult {
+            entities: vec![NamedEntity {
+                text: "支付网关".into(),
+                tag: "NN".into(),
+                frequency: 3,
+            }],
+            keywords: vec!["支付".into()],
+            summary: "忽略".into(),
+        };
+        let v = HanlpClientProcessor::block_to_json(4, Some(&result));
+        assert_eq!(v["block_index"], serde_json::json!(4));
+        assert_eq!(
+            v["entities"],
+            serde_json::json!([{"text": "支付网关", "tag": "NN", "frequency": 3}])
+        );
+        assert_eq!(v["keywords"], serde_json::json!(["支付"]));
+    }
+
+    #[test]
+    fn block_to_json_maps_none_to_empty() {
+        let v = HanlpClientProcessor::block_to_json(2, None);
+        assert_eq!(v["block_index"], serde_json::json!(2));
+        assert_eq!(v["entities"], serde_json::json!([]));
+        assert_eq!(v["keywords"], serde_json::json!([]));
     }
 }
