@@ -64,6 +64,9 @@ chunk + embed，没有实体/关系抽取；知识搜索走纯字符串 `CONTAIN
 | D5 | 文档块原文 | **双写**：块原文 → `doc_chunks`，实体语义 → `kg_nodes` |
 | D6 | 落地顺序 | **构建优先**，检索层实现延后（架构本文档定稿） |
 | D7 | 向量点主键 | **改从业务主键派生**（改进点 I1，见 §9），不再用 elementId |
+| D8 | 实体类型 | **固定枚举**（`EntityType`，§5.3），词表外归 `Other`；非自由文本 |
+| D9 | 实体生命周期 | **边随文档走、实体按引用存活、孤儿周期清理**（§6.5），非只增不删 |
+| D10 | 并发漏合并 | **默认接受 + `SAME_AS` 事后治理**（§6.1），不默认加锁 |
 
 ---
 
@@ -113,29 +116,58 @@ chunk + embed，没有实体/关系抽取；知识搜索走纯字符串 `CONTAIN
 做三件事：① 从候选确认/合并/补充实体，定 type 和一句话 summary；② 抽关系三元组并带原
 文证据句；③ 输出块级 summary（后面向量化用）。
 
-### 5.2 统一产出结构 `ExtractedGraph`
+### 5.2 块级数据流（引擎如何走到块）
+
+pipeline engine **以文件为单位执行**（`engine.rs:196-237`，多文件并行；单文件内各
+processor 按优先级顺序各执行一次）。chunk processor 一次产出**全部块**的 JSON 数组
+（`chunk.rs:90-111`，含 `chunk_index`）和 `doc_id`（`chunk.rs:83-87`，
+`dt://doc/{project}/{path}`）。现状 `llm_client` 不消费 chunks、直接用 `ctx.file_text`
+全文本——这正是要改的点。
+
+新数据流（文件内块级循环，归属 llm/extract 处理器内部）：
+
+```
+engine: 一次 execute/文件
+  chunk 处理器 → outputs["chunk"]: { doc_id, chunks[{chunk_index, text, ...}] }
+  hanlp 处理器 → 逐块跑（或全文跑一次后按块切分，实现时择一，默认逐块）
+  llm 处理器   → 遍历 chunks[]，每块一次 LLM 调用
+                 → 每块产出一个 ExtractedGraph { doc_id, block_index = chunk_index, ... }
+  store/consolidate → 消费 Vec<ExtractedGraph>，逐块落库
+```
+
+即：**块不独立走管线，而是在 llm 处理器内部循环**；`block_index` 直接取
+`chunk.chunk_index`，Consolidate 据此关联 `doc_chunks` payload 的 `block_index`。
+
+### 5.3 统一产出结构 `ExtractedGraph`
 
 新增 `src/application/knowledge/extract/model.rs`：
 
 ```rust
 pub struct ExtractedGraph {
-    pub doc_id: String,
-    pub block_index: u32,
+    pub doc_id: String,       // 来自 chunk 处理器输出
+    pub block_index: u32,     // = chunk.chunk_index
     pub block_summary: String,
     pub entities: Vec<ExtractedEntity>,
     pub relations: Vec<ExtractedRelation>,
+    pub degraded: bool,       // JSON 解析失败降级标记（§5.5）
 }
 
 pub struct ExtractedEntity {
     pub mention: String,         // 原文提法
     pub canonical_name: String,  // 规范名（消歧主键的原料）
-    pub entity_type: String,     // 自由类型，推荐词表见 prompt
+    pub entity_type: EntityType, // 固定枚举（见下），未知 → Other
     pub summary: String,         // 一句话语义摘要（向量化的核心文本）
     pub keywords: Vec<String>,
 }
 
+/// 固定类型词表——不是自由文本。消歧的"type 一致"强约束依赖它是封闭集合。
+pub enum EntityType {
+    Service, Channel, Config, Table, Api,
+    Concept, Person, Org, Product, Other,
+}
+
 pub struct ExtractedRelation {
-    pub head: String,      // 对应某实体的 canonical_name
+    pub head: String,      // 必须等于某实体的 canonical_name
     pub relation: String,  // 规范动词，如 routes_to / depends_on / configured_by
     pub tail: String,
     pub evidence: String,  // 原文证据句
@@ -143,7 +175,10 @@ pub struct ExtractedRelation {
 }
 ```
 
-### 5.3 Prompt 重写：`config/prompts/document_with_nlp.yaml`
+LLM 返回词表外的 type 时归一为 `Other`（记录原值到 `aliases`），保证 §6.1 的
+"type 一致"是强约束而不是宽松匹配。
+
+### 5.4 Prompt 重写：`config/prompts/document_with_nlp.yaml`
 
 现有 prompt（35 行）问题：实体只有 `name/type/description`，关系限定
 `depends|contains|relates` 三种，无证据、无置信度、无规范名。整体重写为：
@@ -170,6 +205,7 @@ system: |
 
   规则：
   - 仅输出 JSON，不要 markdown，不要额外说明
+  - type 必须从给定词表中选择，词表外的归入 Other
   - canonical_name 用于跨块指同一实体，同一实体必须使用同一个规范名
   - relation 的 head/tail 必须引用 entities 里的 canonical_name
   - NLP 候选仅供召回参考，你可确认、合并、补充或丢弃
@@ -178,18 +214,31 @@ prompt: |
   文件：${file_path}
 
   NLP 实体候选：
-  ${hanlp.entities}
+  ${entities}
 
   关键词：
-  ${hanlp.keywords}
+  ${keywords}
 
   文档内容：
   ${file_text}
 ```
 
-`llm_client.rs::build_render_context` 已有把 HanLP 输出注入 prompt 的逻辑，继续沿用；
-改动点是 LLM 响应不再当整块文本，而是**解析 JSON → `ExtractedGraph`**（解析失败降级：
-整块文本只进 `doc_chunks`，不写图）。
+**模板变量必须是扁平的 `${entities}` / `${keywords}`，不是 `${hanlp.entities}`。**
+渲染器 `render_template`（`pipeline/prompt.rs:144-174`）支持 `${a.b}` 点路径，但
+`build_render_context`（`llm_client.rs:152-166`）注入的是**扁平键**
+（`entities/keywords/summary/file_text`）；解析不到的路径会**原样留在渲染结果里**
+（`prompt.rs:143`），不会报错。现有 yaml 写的 `${hanlp.entities}` 今天就是坏的——
+HanLP 候选从未真正进入 prompt。重写时一并修正，实现者不要再踩。
+
+### 5.5 LLM 响应解析与降级
+
+LLM 响应不再当整块文本，而是**解析 JSON → `ExtractedGraph`**。解析失败时：
+
+1. 重试一次（附加"仅输出 JSON"修正提示）；
+2. 仍失败则降级：`degraded = true`，该块**只进 `doc_chunks` 不写图**，
+   embedding 文本 = **原始块文本**（没有 block_summary 可用），payload 标记
+   `"degraded": true` 便于后续补抽；
+3. 降级块计入日志与 build 报告。
 
 ---
 
@@ -217,27 +266,58 @@ if hits.top.score > 0.92 && type 一致 {
 **顺序依赖**：近邻查询依赖 `kg_nodes` 已有向量，所以同一次 build 内必须**边写边查**，
 逐实体 upsert 而不是最后批量 upsert（与现有 store 的批量逻辑不同，重写时留意）。
 
+**并发安全**（engine 多文件并行，`engine.rs:196-237`）：两个 worker 同时处理含同一实
+体的不同文档时——
+
+- **同名实体（canonical 相同）：安全**。`entity_id` 是从 canonical 确定性派生的
+  （`dt://entity/{project}/{type}/{canonical}`），两 worker 算出同一个 ID；
+  Memgraph `MERGE` 原子，叠加 `entity_id` 唯一约束（§6.2 迁移），只会产生一个节点；
+  向量 upsert 用确定性 point_id（I1），重复写幂等。
+- **近重复实体（canonical 不同、cos>0.92）：存在漏合并窗口**。worker B 的近邻查询可
+  能先于 worker A 的 upsert 落库，导致本该合并的两个实体各自新建节点。后果是有界的
+  （少量近重复节点，不产生重复向量点），处理策略：
+  1. **默认接受**，靠 §6.4 的 `SAME_AS` 边事后治理——下次增量 build 处理其中任一实
+     体时，近邻查询会命中另一个，补写 `SAME_AS`；
+  2. 可选强化：Consolidate 层对"消歧查询 + 写图 + upsert"临界区加**项目级互斥锁**
+     （per-project `tokio::sync::Mutex`），彻底消除窗口，代价是文档间消歧串行化。
+     默认不启用，观测到近重复率不可接受时再开。
+
 ### 6.2 图落库 Cypher
 
+**Document 节点归属 Consolidate 层**：现有 `MERGE (d:Document ...)` 只在旧路径
+（`build/pipeline.rs:1419`），新链路必须自己保证 Document 存在，否则 `MENTIONED_IN`
+会因节点不存在而静默失败（`MATCH` 不命中即整条不执行）。每个块处理前先 MERGE：
+
 ```cypher
-// 实体：以稳定业务键为主键
+// 0. 文档节点（每块幂等 MERGE，先于一切溯源写入）
+MERGE (d:Document {doc_id: $doc_id})
+  ON CREATE SET d.project = $project, d.file_path = $file_path,
+                d.doc_type = $doc_type
+
+// 1. 实体：以稳定业务键为主键
 MERGE (e:Entity {entity_id: $entity_id})
   ON CREATE SET e.name = $name, e.type = $type, e.summary = $summary,
                 e.keywords = $keywords, e.project = $project, e.aliases = [$mention]
   ON MATCH  SET e.summary = $summary,
                 e.aliases = coalesce(e.aliases, []) + $new_aliases
 
-// 关系：单一 RELATES 类型 + type 属性（Memgraph 不支持参数化边类型，务实取舍）
+// 2. 关系：单一 RELATES 类型 + type 属性（Memgraph 不支持参数化边类型，务实取舍）
+//    r.doc_id 是边级溯源：增量重建时按它精确清除该文档产生的旧关系（§6.5）
 MATCH (h:Entity {entity_id: $head_id}), (t:Entity {entity_id: $tail_id})
-MERGE (h)-[r:RELATES {type: $rel_type}]->(t)
+MERGE (h)-[r:RELATES {type: $rel_type, doc_id: $doc_id}]->(t)
   SET r.evidence = $evidence, r.confidence = $confidence
 
-// 溯源：实体来自哪个文档
+// 3. 溯源：实体来自哪个文档
 MATCH (e:Entity {entity_id: $id}), (d:Document {doc_id: $doc_id})
 MERGE (e)-[:MENTIONED_IN]->(d)
 ```
 
-配套一次性迁移：`CREATE INDEX ON :Entity(entity_id);`（回查和图扩展都按它过滤）。
+配套一次性迁移：
+
+```cypher
+CREATE INDEX ON :Entity(entity_id);
+CREATE CONSTRAINT ON (e:Entity) ASSERT e.entity_id IS UNIQUE;  // 并发安全依赖它
+```
 
 ### 6.3 双写向量（每实体/每块各一次）
 
@@ -248,9 +328,53 @@ Entity MERGE 成功
   → 图节点标记 _kg_synced_at
 
 Block 处理完成
-  → embed(text = block_summary + 原文块)
-  → upsert doc_chunks（payload 带 entity_ids，见 §7.3）
+  → embed(text = block_summary + 原文块)   // 降级块：只用原文块（§5.5）
+  → upsert doc_chunks（payload 带 entity_ids，见 §7.3；降级块带 "degraded": true）
 ```
+
+### 6.4 `SAME_AS` 边（消歧安全阀，最小定义）
+
+用途：① 向量近邻消歧判定"应合并但保留双节点"时挂边；② 并发漏合并（§6.1）的事后治
+理；③ 人工纠正入口。
+
+```cypher
+// 单向一条即可，查询时按无向对待：MATCH (a)-[:SAME_AS]-(b)
+MATCH (a:Entity {entity_id: $from_id}), (b:Entity {entity_id: $to_id})
+MERGE (a)-[r:SAME_AS]->(b)
+  SET r.score = $score,           // 触发时的余弦相似度，人工纠正置 1.0
+      r.created_by = $created_by, // "auto" | "manual"
+      r.reason = $reason,
+      r.created_at = datetime()
+```
+
+- `created_by = "auto"`：Consolidate 消歧或后续 build 补挂；
+- `created_by = "manual"`：人工纠正。本期不提供专门 dt 命令，直接用 Cypher（上面的语
+  句即入口）；检索层必须把 `SAME_AS` 邻居视为同一实体返回。反向纠正（拆散错误合并）
+  同样用 Cypher `MATCH ()-[r:SAME_AS]->() WHERE ... DELETE r`。
+
+### 6.5 实体生命周期（增量构建下的更新/删除）
+
+有意采取**"边随文档走、实体按引用存活"**的策略，而不是无脑只增不删：
+
+1. **文档被修改/重建**：先按溯源精确清除该文档的旧产物，再走正常抽取写入——
+   ```cypher
+   MATCH ()-[r:RELATES {doc_id: $doc_id}]->() DELETE r;
+   MATCH ()-[m:MENTIONED_IN]->(:Document {doc_id: $doc_id}) DELETE m;
+   ```
+   （这正是 §6.2 给 `RELATES` 加 `doc_id` 属性的原因。）
+2. **文档被删除**：同上清除边 + 删 `Document` 节点 + 删 `doc_chunks` 向量点。
+3. **实体节点**：只要还存在任何 `MENTIONED_IN` 或被其他实体的 `RELATES` 引用就保留
+   （它是跨文档共享知识，一篇文档消失不杀死它）。
+4. **孤儿实体**（零 `MENTIONED_IN`）：不实时清理，由周期性任务/FullRebuild 统一处理，
+   并同步按 point_id 删 `kg_nodes` 向量点（§7.5 删除闭环）：
+   ```cypher
+   OPTIONAL MATCH (e:Entity)-[m:MENTIONED_IN]->()
+   WITH e, count(m) AS c WHERE c = 0
+   DETACH DELETE e
+   ```
+5. 关系边的粒度说明：`RELATES` 的 MERGE key 含 `doc_id`（§6.2），所以**不同文档对同
+   一对实体的证据以多条边共存**（各自溯源，检索时可聚合）；同一文档重建时先删后写
+   （本条第 1 点），不会产生陈旧边。
 
 ---
 
@@ -301,6 +425,7 @@ Block 处理完成
   "block_index": 3,
   "project": "offen-pay",
   "entity_ids": ["dt://entity/offen-pay/Channel/ifcode", "..."],
+  "degraded": false,
   "source": "doc"
 }
 ```
@@ -344,9 +469,18 @@ fn search_knowledge(query, project, limit):
             → top-3K 个 business_id + 语义分
   2. 图扩展: MATCH (e:Entity)-[r:RELATES]-(nb) WHERE e.entity_id IN $seed_ids
             → 1~2 跳邻居和关系边纳入候选（捞回向量漏掉但结构相关的）
+            → SAME_AS 邻居视为同一实体（§6.4）
   3. 重排:  bge-reranker-v2-m3 对 (query, 候选 name+summary) 打分
             （rerank_provider 配置已存在）
   4. 融合:  语义分 + 图距离衰减 + rerank 分 → 排序截断 limit
+```
+
+融合排序的初始权重（方向性建议，实现时可调，收敛后写回本节）：
+
+```
+final = 0.6 × rerank分            // 主排序信号：reranker 最懂 query 相关性
+      + 0.3 × 语义分              // 向量召回分，打底
+      + 0.1 × graph_boost         // 图证据加成：直接命中=1.0，1跳=0.5，2跳=0.25（0.5^hop 指数衰减）
 ```
 
 同一逻辑适用于 `world=code` / `world=doc` 的后续增强；`doc_chunks` 支撑"给我证据段落"
@@ -363,7 +497,7 @@ fn search_knowledge(query, project, limit):
 | I3 | `kg_bridge.rs:842 concat_props` | 跳过数组，`keywords/aliases` 拼不进 embedding 文本 | 支持字符串数组拼接 |
 | I4 | `kg_bridge.rs:996` | description 截断 200 字进 payload | `summary` 完整保留（§7.2） |
 | I5 | 删除路径 | 只有写穿+补偿，图删向量留 | 按 point_id/business_id 删除 + FullRebuild 清项目（§7.5） |
-| I6 | `document_with_nlp.yaml` | 弱 schema，3 种关系，无证据 | 整体重写（§5.3） |
+| I6 | `document_with_nlp.yaml` | 弱 schema，3 种关系，无证据；`${hanlp.*}` 变量名与渲染上下文不匹配（静默失效） | 整体重写 + 扁平变量名（§5.4） |
 | I7 | Memgraph | `Entity.entity_id` 无索引 | `CREATE INDEX ON :Entity(entity_id)` |
 
 ---
@@ -389,8 +523,8 @@ fn search_knowledge(query, project, limit):
 
 | 位置 | 改什么 |
 |------|--------|
-| `pipeline/processors/llm_client.rs` | 响应解析为 `ExtractedGraph`（JSON 解析失败降级为只进 doc_chunks） |
-| `config/prompts/document_with_nlp.yaml` | 按 §5.3 重写 |
+| `pipeline/processors/llm_client.rs` | 消费 chunk 输出、**逐块循环**调 LLM（§5.2）；响应解析为 `ExtractedGraph`，失败按 §5.5 降级 |
+| `config/prompts/document_with_nlp.yaml` | 按 §5.4 重写（含变量名修正） |
 | `pipeline/processors/store.rs` | 重写为 Consolidate 层：解析 → 消歧 → 写图 → 双写向量（边写边查） |
 | `build/pipeline.rs::process_documents`（1216 起） | 文档块喂给 pipeline engine，不再只 chunk+embed |
 | `sync/kg_bridge.rs` | `build_payload`/`build_search_text`/`build_qdrant_point` 按 §7.2/§7.4/I2-I4 扩展；新增按 business_id 删除 |
@@ -400,10 +534,10 @@ fn search_knowledge(query, project, limit):
 
 | 位置 | 内容 |
 |------|------|
-| `application/knowledge/extract/model.rs` | `ExtractedGraph` 等结构（§5.2） |
+| `application/knowledge/extract/model.rs` | `ExtractedGraph` 等结构（§5.3） |
 | `application/knowledge/extract/consolidate.rs` | 消歧 + 落库 + 双写编排（§6） |
 | `application/knowledge/extract/retrieve.rs` | 混合检索（延后，§8） |
-| Memgraph 迁移 | `CREATE INDEX ON :Entity(entity_id)` |
+| Memgraph 迁移 | `CREATE INDEX ON :Entity(entity_id)` + `entity_id` 唯一约束（§6.2） |
 
 统一入口：build 的文档处理真正走 `pipeline::engine`（tree_sitter → chunk → hanlp →
 llm → store），代码文件继续走现有 AST 抽取，文档文件走通用抽取链。
@@ -414,7 +548,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 
 | 步骤 | 内容 | 验证方式 |
 |------|------|----------|
-| **S1** | 定义 `ExtractedGraph` + 重写 `document_with_nlp.yaml`；llm_client 解析 JSON | 拿 3~5 个真实文档跑通"文本→实体+关系 JSON"，人工核对 JSON 质量 |
+| **S1** | 定义 `ExtractedGraph` + 重写 `document_with_nlp.yaml`；llm_client 解析 JSON | 固定 ≥5 个真实文档的测试集，可量化门槛：① JSON 解析成功率 ≥90%（含一次重试）；② relation 的 head/tail 在 entities 中的覆盖率 ≥95%；③ 抽 20 个实体人工核对，准确率 ≥80% |
 | **S2** | 重写 `store.rs` 为 Consolidate 层：两级消歧 + 写 Entity/RELATES/MENTIONED_IN + 双写向量（含 I1-I5 改进）；建 `entity_id` 索引 | `dt build --test` 对 `test/expected.json` 验证；Cypher 抽查 Entity/RELATES；Qdrant 抽查 payload |
 | **S3** | `process_documents` 接入 pipeline engine | `dt build --test` 全量；对比同一文档重复 build 的实体去重效果 |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支 + learn 停用 | `cargo build && cargo test && cargo clippy --all-targets` 全绿 |
@@ -426,12 +560,16 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 
 1. **边写边查的性能**：逐实体 upsert + 近邻查询比批量慢。可接受（文档量级小）；若成瓶
    颈，按文档维度做"块内批量、文档间写穿"的折中，消歧阈值内结果不变。
-2. **LLM JSON 稳定性**：必须有解析失败降级（只进 doc_chunks）+ 重试一次（带"仅输出
-   JSON"修正提示）。降级块记入日志便于后续补抽。
-3. **消歧误合并**：cos>0.92 + type 一致双条件，宁可多建节点不可错并；`SAME_AS` 边保留
-   人工纠正入口。
-4. **关系类型发散**：自由文本 relation 会发散，靠 prompt 推荐词表收敛；后续可跑一次
+2. **并发漏合并**（不是重复节点）：同名实体靠确定性 `entity_id` + 唯一约束 + `MERGE`
+   原子性保证安全；真实风险是近重复实体的漏合并窗口，分析与对策见 §6.1。
+3. **LLM JSON 稳定性**：解析失败 → 重试一次 → 降级（`degraded=true`，只进 doc_chunks，
+   embedding 用原文块），定义见 §5.5。
+4. **消歧误合并**：cos>0.92 + type 一致（固定枚举，§5.3）双条件，宁可多建节点不可错
+   并；`SAME_AS` 边为人工纠正入口，schema 见 §6.4。
+5. **关系类型发散**：自由文本 relation 会发散，靠 prompt 推荐词表收敛；后续可跑一次
    关系聚类治理，不在本期范围。
-5. **point_id 切换的迁移**：I1 切换派生键后，`kg_nodes` 存量点需随下一次 build/kg-sync
+6. **point_id 切换的迁移**：I1 切换派生键后，`kg_nodes` 存量点需随下一次 build/kg-sync
    自然重建；切换前可对 `kg_nodes` 做一次 `delete_collection` 清库（数据皆可从图重建，
    无损失）。
+7. **实体只增不删的长期健康**：已定义生命周期策略（§6.5）：边随文档走、实体按引用存
+   活、孤儿周期清理，非无脑累积。
