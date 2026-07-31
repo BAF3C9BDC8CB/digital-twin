@@ -594,7 +594,10 @@ fn search_knowledge(query, project, limit):
               的一条，其余边的 evidence 聚合为该条的补充证据——避免同一
               关系重复计数、挤占 limit 名额
   3. 重排:  bge-reranker-v2-m3 对 (query, 候选 name+summary) 打分
-            （rerank_provider 配置已存在）
+            （rerank_provider 配置已存在；注意现状：rerank 链路已铺好
+              但业务零调用，S5 是首个调用点。reranker 只在检索层使用，
+              构建期 S1-S4 不涉及。本地 xinference 的 rerank 模型需与
+              此对齐为 bge-reranker-v2-m3，不要用 bge-reranker-base）
   4. 融合:  语义分 + 图距离衰减 + rerank 分 → 排序截断 limit
 ```
 
