@@ -273,16 +273,29 @@ LLM 逐块抽取会产出大量重复实体（同一"支付网关"出现在 10 �
 ### 6.1 两级实体消歧
 
 ```rust
-// 第一级（便宜）：规范名精确 MERGE
-let canonical = normalize(&entity.canonical_name); // 小写、trim、全半角统一
+// 规范化：小写、trim、全半角统一 + URI 保留字符百分号编码（先 % → %25，
+// 再 / 空格 # ? 等）。编码是硬要求：canonical 由 LLM 从中文文档自由生成，
+// 可能含 "/api/pay/route"、"读/写分离" 这类字符，不编码会注入额外 URI 段、
+// 破坏 entity_id 层级、让下游按段解析错位。选百分号编码而非字符替换——
+// 替换会让 "读/写分离" 与 "读_写分离" 碰撞成同一 ID。
+// （make_method_id/make_class_id 不转义是安全的：代码标识符受语言语法约束
+//   不可能含 /；LLM 产物没有这个约束，新链路的新风险不能照搬旧惯例。）
+let canonical = normalize(&entity.canonical_name);
+let entity_id = format!("dt://entity/{project}/{type}/{canonical}");
 
-// 第二级（准）：向量近邻消歧，复用 embed 服务
-let hits = qdrant.search("kg_nodes", embed(&entity_embed_text(&entity)),
-                         k = 5, filter = project);
-if hits.top.score > 0.92 && type 一致 {
-    // MERGE 到已有 entity_id，合并 aliases / summary
+// 第一级（便宜）：精确命中直接短路——不 embed 查询向量、不做近邻搜索。
+// （存储向量仍随 §6.3 块批量 embed，用于同步 keywords/summary 的演化。）
+if graph.entity_exists(&entity_id) {  // 可按块批量 UNWIND 一次查完
+    // → 直接 MERGE（ON MATCH 更新 summary/aliases/keywords）
 } else {
-    // 新建 entity_id = dt://entity/{project}/{type}/{canonical}
+    // 第二级（准）：向量近邻消歧，复用 embed 服务
+    let hits = qdrant.search("kg_nodes", embed(&entity_embed_text(&entity)),
+                             k = 5, filter = project);
+    if hits.top.score > 0.92 && type 一致 {
+        // → MERGE 到已有 entity_id，合并 aliases/summary/keywords
+    } else {
+        // → 新建
+    }
 }
 ```
 
@@ -335,7 +348,9 @@ MERGE (e:Entity {entity_id: $entity_id})
                 e.keywords = $keywords, e.project = $project, e.aliases = [$mention]
   ON MATCH  SET e.summary = $summary,
                 e.aliases = REDUCE(acc = coalesce(e.aliases, []), x IN $new_aliases |
-                              CASE WHEN x IN acc THEN acc ELSE acc + x END)
+                              CASE WHEN x IN acc THEN acc ELSE acc + x END),
+                e.keywords = REDUCE(kacc = coalesce(e.keywords, []), x IN $keywords |
+                              CASE WHEN x IN kacc THEN kacc ELSE kacc + x END)
 
 // 2. 关系：单一 RELATES 类型 + type 属性（Memgraph 不支持参数化边类型，务实取舍）
 //    r.doc_id 是边级溯源：增量重建时按它精确清除该文档产生的旧关系（§6.5）
@@ -354,6 +369,11 @@ MERGE (e)-[:MENTIONED_IN]->(d)
 CREATE INDEX ON :Entity(entity_id);
 CREATE CONSTRAINT ON (e:Entity) ASSERT e.entity_id IS UNIQUE;  // 并发安全依赖它
 ```
+
+**图属性与向量的有意近似**：`ON MATCH` 后图的 `keywords/aliases` 是累积并集，而
+§6.3 的存储向量始终用**最新一次抽取**的 keywords/summary 构造。两者不完全一致是
+有意的：向量保检索时效（反映最新语义），图保完整历史；完全同步需要写后读回合并
+集再 embed，一次额外往返换边际收益，不做。
 
 ### 6.3 双写向量（每实体/每块各一次）
 
@@ -498,6 +518,15 @@ elementId 全量重建后变化 → 旧向量点成孤儿，无法幂等覆盖�
 - 重建幂等：同一实体反复 upsert 覆盖同一个点；
 - 删除简单：按 business_id 直接算 point_id 删除，无需先查图拿 elementId；
 - 一致性可校验：图里有的 business_id 与库里 point 集合可直接 diff。
+
+`doc_chunks` 没有 business_id，其 point_id 同样明确为确定性派生：
+
+```
+point_id = make_point_id("{doc_id}:{block_index}")
+```
+
+首次构建/FullRebuild/同 build 重跑均幂等覆盖；文档重建时的孤儿清理仍走
+`delete_by_filter(doc_id=...)`（§6.5），两者互补。
 
 ### 7.5 与知识图谱的联系：强耦合、单向真相
 
