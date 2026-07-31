@@ -353,6 +353,8 @@ MERGE (e:Entity {entity_id: $entity_id})
                               CASE WHEN x IN kacc THEN kacc ELSE kacc + x END)
 
 // 2. 关系：单一 RELATES 类型 + type 属性（Memgraph 不支持参数化边类型，务实取舍）
+//    $head_id/$tail_id 必须来自本块 canonical→entity_id 映射表（下方硬约束），
+//    禁止从 canonical 重新派生——否则第二级消歧合并的实体会静默丢边
 //    r.doc_id 是边级溯源：增量重建时按它精确清除该文档产生的旧关系（§6.5）
 MATCH (h:Entity {entity_id: $head_id}), (t:Entity {entity_id: $tail_id})
 MERGE (h)-[r:RELATES {type: $rel_type, doc_id: $doc_id}]->(t)
@@ -362,6 +364,30 @@ MERGE (h)-[r:RELATES {type: $rel_type, doc_id: $doc_id}]->(t)
 MATCH (e:Entity {entity_id: $id}), (d:Document {doc_id: $doc_id})
 MERGE (e)-[:MENTIONED_IN]->(d)
 ```
+
+**关系端点解析（硬约束，违反即静默丢边）**：`$head_id`/`$tail_id` **禁止**从
+`head`/`tail` 的 canonical 重新派生。`ExtractedRelation.head/tail` 存的是
+canonical_name（§5.3），而第二级向量消歧会把实体合并到**另一个主实体的
+entity_id**——被合并的实体根本没有按自己 canonical 派生的节点。此时用 head 派生
+ID 去 MATCH 会落空，`MERGE` 整条不执行，关系边**静默丢失**（例："支付网关"被合并
+进"支付服务网关"后，`支付网关 -routes_to-> 银联渠道` 按前者派生 ID 必然 MATCH 不
+中）。正确做法：
+
+```
+Consolidate 处理每个块时维护本块映射表：
+    canonical_name → 消歧后实际落库的 entity_id
+    （每个实体在 §6.1 消歧出结果时即登记，无论短路/合并/新建）
+关系落库时 head_id = map[head], tail_id = map[tail]
+映射表未命中 → 回退按规范名精确派生（端点可能是历史 build 建的老节点）
+仍不命中    → 记日志 + 丢弃该关系（计入 build 报告的孤儿关系数），
+              不补建占位实体
+```
+
+**事务边界（有意选择最终一致）**：§6.2 的 0/1/2/3 是四条独立 `write_query` 调用
+（现有 `GraphRepository::write_query` 一次一条，`store.rs:323`），不包多语句事务。
+中途失败会留下部分写入——接受，靠既有补偿机制收敛：`_kg_synced_at` 只在某实体的
+全部步骤（实体+关系+溯源+向量 upsert）成功后才标记，`dt kg-sync` 会兜底重放未完成
+节点（§7.5）。文档级清除（§6.5）在下一轮 build 入口也会抹平残留。
 
 配套一次性迁移：
 
