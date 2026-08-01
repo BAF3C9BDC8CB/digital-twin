@@ -9,7 +9,6 @@
 
 use crate::domain::traits::{GraphRepository, VectorRepository};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -71,7 +70,10 @@ pub async fn verify_test_data(
 
     // ── Step 2: Query actual graph data ─────────────────────────────────
     let mut params = HashMap::new();
-    params.insert("p".into(), serde_json::Value::String(TEST_PROJECT.to_string()));
+    params.insert(
+        "p".into(),
+        serde_json::Value::String(TEST_PROJECT.to_string()),
+    );
 
     // 2a. Query all methods
     let methods_result = graph
@@ -400,7 +402,6 @@ pub async fn verify_test_data(
                 ));
             }
         }
-
     }
 
     // ── Step 4: Check for source-code files in graph but not in expected ──
@@ -478,13 +479,15 @@ pub async fn verify_test_data(
             )
             .await;
         let has_project = match &p_result {
-            Ok(result) => result
-                .as_array()
-                .and_then(|rows| rows.first())
-                .and_then(|row| row.get("cnt"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0)
-                > 0,
+            Ok(result) => {
+                result
+                    .as_array()
+                    .and_then(|rows| rows.first())
+                    .and_then(|row| row.get("cnt"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    > 0
+            }
             Err(_) => false,
         };
         if has_project {
@@ -512,15 +515,16 @@ pub async fn verify_test_data(
                 .as_bool()
                 .unwrap_or(true);
             if methods_exists == qdrant_methods_expected {
-                report.add(CheckResult::passed(
-                    "Qdrant methods collection",
-                    "Vector",
-                ));
+                report.add(CheckResult::passed("Qdrant methods collection", "Vector"));
             } else {
                 report.add(CheckResult::failed(
                     "Qdrant methods collection",
                     "Vector",
-                    if qdrant_methods_expected { "exists" } else { "absent" },
+                    if qdrant_methods_expected {
+                        "exists"
+                    } else {
+                        "absent"
+                    },
                     if methods_exists { "exists" } else { "absent" },
                 ));
             }
@@ -534,10 +538,8 @@ pub async fn verify_test_data(
                             .as_i64()
                             .unwrap_or(expected_total_methods);
                         if cnt as i64 == expected_qdrant {
-                            report.add(CheckResult::passed(
-                                "Qdrant method vectors count",
-                                "Vector",
-                            ));
+                            report
+                                .add(CheckResult::passed("Qdrant method vectors count", "Vector"));
                         } else {
                             report.add(CheckResult::failed(
                                 "Qdrant method vectors count",
@@ -572,11 +574,7 @@ pub async fn verify_test_data(
                             "Vector",
                         ));
                         if !llm_info.sample_text.is_empty() {
-                            let preview: String = llm_info
-                                .sample_text
-                                .chars()
-                                .take(80)
-                                .collect();
+                            let preview: String = llm_info.sample_text.chars().take(80).collect();
                             tracing::info!("LLM content sample: {}", preview);
                         }
                     } else {
@@ -642,6 +640,12 @@ pub async fn verify_test_data(
         }
     }
 
+    // ── Step 8: Knowledge-graph verification (Extract + Consolidate) ─────
+    // R11: LLM extraction is non-deterministic, so expectations are
+    // lower-bound counts (>=) plus sampled presence/field-shape checks — no
+    // exact equality. The old HanLP keyword-Entity check was removed (§10.1).
+    verify_knowledge_graph(&graph, &vector, &expected, &params, &mut report).await;
+
     report.set_duration(start.elapsed().as_millis() as u64);
     tracing::info!(
         total = report.total,
@@ -657,8 +661,411 @@ pub async fn verify_test_data(
 fn load_expected() -> Result<serde_json::Value, String> {
     let content = std::fs::read_to_string(EXPECTED_PATH)
         .map_err(|e| format!("cannot read {}: {}", EXPECTED_PATH, e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("cannot parse {}: {}", EXPECTED_PATH, e))
+    serde_json::from_str(&content).map_err(|e| format!("cannot parse {}: {}", EXPECTED_PATH, e))
+}
+
+/// Verify the knowledge-graph output of the Extract + Consolidate chain
+/// (Entity nodes, RELATES edges, MENTIONED_IN provenance, and the dual-written
+/// kg_nodes / doc_chunks vector payloads).
+///
+/// R11: extraction is non-deterministic, so every count expectation in
+/// `expected.json` is a **lower bound** (`>=`), entity checks are **sampled
+/// presence**, and we only assert field *shapes*, never exact equality.
+async fn verify_knowledge_graph(
+    graph: &Arc<dyn GraphRepository>,
+    vector: &Arc<dyn VectorRepository>,
+    expected: &serde_json::Value,
+    params: &HashMap<String, serde_json::Value>,
+    report: &mut TestReport,
+) {
+    let summary = &expected["summary"];
+
+    // Helper: run a count query, return Option<i64>. None on query error
+    // (error is reported by the caller once, here).
+    let count = |query: &str, graph: &Arc<dyn GraphRepository>, params: &HashMap<String, serde_json::Value>| {
+        let graph = graph.clone();
+        let params = params.clone();
+        let q = query.to_string();
+        async move {
+            match graph.read_query(&q, params).await {
+                Ok(v) => v
+                    .as_array()
+                    .and_then(|rows| rows.first())
+                    .and_then(|r| r.get("cnt"))
+                    .and_then(|v| v.as_i64()),
+                Err(_) => None,
+            }
+        }
+    };
+
+    // ── Graph count checks (lower-bound) ────────────────────────────────
+    let checks: [(&str, &str, &str); 3] = [
+        (
+            "min_entities",
+            "Entity count",
+            "MATCH (e:Entity {project: $p}) RETURN count(*) AS cnt",
+        ),
+        (
+            "min_relates",
+            "RELATES edge count",
+            "MATCH (:Entity {project: $p})-[r:RELATES]->(:Entity {project: $p}) \
+             RETURN count(r) AS cnt",
+        ),
+        (
+            "min_mentioned_in",
+            "MENTIONED_IN edge count",
+            "MATCH (:Entity {project: $p})-[m:MENTIONED_IN]->(:Document {project: $p}) \
+             RETURN count(m) AS cnt",
+        ),
+    ];
+
+    let mut any_query_failed = false;
+    for (key, label, cypher) in checks {
+        let min = summary[key].as_i64().unwrap_or(0);
+        if min == 0 {
+            report.add(CheckResult::skipped(
+                label,
+                "KG",
+                &format!("no `{key}` expectation in expected.json"),
+            ));
+            continue;
+        }
+        match count(cypher, graph, params).await {
+            Some(actual) if actual >= min => {
+                report.add(CheckResult::passed(
+                    &format!("{label} >= {min} (actual {actual})"),
+                    "KG",
+                ));
+            }
+            Some(actual) => {
+                report.add(CheckResult::failed(
+                    label,
+                    "KG",
+                    &format!(">= {min}"),
+                    &actual.to_string(),
+                ));
+            }
+            None => {
+                any_query_failed = true;
+                report.add(CheckResult::failed(label, "KG", "query succeeds", "query error"));
+            }
+        }
+    }
+    if any_query_failed {
+        return; // graph is unreachable — skip the deeper shape checks
+    }
+
+    // ── Entity field shape ───────────────────────────────────────────────
+    // Sample one Entity and confirm it carries the §7.2 graph properties.
+    match graph
+        .read_query(
+            "MATCH (e:Entity {project: $p}) \
+             RETURN e.entity_id AS entity_id, e.name AS name, e.type AS type, \
+                    e.summary AS summary, e.keywords AS keywords, e.aliases AS aliases \
+             LIMIT 1",
+            params.clone(),
+        )
+        .await
+    {
+        Ok(v) => {
+            let sample = v.as_array().and_then(|rows| rows.first());
+            match sample {
+                Some(e) => {
+                    let mut missing: Vec<&str> = Vec::new();
+                    if e.get("entity_id").and_then(|x| x.as_str()).is_none() {
+                        missing.push("entity_id");
+                    }
+                    if e.get("name").and_then(|x| x.as_str()).is_none() {
+                        missing.push("name");
+                    }
+                    if e.get("type").and_then(|x| x.as_str()).is_none() {
+                        missing.push("type");
+                    }
+                    if e.get("summary").and_then(|x| x.as_str()).is_none() {
+                        missing.push("summary");
+                    }
+                    if e.get("keywords").and_then(|x| x.as_array()).is_none() {
+                        missing.push("keywords");
+                    }
+                    if e.get("aliases").and_then(|x| x.as_array()).is_none() {
+                        missing.push("aliases");
+                    }
+                    if missing.is_empty() {
+                        report.add(CheckResult::passed(
+                            "Entity carries entity_id/name/type/summary/keywords/aliases",
+                            "KG",
+                        ));
+                    } else {
+                        report.add(CheckResult::failed(
+                            "Entity field shape",
+                            "KG",
+                            "all §7.2 properties present",
+                            &format!("missing: {}", missing.join(", ")),
+                        ));
+                    }
+                }
+                None => report.add(CheckResult::failed(
+                    "Entity field shape",
+                    "KG",
+                    "at least one Entity",
+                    "no Entity nodes found",
+                )),
+            }
+        }
+        Err(e) => report.add(CheckResult::failed(
+            "Entity field shape query",
+            "KG",
+            "query succeeds",
+            &format!("{e}"),
+        )),
+    }
+
+    // ── RELATES edge field shape ─────────────────────────────────────────
+    match graph
+        .read_query(
+            "MATCH (:Entity {project: $p})-[r:RELATES]->(:Entity {project: $p}) \
+             RETURN r.type AS type, r.doc_id AS doc_id, r.evidence AS evidence, \
+                    r.confidence AS confidence LIMIT 1",
+            params.clone(),
+        )
+        .await
+    {
+        Ok(v) => {
+            let sample = v.as_array().and_then(|rows| rows.first());
+            match sample {
+                Some(r) => {
+                    let mut missing: Vec<&str> = Vec::new();
+                    if r.get("type").and_then(|x| x.as_str()).is_none() {
+                        missing.push("type");
+                    }
+                    if r.get("doc_id").and_then(|x| x.as_str()).is_none() {
+                        missing.push("doc_id");
+                    }
+                    // evidence/confidence are allowed to be empty/default but the
+                    // keys must exist.
+                    if r.get("evidence").is_none() {
+                        missing.push("evidence");
+                    }
+                    if r.get("confidence").is_none() {
+                        missing.push("confidence");
+                    }
+                    if missing.is_empty() {
+                        report.add(CheckResult::passed(
+                            "RELATES edge carries type/doc_id/evidence/confidence",
+                            "KG",
+                        ));
+                    } else {
+                        report.add(CheckResult::failed(
+                            "RELATES edge field shape",
+                            "KG",
+                            "type/doc_id/evidence/confidence present",
+                            &format!("missing: {}", missing.join(", ")),
+                        ));
+                    }
+                }
+                None => report.add(CheckResult::failed(
+                    "RELATES edge field shape",
+                    "KG",
+                    "at least one RELATES edge",
+                    "no RELATES edges found",
+                )),
+            }
+        }
+        Err(e) => report.add(CheckResult::failed(
+            "RELATES field shape query",
+            "KG",
+            "query succeeds",
+            &format!("{e}"),
+        )),
+    }
+
+    // ── Sampled entity presence ──────────────────────────────────────────
+    // sample_entities: [{name, type}, ...] — case-insensitive canonical-name
+    // match, sampled so non-determinism cannot fail the run.
+    if let Some(samples) = summary["sample_entities"].as_array() {
+        for sample in samples {
+            let name = sample["name"].as_str().unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let want_type = sample["type"].as_str().unwrap_or_default();
+            let mut p = params.clone();
+            p.insert("n".into(), serde_json::Value::String(name.to_lowercase()));
+            let result = graph
+                .read_query(
+                    "MATCH (e:Entity {project: $p}) \
+                     WHERE toLower(e.name) CONTAINS $n OR toLower(e.entity_id) CONTAINS $n \
+                     RETURN e.type AS type LIMIT 5",
+                    p,
+                )
+                .await;
+            let check_name = format!("Sample entity '{}' present", name);
+            match result {
+                Ok(v) => {
+                    let rows = v.as_array().cloned().unwrap_or_default();
+                    if rows.is_empty() {
+                        report.add(CheckResult::failed(
+                            &check_name,
+                            "KG",
+                            "exists",
+                            "not found",
+                        ));
+                    } else if want_type.is_empty() {
+                        report.add(CheckResult::passed(&check_name, "KG"));
+                    } else {
+                        let type_ok = rows.iter().any(|r| {
+                            r.get("type")
+                                .and_then(|t| t.as_str())
+                                .map(|t| t.eq_ignore_ascii_case(want_type))
+                                .unwrap_or(false)
+                        });
+                        if type_ok {
+                            report.add(CheckResult::passed(
+                                &format!("{} (type={})", check_name, want_type),
+                                "KG",
+                            ));
+                        } else {
+                            let found: Vec<String> = rows
+                                .iter()
+                                .filter_map(|r| r.get("type").and_then(|t| t.as_str()))
+                                .map(String::from)
+                                .collect();
+                            report.add(CheckResult::failed(
+                                &format!("Sample entity '{}' type", name),
+                                "KG",
+                                want_type,
+                                &found.join(", "),
+                            ));
+                        }
+                    }
+                }
+                Err(e) => report.add(CheckResult::failed(
+                    &check_name,
+                    "KG",
+                    "query succeeds",
+                    &format!("{e}"),
+                )),
+            }
+        }
+    }
+
+    // ── Vector payload checks ────────────────────────────────────────────
+    verify_vector_payloads(vector, summary, report).await;
+}
+
+/// Inspect a single point from `kg_nodes` and `doc_chunks` and assert the
+/// payload carries the fields mandated by §7.2 / §7.3.
+async fn verify_vector_payloads(
+    vector: &Arc<dyn VectorRepository>,
+    summary: &serde_json::Value,
+    report: &mut TestReport,
+) {
+    // kg_nodes — §7.2 fields (business_id / origin=extracted / summary / labels).
+    if summary["check_kg_nodes_payload"].as_bool().unwrap_or(true) {
+        let kg = crate::shared::collections::KG_NODES;
+        match point_payload(vector, kg).await {
+            Some(payload) => {
+                let mut missing: Vec<&str> = Vec::new();
+                if payload.get("business_id").and_then(|x| x.as_str()).is_none() {
+                    missing.push("business_id");
+                }
+                if payload.get("name").and_then(|x| x.as_str()).is_none() {
+                    missing.push("name");
+                }
+                if payload.get("summary").and_then(|x| x.as_str()).is_none() {
+                    missing.push("summary");
+                }
+                if payload.get("labels").and_then(|x| x.as_array()).is_none() {
+                    missing.push("labels");
+                }
+                if payload.get("origin").and_then(|x| x.as_str()).is_none() {
+                    missing.push("origin");
+                }
+                if missing.is_empty() {
+                    report.add(CheckResult::passed(
+                        "kg_nodes payload has business_id/name/summary/labels/origin",
+                        "Vector",
+                    ));
+                } else {
+                    report.add(CheckResult::failed(
+                        "kg_nodes payload shape",
+                        "Vector",
+                        "§7.2 fields present",
+                        &format!("missing: {}", missing.join(", ")),
+                    ));
+                }
+            }
+            None => report.add(CheckResult::skipped(
+                "kg_nodes payload shape",
+                "Vector",
+                "collection absent or empty (no entities extracted)",
+            )),
+        }
+    }
+
+    // doc_chunks — §7.3 fields (doc_id / block_index / entity_ids / text).
+    if summary["check_doc_chunks_payload"].as_bool().unwrap_or(true) {
+        let dc = crate::shared::collections::DOC_CHUNKS;
+        match point_payload(vector, dc).await {
+            Some(payload) => {
+                let mut missing: Vec<&str> = Vec::new();
+                if payload.get("doc_id").and_then(|x| x.as_str()).is_none() {
+                    missing.push("doc_id");
+                }
+                if payload.get("block_index").is_none() {
+                    missing.push("block_index");
+                }
+                if payload.get("text").and_then(|x| x.as_str()).is_none() {
+                    missing.push("text");
+                }
+                if missing.is_empty() {
+                    report.add(CheckResult::passed(
+                        "doc_chunks payload has doc_id/block_index/text",
+                        "Vector",
+                    ));
+                } else {
+                    report.add(CheckResult::failed(
+                        "doc_chunks payload shape",
+                        "Vector",
+                        "§7.3 fields present",
+                        &format!("missing: {}", missing.join(", ")),
+                    ));
+                }
+            }
+            None => report.add(CheckResult::skipped(
+                "doc_chunks payload shape",
+                "Vector",
+                "collection absent or empty",
+            )),
+        }
+    }
+}
+
+/// Fetch one arbitrary point's payload from a collection (dummy vector
+/// search, limit 1), scoped to points written by THIS test build
+/// (`project = test-pipeline`). Returns None if the collection is
+/// missing/empty/error.
+///
+/// The project filter is required because `kg_nodes` is a global collection:
+/// it also holds legacy kg-sync points whose payload shape (`elementId` /
+/// `description` / `source`) predates §7.2 (`business_id` / `summary` /
+/// `origin`). Sampling unfiltered would non-deterministically pick those and
+/// fail the shape assertion even though the Consolidate writer is correct.
+async fn point_payload(
+    vector: &Arc<dyn VectorRepository>,
+    collection: &str,
+) -> Option<serde_json::Value> {
+    let dummy: Vec<f32> = vec![0.0; 1024];
+    let filter = serde_json::json!({
+        "must": [{"key": "project", "match": {"value": TEST_PROJECT}}]
+    });
+    let results = vector
+        .search_with_filter(collection, dummy, 1, filter)
+        .await
+        .ok()?;
+    let point = results.first()?;
+    let payload = point.get("payload").or(point.get("result")).unwrap_or(point);
+    Some(payload.clone())
 }
 
 /// Result of checking LLM content in the entities collection.
@@ -671,15 +1078,15 @@ struct LlmContentInfo {
 
 /// Inspect one entity point from the Qdrant entities collection.
 /// Reports whether points exist and whether `llm_analysis` has content.
-async fn check_llm_content(
-    vector: &Arc<dyn VectorRepository>,
-    collection: &str,
-) -> LlmContentInfo {
+async fn check_llm_content(vector: &Arc<dyn VectorRepository>, collection: &str) -> LlmContentInfo {
     let dummy_vec: Vec<f32> = vec![0.0; 1024];
     match vector.search(collection, dummy_vec, 1).await {
         Ok(results) => {
             if let Some(point) = results.first() {
-                let payload = point.get("payload").or(point.get("result")).unwrap_or(point);
+                let payload = point
+                    .get("payload")
+                    .or(point.get("result"))
+                    .unwrap_or(point);
                 let payload_keys = payload
                     .as_object()
                     .map(|o| o.keys().cloned().collect::<Vec<_>>())

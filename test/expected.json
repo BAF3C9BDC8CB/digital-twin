@@ -322,6 +322,51 @@
         }
       ],
       "classes": []
+    },
+    "fixtures/knowledge/docker-mysql-timezone.md": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/knowledge/nacos-config-hot-reload.md": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/knowledge/redis-cache-pitfall.md": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/markdown/architecture.md": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/markdown/decision-ifcode-waycode.md": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/python/payment.py": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "fixtures/yaml/config.yaml": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "project/config.yaml": {
+      "language": "",
+      "methods": [],
+      "classes": []
+    },
+    "project/README.txt": {
+      "language": "",
+      "methods": [],
+      "classes": []
     }
   },
   "summary": {
@@ -356,7 +401,18 @@
     "knowledge_count": 6,
     "experience_count": 3,
     "implemented_by_relations": 11,
-    "calls_relations": 7
+    "calls_relations": 7,
+    "min_entities": 150,
+    "min_relates": 40,
+    "min_mentioned_in": 150,
+    "sample_entities": [
+      { "name": "aria2c" },
+      { "name": "channelextra" },
+      { "name": "paychannelservice.createpay" }
+    ],
+    "check_kg_nodes_payload": true,
+    "check_doc_chunks_payload": true,
+    "_note_kg": "R11: LLM extraction is non-deterministic — Entity/RELATES/MENTIONED_IN are lower-bound (>=) counts plus sampled presence/field-shape checks. Bounds calibrated 2026-08-01 from first real build (observed 265/74/274, floors set ~55-60%). Samples are presence-only (no type assert) to tolerate LLM typing variance."
   },
   "_known_issues": {}
 }
