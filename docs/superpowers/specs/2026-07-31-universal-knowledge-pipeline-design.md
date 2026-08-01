@@ -859,3 +859,39 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
   （FullRebuild 兜底，建议立后续任务）。
 - **修复后复验**：fmt exit=0；clippy 0 error；test **747+2**（747=760-13 vectorizer
   测试；2 失败均为预存基线，未扩大）。
+
+### 13.10 遗留问题与推荐处理（2026-08-02 `dt build --test` 故障排查后续）
+
+**背景**：2026-08-01 `dt build --test` 报 93/116 失败。根因=SQLite 增量进度陈旧
+（KG 已被清空但 file_snapshots/pipeline_progress 仍记录"全部完成"，`--test` 硬编码
+`full=false` 无法强制重建）。排查中确认的 4 个代码缺陷：②a/②c 已修复，②b/②d 记录
+在此待后续处理。
+
+**已修复**：
+- ②a `--test` 不透传 `--full`：`main.rs` 测试路径 `full` 写死 false → 改为透传用户
+  标志；`dt build --test --full` 实测生效（日志 `full=true`，全量重建 117/118 通过）。
+- ②c `cleanup.rs` 吞错：SQLite 三行删除/图删除/Qdrant 集合删除全部 `let _ =` →
+  改为 `tracing::warn!` 逐个记录；snapshot 为 None 时显式警告"进度未清，下次测试
+  可能全跳过"。
+
+**待处理 ②b：store 处理器把 embed 失败升级为整体失败**
+- 现象：store 一件事打包两个动作（实体写 KG + 向量写 Qdrant）。embed API 故障时
+  （如 SiliconFlow 401），连 KG 写入也一起放弃——LLM 抽取明明成功，Entity 却全为 0。
+- 推荐处理：**降级而非失败**。embed 失败时实体/边照常写入 KG，向量写入标记
+  `pending_embed`（或落一张待补偿表），由后续补偿任务（如 `dt build --source knowledge`
+  或定期重试）补齐向量。验收标准：embed 服务宕机时 `dt build` 的 KG 写入不受影响，
+  恢复后向量可补齐。
+
+**待处理 ②d：进度失效机制缺失（本次故障的源头设计缺口）**
+- 现象：KG/向量数据被清时（`dt clean`、Memgraph 重启丢数据、人工清库），SQLite 的
+  file_snapshots/pipeline_progress 不会跟着失效。增量逻辑无条件信任 SQLite → 全部
+  跳过 → 构建"成功"但图是空的。终审旁注②（代码文件删除未接 `delete_file_progress`）
+  是同一缺口的另一个口子。
+- 推荐处理（按成本从低到高，可组合）：
+  1. **启动校验**：`dt build` 开始时抽样比对"SQLite 声称已处理的文件数"与"KG 中该项
+     目节点数"，数量级不符（如进度>0 而节点=0）则警告并自动转全量；
+  2. **统一删除入口**：凡清 KG 数据的路径（clean/FullRebuild prepare/人工运维文档）
+     必须同步清对应进度表，把"清数据不清进度"变成不可能；
+  3. **进度签名**：进度表记录所属 KG 代次（如 Memgraph 启动时间或项目代次号），
+     代次不符即作废。
+- 关联：§13.9 旁注②（代码文件删除未接 `delete_file_progress`）应与 ②d 一并设计。
