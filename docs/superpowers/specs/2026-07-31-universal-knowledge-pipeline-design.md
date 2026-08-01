@@ -730,7 +730,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | **S2a** | Consolidate 核心：consolidate.rs（两级消歧/写图/双写/purge/SAME_AS/I7 迁移）+ store.rs 薄壳重写（R8）+ R7 `search_with_filter` | ✅ 完成 | `98044df` + 修复轮 `6936cc0` | 修复轮 1 后 ALL ADDRESSED（1C+2I+5M 全部修复） |
 | **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | ✅ 完成（自审，待确认） | `ccb53e6` | 自审通过（无 subagent 评审，见 §13.5） |
 | **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ✅ 完成 | `72798e3` | 控制者自审（同 S2b 模式） |
-| **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ⬜ 待做 | — | — |
+| **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ✅ 完成（自审，用户指示无 subagent） | `647bddd` | 控制者自审（同 S2b 模式，见 §13.7） |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ⬜ 待做 | — | — |
 | 终审 | 全分支 code review（最 capable 模型）+ finishing-a-development-branch | ⬜ 待做 | — | — |
 | **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ⏸️ 方案本身延后，不在本轮 | — | — |
@@ -805,3 +805,36 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
   （skip=llm_analysis 内容检查，expected 标记 `has_llm_analysis_on_methods=false`，有意）。
   独立二轮复跑实测 263/58/270——RELATES 漂移最大（74→58，-22%），下界仍成立，
   抽样实体全部复现，校准余量设计有效。
+
+### 13.7 S3 完成记录（2026-08-01，会话内直接实现——用户指示无 subagent）
+
+- **旧路径摘除（R10 收尾）**：`process_documents`/`write_document_to_graph`/
+  `write_chunk_to_graph`/`DocumentItem` 整体删除（§10.2 标"改造"，实际无残留职责——
+  engine 已覆盖文档抽取链）：chunk+embed doc_chunks 双写、Document/DocumentChunk 图
+  节点（全库无消费方）、文档 @knowledge 提取一并移除；`PipelineTemplate` 只保留文档
+  **生命周期**职责。
+- **deleted_paths → purge_document（§6.5.2 接线）**：build/pipeline.rs 新增 Step 3b——
+  strategy 对 doc_files 再选一次（deleted 含 code/doc 混存快照表污染，按
+  `document_extensions` 过滤）→ `purge_document`（提为 consolidate.rs 自由函数，
+  `&dyn` 注入、无需 embed；Consolidator 方法委托）→ **成功 purge 者**才
+  `delete_file_progress` 清快照+步骤进度（失败保留下轮重报，自审修复）。Step 9b
+  保存变更文档快照基线（置于 Step 9 后——FullRebuildStrategy.update_snapshots 先
+  delete_project 全清，顺序错误会丢基线）。
+- **doc_id 归一 rel 形态**：engine 旧产物为绝对路径（`dt://doc/{proj}//data/...`，
+  实测同文档 rel+abs 双 Document 节点）；build.rs engine 输入/skip 键/成功匹配三处
+  改项目相对路径，chunk.rs 与 purge 统一 `domain::id::make_document_id`。
+  遗留影响：其他生产项目的 abs 形态垃圾经 `dt build --full` 自愈（prepare 清项目
+  向量 + §6.5.1 入口清边），abs Document 节点可一次性 Cypher 清除
+  （`... doc_id STARTS WITH 'dt://doc/{project}//' DETACH DELETE d`）。
+- **新增 trait 方法**：`SnapshotRepository::delete_file_progress`（默认 no-op 防 mock
+  连锁——同 §13.4 step 进度先例；SqliteRepo/MemorySnapshotRepo 真实现，
+  file_snapshots+pipeline_progress 两表）——修复"删除后同内容重建被陈旧步骤进度
+  跳过"；PDF 文档不再有任何处理（engine skip_ext 含 pdf），删除 purge 仍生效。
+- **验收数字**：`cargo test` 775 passed / 2 failed（预存，未扩大，新增 3 项单测）；
+  clippy 0 error；`dt clean --test && dt build --test` → **117/0 failed/1 skipped**；
+  重复 build 实体**零漂移**（271/62/280/12 完全一致）；删除
+  `redis-cache-pitfall.md` → Document/MENTIONED_IN(7)/RELATES(4)/doc_chunks 点/
+  快照/步骤进度全部清零 → 恢复文件 → 1 文件重抽（不被陈旧进度跳过）→ 计数复原。
+- **旁注（out-of-scope，终审上报）**：①代码文件删除有同类陈旧进度问题（恢复同内容
+  文件 → Method 节点丢失直至内容变更，可用同一 `delete_file_progress` 修）；②gRPC
+  BuildServiceImpl 路径无 engine，文档仅生命周期无抽取（既有状态）。
