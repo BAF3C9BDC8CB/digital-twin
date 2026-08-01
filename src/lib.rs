@@ -5,7 +5,7 @@
 //!   infrastructure/   → Memgraph, Qdrant, SQLite, scanner, parser
 //!   application/      → use-case orchestration (build, sync, context, knowledge, plugins)
 //!   interfaces/       → gRPC server + CLI command handlers
-//!   shared/           → logging, coordinator, chunker, vectorizer
+//!   shared/           → logging, coordinator, chunker
 
 pub mod proto;
 pub mod domain;

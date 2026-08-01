@@ -173,5 +173,4 @@ mod tests {
         let result = reg.parse_file("function main() {}\nclass App {}", &path, "test");
         assert!(result.is_ok());
     }
-
 }
