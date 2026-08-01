@@ -732,7 +732,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ✅ 完成 | `72798e3` | 控制者自审（同 S2b 模式） |
 | **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ✅ 完成（自审，用户指示无 subagent） | `647bddd` | 控制者自审（同 S2b 模式，见 §13.7） |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ✅ 完成（自审，用户指示无 subagent） | `80d1f33` | 控制者自审（同 S2b 模式） |
-| 终审 | 全分支 code review（最 capable 模型）+ finishing-a-development-branch | ⬜ 待做 | — | — |
+| 终审 | 全分支 code review + finishing-a-development-branch | ✅ 完成（1C+2M 已修复） | `20a8bee` + `ab105c5` | 见 §13.9 |
 | **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ⏸️ 方案本身延后，不在本轮 | — | — |
 
 ### 13.2 S1 验收数字（独立复验通过）
@@ -838,3 +838,24 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 - **旁注（out-of-scope，终审上报）**：①代码文件删除有同类陈旧进度问题（恢复同内容
   文件 → Method 节点丢失直至内容变更，可用同一 `delete_file_progress` 修）；②gRPC
   BuildServiceImpl 路径无 engine，文档仅生命周期无抽取（既有状态）。
+
+### 13.9 终审记录（2026-08-01，控制者直接执行——用户指示无 subagent）
+
+- **规范符合性**：§5-§10 逐节核对全部一致（模型/prompt/块级流/降级/两级消歧/图落库/
+  双写/SAME_AS/生命周期/payload/point_id/I1-I7/删除清单零残留/learn 无接入）；§13 记录
+  的全部已批准偏差与代码相符，未发现未申报偏离。
+- **独立复验**：cargo test 760+2（预存）、clippy 0 error、fmt exit=1（见 Minor#1）。
+- **Critical（已修复，`ab105c5`）**：`test/fixtures/knowledge/` 4 个 fixture 未跟踪——
+  干净检出上 S1 测试集 7→3（<§11 ≥5 门槛）、expected.json 抽样实体 aria2c 来源缺失
+  （`dt build --test` 必挂）、下界校准基数不完整。用户裁决全部提交（均已脱敏）。
+- **Minor#1（已修复，`20a8bee`）**：S4 提交遗留 `parser/mod.rs` fmt 空行，HEAD 不过
+  `cargo fmt --check`。
+- **Minor#2（已修复，`20a8bee`）**：`shared/vectorizer.rs`（605 行）S3 后全库零消费方，
+  整模块删除（§10.2 原计划改造它，实际 entity_ids 落在 consolidate.rs）。
+- **旁注复核（均属实，上报用户裁决，不在本轮修）**：①R4 同类 bug——`build.rs`
+  handle_build 的 SF 默认分支 base_url 仍读 `inference_server.url`；②S3 旁注①——代码
+  文件删除路径未接 `delete_file_progress`（恢复同内容文件被陈旧进度跳过）；③S3 旁注
+  ②——gRPC BuildServiceImpl 无 engine；④§6.5.4 孤儿实体周期清理 Cypher 无步骤认领
+  （FullRebuild 兜底，建议立后续任务）。
+- **修复后复验**：fmt exit=0；clippy 0 error；test **747+2**（747=760-13 vectorizer
+  测试；2 失败均为预存基线，未扩大）。
