@@ -61,9 +61,6 @@ pub struct ExtractionResult {
     pub classes: Vec<crate::domain::types::ClassBlock>,
     pub modules: Vec<crate::domain::types::ModuleBlock>,
     pub snapshots: Vec<FileSnapshot>,
-    /// @knowledge annotations extracted from code comments.
-    pub knowledge_annotations:
-        Vec<crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation>,
 }
 
 /// The pipeline template that orchestrates the build flow.
@@ -196,37 +193,8 @@ impl PipelineTemplate {
         // (Step 3b / Step 9b).
 
         // Step 6: Write graph (methods, classes, modules, relationships)
-        // NOTE: Must be done BEFORE write_knowledge_annotations so that
-        // IMPLEMENTED_BY relationships can match Method nodes in the graph.
         if let Some(graph) = graph {
             self.write_graph(graph, project, &extraction).await?;
-        }
-
-        // Step 6b: Write knowledge annotations (@knowledge comments)
-        // Now that Method nodes exist in the graph, IMPLEMENTED_BY can match.
-        let knowledge_count = extraction.knowledge_annotations.len();
-        if let Some(graph) = graph {
-            if knowledge_count > 0 {
-                // Skip embedding in write_knowledge_annotations if processors.embed=false
-                let embed_for_annotations = if self.skip_embed {
-                    None
-                } else {
-                    embed.as_deref()
-                };
-                let vector_for_annotations = if self.skip_embed {
-                    None
-                } else {
-                    vector.as_deref()
-                };
-                self.write_knowledge_annotations(
-                    graph,
-                    project,
-                    &extraction.knowledge_annotations,
-                    embed_for_annotations,
-                    vector_for_annotations,
-                )
-                .await;
-            }
         }
 
         // Step 7b: Embed methods and write to Qdrant (skip if processors.embed=false)
@@ -538,7 +506,7 @@ impl PipelineTemplate {
         })
     }
 
-    /// Extract entities (methods, classes, modules, knowledge annotations) from a batch of files.
+    /// Extract entities (methods, classes, modules) from a batch of files.
     /// Uses multiple threads for parallel file I/O and parsing.
     fn extract_entities(
         &self,
@@ -549,7 +517,6 @@ impl PipelineTemplate {
         let all_methods = Arc::new(std::sync::Mutex::new(Vec::new()));
         let all_classes = Arc::new(std::sync::Mutex::new(Vec::new()));
         let all_snapshots = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let all_annotations = Arc::new(std::sync::Mutex::new(Vec::new()));
         let module_set = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
 
         let num_threads = std::thread::available_parallelism()
@@ -567,7 +534,6 @@ impl PipelineTemplate {
                 let methods = all_methods.clone();
                 let classes = all_classes.clone();
                 let snapshots = all_snapshots.clone();
-                let annotations = all_annotations.clone();
                 let modules = module_set.clone();
                 s.spawn(move || {
                     for file_path in &chunk {
@@ -607,11 +573,6 @@ impl PipelineTemplate {
                                 continue;
                             }
                         };
-                        let knowledge_anns =
-                            crate::infrastructure::parser::extract_knowledge_annotations(
-                                &source, &rel_path, &project,
-                            );
-                        annotations.lock().unwrap().extend(knowledge_anns);
                         let method_count = result.methods.len() as u32;
                         for m in &result.methods {
                             if !m.package_or_module.is_empty() {
@@ -644,10 +605,6 @@ impl PipelineTemplate {
             .unwrap()
             .into_inner()
             .unwrap();
-        let all_annotations = Arc::try_unwrap(all_annotations)
-            .unwrap()
-            .into_inner()
-            .unwrap();
         let module_set = Arc::try_unwrap(module_set).unwrap().into_inner().unwrap();
 
         let modules: Vec<crate::domain::types::ModuleBlock> = module_set
@@ -664,7 +621,6 @@ impl PipelineTemplate {
             classes: all_classes,
             modules,
             snapshots: all_snapshots,
-            knowledge_annotations: all_annotations,
         })
     }
 
@@ -843,295 +799,6 @@ impl PipelineTemplate {
         Ok(())
     }
 
-    /// Write @knowledge annotations as Concept and Knowledge nodes to the graph database.
-    async fn write_knowledge_annotations(
-        &self,
-        graph: &dyn GraphRepository,
-        project: &str,
-        annotations: &[crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation],
-        embed: Option<&dyn EmbedService>,
-        vector: Option<&dyn VectorRepository>,
-    ) {
-        let now = chrono::Utc::now().to_rfc3339();
-
-        for ann in annotations {
-            // Write Domain node if domain is set
-            if let Some(ref domain) = ann.domain {
-                let domain_id = format!("dt://domain/{}", domain);
-                let mut params = std::collections::HashMap::new();
-                params.insert("domain_id".into(), serde_json::json!(domain_id));
-                params.insert("name".into(), serde_json::json!(domain));
-                params.insert(
-                    "description".into(),
-                    serde_json::json!(format!("{} domain knowledge", domain)),
-                );
-                let _ = graph
-                    .write_query(
-                        r#"MERGE (d:Domain {domain_id: $domain_id})
-                        ON CREATE SET d.name = $name, d.description = $description
-                        ON MATCH SET d.description = $description"#,
-                        params,
-                    )
-                    .await;
-            }
-
-            // Write Concept node if concept + definition are present
-            if let (Some(ref concept_name), Some(ref definition)) = (&ann.concept, &ann.definition)
-            {
-                let domain = ann.domain.as_deref().unwrap_or("通用");
-                let concept_id = format!("dt://concept/{}/{}", domain, concept_name);
-                let summary = if ann.description.is_empty() {
-                    definition.clone()
-                } else {
-                    ann.description.clone()
-                };
-
-                let mut params = std::collections::HashMap::new();
-                params.insert("concept_id".into(), serde_json::json!(concept_id));
-                params.insert("name".into(), serde_json::json!(concept_name));
-                params.insert("definition".into(), serde_json::json!(definition));
-                params.insert("domain".into(), serde_json::json!(domain));
-                params.insert("summary".into(), serde_json::json!(summary));
-
-                let _ = graph
-                    .write_query(
-                        r#"MERGE (c:Concept {concept_id: $concept_id})
-                        ON CREATE SET
-                            c.name = $name,
-                            c.definition = $definition,
-                            c.domain = $domain,
-                            c.summary = $summary
-                        ON MATCH SET
-                            c.definition = $definition,
-                            c.summary = $summary"#,
-                        params,
-                    )
-                    .await;
-
-                // 即时嵌入 Concept 节点到 kg_nodes
-                // Property map mirrors service.rs::auto_vectorize_concept so the
-                // search text + payload fields stay consistent across the two
-                // write paths. We reuse the `summary` computed above (defaults
-                // to `definition` when `ann.description` is empty) for the
-                // `description` slot — exactly what auto_vectorize_concept
-                // writes (it uses `concept.summary`, which is the same value).
-                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
-                    let concept_props = serde_json::json!({
-                        "name": concept_name,
-                        "definition": definition,
-                        "domain": domain,
-                        "summary": summary,
-                        "description": if summary.is_empty() || summary == "/" { definition.clone() } else { summary.clone() },
-                    });
-                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
-                        graph,
-                        embed_svc,
-                        vector_repo,
-                        "Concept",
-                        "concept_id",
-                        &concept_id,
-                        &concept_props,
-                    )
-                    .await
-                    {
-                        tracing::warn!("embed Concept {} failed: {}", concept_id, e);
-                    }
-                }
-
-                // Link Concept to Domain
-                if let Some(ref domain) = ann.domain {
-                    let domain_id = format!("dt://domain/{}", domain);
-                    let mut link_params = std::collections::HashMap::new();
-                    link_params.insert("concept_id".into(), serde_json::json!(&concept_id));
-                    link_params.insert("domain_id".into(), serde_json::json!(&domain_id));
-                    let _ = graph
-                        .write_query(
-                            r#"MATCH (c:Concept {concept_id: $concept_id})
-                            MATCH (d:Domain {domain_id: $domain_id})
-                            MERGE (d)-[:CONTAINS]->(c)"#,
-                            link_params,
-                        )
-                        .await;
-                }
-
-                // Link Concept to source file (Method, if exists)
-                let mut file_params = std::collections::HashMap::new();
-                file_params.insert("concept_id".into(), serde_json::json!(&concept_id));
-                file_params.insert("file_path".into(), serde_json::json!(&ann.file_path));
-                file_params.insert("project".into(), serde_json::json!(project));
-                let _ = graph
-                    .write_query(
-                        r#"MATCH (c:Concept {concept_id: $concept_id})
-                        MATCH (m:Method {project: $project})
-                        WHERE m.file_path = $file_path OR m.file_path ENDS WITH $file_path
-                        MERGE (c)-[:IMPLEMENTED_BY]->(m)"#,
-                        file_params,
-                    )
-                    .await;
-                // Also link Concept to source Document (if the concept came from a document/knowledge file)
-                self.link_to_document(graph, project, &concept_id, &ann.file_path)
-                    .await;
-            }
-
-            // Write Knowledge node if pitfall is present
-            if let Some(ref pitfall) = ann.pitfall {
-                let concept_key = ann.concept.as_deref().unwrap_or("unknown");
-                let domain = ann.domain.as_deref().unwrap_or("通用");
-                let knowledge_id = format!("dt://knowledge/{}/{}/{}", project, domain, concept_key);
-                let name = format!("{}-pitfall", concept_key);
-                let title = format!("{} 注意事项", concept_key);
-
-                let mut params = std::collections::HashMap::new();
-                params.insert("knowledge_id".into(), serde_json::json!(&knowledge_id));
-                params.insert("name".into(), serde_json::json!(name));
-                params.insert("title".into(), serde_json::json!(title));
-                params.insert("domain".into(), serde_json::json!(domain));
-                params.insert("summary".into(), serde_json::json!(pitfall));
-                params.insert("content".into(), serde_json::json!(pitfall));
-                params.insert(
-                    "definition".into(),
-                    serde_json::json!(ann.definition.as_deref().unwrap_or("")),
-                );
-                params.insert("source".into(), serde_json::json!("code_comment"));
-                params.insert("project".into(), serde_json::json!(project));
-                params.insert("confidence".into(), serde_json::json!(0.7));
-                params.insert("verified_by".into(), serde_json::Value::Null);
-                params.insert("created_at".into(), serde_json::json!(&now));
-                params.insert("updated_at".into(), serde_json::json!(&now));
-                params.insert("version".into(), serde_json::json!(1));
-
-                let _ = graph
-                    .write_query(
-                        r#"MERGE (k:Knowledge {knowledge_id: $knowledge_id})
-                        ON CREATE SET
-                            k.name = $name,
-                            k.title = $title,
-                            k.domain = $domain,
-                            k.summary = $summary,
-                            k.content = $content,
-                            k.definition = $definition,
-                            k.source = $source,
-                            k.project = $project,
-                            k.confidence = $confidence,
-                            k.verified_by = $verified_by,
-                            k.created_at = $created_at,
-                            k.updated_at = $updated_at,
-                            k.version = $version
-                        ON MATCH SET
-                            k.summary = $summary,
-                            k.content = $content,
-                            k.updated_at = $updated_at"#,
-                        params,
-                    )
-                    .await;
-
-                // 即时嵌入 Knowledge 节点到 kg_nodes
-                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
-                    let knowledge_props = serde_json::json!({
-                        "name": name,
-                        "title": title,
-                        "domain": domain,
-                        "summary": pitfall,
-                        "content": pitfall,
-                    });
-                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
-                        graph,
-                        embed_svc,
-                        vector_repo,
-                        "Knowledge",
-                        "knowledge_id",
-                        &knowledge_id,
-                        &knowledge_props,
-                    )
-                    .await
-                    {
-                        tracing::warn!("embed Knowledge {} failed: {}", knowledge_id, e);
-                    }
-                }
-
-                // Link Knowledge pitfall to source Document
-                self.link_to_document(graph, project, &knowledge_id, &ann.file_path)
-                    .await;
-            }
-
-            // Write Experience node if experience field is present
-            if let Some(ref exp_title) = ann.experience {
-                let domain = ann.domain.as_deref().unwrap_or("通用");
-                let experience_id = format!(
-                    "dt://experience/{}/{}/{}",
-                    project,
-                    domain,
-                    ann.concept.as_deref().unwrap_or("unknown")
-                );
-                let content = if ann.description.is_empty() {
-                    exp_title.clone()
-                } else {
-                    format!("{}: {}", exp_title, ann.description)
-                };
-
-                let mut params = std::collections::HashMap::new();
-                params.insert("experience_id".into(), serde_json::json!(&experience_id));
-                params.insert("title".into(), serde_json::json!(exp_title));
-                params.insert("summary".into(), serde_json::json!(exp_title));
-                params.insert("content".into(), serde_json::json!(content));
-                params.insert("domain".into(), serde_json::json!(domain));
-                params.insert("severity".into(), serde_json::json!("warning"));
-                params.insert("project".into(), serde_json::json!(project));
-                params.insert("created_at".into(), serde_json::json!(&now));
-
-                let _ = graph
-                    .write_query(
-                        r#"MERGE (e:Experience {experience_id: $experience_id})
-                        ON CREATE SET
-                            e.title = $title,
-                            e.summary = $summary,
-                            e.content = $content,
-                            e.domain = $domain,
-                            e.severity = $severity,
-                            e.project = $project,
-                            e.created_at = $created_at
-                        ON MATCH SET
-                            e.title = $title,
-                            e.summary = $summary,
-                            e.content = $content,
-                            e.severity = $severity"#,
-                        params,
-                    )
-                    .await;
-
-                // 即时嵌入 Experience 节点到 kg_nodes
-                // Property map mirrors service.rs::auto_vectorize_experience
-                // (which uses `experience.title` as `name`). Here `exp_title`
-                // is the closest equivalent.
-                if let (Some(embed_svc), Some(vector_repo)) = (embed, vector) {
-                    let experience_props = serde_json::json!({
-                        "name": exp_title,
-                        "title": exp_title,
-                        "description": ann.description,
-                        "domain": domain,
-                    });
-                    if let Err(e) = crate::application::sync::kg_bridge::embed_kg_node(
-                        graph,
-                        embed_svc,
-                        vector_repo,
-                        "Experience",
-                        "experience_id",
-                        &experience_id,
-                        &experience_props,
-                    )
-                    .await
-                    {
-                        tracing::warn!("embed Experience {} failed: {}", experience_id, e);
-                    }
-                }
-
-                // Link Experience to source Document
-                self.link_to_document(graph, project, &experience_id, &ann.file_path)
-                    .await;
-            }
-        }
-    }
-
     /// Rebuild CALLS relationships for all methods in a project.
     async fn rebuild_call_graph(
         &self,
@@ -1223,34 +890,6 @@ fn is_document_path(
         .and_then(|e| e.to_str())
         .map(|e| document_extensions.contains(e))
         .unwrap_or(false)
-}
-
-impl PipelineTemplate {
-    /// Link a knowledge entity (Knowledge/Concept/Experience) to its source Document.
-    /// Uses `file_path` to find the Document — safe no-op if no matching Document exists.
-    async fn link_to_document(
-        &self,
-        graph: &dyn GraphRepository,
-        project: &str,
-        entity_id: &str,
-        file_path: &str,
-    ) {
-        let mut params = std::collections::HashMap::new();
-        params.insert("entity_id".into(), serde_json::json!(entity_id));
-        params.insert("file_path".into(), serde_json::json!(file_path));
-        params.insert("project".into(), serde_json::json!(project));
-        let _ = graph
-            .write_query(
-                r#"MATCH (e)
-                WHERE e.knowledge_id = $entity_id
-                   OR e.experience_id = $entity_id
-                   OR e.concept_id = $entity_id
-                MATCH (d:Document {file_path: $file_path, project: $project})
-                MERGE (e)-[:FROM_DOC]->(d)"#,
-                params,
-            )
-            .await;
-    }
 }
 
 /// Infer a human-readable project type label from the project name.

@@ -5,21 +5,21 @@
 //! - `update_file(project, path)` — single file update
 //! - `delete_project(project)` — remove all data for a project
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::{
     BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
 };
 use crate::domain::types::{BatchConfig, BuildReport, ScanConfig};
+use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::infrastructure::siliconflow::SiliconFlowClient;
-use crate::infrastructure::parser::ParserRegistry;
 use super::pipeline::PipelineTemplate;
 use super::strategy::full_rebuild::FullRebuildStrategy;
 use super::strategy::incremental::IncrementalStrategy;
 use super::strategy::BuildStrategy;
+use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// Default build service implementation.
 ///
@@ -36,6 +36,7 @@ pub struct BuildServiceImpl {
     scan_config: ScanConfig,
     full: bool,
     batch_config: BatchConfig,
+    skip_embed: bool,
 }
 
 impl BuildServiceImpl {
@@ -49,6 +50,7 @@ impl BuildServiceImpl {
         siliconflow: Option<Arc<SiliconFlowClient>>,
         full: bool,
         batch_config: BatchConfig,
+        skip_embed: bool,
     ) -> Self {
         Self {
             parser_registry,
@@ -60,6 +62,7 @@ impl BuildServiceImpl {
             scan_config: ScanConfig::default(),
             full,
             batch_config,
+            skip_embed,
         }
     }
 
@@ -88,7 +91,8 @@ impl BuildService for BuildServiceImpl {
             self.parser_registry.clone(),
             self.batch_config.clone(),
             self.siliconflow.clone(),
-        );
+        )
+        .with_skip_embed(self.skip_embed);
         let strategy = self.select_strategy();
 
         let graph_ref: Option<&dyn GraphRepository> = self.graph.as_ref().map(|r| r.as_ref());
@@ -109,8 +113,7 @@ impl BuildService for BuildServiceImpl {
 
     async fn update_file(&self, project: &str, path: &Path) -> Result<(), DtError> {
         // For single file update, we parse the file and upsert to graph.
-        let source = std::fs::read_to_string(path)
-            .map_err(DtError::Io)?;
+        let source = std::fs::read_to_string(path).map_err(DtError::Io)?;
 
         let result = self.parser_registry.parse_file(&source, path, project)?;
 
@@ -120,7 +123,6 @@ impl BuildService for BuildServiceImpl {
                 classes: result.classes,
                 modules: Vec::new(),
                 snapshots: Vec::new(),
-                knowledge_annotations: Vec::new(),
             };
             // Re-use the write_graph logic - but extraction is private
             // For now, skip graph writing for single file updates.
@@ -170,10 +172,7 @@ impl BuildService for BuildServiceImpl {
                 .await;
             // Delete the Project node
             let _ = graph
-                .write_query(
-                    "MATCH (p:Project {name: $project}) DETACH DELETE p",
-                    params,
-                )
+                .write_query("MATCH (p:Project {name: $project}) DETACH DELETE p", params)
                 .await;
         }
 
@@ -192,7 +191,17 @@ mod tests {
     #[test]
     fn service_creates() {
         let registry = Arc::new(ParserRegistry::new());
-        let service = BuildServiceImpl::new(registry, None, None, None, None, None, false, BatchConfig::default());
+        let service = BuildServiceImpl::new(
+            registry,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            BatchConfig::default(),
+            false,
+        );
         // Just verify it compiles and is constructable
         assert_eq!(service.scan_config.max_file_size, 524_288);
     }

@@ -24,9 +24,6 @@ prompt: |
   AST实体：
   ${tree_sitter.entities}
 
-  注解：
-  ${tree_sitter.annotations}
-
   源代码：
   ${file_text}
 

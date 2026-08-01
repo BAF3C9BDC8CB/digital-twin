@@ -34,14 +34,12 @@ pub mod annotation;
 pub mod entities;
 pub mod service;
 
-pub use annotation::{
-    extract_knowledge_annotations, parse_details, parse_value_list, KnowledgeAnnotation,
-};
+pub use annotation::{parse_details, parse_value_list};
 pub use entities::{
-    Concept, Domain, Experience, ExperienceSeverity, Knowledge, KnowledgeSource,
-    KnowledgeVersion, Playbook, Step,
+    Concept, Domain, Experience, ExperienceSeverity, Knowledge, KnowledgeSource, KnowledgeVersion,
+    Playbook, Step,
 };
 pub use service::{
-    concept_from_details, domain_from_details, experience_from_details,
-    knowledge_from_details, playbook_from_details, DefaultKnowledgeService, KnowledgeService,
+    concept_from_details, domain_from_details, experience_from_details, knowledge_from_details,
+    playbook_from_details, DefaultKnowledgeService, KnowledgeService,
 };

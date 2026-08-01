@@ -1,10 +1,8 @@
 //! Tree-sitter AST processor — wraps [`ParserRegistry`] to extract code
 //! entities (classes, methods, fields) from source files.
 //!
-//! Produces a [`ProcessorOutput`] with three keys:
+//! Produces a [`ProcessorOutput`] with two keys:
 //! - `"entities"`   — JSON object containing `classes` and `methods` arrays
-//! - `"annotations"` — `@knowledge` annotation entries extracted from
-//!   comments
 //! - `"imports"`    — list of import/use statements (bare structure, may be
 //!   empty for languages without a full import-tree extractor)
 
@@ -17,7 +15,6 @@ use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::parser::extract_knowledge_annotations;
 
 /// AST‑based code parser using tree‑sitter grammars.
 ///
@@ -56,9 +53,9 @@ impl Processor for TreeSitterProcessor {
         let mut output = ProcessorOutput::new();
 
         // Parse the file using the registry.
-        let parse_result = self
-            .registry
-            .parse_file(&ctx.file_text, &ctx.file_path, &ctx.project_name)?;
+        let parse_result =
+            self.registry
+                .parse_file(&ctx.file_text, &ctx.file_path, &ctx.project_name)?;
 
         // Store entities as a JSON object with "classes" and "methods".
         let entities = serde_json::json!({
@@ -92,29 +89,6 @@ impl Processor for TreeSitterProcessor {
             }).collect::<Vec<_>>(),
         });
         output.set("entities", entities);
-
-        // Extract @knowledge annotations from comments.
-        let raw_annotations = extract_knowledge_annotations(
-            &ctx.file_text,
-            &ctx.file_path.to_string_lossy(),
-            &ctx.project_name,
-        );
-        let annotations: Vec<serde_json::Value> = raw_annotations
-            .iter()
-            .map(|a| {
-                serde_json::json!({
-                    "domain": a.domain,
-                    "concept": a.concept,
-                    "definition": a.definition,
-                    "pitfall": a.pitfall,
-                    "experience": a.experience,
-                    "line_number": a.line_number,
-                    "file_path": a.file_path,
-                    "description": a.description,
-                })
-            })
-            .collect();
-        output.set("annotations", annotations);
 
         // Basic import extraction — collect unique package/module paths from
         // the parsed classes as a simple list.
@@ -180,7 +154,6 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.get("entities").is_some());
-        assert!(output.get("annotations").is_some());
         assert!(output.get("imports").is_some());
     }
 

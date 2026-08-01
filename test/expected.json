@@ -390,17 +390,6 @@
       "php",
       "rust"
     ],
-    "knowledge_domains": [
-      "运维",
-      "配置",
-      "缓存",
-      "部署",
-      "支付"
-    ],
-    "concept_count": 8,
-    "knowledge_count": 6,
-    "experience_count": 3,
-    "implemented_by_relations": 11,
     "calls_relations": 7,
     "min_entities": 150,
     "min_relates": 40,
