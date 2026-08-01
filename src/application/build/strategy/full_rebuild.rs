@@ -1,9 +1,10 @@
 //! Full rebuild strategy — wipes all project data and rebuilds from scratch.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::FileSnapshot;
+use crate::shared::collections::{DOC_CHUNKS, KG_NODES};
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -36,43 +37,76 @@ impl BuildStrategy for FullRebuildStrategy {
     async fn prepare(
         &self,
         graph: Option<&dyn GraphRepository>,
-        _vector: Option<&dyn VectorRepository>,
+        vector: Option<&dyn VectorRepository>,
         project: &str,
     ) -> Result<(), DtError> {
+        // §7.5: clear this project's vectors first — extracted-entity points
+        // (kg_nodes) and evidence blocks (doc_chunks) are project-scoped via
+        // the payload `project` key. Failures are logged, not fatal: the
+        // subsequent upserts are idempotent by deterministic point ids.
+        if let Some(vector) = vector {
+            let project_filter = serde_json::json!({
+                "must": [{"key": "project", "match": {"value": project}}],
+            });
+            for collection in [KG_NODES, DOC_CHUNKS] {
+                if let Err(e) = vector
+                    .delete_by_filter(collection, project_filter.clone())
+                    .await
+                {
+                    tracing::warn!(
+                        "[full_rebuild] clear {collection} vectors for {project} failed: {e}"
+                    );
+                }
+            }
+        }
+
         // Delete all Method, Class, and Module nodes for this project
         if let Some(graph) = graph {
             let mut params = HashMap::new();
-            params.insert("project".to_string(), serde_json::Value::String(project.to_string()));
+            params.insert(
+                "project".to_string(),
+                serde_json::Value::String(project.to_string()),
+            );
 
             // Delete CALLS relationships first
-            let _ = graph.write_query(
-                "MATCH (m:Method {project: $project})-[r:CALLS]->() DELETE r",
-                params.clone(),
-            ).await;
+            let _ = graph
+                .write_query(
+                    "MATCH (m:Method {project: $project})-[r:CALLS]->() DELETE r",
+                    params.clone(),
+                )
+                .await;
 
             // Delete CONTAINS relationships
-            let _ = graph.write_query(
-                "MATCH (c:Class {project: $project})-[r:CONTAINS]->() DELETE r",
-                params.clone(),
-            ).await;
+            let _ = graph
+                .write_query(
+                    "MATCH (c:Class {project: $project})-[r:CONTAINS]->() DELETE r",
+                    params.clone(),
+                )
+                .await;
 
             // Delete methods
-            let _ = graph.write_query(
-                "MATCH (m:Method {project: $project}) DETACH DELETE m",
-                params.clone(),
-            ).await;
+            let _ = graph
+                .write_query(
+                    "MATCH (m:Method {project: $project}) DETACH DELETE m",
+                    params.clone(),
+                )
+                .await;
 
             // Delete classes
-            let _ = graph.write_query(
-                "MATCH (c:Class {project: $project}) DETACH DELETE c",
-                params.clone(),
-            ).await;
+            let _ = graph
+                .write_query(
+                    "MATCH (c:Class {project: $project}) DETACH DELETE c",
+                    params.clone(),
+                )
+                .await;
 
             // Delete modules
-            let _ = graph.write_query(
-                "MATCH (m:Module {project: $project}) DETACH DELETE m",
-                params,
-            ).await;
+            let _ = graph
+                .write_query(
+                    "MATCH (m:Module {project: $project}) DETACH DELETE m",
+                    params,
+                )
+                .await;
         }
 
         Ok(())

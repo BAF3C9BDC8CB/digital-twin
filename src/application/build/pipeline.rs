@@ -21,10 +21,10 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::infrastructure::siliconflow::SiliconFlowClient;
+use super::strategy::BuildStrategy;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
-use super::strategy::BuildStrategy;
+use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// Maximum concurrent LLM analysis requests to SiliconFlow.
 const PHASE2_CONCURRENCY: usize = 5;
@@ -60,7 +60,8 @@ pub struct ExtractionResult {
     pub modules: Vec<crate::domain::types::ModuleBlock>,
     pub snapshots: Vec<FileSnapshot>,
     /// @knowledge annotations extracted from code comments.
-    pub knowledge_annotations: Vec<crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation>,
+    pub knowledge_annotations:
+        Vec<crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation>,
 }
 
 /// A document item ready for storage.
@@ -85,6 +86,8 @@ pub struct PipelineTemplate {
     batch_config: BatchConfig,
     /// Optional SiliconFlow client for Phase 2 (code semantic analysis).
     siliconflow: Option<Arc<SiliconFlowClient>>,
+    /// Skip vector embedding (set processors.embed=false to preserve existing vectors).
+    skip_embed: bool,
 }
 
 impl PipelineTemplate {
@@ -94,7 +97,18 @@ impl PipelineTemplate {
         batch_config: BatchConfig,
         siliconflow: Option<Arc<SiliconFlowClient>>,
     ) -> Self {
-        Self { parser_registry, batch_config, siliconflow }
+        Self {
+            parser_registry,
+            batch_config,
+            siliconflow,
+            skip_embed: false,
+        }
+    }
+
+    /// Set skip_embed flag (processors.embed=false in config).
+    pub fn with_skip_embed(mut self, skip: bool) -> Self {
+        self.skip_embed = skip;
+        self
     }
 
     /// Execute the full build pipeline.
@@ -133,7 +147,16 @@ impl PipelineTemplate {
         }
 
         // Step 4: Prepare storage (strategy-specific)
-        strategy.prepare(graph, None, project).await?;
+        strategy.prepare(graph, vector.as_deref(), project).await?;
+
+        // Full rebuild: clear all pipeline step progress and LLM progress
+        // so that incremental tracking starts from scratch.
+        if strategy.force_rebuild() {
+            if let Some(ref snap) = snapshot_repo {
+                let _ = snap.clear_step_progress(project).await;
+                let _ = snap.clear_llm_progress(project).await;
+            }
+        }
 
         // Step 5: Parse files and extract entities
         let extraction = self.extract_entities(project, root, &files_to_process)?;
@@ -159,7 +182,9 @@ impl PipelineTemplate {
                     }
                     for p in &doc_files {
                         let rel = scanner::rel_path(root, p);
-                        let current_mtime = p.metadata().ok()
+                        let current_mtime = p
+                            .metadata()
+                            .ok()
                             .and_then(|m| m.modified().ok())
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                             .map(|d| d.as_secs_f64())
@@ -181,7 +206,15 @@ impl PipelineTemplate {
             if !doc_to_process.is_empty() {
                 if let Some(graph) = graph {
                     let _documents_written = self
-                        .process_documents(project, root, &doc_to_process, Some(graph), embed.clone(), vector.clone(), snapshot_repo.as_deref())
+                        .process_documents(
+                            project,
+                            root,
+                            &doc_to_process,
+                            Some(graph),
+                            embed.clone(),
+                            vector.clone(),
+                            snapshot_repo.as_deref(),
+                        )
                         .await?;
                 }
             }
@@ -199,99 +232,141 @@ impl PipelineTemplate {
         let knowledge_count = extraction.knowledge_annotations.len();
         if let Some(graph) = graph {
             if knowledge_count > 0 {
+                // Skip embedding in write_knowledge_annotations if processors.embed=false
+                let embed_for_annotations = if self.skip_embed {
+                    None
+                } else {
+                    embed.as_deref()
+                };
+                let vector_for_annotations = if self.skip_embed {
+                    None
+                } else {
+                    vector.as_deref()
+                };
                 self.write_knowledge_annotations(
                     graph,
                     project,
                     &extraction.knowledge_annotations,
-                    embed.as_deref(),
-                    vector.as_deref(),
+                    embed_for_annotations,
+                    vector_for_annotations,
                 )
                 .await;
             }
         }
 
-        // Step 7b: Embed methods and write to Qdrant
+        // Step 7b: Embed methods and write to Qdrant (skip if processors.embed=false)
         if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
-            let texts: Vec<String> = extraction.methods.iter()
-                .map(|m| format!("{} {}", m.signature, m.comment))
-                .collect();
-            if !texts.is_empty() {
+            if self.skip_embed {
+                tracing::info!(
+                    "Skipping embed step (processors.embed=false) — preserving existing Qdrant vectors"
+                );
+            } else if !extraction.methods.is_empty() {
+                let texts: Vec<String> = extraction
+                    .methods
+                    .iter()
+                    .map(|m| format!("{} {}", m.signature, m.comment))
+                    .collect();
                 let embed_batch = self.batch_config.embed;
                 let concurrent = self.batch_config.embed_concurrency;
 
-                let chunk_pairs: Vec<(Vec<String>, Vec<crate::domain::types::MethodBlock>)> = texts.chunks(embed_batch)
+                let chunk_pairs: Vec<(Vec<String>, Vec<crate::domain::types::MethodBlock>)> = texts
+                    .chunks(embed_batch)
                     .zip(extraction.methods.chunks(embed_batch))
                     .map(|(t, m)| (t.to_vec(), m.to_vec()))
                     .collect();
 
                 let embed_svc = embed_svc.clone();
-                let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> = stream::iter(chunk_pairs)
-                    .map(|(text_chunk, method_chunk)| {
-                        let svc = embed_svc.clone();
-                        async move {
-                            let embeddings = svc.embed_batch(&text_chunk).await
-                                .map_err(|e| DtError::Repository(format!("embed: {}", e)))?;
-                            let points: Vec<serde_json::Value> = method_chunk.iter().zip(embeddings.iter())
-                                .map(|(m, vec)| serde_json::json!({
-                                    "id": m.method_id,
-                                    "vector": vec,
-                                    "payload": {
-                                        // ---- identity ----
-                                        "name": m.name,
-                                        "signature": m.signature,
-                                        "class_name": m.class_name,
-                                        // ---- location ----
-                                        "file_path": m.file_path,
-                                        "package_or_module": m.package_or_module,
-                                        // ---- tech stack ----
-                                        "language": m.language,
-                                        "project": m.project,
-                                        // ---- code range ----
-                                        "start_line": m.start_line,
-                                        "end_line": m.end_line,
-                                        // ---- signature ----
-                                        "params": m.params,
-                                        "return_type": m.return_type,
-                                        "calls": m.calls,
-                                        "comment": m.comment,
-                                        // ---- metadata ----
-                                        "entity_id": m.method_id,
-                                    }
-                                }))
-                                .collect();
-                            Ok(points)
-                        }
-                    })
-                    .buffer_unordered(concurrent)
-                    .collect()
-                    .await;
+                let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> =
+                    stream::iter(chunk_pairs)
+                        .map(|(text_chunk, method_chunk)| {
+                            let svc = embed_svc.clone();
+                            async move {
+                                let embeddings = svc
+                                    .embed_batch(&text_chunk)
+                                    .await
+                                    .map_err(|e| DtError::Repository(format!("embed: {}", e)))?;
+                                let points: Vec<serde_json::Value> = method_chunk
+                                    .iter()
+                                    .zip(embeddings.iter())
+                                    .map(|(m, vec)| {
+                                        serde_json::json!({
+                                            "id": m.method_id,
+                                            "vector": vec,
+                                            "payload": {
+                                                // ---- identity ----
+                                                "name": m.name,
+                                                "signature": m.signature,
+                                                "class_name": m.class_name,
+                                                // ---- location ----
+                                                "file_path": m.file_path,
+                                                "package_or_module": m.package_or_module,
+                                                // ---- tech stack ----
+                                                "language": m.language,
+                                                "project": m.project,
+                                                // ---- code range ----
+                                                "start_line": m.start_line,
+                                                "end_line": m.end_line,
+                                                // ---- signature ----
+                                                "params": m.params,
+                                                "return_type": m.return_type,
+                                                "calls": m.calls,
+                                                "comment": m.comment,
+                                                // ---- metadata ----
+                                                "entity_id": m.method_id,
+                                            }
+                                        })
+                                    })
+                                    .collect();
+                                Ok(points)
+                            }
+                        })
+                        .buffer_unordered(concurrent)
+                        .collect()
+                        .await;
 
                 let mut all_points = Vec::new();
                 for result in embed_results {
                     all_points.extend(result?);
                 }
 
-                vector_repo.ensure_collection(crate::shared::collections::CODE_METHODS, crate::shared::collections::VECTOR_DIM).await?;
+                vector_repo
+                    .ensure_collection(
+                        crate::shared::collections::CODE_METHODS,
+                        crate::shared::collections::VECTOR_DIM,
+                    )
+                    .await?;
                 // Upsert in batches to avoid Qdrant timeouts with large payloads
                 let upsert_batch = self.batch_config.upsert;
                 for chunk in all_points.chunks(upsert_batch) {
-                    vector_repo.upsert(crate::shared::collections::CODE_METHODS, chunk.to_vec()).await?;
+                    vector_repo
+                        .upsert(crate::shared::collections::CODE_METHODS, chunk.to_vec())
+                        .await?;
                 }
-                tracing::info!("upserted {} vectors to Qdrant ({} concurrent batches)", extraction.methods.len(), (extraction.methods.len() + embed_batch - 1) / embed_batch);
+                tracing::info!(
+                    "upserted {} vectors to Qdrant ({} concurrent batches)",
+                    extraction.methods.len(),
+                    (extraction.methods.len() + embed_batch - 1) / embed_batch
+                );
             }
         }
 
         // Step 8: Rebuild call graph
         if let Some(graph) = graph {
-            tracing::info!("rebuilding call graph for {} methods...", extraction.methods.len());
-            self.rebuild_call_graph(graph, project, &extraction.methods).await?;
+            tracing::info!(
+                "rebuilding call graph for {} methods...",
+                extraction.methods.len()
+            );
+            self.rebuild_call_graph(graph, project, &extraction.methods)
+                .await?;
             tracing::info!("call graph rebuild complete");
         }
 
         // Step 9: Update SQLite snapshots
         if let Some(repo) = snapshot_repo.as_deref() {
             tracing::info!("updating {} snapshots...", extraction.snapshots.len());
-            strategy.update_snapshots(repo, project, &extraction.snapshots).await?;
+            strategy
+                .update_snapshots(repo, project, &extraction.snapshots)
+                .await?;
             tracing::info!("snapshot update complete");
         }
 
@@ -299,9 +374,15 @@ impl PipelineTemplate {
         // LLM analysis is submitted as a background tokio task so the build
         // returns immediately. The task processes methods concurrently and
         // updates Qdrant points with llm_analysis field.
-        if let (Some(ref client), Some(ref embed_svc), Some(ref vector_repo), Some(repo)) =
-            (&self.siliconflow, &embed, &vector, snapshot_repo)
-        {
+        //
+        // NOTE: embed and vector are required only when processors.store is true.
+        // When store is false, we still run LLM analysis but skip the embed+upsert step.
+        let phase2_client_available = self.siliconflow.is_some();
+        let phase2_snapshot_available = snapshot_repo.is_some();
+
+        if let (true, true) = (phase2_client_available, phase2_snapshot_available) {
+            let client = self.siliconflow.as_ref().unwrap();
+            let repo = snapshot_repo.as_ref().unwrap();
             let methods = &extraction.methods;
             if !methods.is_empty() {
                 let system_prompt = load_code_analysis_prompt();
@@ -337,26 +418,28 @@ impl PipelineTemplate {
                 let skipped = methods.len() - total;
                 tracing::info!(
                     "Phase 2: {} to analyze, {} up-to-date (background, non-blocking)",
-                    total, skipped,
+                    total,
+                    skipped,
                 );
 
                 if total > 0 {
                     // Spawn background task — build returns immediately
-                    let client = client.clone();
-                    let embed_svc = embed_svc.clone();
-                    let vector_repo = vector_repo.clone();
-                    let repo = repo.clone();  // Arc clone
+                    // embed_svc and vector_repo may be None when processors.store is false
+                    let client_cloned = client.clone();
+                    let repo_cloned = repo.clone();
                     let proj = project.to_string();
+                    let embed_svc_opt = embed.clone();
+                    let vector_repo_opt = vector.clone();
 
                     tokio::spawn(async move {
                         tracing::info!("Phase 2 background worker started: {} methods", total);
 
                         let results: Vec<(String, bool)> = stream::iter(
                             jobs.into_iter().map(|(method, hash)| {
-                                let cli = client.clone();
-                                let svc = embed_svc.clone();
-                                let repo_vec = vector_repo.clone();
-                                let repo_snap = repo.clone();
+                                let cli = client_cloned.clone();
+                                let repo_snap = repo_cloned.clone();
+                                let embed_svc = embed_svc_opt.clone();
+                                let vector_repo = vector_repo_opt.clone();
                                 let sp = system_prompt.clone();
                                 let coll = collection.clone();
                                 let proj = proj.clone();
@@ -370,38 +453,44 @@ impl PipelineTemplate {
                                                 .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
                                                 .await;
 
-                                            match svc.embed_batch(&[llm_response.clone()]).await {
-                                                Ok(embeddings) => {
-                                                    if let Some(vec) = embeddings.first() {
-                                                        let point = serde_json::json!({
-                                                            "id": method_id,
-                                                            "vector": vec,
-                                                            "payload": {
-                                                                "name": method.name,
-                                                                "signature": method.signature,
-                                                                "class_name": method.class_name,
-                                                                "file_path": method.file_path,
-                                                                "package_or_module": method.package_or_module,
-                                                                "language": method.language,
-                                                                "project": method.project,
-                                                                "start_line": method.start_line,
-                                                                "end_line": method.end_line,
-                                                                "params": method.params,
-                                                                "return_type": method.return_type,
-                                                                "calls": method.calls,
-                                                                "comment": method.comment,
-                                                                "entity_id": method.method_id,
-                                                                "llm_analysis": llm_response,
+                                            // Only embed and upsert if store is enabled (embed_svc and vector_repo available)
+                                            if let (Some(svc), Some(repo_vec)) = (embed_svc.as_ref(), vector_repo.as_ref()) {
+                                                match svc.embed_batch(&[llm_response.clone()]).await {
+                                                    Ok(embeddings) => {
+                                                        if let Some(vec) = embeddings.first() {
+                                                            let point = serde_json::json!({
+                                                                "id": method_id,
+                                                                "vector": vec,
+                                                                "payload": {
+                                                                    "name": method.name,
+                                                                    "signature": method.signature,
+                                                                    "class_name": method.class_name,
+                                                                    "file_path": method.file_path,
+                                                                    "package_or_module": method.package_or_module,
+                                                                    "language": method.language,
+                                                                    "project": method.project,
+                                                                    "start_line": method.start_line,
+                                                                    "end_line": method.end_line,
+                                                                    "params": method.params,
+                                                                    "return_type": method.return_type,
+                                                                    "calls": method.calls,
+                                                                    "comment": method.comment,
+                                                                    "entity_id": method.method_id,
+                                                                    "llm_analysis": llm_response,
+                                                                }
+                                                            });
+                                                            if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
+                                                                tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
                                                             }
-                                                        });
-                                                        if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
-                                                            tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
                                                         }
                                                     }
+                                                    Err(e) => {
+                                                        tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
-                                                }
+                                            } else {
+                                                // store=false: skip embed+upsert, just log the LLM response
+                                                tracing::debug!("Phase 2 LLM done (no store) {}: {}", method_name, llm_response.chars().take(50).collect::<String>());
                                             }
 
                                             tracing::info!("Phase 2 done {}", method_name);
@@ -422,11 +511,16 @@ impl PipelineTemplate {
                         let analyzed = results.iter().filter(|(_, ok)| *ok).count();
                         tracing::info!(
                             "Phase 2 background complete: {} analyzed, {} up-to-date, {} errors",
-                            analyzed, skipped, total - analyzed,
+                            analyzed,
+                            skipped,
+                            total - analyzed,
                         );
                     });
 
-                    tracing::info!("Phase 2: {} methods submitted for background LLM analysis", total);
+                    tracing::info!(
+                        "Phase 2: {} methods submitted for background LLM analysis",
+                        total
+                    );
                 }
             }
         }
@@ -546,8 +640,14 @@ impl PipelineTemplate {
 
         let all_methods = Arc::try_unwrap(all_methods).unwrap().into_inner().unwrap();
         let all_classes = Arc::try_unwrap(all_classes).unwrap().into_inner().unwrap();
-        let all_snapshots = Arc::try_unwrap(all_snapshots).unwrap().into_inner().unwrap();
-        let all_annotations = Arc::try_unwrap(all_annotations).unwrap().into_inner().unwrap();
+        let all_snapshots = Arc::try_unwrap(all_snapshots)
+            .unwrap()
+            .into_inner()
+            .unwrap();
+        let all_annotations = Arc::try_unwrap(all_annotations)
+            .unwrap()
+            .into_inner()
+            .unwrap();
         let module_set = Arc::try_unwrap(module_set).unwrap().into_inner().unwrap();
 
         let modules: Vec<crate::domain::types::ModuleBlock> = module_set
@@ -582,16 +682,27 @@ impl PipelineTemplate {
 
         // ---- Step 0: Ensure Project node exists ----
         {
-            let lang = extraction.methods.first()
+            let lang = extraction
+                .methods
+                .first()
                 .map(|m| m.language.as_str())
                 .or_else(|| extraction.classes.first().map(|_| "unknown"))
                 .unwrap_or("unknown");
             let project_type = infer_project_type(project);
 
             let mut params = HashMap::new();
-            params.insert("name".to_string(), serde_json::Value::String(project.to_string()));
-            params.insert("language".to_string(), serde_json::Value::String(lang.to_string()));
-            params.insert("project_type".to_string(), serde_json::Value::String(project_type.to_string()));
+            params.insert(
+                "name".to_string(),
+                serde_json::Value::String(project.to_string()),
+            );
+            params.insert(
+                "language".to_string(),
+                serde_json::Value::String(lang.to_string()),
+            );
+            params.insert(
+                "project_type".to_string(),
+                serde_json::Value::String(project_type.to_string()),
+            );
 
             graph
                 .write_query(
@@ -620,7 +731,10 @@ impl PipelineTemplate {
                         "calls": m.calls, "comment": m.comment, "source_text": m.source_text,
                     })).collect();
                     let mut params = HashMap::new();
-                    params.insert("methods".to_string(), serde_json::Value::Array(methods_json));
+                    params.insert(
+                        "methods".to_string(),
+                        serde_json::Value::Array(methods_json),
+                    );
                     graph
                         .write_query(
                             r#"UNWIND $methods AS m
@@ -649,7 +763,10 @@ impl PipelineTemplate {
                         "project": c.project, "start_line": c.start_line, "end_line": c.end_line,
                     })).collect();
                     let mut params = HashMap::new();
-                    params.insert("classes".to_string(), serde_json::Value::Array(classes_json));
+                    params.insert(
+                        "classes".to_string(),
+                        serde_json::Value::Array(classes_json),
+                    );
                     graph
                         .write_query(
                             r#"UNWIND $classes AS c
@@ -669,11 +786,19 @@ impl PipelineTemplate {
 
             let write_modules = async {
                 for chunk in modules.chunks(unwind) {
-                    let modules_json: Vec<serde_json::Value> = chunk.iter().map(|m| serde_json::json!({
-                        "module_id": m.module_id, "name": m.name, "project": m.project,
-                    })).collect();
+                    let modules_json: Vec<serde_json::Value> = chunk
+                        .iter()
+                        .map(|m| {
+                            serde_json::json!({
+                                "module_id": m.module_id, "name": m.name, "project": m.project,
+                            })
+                        })
+                        .collect();
                     let mut params = HashMap::new();
-                    params.insert("modules".to_string(), serde_json::Value::Array(modules_json));
+                    params.insert(
+                        "modules".to_string(),
+                        serde_json::Value::Array(modules_json),
+                    );
                     graph
                         .write_query(
                             r#"UNWIND $modules AS m
@@ -751,8 +876,7 @@ impl PipelineTemplate {
             }
 
             // Write Concept node if concept + definition are present
-            if let (Some(ref concept_name), Some(ref definition)) =
-                (&ann.concept, &ann.definition)
+            if let (Some(ref concept_name), Some(ref definition)) = (&ann.concept, &ann.definition)
             {
                 let domain = ann.domain.as_deref().unwrap_or("通用");
                 let concept_id = format!("dt://concept/{}/{}", domain, concept_name);
@@ -826,17 +950,14 @@ impl PipelineTemplate {
                             MATCH (d:Domain {domain_id: $domain_id})
                             MERGE (d)-[:CONTAINS]->(c)"#,
                             link_params,
-                    )
-                    .await;
+                        )
+                        .await;
                 }
 
                 // Link Concept to source file (Method, if exists)
                 let mut file_params = std::collections::HashMap::new();
                 file_params.insert("concept_id".into(), serde_json::json!(&concept_id));
-                file_params.insert(
-                    "file_path".into(),
-                    serde_json::json!(&ann.file_path),
-                );
+                file_params.insert("file_path".into(), serde_json::json!(&ann.file_path));
                 file_params.insert("project".into(), serde_json::json!(project));
                 let _ = graph
                     .write_query(
@@ -848,17 +969,15 @@ impl PipelineTemplate {
                     )
                     .await;
                 // Also link Concept to source Document (if the concept came from a document/knowledge file)
-                self.link_to_document(graph, project, &concept_id, &ann.file_path).await;
+                self.link_to_document(graph, project, &concept_id, &ann.file_path)
+                    .await;
             }
 
             // Write Knowledge node if pitfall is present
             if let Some(ref pitfall) = ann.pitfall {
                 let concept_key = ann.concept.as_deref().unwrap_or("unknown");
                 let domain = ann.domain.as_deref().unwrap_or("通用");
-                let knowledge_id = format!(
-                    "dt://knowledge/{}/{}/{}",
-                    project, domain, concept_key
-                );
+                let knowledge_id = format!("dt://knowledge/{}/{}/{}", project, domain, concept_key);
                 let name = format!("{}-pitfall", concept_key);
                 let title = format!("{} 注意事项", concept_key);
 
@@ -931,7 +1050,8 @@ impl PipelineTemplate {
                 }
 
                 // Link Knowledge pitfall to source Document
-                self.link_to_document(graph, project, &knowledge_id, &ann.file_path).await;
+                self.link_to_document(graph, project, &knowledge_id, &ann.file_path)
+                    .await;
             }
 
             // Write Experience node if experience field is present
@@ -1006,7 +1126,8 @@ impl PipelineTemplate {
                 }
 
                 // Link Experience to source Document
-                self.link_to_document(graph, project, &experience_id, &ann.file_path).await;
+                self.link_to_document(graph, project, &experience_id, &ann.file_path)
+                    .await;
             }
         }
     }
@@ -1061,11 +1182,7 @@ impl PipelineTemplate {
 }
 
 /// Delete method nodes and relationships for a list of deleted files.
-async fn delete_files_from_graph(
-    graph: &dyn GraphRepository,
-    project: &str,
-    files: &[String],
-) {
+async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, files: &[String]) {
     let files_json: Vec<serde_json::Value> = files
         .iter()
         .map(|f| serde_json::Value::String(f.clone()))
@@ -1112,7 +1229,9 @@ impl PipelineTemplate {
 
         for file_path in doc_files {
             // Parse the document
-            let parsed = match crate::infrastructure::parser::document::parse_document(file_path, project, root) {
+            let parsed = match crate::infrastructure::parser::document::parse_document(
+                file_path, project, root,
+            ) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!("Failed to parse document {}: {}", file_path.display(), e);
@@ -1141,24 +1260,23 @@ impl PipelineTemplate {
 
             // Determine target collection: knowledge files go to {project}_knowledge
             let rel_path = scanner::rel_path(root, file_path);
-            let is_knowledge_file = rel_path.contains("/knowledge/") || rel_path.starts_with("knowledge/");
+            let is_knowledge_file =
+                rel_path.contains("/knowledge/") || rel_path.starts_with("knowledge/");
             let collection = if is_knowledge_file {
                 crate::shared::collections::KG_NODES.to_string()
             } else {
                 crate::shared::collections::DOC_CHUNKS.to_string()
             };
 
-            // Embed chunks in batches if embed service is available.
+            // Embed chunks in batches if embed service is available and not skipped.
             if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
-                if !chunks.is_empty() {
+                if !chunks.is_empty() && !self.skip_embed {
                     let doc_embed_batch = self.batch_config.embed;
                     let doc_concurrent = self.batch_config.embed_concurrency;
                     vector_repo.ensure_collection(&collection, 1024).await?;
 
-                    let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> = chunks
-                        .chunks(doc_embed_batch)
-                        .map(|c| c.to_vec())
-                        .collect();
+                    let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> =
+                        chunks.chunks(doc_embed_batch).map(|c| c.to_vec()).collect();
 
                     let svc = embed_svc.clone();
                     let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> =
@@ -1166,20 +1284,26 @@ impl PipelineTemplate {
                             .map(|chunk_batch| {
                                 let svc = svc.clone();
                                 async move {
-                                    let texts: Vec<String> = chunk_batch.iter().map(|c| c.text.clone()).collect();
-                                    let embeddings = svc.embed_batch(&texts).await
-                                        .map_err(|e| DtError::Repository(format!("embed: {}", e)))?;
-                                    let points: Vec<serde_json::Value> = chunk_batch.iter()
+                                    let texts: Vec<String> =
+                                        chunk_batch.iter().map(|c| c.text.clone()).collect();
+                                    let embeddings =
+                                        svc.embed_batch(&texts).await.map_err(|e| {
+                                            DtError::Repository(format!("embed: {}", e))
+                                        })?;
+                                    let points: Vec<serde_json::Value> = chunk_batch
+                                        .iter()
                                         .zip(embeddings.iter())
-                                        .map(|(chunk, vec)| serde_json::json!({
-                                            "id": chunk.chunk_id,
-                                            "vector": vec,
-                                            "payload": {
-                                                "text": &chunk.text,
-                                                "doc_id": chunk.chunk_id,
-                                                "project": project,
-                                            },
-                                        }))
+                                        .map(|(chunk, vec)| {
+                                            serde_json::json!({
+                                                "id": chunk.chunk_id,
+                                                "vector": vec,
+                                                "payload": {
+                                                    "text": &chunk.text,
+                                                    "doc_id": chunk.chunk_id,
+                                                    "project": project,
+                                                },
+                                            })
+                                        })
                                         .collect();
                                     Ok(points)
                                 }
@@ -1196,7 +1320,9 @@ impl PipelineTemplate {
                     if !all_points.is_empty() {
                         let doc_upsert_batch = self.batch_config.upsert;
                         for chunk in all_points.chunks(doc_upsert_batch) {
-                            vector_repo.upsert(&collection, chunk.to_vec()).await
+                            vector_repo
+                                .upsert(&collection, chunk.to_vec())
+                                .await
                                 .map_err(|e| DtError::Repository(format!("upsert: {}", e)))?;
                         }
                     }
@@ -1204,11 +1330,16 @@ impl PipelineTemplate {
             }
 
             // Extract @knowledge annotations BEFORE consuming parsed fields
-            let knowledge_anns =
-                crate::infrastructure::parser::extract_knowledge_annotations(
-                    &parsed.content, &parsed.rel_path, project,
-                );
-            tracing::info!("KNOWLEDGE_ANNOTATIONS: file={}, count={}", parsed.rel_path, knowledge_anns.len());
+            let knowledge_anns = crate::infrastructure::parser::extract_knowledge_annotations(
+                &parsed.content,
+                &parsed.rel_path,
+                project,
+            );
+            tracing::info!(
+                "KNOWLEDGE_ANNOTATIONS: file={}, count={}",
+                parsed.rel_path,
+                knowledge_anns.len()
+            );
 
             // Build DocumentItem (consumes parsed.content, parsed.rel_path, etc.)
             let doc_item = DocumentItem {
@@ -1269,11 +1400,7 @@ impl PipelineTemplate {
     }
 
     /// Write a single Document node to the graph database.
-    async fn write_document_to_graph(
-        &self,
-        graph: &dyn GraphRepository,
-        doc: &DocumentItem,
-    ) {
+    async fn write_document_to_graph(&self, graph: &dyn GraphRepository, doc: &DocumentItem) {
         let mut params = std::collections::HashMap::new();
         params.insert("doc_id".into(), serde_json::json!(&doc.doc_id));
         params.insert("name".into(), serde_json::json!(&doc.name));
@@ -1327,8 +1454,14 @@ impl PipelineTemplate {
         params.insert("doc_id".into(), serde_json::json!(doc_id));
         params.insert("chunk_index".into(), serde_json::json!(chunk.chunk_index));
         params.insert("text".into(), serde_json::json!(&chunk.text));
-        params.insert("prev_chunk_id".into(), serde_json::json!(&chunk.prev_chunk_id));
-        params.insert("next_chunk_id".into(), serde_json::json!(&chunk.next_chunk_id));
+        params.insert(
+            "prev_chunk_id".into(),
+            serde_json::json!(&chunk.prev_chunk_id),
+        );
+        params.insert(
+            "next_chunk_id".into(),
+            serde_json::json!(&chunk.next_chunk_id),
+        );
         params.insert("start_char".into(), serde_json::json!(chunk.start_char));
         params.insert("end_char".into(), serde_json::json!(chunk.end_char));
 
@@ -1389,23 +1522,66 @@ impl PipelineTemplate {
 /// (e.g. `api-gateway` → `"微服务 — API 网关"`, `yimeng-website` → `"前端 — Web 应用"`).
 fn infer_project_type(project: &str) -> &str {
     let lower = project.to_lowercase();
-    if lower.contains("gateway") { return "微服务 — API 网关"; }
-    if lower.contains("website") || lower.contains("-h5") { return "前端 — Web 应用"; }
-    if lower.contains("hospital") || lower.contains("doctor") || lower.contains("nurse") || lower.contains("med") { return "微服务 — 医疗业务"; }
-    if lower.contains("pay") || lower.contains("charge") || lower.contains("cashier") || lower.contains("settlement") || lower.contains("order") { return "微服务 — 支付/交易"; }
-    if lower.contains("content") { return "微服务 — 内容中台"; }
-    if lower.contains("data") || lower.contains("report") || lower.contains("statistics") { return "微服务 — 数据/报表"; }
-    if lower.contains("log") { return "微服务 — 日志/监控"; }
-    if lower.contains("warehouse") || lower.contains("goods") || lower.contains("inventory") { return "微服务 — 仓储/物流"; }
-    if lower.contains("user") || lower.contains("auth") || lower.contains("oauth") { return "微服务 — 用户/认证"; }
-    if lower.contains("message") || lower.contains("sms") || lower.contains("im-") { return "微服务 — 消息/通知"; }
-    if lower.contains("admin") || lower.contains("boss") { return "前端 — 管理后台"; }
-    if lower.contains("saas") { return "微服务 — SaaS"; }
-    if lower.contains("search") { return "微服务 — 搜索"; }
-    if lower.contains("config") || lower.contains("cache") { return "微服务 — 基础设施"; }
-    if lower.contains("label") || lower.contains("comment") || lower.contains("app-") { return "微服务 — 业务支撑"; }
-    if lower.contains("-api") || lower.contains("api-") { return "微服务 — API 层"; }
-    if lower.contains("center") { return "微服务 — 业务中台"; }
+    if lower.contains("gateway") {
+        return "微服务 — API 网关";
+    }
+    if lower.contains("website") || lower.contains("-h5") {
+        return "前端 — Web 应用";
+    }
+    if lower.contains("hospital")
+        || lower.contains("doctor")
+        || lower.contains("nurse")
+        || lower.contains("med")
+    {
+        return "微服务 — 医疗业务";
+    }
+    if lower.contains("pay")
+        || lower.contains("charge")
+        || lower.contains("cashier")
+        || lower.contains("settlement")
+        || lower.contains("order")
+    {
+        return "微服务 — 支付/交易";
+    }
+    if lower.contains("content") {
+        return "微服务 — 内容中台";
+    }
+    if lower.contains("data") || lower.contains("report") || lower.contains("statistics") {
+        return "微服务 — 数据/报表";
+    }
+    if lower.contains("log") {
+        return "微服务 — 日志/监控";
+    }
+    if lower.contains("warehouse") || lower.contains("goods") || lower.contains("inventory") {
+        return "微服务 — 仓储/物流";
+    }
+    if lower.contains("user") || lower.contains("auth") || lower.contains("oauth") {
+        return "微服务 — 用户/认证";
+    }
+    if lower.contains("message") || lower.contains("sms") || lower.contains("im-") {
+        return "微服务 — 消息/通知";
+    }
+    if lower.contains("admin") || lower.contains("boss") {
+        return "前端 — 管理后台";
+    }
+    if lower.contains("saas") {
+        return "微服务 — SaaS";
+    }
+    if lower.contains("search") {
+        return "微服务 — 搜索";
+    }
+    if lower.contains("config") || lower.contains("cache") {
+        return "微服务 — 基础设施";
+    }
+    if lower.contains("label") || lower.contains("comment") || lower.contains("app-") {
+        return "微服务 — 业务支撑";
+    }
+    if lower.contains("-api") || lower.contains("api-") {
+        return "微服务 — API 层";
+    }
+    if lower.contains("center") {
+        return "微服务 — 业务中台";
+    }
     "微服务"
 }
 
@@ -1413,14 +1589,24 @@ fn infer_project_type(project: &str) -> &str {
 /// Falls back to a hardcoded default if the file is missing.
 fn load_code_analysis_prompt() -> String {
     let paths = [
-        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("prompts").join("code_analysis.yaml")),
-        Some(std::path::PathBuf::from("config/prompts/code_analysis.yaml")),
+        std::env::var("HOME").ok().map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".config")
+                .join("digital-twin")
+                .join("prompts")
+                .join("code_analysis.yaml")
+        }),
+        Some(std::path::PathBuf::from(
+            "config/prompts/code_analysis.yaml",
+        )),
     ];
     for path in paths.iter().flatten() {
         if let Ok(content) = std::fs::read_to_string(path) {
             use serde::Deserialize;
             #[derive(Deserialize)]
-            struct Prompt { system: Option<String> }
+            struct Prompt {
+                system: Option<String>,
+            }
             if let Ok(p) = serde_yaml::from_str::<Prompt>(&content) {
                 if let Some(s) = p.system {
                     if !s.is_empty() {

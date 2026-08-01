@@ -200,7 +200,9 @@ impl KgBridge {
         // Content-based detection: YAML has top-level "key:" lines
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') { continue; }
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
             if trimmed.contains(':') && !trimmed.contains('=') {
                 return true;
             }
@@ -233,12 +235,16 @@ impl KgBridge {
         let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (k, v) in pairs {
             let full_parts: Vec<&str> = k.split('.').collect();
-            if full_parts.len() <= prefix_depth { continue; }
+            if full_parts.len() <= prefix_depth {
+                continue;
+            }
             let rel_parts = &full_parts[prefix_depth..];
             // Output intermediate keys (track to avoid duplicates)
             let mut cur_path = String::new();
             for (i, part) in rel_parts.iter().enumerate() {
-                if !cur_path.is_empty() { cur_path.push('.'); }
+                if !cur_path.is_empty() {
+                    cur_path.push('.');
+                }
                 cur_path.push_str(part);
                 let depth = prefix_depth + i;
                 let indent = "  ".repeat(depth);
@@ -291,20 +297,28 @@ impl KgBridge {
             let content = cfg.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let config_id = cfg.get("config_id").and_then(|v| v.as_str()).unwrap_or("");
             let data_id = cfg.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
-            let group = cfg.get("group").and_then(|v| v.as_str()).unwrap_or("DEFAULT_GROUP");
+            let group = cfg
+                .get("group")
+                .and_then(|v| v.as_str())
+                .unwrap_or("DEFAULT_GROUP");
             let config_type = cfg.get("type").and_then(|v| v.as_str()).unwrap_or("");
             let namespace = cfg.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
 
-            if content.is_empty() { continue; }
+            if content.is_empty() {
+                continue;
+            }
 
             let is_yaml = Self::detect_is_yaml(data_id, config_type, content);
             let sections = chunk_config_adaptive(content, is_yaml);
-            if sections.is_empty() { continue; }
+            if sections.is_empty() {
+                continue;
+            }
 
             // Build chunk texts and embed
-            let texts: Vec<String> = sections.iter().map(|(name, pairs)| {
-                Self::reconstruct_text(name, pairs, is_yaml)
-            }).collect();
+            let texts: Vec<String> = sections
+                .iter()
+                .map(|(name, pairs)| Self::reconstruct_text(name, pairs, is_yaml))
+                .collect();
 
             let vectors = match self.embed.embed_batch(&texts).await {
                 Ok(v) => v,
@@ -315,7 +329,9 @@ impl KgBridge {
             };
 
             // Build Qdrant points
-            let points: Vec<serde_json::Value> = sections.iter().zip(vectors.iter())
+            let points: Vec<serde_json::Value> = sections
+                .iter()
+                .zip(vectors.iter())
                 .map(|((section_name, pairs), vec)| {
                     let text = Self::reconstruct_text(section_name, pairs, is_yaml);
                     serde_json::json!({
@@ -348,7 +364,9 @@ impl KgBridge {
         let elapsed = start.elapsed();
         tracing::info!(
             "[config_chunks] done: {} chunks from {} configs ({:.1}s)",
-            chunk_count, total, elapsed.as_secs_f64()
+            chunk_count,
+            total,
+            elapsed.as_secs_f64()
         );
 
         Ok(SyncReport {
@@ -404,17 +422,13 @@ impl KgBridge {
         let nodes = parse_graph_rows(&result)?;
 
         if nodes.is_empty() {
-            tracing::debug!(
-                "[kg-sync] node not found: label={label} {prop_key}={prop_value}"
-            );
+            tracing::debug!("[kg-sync] node not found: label={label} {prop_key}={prop_value}");
             return Ok(());
         }
 
         self.process_batch(&nodes).await?;
 
-        tracing::debug!(
-            "[kg-sync] auto-synced 1 node: label={label} {prop_key}={prop_value}",
-        );
+        tracing::debug!("[kg-sync] auto-synced 1 node: label={label} {prop_key}={prop_value}",);
         Ok(())
     }
 
@@ -459,7 +473,10 @@ impl KgBridge {
         let start = Instant::now();
         let mode = if incremental { "incremental" } else { "full" };
 
-        tracing::info!("[kg-sync] starting {} sync (BATCH_SIZE={BATCH_SIZE}, CONCURRENCY={CONCURRENCY})", mode);
+        tracing::info!(
+            "[kg-sync] starting {} sync (BATCH_SIZE={BATCH_SIZE}, CONCURRENCY={CONCURRENCY})",
+            mode
+        );
 
         // 1.  Ensure the Qdrant collection exists.
         self.vector
@@ -504,14 +521,13 @@ impl KgBridge {
             let vector = self.vector.clone();
             let graph = self.graph.clone();
 
-            let chunks: Vec<Vec<KgNode>> = nodes
-                .chunks(BATCH_SIZE)
-                .map(|c| c.to_vec())
-                .collect();
+            let chunks: Vec<Vec<KgNode>> = nodes.chunks(BATCH_SIZE).map(|c| c.to_vec()).collect();
 
             tracing::info!(
                 "[kg-sync] pipelining {} batches x {} nodes, {} concurrent",
-                chunks.len(), BATCH_SIZE, CONCURRENCY,
+                chunks.len(),
+                BATCH_SIZE,
+                CONCURRENCY,
             );
 
             let results: Vec<Result<usize, DtError>> = stream::iter(chunks)
@@ -597,10 +613,7 @@ impl KgBridge {
     /// are returned.
     async fn fetch_nodes(&self, incremental: bool) -> Result<Vec<KgNode>, DtError> {
         // Build label OR-clause:  n:Server OR n:Database OR n:K8sDeployment OR ...
-        let label_conds: Vec<String> = BUSINESS_LABELS
-            .iter()
-            .map(|l| format!("n:{l}"))
-            .collect();
+        let label_conds: Vec<String> = BUSINESS_LABELS.iter().map(|l| format!("n:{l}")).collect();
         let label_clause = label_conds.join(" OR ");
 
         let cypher = if incremental {
@@ -674,51 +687,153 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
 
     match primary_label {
         // ── Infrastructure ──────────────────────────────────────────
-        "Server" => concat_props(props, &["name", "service_type", "hostname", "description", "environment"]),
-        "Database" => concat_props(props, &["name", "db_type", "host", "description", "environment"]),
-        "K8sDeployment" => concat_props(props, &["name", "namespace", "image", "description", "environment"]),
-        "K8sService" => concat_props(props, &["name", "namespace", "cluster_ip", "description", "environment"]),
+        "Server" => concat_props(
+            props,
+            &[
+                "name",
+                "service_type",
+                "hostname",
+                "description",
+                "environment",
+            ],
+        ),
+        "Database" => concat_props(
+            props,
+            &["name", "db_type", "host", "description", "environment"],
+        ),
+        "K8sDeployment" => concat_props(
+            props,
+            &["name", "namespace", "image", "description", "environment"],
+        ),
+        "K8sService" => concat_props(
+            props,
+            &[
+                "name",
+                "namespace",
+                "cluster_ip",
+                "description",
+                "environment",
+            ],
+        ),
 
         // ── Service registry ───────────────────────────────────────
-        "Service" => concat_props(props, &["name", "service_name", "hostname", "port", "description", "environment"]),
-        "ServiceInstance" => concat_props(props, &["instance_id", "service_name", "host", "port", "environment"]),
+        "Service" => concat_props(
+            props,
+            &[
+                "name",
+                "service_name",
+                "hostname",
+                "port",
+                "description",
+                "environment",
+            ],
+        ),
+        "ServiceInstance" => concat_props(
+            props,
+            &["instance_id", "service_name", "host", "port", "environment"],
+        ),
 
         // ── Nacos ──────────────────────────────────────────────────
         "NacosConfig" => concat_props(props, &["data_id", "group", "namespace", "content"]),
-        "NacosService" => concat_props(props, &["service_name", "group_name", "namespace", "description"]),
+        "NacosService" => concat_props(
+            props,
+            &["service_name", "group_name", "namespace", "description"],
+        ),
         "NacosNamespace" => concat_props(props, &["namespace", "description"]),
         "NacosGroup" => concat_props(props, &["group_name", "namespace", "description"]),
-        "NacosInstance" => concat_props(props, &["instance_id", "service_name", "ip", "port", "namespace"]),
+        "NacosInstance" => concat_props(
+            props,
+            &["instance_id", "service_name", "ip", "port", "namespace"],
+        ),
 
         // ── Knowledge ──────────────────────────────────────────────
         // Enhanced: include all semantically rich fields for better vector quality.
         // summary/content carry the pitfall text; definition carries the concept definition.
-        "Knowledge" => concat_props(props, &["name", "title", "domain", "summary", "content", "definition", "description"]),
-        "Concept" => concat_props(props, &["name", "definition", "domain", "summary", "description", "content"]),
-        "Playbook" => concat_props(props, &["name", "title", "description", "domain", "content"]),
-        "Experience" => concat_props(props, &["name", "title", "description", "domain", "content", "summary"]),
+        "Knowledge" => concat_props(
+            props,
+            &[
+                "name",
+                "title",
+                "domain",
+                "summary",
+                "content",
+                "definition",
+                "description",
+            ],
+        ),
+        "Concept" => concat_props(
+            props,
+            &[
+                "name",
+                "definition",
+                "domain",
+                "summary",
+                "description",
+                "content",
+            ],
+        ),
+        "Playbook" => concat_props(
+            props,
+            &["name", "title", "description", "domain", "content"],
+        ),
+        "Experience" => concat_props(
+            props,
+            &[
+                "name",
+                "title",
+                "description",
+                "domain",
+                "content",
+                "summary",
+            ],
+        ),
         "Domain" => concat_props(props, &["name", "description", "summary"]),
 
         // ── Documents & data ───────────────────────────────────────
         "Document" => concat_props(props, &["title", "content", "source_file", "description"]),
-        "Endpoint" => concat_props(props, &["path", "method", "controller", "description", "project"]),
-        "ConfigKey" => concat_props(props, &["name", "value", "data_id", "namespace", "description"]),
-        "ConfigSection" => concat_props(props, &["section_id", "name", "summary", "namespace", "data_id", "config_type"]),
+        "Endpoint" => concat_props(
+            props,
+            &["path", "method", "controller", "description", "project"],
+        ),
+        "ConfigKey" => concat_props(
+            props,
+            &["name", "value", "data_id", "namespace", "description"],
+        ),
+        "ConfigSection" => concat_props(
+            props,
+            &[
+                "section_id",
+                "name",
+                "summary",
+                "namespace",
+                "data_id",
+                "config_type",
+            ],
+        ),
         "Table" => concat_props(props, &["table_name", "db_type", "description", "columns"]),
 
         // ── Events ─────────────────────────────────────────────────
         "Deployment" => concat_props(props, &["name", "env", "branch", "description"]),
         "ConfigChange" => concat_props(props, &["name", "data_id", "description", "summary"]),
         "BugFix" => concat_props(props, &["title", "file", "description", "summary"]),
-        "Decision" => concat_props(props, &["title", "decision", "reason", "scope", "description"]),
-        "PodEvent" => concat_props(props, &["pod_name", "namespace", "reason", "message", "description"]),
+        "Decision" => concat_props(
+            props,
+            &["title", "decision", "reason", "scope", "description"],
+        ),
+        "PodEvent" => concat_props(
+            props,
+            &["pod_name", "namespace", "reason", "message", "description"],
+        ),
 
         // ── Cross-cutting ──────────────────────────────────────────
         "Thread" => concat_props(props, &["title", "description", "domain", "tags"]),
         "Requirement" => concat_props(props, &["title", "description", "status", "domain"]),
 
         // ── Fallback ───────────────────────────────────────────────
-        _ => concat_props(props, &["name", "title", "description", "summary", "content"]),
+        _ => concat_props(
+            props,
+            &["name", "title", "description", "summary", "content"],
+        ),
     }
 }
 
@@ -736,7 +851,21 @@ fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
                 serde_json::Value::Number(n) => {
                     parts.push(n.to_string());
                 }
-                _ => { /* skip nulls, bools, arrays, objects */ }
+                // I3: string arrays contribute each element (e.g. keywords)
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        match item {
+                            serde_json::Value::String(s) if !s.is_empty() => {
+                                parts.push(s.clone());
+                            }
+                            serde_json::Value::Number(n) => {
+                                parts.push(n.to_string());
+                            }
+                            _ => { /* skip nulls, bools, nested arrays/objects */ }
+                        }
+                    }
+                }
+                _ => { /* skip nulls, bools, objects */ }
             }
         }
     }
@@ -749,8 +878,12 @@ fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Build a Qdrant point JSON value from a KG node and its embedding vector.
+///
+/// I1: the point ID is derived from the node's stable **business ID**
+/// (not the volatile graph elementId), so re-created graph nodes map back
+/// onto the same vector point and upserts stay idempotent across rebuilds.
 fn build_qdrant_point(node: &KgNode, vector: &[f32]) -> serde_json::Value {
-    let point_id = make_point_id(&node.element_id);
+    let point_id = make_point_id(&business_id(node));
     let payload = build_payload(node);
 
     serde_json::json!({
@@ -801,9 +934,8 @@ pub async fn embed_kg_node(
     //    "elementId" field must be a real graph element ID (format "4:xxx:yyy")
     //    so that `expand_nodes` (which uses `WHERE elementId(n) IN $ids`) can
     //    match against it. Constructing a synthetic id breaks graph expansion.
-    let fetch_cypher = format!(
-        "MATCH (n:{label} {{{id_field}: $value}}) RETURN elementId(n) AS eid"
-    );
+    let fetch_cypher =
+        format!("MATCH (n:{label} {{{id_field}: $value}}) RETURN elementId(n) AS eid");
     let mut fetch_params = HashMap::new();
     fetch_params.insert(
         "value".to_string(),
@@ -847,9 +979,8 @@ pub async fn embed_kg_node(
     vector.upsert(KG_COLLECTION, vec![point]).await?;
 
     // 7. Mark synced in graph
-    let mark_cypher = format!(
-        "MATCH (n:{label} {{{id_field}: $value}}) SET n._kg_synced_at = datetime()"
-    );
+    let mark_cypher =
+        format!("MATCH (n:{label} {{{id_field}: $value}}) SET n._kg_synced_at = datetime()");
     let mut mark_params = HashMap::new();
     mark_params.insert(
         "value".to_string(),
@@ -866,44 +997,172 @@ pub async fn embed_kg_node(
 
 /// Build the Qdrant payload from node properties.
 ///
-/// The payload contains lightweight metadata for filtering and display.
+/// I2/I4: unified core schema (§7.2) shared with extracted-entity points —
+/// `{elementId, business_id, name, type, summary, keywords, project, labels,
+/// doc_id?, origin, source}`. `summary` is the **full** text (no truncation).
+/// `description` is kept as a legacy alias of `summary` because existing
+/// consumers (retriever.rs, search_mcp.rs) read it.
 fn build_payload(node: &KgNode) -> serde_json::Value {
     let props = &node.properties;
+    let bid = business_id(node);
+    let primary_label = node
+        .labels
+        .iter()
+        .find(|l| BUSINESS_LABELS.contains(&l.as_str()))
+        .map(|l| l.to_lowercase())
+        .unwrap_or_default();
+    // Full representative text: first non-empty of summary/description/content.
+    let summary = ["summary", "description", "content"]
+        .iter()
+        .find_map(|k| props.get(k).and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let keywords: Vec<serde_json::Value> = props
+        .get("keywords")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| serde_json::Value::String(s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let origin = props
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("learned");
 
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         // ---- identity ----
         "elementId": node.element_id,
+        "business_id": bid,
         "name": props.get("name").cloned().unwrap_or(serde_json::Value::Null),
+        "type": primary_label,
         "labels": node.labels,
-        // ---- properties ----
+        // ---- content (I4: full, untruncated) ----
+        "summary": summary,
+        "description": summary,
+        "keywords": keywords,
+        // ---- scope ----
+        "project": props.get("project").cloned().unwrap_or(serde_json::Value::Null),
+        // ---- provenance ----
+        "origin": origin,
+        "source": "kg",
+        // ---- label-specific extensions (display) ----
         "service_type": props.get("service_type").cloned().unwrap_or(serde_json::Value::Null),
         "environment": props.get("environment").cloned().unwrap_or(serde_json::Value::Null),
-        "description": props.get("description")
-            .and_then(|v| v.as_str())
-            .map(|s| &s[..s.len().min(200)])
-            .unwrap_or(""),
-        // ---- metadata ----
-        "source": "kg",
-    })
+    });
+    // doc_id only when present (extracted/business doc-linked nodes)
+    if let Some(doc_id) = props.get("doc_id").and_then(|v| v.as_str()) {
+        if !doc_id.is_empty() {
+            payload["doc_id"] = serde_json::Value::String(doc_id.to_string());
+        }
+    }
+    payload
 }
 
-/// Generate a deterministic UUID v4 from a graph element ID via SHA-256.
+/// Generate a deterministic UUID v4 from a stable business ID via SHA-256.
 ///
-/// This ensures the same elementId always maps to the same Qdrant point
-/// ID across sync runs, allowing idempotent upserts.
-fn make_point_id(element_id: &str) -> String {
-    let hash = Sha256::digest(element_id.as_bytes());
+/// This ensures the same business ID always maps to the same Qdrant point
+/// ID across sync runs, allowing idempotent upserts. `pub(crate)` so the
+/// Consolidate layer (Task 2, §7.4) can derive point IDs from business IDs.
+pub(crate) fn make_point_id(business_id: &str) -> String {
+    let hash = Sha256::digest(business_id.as_bytes());
     format!(
         "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
         u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]),
         u16::from_be_bytes([hash[4], hash[5]]),
         u16::from_be_bytes([hash[6], hash[7]]) & 0x0fff,
         u16::from_be_bytes([hash[8], hash[9]]) & 0x3fff | 0x8000,
-        u64::from_be_bytes([
-            hash[10], hash[11], hash[12], hash[13],
-            hash[14], hash[15], 0, 0,
-        ]) >> 16,
+        u64::from_be_bytes([hash[10], hash[11], hash[12], hash[13], hash[14], hash[15], 0, 0,])
+            >> 16,
     )
+}
+
+/// Derive the stable business ID for a KG node (I1).
+///
+/// Priority order:
+/// 1. Explicit unique-ID properties (`knowledge_id`, `concept_id`, …) —
+///    these are the node's true business identity and survive graph rebuilds.
+/// 2. `name` (optionally qualified by `namespace`/`db` for composite-key
+///    nodes like K8sDeployment/Table/ConfigKey).
+/// 3. `element_id` as a last-resort fallback (legacy behaviour).
+pub(crate) fn business_id(node: &KgNode) -> String {
+    let props = &node.properties;
+
+    const ID_KEYS: &[&str] = &[
+        "entity_id",
+        "knowledge_id",
+        "concept_id",
+        "experience_id",
+        "playbook_id",
+        "domain_id",
+        "server_id",
+        "database_id",
+        "service_id",
+        "instance_id",
+        "endpoint_id",
+        "doc_id",
+        "config_id",
+        "thread_id",
+        "requirement_id",
+        "decision_id",
+        "event_id",
+        "session_id",
+        "version_id",
+        "observation_id",
+        "analysis_id",
+    ];
+    for key in ID_KEYS {
+        if let Some(s) = props.get(key).and_then(|v| v.as_str()) {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+
+    // Composite-identity nodes: name qualified by namespace/db.
+    if let Some(name) = props
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        let qualifier = props
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .or_else(|| props.get("db").and_then(|v| v.as_str()))
+            .filter(|s| !s.is_empty());
+        return match qualifier {
+            Some(q) => format!("{name}@{q}"),
+            None => name.to_string(),
+        };
+    }
+
+    node.element_id.clone()
+}
+
+/// Delete the `kg_nodes` vector point belonging to a business node (I5).
+///
+/// Closure of §7.5: when a graph node is deleted, its vector point must go
+/// too. Deletion is by payload `business_id` match — deterministic because
+/// I1 makes business_id ↔ point 1:1 by construction.
+///
+/// Caveat: legacy points written before I2 lack the `business_id` payload
+/// key and are NOT matched; they are cleared by the one-time `kg_nodes`
+/// wipe documented in §12 risk item 6.
+pub async fn delete_kg_vector(
+    vector: &dyn VectorRepository,
+    business_id: &str,
+) -> Result<(), DtError> {
+    vector
+        .delete_by_filter(
+            KG_COLLECTION,
+            serde_json::json!({
+                "must": [{"key": "business_id", "match": {"value": business_id}}],
+            }),
+        )
+        .await
 }
 
 // ---------------------------------------------------------------------------
@@ -913,7 +1172,7 @@ fn make_point_id(element_id: &str) -> String {
 /// Parse the raw graph response JSON into a `Vec<KgNode>`.
 ///
 /// Handles two response formats:
-    /// 1. **Bolt driver** — `Value::Array` of row objects:
+/// 1. **Bolt driver** — `Value::Array` of row objects:
 ///    ```json
 ///    [{"n": {...}, "eid": "4:...", "lbls": ["Server"]}]
 ///    ```
@@ -949,10 +1208,7 @@ fn parse_graph_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
         }
 
         let properties = row[0].clone();
-        let element_id = row[1]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let element_id = row[1].as_str().unwrap_or("").to_string();
 
         let labels: Vec<String> = row[2]
             .as_array()
@@ -981,10 +1237,7 @@ fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
     let mut nodes: Vec<KgNode> = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let properties = row
-            .get("n")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
+        let properties = row.get("n").cloned().unwrap_or(serde_json::Value::Null);
 
         let element_id = row
             .get("eid")
@@ -1000,7 +1253,11 @@ fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
                     let eid = row_arr[1].as_str().unwrap_or("").to_string();
                     let lbls: Vec<String> = row_arr[2]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     nodes.push(KgNode {
                         element_id: eid,
@@ -1059,7 +1316,10 @@ mod tests {
     fn make_point_id_different_per_input() {
         let id_a = make_point_id("4:aaa");
         let id_b = make_point_id("4:bbb");
-        assert_ne!(id_a, id_b, "different elementIds must produce different UUIDs");
+        assert_ne!(
+            id_a, id_b,
+            "different elementIds must produce different UUIDs"
+        );
     }
 
     #[test]
@@ -1073,8 +1333,15 @@ mod tests {
         assert_eq!(parts[2].len(), 4);
         assert!(parts[2].starts_with('4'), "version nibble must be 4");
         assert_eq!(parts[3].len(), 4);
-        assert!(parts[3].starts_with('8') || parts[3].starts_with('9') || parts[3].starts_with('a') || parts[3].starts_with('b') || parts[3].starts_with('A') || parts[3].starts_with('B'),
-            "variant bits must be 10xx");
+        assert!(
+            parts[3].starts_with('8')
+                || parts[3].starts_with('9')
+                || parts[3].starts_with('a')
+                || parts[3].starts_with('b')
+                || parts[3].starts_with('A')
+                || parts[3].starts_with('B'),
+            "variant bits must be 10xx"
+        );
         assert_eq!(parts[4].len(), 12);
     }
 
@@ -1218,7 +1485,8 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn payload_truncates_long_description() {
+    fn payload_preserves_full_description() {
+        // I4: summary/description must NOT be truncated (was 200 chars).
         let node = KgNode {
             element_id: "4:test".into(),
             labels: vec!["Server".into()],
@@ -1231,7 +1499,12 @@ mod tests {
         };
         let payload = build_payload(&node);
         let desc = payload["description"].as_str().unwrap();
-        assert!(desc.len() <= 200);
+        assert_eq!(desc.len(), 500, "description must be preserved in full");
+        assert_eq!(
+            payload["summary"].as_str().unwrap().len(),
+            500,
+            "summary mirrors description in full"
+        );
     }
 
     #[test]
@@ -1241,14 +1514,105 @@ mod tests {
             labels: vec!["Database".into()],
             properties: serde_json::json!({
                 "name": "mydb",
+                "database_id": "dt://db/proj/mydb",
                 "environment": "prod",
+                "project": "proj",
+                "keywords": ["mysql", "核心库"],
             }),
         };
         let payload = build_payload(&node);
+        // I2 unified core schema (§7.2)
         assert_eq!(payload["elementId"], "4:abc");
+        assert_eq!(payload["business_id"], "dt://db/proj/mydb");
         assert_eq!(payload["name"], "mydb");
+        assert_eq!(payload["type"], "database");
+        assert_eq!(payload["labels"], serde_json::json!(["Database"]));
+        assert_eq!(payload["project"], "proj");
+        assert_eq!(payload["keywords"], serde_json::json!(["mysql", "核心库"]));
+        assert_eq!(payload["origin"], "learned");
         assert_eq!(payload["source"], "kg");
+        // label-specific extensions retained
         assert_eq!(payload["environment"], "prod");
+        // doc_id absent when not set
+        assert!(payload.get("doc_id").is_none());
+    }
+
+    #[test]
+    fn payload_doc_id_present_when_set() {
+        let node = KgNode {
+            element_id: "4:abc".into(),
+            labels: vec!["Document".into()],
+            properties: serde_json::json!({
+                "name": "guide",
+                "doc_id": "dt://doc/proj/guide.md",
+            }),
+        };
+        let payload = build_payload(&node);
+        assert_eq!(payload["doc_id"], "dt://doc/proj/guide.md");
+    }
+
+    // ------------------------------------------------------------------
+    // business_id (I1)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn business_id_prefers_explicit_id_property() {
+        let node = KgNode {
+            element_id: "4:xyz".into(),
+            labels: vec!["Knowledge".into()],
+            properties: serde_json::json!({
+                "name": "some-name",
+                "knowledge_id": "dt://knowledge/proj/pattern/foo",
+            }),
+        };
+        assert_eq!(business_id(&node), "dt://knowledge/proj/pattern/foo");
+    }
+
+    #[test]
+    fn business_id_falls_back_to_qualified_name() {
+        // Composite-key nodes (K8sDeployment/Table/ConfigKey): name@namespace
+        let node = KgNode {
+            element_id: "4:xyz".into(),
+            labels: vec!["K8sDeployment".into()],
+            properties: serde_json::json!({
+                "name": "pay-svc",
+                "namespace": "prod",
+            }),
+        };
+        assert_eq!(business_id(&node), "pay-svc@prod");
+
+        let bare = KgNode {
+            element_id: "4:xyz".into(),
+            labels: vec!["Server".into()],
+            properties: serde_json::json!({"name": "api"}),
+        };
+        assert_eq!(business_id(&bare), "api");
+    }
+
+    #[test]
+    fn business_id_last_resort_element_id() {
+        let node = KgNode {
+            element_id: "4:fallback".into(),
+            labels: vec!["PodEvent".into()],
+            properties: serde_json::json!({}),
+        };
+        assert_eq!(business_id(&node), "4:fallback");
+    }
+
+    // ------------------------------------------------------------------
+    // concat_props — I3 string arrays
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn concat_props_includes_string_arrays() {
+        let props = serde_json::json!({
+            "name": "foo",
+            "keywords": ["bar", "baz"],
+            "mixed": ["qux", 7, null, true],
+            "empty_arr": [],
+        });
+        let text = concat_props(&props, &["name", "keywords", "mixed", "empty_arr"]);
+        assert_eq!(text, "foo bar baz qux 7");
     }
 
     // ------------------------------------------------------------------
@@ -1306,15 +1670,123 @@ mod tests {
         let node = KgNode {
             element_id: "4:test-point".into(),
             labels: vec!["Server".into()],
-            properties: serde_json::json!({"name": "api", "description": "desc"}),
+            properties: serde_json::json!({
+                "name": "api",
+                "server_id": "dt://server/proj/api",
+                "description": "desc",
+            }),
         };
         let vector = vec![0.1_f32, 0.2_f32, 0.3_f32];
         let point = build_qdrant_point(&node, &vector);
 
         assert!(point["id"].is_string());
+        // I1: point id derives from the business id, NOT the elementId
+        assert_eq!(
+            point["id"].as_str().unwrap(),
+            make_point_id("dt://server/proj/api")
+        );
         assert_eq!(point["vector"].as_array().unwrap().len(), 3);
         assert_eq!(point["payload"]["name"], "api");
         assert_eq!(point["payload"]["source"], "kg");
+    }
+
+    #[test]
+    fn point_id_stable_across_element_id_change() {
+        // I1 core property: re-created graph node (new elementId, same
+        // business identity) maps to the SAME point → idempotent upsert.
+        let props = serde_json::json!({
+            "name": "api",
+            "server_id": "dt://server/proj/api",
+        });
+        let old_node = KgNode {
+            element_id: "4:old".into(),
+            labels: vec!["Server".into()],
+            properties: props.clone(),
+        };
+        let new_node = KgNode {
+            element_id: "4:new".into(),
+            labels: vec!["Server".into()],
+            properties: props,
+        };
+        let v = vec![0.1_f32];
+        assert_eq!(
+            build_qdrant_point(&old_node, &v)["id"],
+            build_qdrant_point(&new_node, &v)["id"]
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // delete_kg_vector (I5)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn delete_kg_vector_filters_on_business_id() {
+        struct CaptureVector {
+            captured: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+        }
+
+        #[async_trait]
+        impl VectorRepository for CaptureVector {
+            async fn ensure_collection(&self, _c: &str, _d: u32) -> Result<(), DtError> {
+                Ok(())
+            }
+            async fn search(
+                &self,
+                _c: &str,
+                _v: Vec<f32>,
+                _l: u64,
+            ) -> Result<Vec<serde_json::Value>, DtError> {
+                Ok(vec![])
+            }
+            async fn upsert(&self, _c: &str, _p: Vec<serde_json::Value>) -> Result<(), DtError> {
+                Ok(())
+            }
+            async fn delete_by_filter(
+                &self,
+                collection: &str,
+                filter: serde_json::Value,
+            ) -> Result<(), DtError> {
+                self.captured
+                    .lock()
+                    .unwrap()
+                    .push((collection.to_string(), filter));
+                Ok(())
+            }
+            async fn list_collections(&self) -> Result<Vec<String>, DtError> {
+                Ok(vec![])
+            }
+            async fn collection_info(&self, _n: &str) -> Result<CollectionInfo, DtError> {
+                Ok(CollectionInfo {
+                    name: "kg_nodes".to_string(),
+                    points_count: 0,
+                    vector_dim: 1024,
+                    model_version: "bge-m3".to_string(),
+                })
+            }
+            async fn delete_collection(&self, _n: &str) -> Result<(), DtError> {
+                Ok(())
+            }
+            async fn health_check(&self) -> Result<HealthStatus, DtError> {
+                Ok(HealthStatus::Healthy)
+            }
+        }
+
+        let vector = CaptureVector {
+            captured: std::sync::Mutex::new(vec![]),
+        };
+        delete_kg_vector(&vector, "dt://knowledge/proj/pattern/foo")
+            .await
+            .expect("delete should succeed");
+
+        let captured = vector.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].0, KG_COLLECTION);
+        assert_eq!(
+            captured[0].1,
+            serde_json::json!({
+                "must": [{"key": "business_id", "match": {"value": "dt://knowledge/proj/pattern/foo"}}],
+            })
+        );
     }
 
     // ------------------------------------------------------------------
@@ -1327,7 +1799,11 @@ mod tests {
         labels.sort_unstable();
         let orig_len = labels.len();
         labels.dedup();
-        assert_eq!(labels.len(), orig_len, "BUSINESS_LABELS must have no duplicates");
+        assert_eq!(
+            labels.len(),
+            orig_len,
+            "BUSINESS_LABELS must have no duplicates"
+        );
     }
 
     #[test]
@@ -1378,10 +1854,7 @@ mod tests {
                 }),
             };
             let text = build_search_text(&node);
-            assert!(
-                !text.is_empty(),
-                "search text empty for label '{label}'"
-            );
+            assert!(!text.is_empty(), "search text empty for label '{label}'");
         }
     }
 
@@ -1449,10 +1922,10 @@ mod tests {
             &'a (dyn GraphRepository + 'a),
             &'a (dyn EmbedService + 'a),
             &'a (dyn VectorRepository + 'a),
-            &'a str,                // label
-            &'a str,                // id_field
-            &'a str,                // id_value
-            &'a serde_json::Value,   // properties
+            &'a str,               // label
+            &'a str,               // id_field
+            &'a str,               // id_value
+            &'a serde_json::Value, // properties
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<(), DtError>> + Send + 'a>,
         > = |g, e, v, lbl, fid, vid, p| Box::pin(embed_kg_node(g, e, v, lbl, fid, vid, p));
@@ -1533,19 +2006,11 @@ mod tests {
         ) -> Result<Vec<serde_json::Value>, DtError> {
             Ok(vec![])
         }
-        async fn upsert(
-            &self,
-            _c: &str,
-            points: Vec<serde_json::Value>,
-        ) -> Result<(), DtError> {
+        async fn upsert(&self, _c: &str, points: Vec<serde_json::Value>) -> Result<(), DtError> {
             self.upserted.lock().unwrap().extend(points);
             Ok(())
         }
-        async fn delete_by_filter(
-            &self,
-            _c: &str,
-            _f: serde_json::Value,
-        ) -> Result<(), DtError> {
+        async fn delete_by_filter(&self, _c: &str, _f: serde_json::Value) -> Result<(), DtError> {
             Ok(())
         }
         async fn list_collections(&self) -> Result<Vec<String>, DtError> {
@@ -1593,7 +2058,11 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok(), "embed_kg_node should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "embed_kg_node should succeed: {:?}",
+            result.err()
+        );
 
         // 1. write_query must have been called once (to mark _kg_synced_at).
         assert_eq!(
