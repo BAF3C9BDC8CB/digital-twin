@@ -731,7 +731,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | ✅ 完成（自审，待确认） | `ccb53e6` | 自审通过（无 subagent 评审，见 §13.5） |
 | **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ✅ 完成 | `72798e3` | 控制者自审（同 S2b 模式） |
 | **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ✅ 完成（自审，用户指示无 subagent） | `647bddd` | 控制者自审（同 S2b 模式，见 §13.7） |
-| **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ⬜ 待做 | — | — |
+| **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ✅ 完成（自审，用户指示无 subagent） | `80d1f33` | 控制者自审（同 S2b 模式） |
 | 终审 | 全分支 code review（最 capable 模型）+ finishing-a-development-branch | ⬜ 待做 | — | — |
 | **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ⏸️ 方案本身延后，不在本轮 | — | — |
 
