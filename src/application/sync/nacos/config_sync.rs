@@ -6,10 +6,10 @@
 //! - [`Database`] nodes for detected JDBC/Redis/Kafka connection strings
 //! - Relationships: `BELONGS_TO`, `CONTAINS`
 
-use async_trait::async_trait;
-use chrono::Utc;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
+use async_trait::async_trait;
+use chrono::Utc;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -18,14 +18,19 @@ use std::sync::LazyLock;
 
 use super::client::NacosClient;
 use crate::application::sync::traits::{SyncReport, SyncSource};
-use crate::shared::chunker::{chunk_config_by_sections, chunk_config_adaptive, parse_kv_line, ChunkConfig};
+use crate::shared::chunker::{
+    chunk_config_adaptive, chunk_config_by_sections, parse_kv_line, ChunkConfig,
+};
 
 // ---------------------------------------------------------------------------
 // Convenience: build a Cypher params HashMap
 // ---------------------------------------------------------------------------
 
 fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -34,16 +39,13 @@ fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Va
 
 /// JDBC URL: `jdbc:mysql://host:port/db?...` or `jdbc:postgresql://...`
 static JDBC_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)jdbc:(mysql|postgresql|mariadb|sqlserver|oracle|h2|dm)://([^/\s?]+)(/\S+)?",
-    )
-    .expect("JDBC regex")
+    Regex::new(r"(?i)jdbc:(mysql|postgresql|mariadb|sqlserver|oracle|h2|dm)://([^/\s?]+)(/\S+)?")
+        .expect("JDBC regex")
 });
 
 /// Redis connection: `redis://host:port/db`, `rediss://...`, or `host:port` in redis context
-static REDIS_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:redis|rediss)://([^/\s?]+)").expect("Redis regex")
-});
+static REDIS_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:redis|rediss)://([^/\s?]+)").expect("Redis regex"));
 
 /// Redis host:port pattern (e.g. `redis.host=127.0.0.1`, `redis.port=6379`)
 static REDIS_HOST_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -130,7 +132,6 @@ fn extract_yaml_keys(namespace: &str, content: &str) -> Vec<ConfigKeyEntry> {
     keys
 }
 
-
 fn classify_key(key: &str) -> String {
     let lower = key.to_lowercase();
     if lower.contains("datasource") || lower.contains("jdbc") || lower.contains("db.") {
@@ -166,12 +167,19 @@ fn extract_databases(_namespace: &str, content: &str) -> Vec<DbConnection> {
     let mut dbs = Vec::new();
 
     for caps in JDBC_RE.captures_iter(content) {
-        let db_type = caps.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+        let db_type = caps
+            .get(1)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
         let host_port = caps.get(2).map(|m| m.as_str()).unwrap_or("localhost");
         let db_path = caps.get(3).map(|m| m.as_str()).unwrap_or("");
 
         let (host, port) = parse_host_port(host_port, default_port_for(&db_type));
-        let database = db_path.trim_start_matches('/').split('?').next().unwrap_or("");
+        let database = db_path
+            .trim_start_matches('/')
+            .split('?')
+            .next()
+            .unwrap_or("");
 
         dbs.push(DbConnection {
             db_type,
@@ -472,7 +480,10 @@ impl ConfigChunkVectorizer {
             .iter()
             .zip(vectors.iter())
             .map(|(chunk, vec)| {
-                let id = format!("dt://nacos/{}/{}#{}", namespace, data_id, chunk.section_name);
+                let id = format!(
+                    "dt://nacos/{}/{}#{}",
+                    namespace, data_id, chunk.section_name
+                );
                 serde_json::json!({
                     "id": id,
                     "vector": vec,
@@ -500,11 +511,7 @@ impl ConfigChunkVectorizer {
     }
 
     /// Delete stale chunk vectors for a config file before re-upserting.
-    pub async fn delete_by_data_id(
-        &self,
-        namespace: &str,
-        data_id: &str,
-    ) -> Result<(), DtError> {
+    pub async fn delete_by_data_id(&self, namespace: &str, data_id: &str) -> Result<(), DtError> {
         self.vector
             .delete_by_filter(
                 Self::COLLECTION,
@@ -925,7 +932,10 @@ mod tests {
 
     #[test]
     fn parse_host_port_without_port() {
-        assert_eq!(parse_host_port("db.example.com", 5432), ("db.example.com", 5432));
+        assert_eq!(
+            parse_host_port("db.example.com", 5432),
+            ("db.example.com", 5432)
+        );
     }
 
     #[test]
@@ -1020,7 +1030,10 @@ mod tests {
 
     #[test]
     fn classify_kafka_key() {
-        assert_eq!(classify_key("spring.kafka.bootstrap-servers"), "MessageQueue");
+        assert_eq!(
+            classify_key("spring.kafka.bootstrap-servers"),
+            "MessageQueue"
+        );
     }
 
     #[test]
@@ -1075,12 +1088,17 @@ mod tests {
             Ok(())
         }
         async fn search(
-            &self, _collection: &str, _vector: Vec<f32>, _limit: u64,
+            &self,
+            _collection: &str,
+            _vector: Vec<f32>,
+            _limit: u64,
         ) -> Result<Vec<serde_json::Value>, DtError> {
             Ok(vec![])
         }
         async fn upsert(
-            &self, _collection: &str, points: Vec<serde_json::Value>,
+            &self,
+            _collection: &str,
+            points: Vec<serde_json::Value>,
         ) -> Result<(), DtError> {
             if let Ok(mut v) = self.upserted.lock() {
                 v.extend(points);
@@ -1088,7 +1106,9 @@ mod tests {
             Ok(())
         }
         async fn delete_by_filter(
-            &self, _collection: &str, _filter: serde_json::Value,
+            &self,
+            _collection: &str,
+            _filter: serde_json::Value,
         ) -> Result<(), DtError> {
             Ok(())
         }
@@ -1161,14 +1181,12 @@ mod tests {
         let vector = Arc::new(MockVector::new());
         let cv = ConfigVectorizer::new(embed, vector.clone());
 
-        let keys = vec![
-            ConfigKeyEntry {
-                name: "server.port".into(),
-                value: "8080".into(),
-                namespace: "prod".into(),
-                purpose: "Server".into(),
-            },
-        ];
+        let keys = vec![ConfigKeyEntry {
+            name: "server.port".into(),
+            value: "8080".into(),
+            namespace: "prod".into(),
+            purpose: "Server".into(),
+        }];
 
         let count = cv
             .vectorize_config_keys(&keys, "prod", "app.yaml", "DEFAULT", "p")
@@ -1209,7 +1227,10 @@ mod tests {
         let chunk = ChunkToVectorize {
             section_name: "spring.datasource".into(),
             key_values: vec![
-                ("spring.datasource.url".into(), "jdbc:mysql://localhost/db".into()),
+                (
+                    "spring.datasource.url".into(),
+                    "jdbc:mysql://localhost/db".into(),
+                ),
                 ("spring.datasource.username".into(), "admin".into()),
             ],
         };
@@ -1240,13 +1261,23 @@ mod tests {
         let chunks = vec![ChunkToVectorize {
             section_name: "spring.datasource".into(),
             key_values: vec![
-                ("spring.datasource.url".into(), "jdbc:mysql://localhost/db".into()),
+                (
+                    "spring.datasource.url".into(),
+                    "jdbc:mysql://localhost/db".into(),
+                ),
                 ("spring.datasource.username".into(), "admin".into()),
             ],
         }];
 
         let count = cv
-            .vectorize_chunks(&chunks, "prod", "app.properties", "DEFAULT", "properties", Some("test"))
+            .vectorize_chunks(
+                &chunks,
+                "prod",
+                "app.properties",
+                "DEFAULT",
+                "properties",
+                Some("test"),
+            )
             .await
             .unwrap();
         assert_eq!(count, 1);
@@ -1280,7 +1311,10 @@ spring:\n  datasource:\n    url: jdbc:mysql://localhost/db\n    username: admin\
   redis:\n    host: 127.0.0.1\n    port: 6379";
 
         let sections = chunk_config_adaptive(yaml, true);
-        eprintln!("Adaptive sections: {:?}", sections.iter().map(|(n,_)| n.as_str()).collect::<Vec<_>>());
+        eprintln!(
+            "Adaptive sections: {:?}",
+            sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
         assert!(!sections.is_empty(), "expected at least 1 section");
 
         // Verify druid-style grouping works on chunk text
@@ -1301,9 +1335,16 @@ spring.redis.host=127.0.0.1\n\
 spring.redis.port=6379";
 
         let sections = chunk_config_adaptive(props, false);
-        eprintln!("Props sections: {:?}", sections.iter().map(|(n,_)| n.as_str()).collect::<Vec<_>>());
-        assert!(sections.len() >= 2, "expected >=2 sections, got {}", sections.len());
-        assert!(sections.iter().any(|(n,_)| n == "spring.datasource"));
-        assert!(sections.iter().any(|(n,_)| n == "spring.redis"));
+        eprintln!(
+            "Props sections: {:?}",
+            sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            sections.len() >= 2,
+            "expected >=2 sections, got {}",
+            sections.len()
+        );
+        assert!(sections.iter().any(|(n, _)| n == "spring.datasource"));
+        assert!(sections.iter().any(|(n, _)| n == "spring.redis"));
     }
 }

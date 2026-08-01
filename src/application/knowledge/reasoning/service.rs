@@ -9,9 +9,9 @@
 //!
 //! [`DefaultReasoningService`] is the canonical production implementation.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::lifecycle::{DefaultLifecycleManager, LifecycleManager};
@@ -160,8 +160,8 @@ impl ReasoningService for DefaultReasoningService {
                 o.confidence  = $confidence
         "#;
 
-        let entities_json = serde_json::to_string(&obs.entities)
-            .unwrap_or_else(|_| "[]".to_string());
+        let entities_json =
+            serde_json::to_string(&obs.entities).unwrap_or_else(|_| "[]".to_string());
 
         let mut params = std::collections::HashMap::new();
         params.insert(
@@ -176,10 +176,7 @@ impl ReasoningService for DefaultReasoningService {
             "evidence".into(),
             serde_json::Value::String(obs.evidence.clone()),
         );
-        params.insert(
-            "entities".into(),
-            serde_json::Value::String(entities_json),
-        );
+        params.insert("entities".into(), serde_json::Value::String(entities_json));
         params.insert(
             "pattern".into(),
             obs.pattern
@@ -187,10 +184,7 @@ impl ReasoningService for DefaultReasoningService {
                 .map(|p| serde_json::Value::String(p.clone()))
                 .unwrap_or(serde_json::Value::Null),
         );
-        params.insert(
-            "confidence".into(),
-            serde_json::json!(obs.confidence),
-        );
+        params.insert("confidence".into(), serde_json::json!(obs.confidence));
         params.insert(
             "session_id".into(),
             serde_json::Value::String(obs.session_id.clone()),
@@ -205,8 +199,8 @@ impl ReasoningService for DefaultReasoningService {
     }
 
     async fn record_analysis(&self, analysis: &Analysis) -> Result<(), DtError> {
-        let steps_json = serde_json::to_string(&analysis.intermediate)
-            .unwrap_or_else(|_| "[]".to_string());
+        let steps_json =
+            serde_json::to_string(&analysis.intermediate).unwrap_or_else(|_| "[]".to_string());
 
         let cypher = r#"
             MERGE (a:Analysis {analysis_id: $analysis_id})
@@ -249,18 +243,12 @@ impl ReasoningService for DefaultReasoningService {
             "method".into(),
             serde_json::Value::String(analysis.method.clone()),
         );
-        params.insert(
-            "intermediate".into(),
-            serde_json::Value::String(steps_json),
-        );
+        params.insert("intermediate".into(), serde_json::Value::String(steps_json));
         params.insert(
             "conclusion".into(),
             serde_json::Value::String(analysis.conclusion.clone()),
         );
-        params.insert(
-            "confidence".into(),
-            serde_json::json!(analysis.confidence),
-        );
+        params.insert("confidence".into(), serde_json::json!(analysis.confidence));
         params.insert(
             "total_cost_ms".into(),
             analysis
@@ -390,10 +378,7 @@ impl ReasoningService for DefaultReasoningService {
             "consequences".into(),
             serde_json::Value::String(decision.consequences.clone()),
         );
-        params.insert(
-            "confidence".into(),
-            serde_json::json!(decision.confidence),
-        );
+        params.insert("confidence".into(), serde_json::json!(decision.confidence));
         params.insert(
             "verified".into(),
             serde_json::Value::Bool(decision.verified),
@@ -413,10 +398,7 @@ impl ReasoningService for DefaultReasoningService {
             );
         }
         if let Some(ref tid) = decision.thread_id {
-            params.insert(
-                "thread_id".into(),
-                serde_json::Value::String(tid.clone()),
-            );
+            params.insert("thread_id".into(), serde_json::Value::String(tid.clone()));
         }
 
         self.graph.write_query(cypher, params).await?;
@@ -580,9 +562,7 @@ impl ReasoningService for DefaultReasoningService {
                             .get("confidence")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(0.0),
-                        total_cost_ms: row
-                            .get("total_cost_ms")
-                            .and_then(|v| v.as_u64()),
+                        total_cost_ms: row.get("total_cost_ms").and_then(|v| v.as_u64()),
                         session_id: row
                             .get("session_id")
                             .and_then(|v| v.as_str())
@@ -686,8 +666,8 @@ impl ReasoningService for DefaultReasoningService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::Observation;
+    use super::*;
     use crate::domain::types::HealthStatus;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -698,10 +678,7 @@ mod tests {
     }
 
     impl CountingRepo {
-        fn new(
-            write_count: Arc<AtomicUsize>,
-            read_count: Arc<AtomicUsize>,
-        ) -> Self {
+        fn new(write_count: Arc<AtomicUsize>, read_count: Arc<AtomicUsize>) -> Self {
             Self {
                 write_count,
                 read_count,
@@ -762,7 +739,9 @@ mod tests {
             timestamp: "2026-07-09T10:00:00Z".into(),
         };
 
-        svc.record_observation(&obs).await.expect("record_observation");
+        svc.record_observation(&obs)
+            .await
+            .expect("record_observation");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -786,7 +765,9 @@ mod tests {
             timestamp: "2026-07-09T10:30:00Z".into(),
         };
 
-        svc.record_analysis(&analysis).await.expect("record_analysis");
+        svc.record_analysis(&analysis)
+            .await
+            .expect("record_analysis");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -814,7 +795,9 @@ mod tests {
             timestamp: "2026-07-09T11:00:00Z".into(),
         };
 
-        svc.record_decision(&decision).await.expect("record_decision");
+        svc.record_decision(&decision)
+            .await
+            .expect("record_decision");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -842,7 +825,9 @@ mod tests {
             timestamp: "2026-07-09T11:00:00Z".into(),
         };
 
-        svc.record_decision(&decision).await.expect("record_decision");
+        svc.record_decision(&decision)
+            .await
+            .expect("record_decision");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 

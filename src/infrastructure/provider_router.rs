@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{EmbedService, LlmService, LlmCapabilities, RerankService};
+use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
 /// Provider routing configuration.
@@ -44,9 +44,15 @@ impl Default for ProviderRouterConfig {
     }
 }
 
-fn default_embed_provider() -> String { "siliconflow".to_string() }
-fn default_rerank_provider() -> String { "siliconflow".to_string() }
-fn default_llm_provider() -> String { "siliconflow".to_string() }
+fn default_embed_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_rerank_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_llm_provider() -> String {
+    "siliconflow".to_string()
+}
 
 /// Routes embed/rerank/llm requests to the appropriate provider.
 ///
@@ -66,7 +72,11 @@ impl EmbedProviderRouter {
         xinference: Option<Arc<super::xinference::XInferenceClient>>,
         config: ProviderRouterConfig,
     ) -> Self {
-        Self { siliconflow, xinference, config }
+        Self {
+            siliconflow,
+            xinference,
+            config,
+        }
     }
 
     /// Create a new router with only a SiliconFlow client (backwards-compatible).
@@ -79,7 +89,16 @@ impl EmbedProviderRouter {
     }
 
     /// Get the provider for a given capability name.
-    fn provider_for(&self, capability: &str) -> Option<&Arc<super::siliconflow::SiliconFlowClient>> {
+    ///
+    /// NOTE: This function was removed because the original return type
+    /// `Option<&Arc<SiliconFlowClient>>` cannot express XInference providers.
+    /// All routing is handled by embed_provider(), rerank_provider(), and
+    /// llm_provider() which correctly use `EmbedProviderRef` enum.
+    #[allow(dead_code)]
+    fn provider_for(
+        &self,
+        capability: &str,
+    ) -> Option<&Arc<super::siliconflow::SiliconFlowClient>> {
         let provider_name = match capability {
             "embed" => &self.config.embed_provider,
             "rerank" => &self.config.rerank_provider,
@@ -89,7 +108,7 @@ impl EmbedProviderRouter {
 
         match provider_name.as_str() {
             "siliconflow" => self.siliconflow.as_ref(),
-            "xinference" => None, // XInference doesn't implement SiliconFlowClient
+            "xinference" => None, // XInference needs EmbedProviderRef, not this
             _ => self.siliconflow.as_ref(),
         }
     }
@@ -107,12 +126,18 @@ impl EmbedProviderRouter {
     /// Pick the embed provider based on config.
     fn embed_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.embed_provider.as_str() {
-            "siliconflow" => self.sf()
+            "siliconflow" => self
+                .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("siliconflow provider not configured for embed".into())),
-            "xinference" => self.xi()
+                .ok_or_else(|| {
+                    DtError::Repository("siliconflow provider not configured for embed".into())
+                }),
+            "xinference" => self
+                .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("xinference provider not configured for embed".into())),
+                .ok_or_else(|| {
+                    DtError::Repository("xinference provider not configured for embed".into())
+                }),
             other => Err(DtError::Config(format!("unknown embed provider: {other}"))),
         }
     }
@@ -120,12 +145,18 @@ impl EmbedProviderRouter {
     /// Pick the rerank provider based on config.
     fn rerank_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.rerank_provider.as_str() {
-            "siliconflow" => self.sf()
+            "siliconflow" => self
+                .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("siliconflow provider not configured for rerank".into())),
-            "xinference" => self.xi()
+                .ok_or_else(|| {
+                    DtError::Repository("siliconflow provider not configured for rerank".into())
+                }),
+            "xinference" => self
+                .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("xinference provider not configured for rerank".into())),
+                .ok_or_else(|| {
+                    DtError::Repository("xinference provider not configured for rerank".into())
+                }),
             other => Err(DtError::Config(format!("unknown rerank provider: {other}"))),
         }
     }
@@ -133,12 +164,18 @@ impl EmbedProviderRouter {
     /// Pick the LLM provider based on config.
     fn llm_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.llm_provider.as_str() {
-            "siliconflow" => self.sf()
+            "siliconflow" => self
+                .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("siliconflow provider not configured for llm".into())),
-            "xinference" => self.xi()
+                .ok_or_else(|| {
+                    DtError::Repository("siliconflow provider not configured for llm".into())
+                }),
+            "xinference" => self
+                .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| DtError::Repository("xinference provider not configured for llm".into())),
+                .ok_or_else(|| {
+                    DtError::Repository("xinference provider not configured for llm".into())
+                }),
             other => Err(DtError::Config(format!("unknown llm provider: {other}"))),
         }
     }
@@ -198,11 +235,7 @@ impl EmbedService for EmbedProviderRouter {
 
 #[async_trait]
 impl RerankService for EmbedProviderRouter {
-    async fn rerank(
-        &self,
-        query: &str,
-        documents: &[String],
-    ) -> Result<Vec<f32>, DtError> {
+    async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, DtError> {
         match self.rerank_provider()? {
             EmbedProviderRef::SiliconFlow(c) => c.rerank(query, documents).await,
             EmbedProviderRef::XInference(c) => c.rerank(query, documents).await,
@@ -237,8 +270,14 @@ impl LlmService for EmbedProviderRouter {
         max_tokens: u32,
     ) -> Result<String, DtError> {
         match self.llm_provider()? {
-            EmbedProviderRef::SiliconFlow(c) => c.chat(system_prompt, user_prompt, temperature, max_tokens).await,
-            EmbedProviderRef::XInference(c) => c.chat(system_prompt, user_prompt, temperature, max_tokens).await,
+            EmbedProviderRef::SiliconFlow(c) => {
+                c.chat(system_prompt, user_prompt, temperature, max_tokens)
+                    .await
+            }
+            EmbedProviderRef::XInference(c) => {
+                c.chat(system_prompt, user_prompt, temperature, max_tokens)
+                    .await
+            }
         }
     }
 
@@ -305,8 +344,11 @@ mod tests {
     #[test]
     fn router_from_siliconflow_works() {
         let client = Arc::new(SiliconFlowClient::new(
-            "https://api.siliconflow.cn/v1", "sk-key",
-            "bge-m3", "reranker", "qwen",
+            "https://api.siliconflow.cn/v1",
+            "sk-key",
+            "bge-m3",
+            "reranker",
+            "qwen",
         ));
         let router = EmbedProviderRouter::from_siliconflow(client);
         assert!(router.siliconflow.is_some());
@@ -316,12 +358,18 @@ mod tests {
     #[test]
     fn router_with_xinference_works() {
         let sf = Arc::new(SiliconFlowClient::new(
-            "https://api.siliconflow.cn/v1", "sk-key",
-            "bge-m3", "reranker", "qwen",
+            "https://api.siliconflow.cn/v1",
+            "sk-key",
+            "bge-m3",
+            "reranker",
+            "qwen",
         ));
         let xi = Arc::new(XInferenceClient::new(
-            "http://localhost:9997/v1", "",
-            "bge-m3", "reranker", "",
+            "http://localhost:9997/v1",
+            "",
+            "bge-m3",
+            "reranker",
+            "",
         ));
         let config = ProviderRouterConfig {
             embed_provider: "xinference".into(),
@@ -345,18 +393,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn router_unknown_provider_returns_error() {
+    #[tokio::test]
+    async fn router_unknown_provider_returns_error() {
         let client = Arc::new(SiliconFlowClient::new(
-            "https://api.siliconflow.cn/v1", "sk-key",
-            "bge-m3", "reranker", "qwen",
+            "https://api.siliconflow.cn/v1",
+            "sk-key",
+            "bge-m3",
+            "reranker",
+            "qwen",
         ));
         let config = ProviderRouterConfig {
             embed_provider: "unknown".into(),
             ..Default::default()
         };
         let router = EmbedProviderRouter::new(Some(client), None, config);
-        let result = router.embed_batch(&["test".into()]);
+        let texts = vec!["test".to_string()];
+        let result = router.embed_batch(&texts);
         // Should fail at embed_provider() before making any HTTP call
         assert!(result.await.is_err());
     }

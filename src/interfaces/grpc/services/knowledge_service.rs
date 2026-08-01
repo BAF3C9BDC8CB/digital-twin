@@ -3,12 +3,12 @@
 //! Delegates to [`DefaultKnowledgeService`] to persist Knowledge, Experience,
 //! Concept, Domain, and Playbook nodes into the knowledge graph.
 
-use crate::domain::traits::GraphRepository;
-use crate::proto::dt::core::*;
-use crate::proto::dt::common;
 use crate::application::knowledge::knowledge::service::{
     DefaultKnowledgeService, KnowledgeService,
 };
+use crate::domain::traits::GraphRepository;
+use crate::proto::dt::common;
+use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::Status;
 
@@ -17,9 +17,7 @@ pub async fn handle_memorize(
     req: MemorizeRequest,
     graph: Option<Arc<dyn GraphRepository>>,
 ) -> Result<common::Empty, Status> {
-    let graph = graph.ok_or_else(|| {
-        Status::unavailable("Graph backend not available")
-    })?;
+    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
 
     let svc = DefaultKnowledgeService::new(graph);
     let project = if req.project.is_empty() {

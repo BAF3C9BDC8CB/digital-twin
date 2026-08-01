@@ -7,9 +7,9 @@
 
 use std::fs;
 use std::path::PathBuf;
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::fmt::time::FormatTime;
 
 /// Log timestamps in local timezone (not UTC).
 struct LocalTimer;

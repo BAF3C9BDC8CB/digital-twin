@@ -34,8 +34,7 @@ pub async fn handle_jcli(
         jenkins_user,
         jenkins_token,
     );
-    let jenkins =
-        crate::application::plugins::jenkins::service::JenkinsPluginService::new(client);
+    let jenkins = crate::application::plugins::jenkins::service::JenkinsPluginService::new(client);
 
     match action.as_str() {
         "list" | "jobs" => match jenkins.list_jobs().await {
@@ -107,13 +106,14 @@ pub async fn handle_jcli(
                     // After successful build, incrementally sync this job
                     if let Some(ref job_name) = job {
                         if let Some(ref g) = graph {
-                            let client = crate::application::plugins::jenkins::client::JenkinsApiClient::new(
-                                jenkins_url, jenkins_user, jenkins_token,
-                            );
-                            let source = JobSyncSource::new(
-                                Arc::new(client),
-                                Some(job_name.clone()),
-                            );
+                            let client =
+                                crate::application::plugins::jenkins::client::JenkinsApiClient::new(
+                                    jenkins_url,
+                                    jenkins_user,
+                                    jenkins_token,
+                                );
+                            let source =
+                                JobSyncSource::new(Arc::new(client), Some(job_name.clone()));
                             match source.sync_job(g.as_ref()).await {
                                 Ok(r) => {
                                     tracing::info!(

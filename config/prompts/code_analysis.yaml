@@ -21,3 +21,5 @@ system: |
   代码：public String getName() { return this.name; }
   用途：返回名称字段的值。
   逻辑：从对象属性中读取并返回name字段。
+prompt: |
+  代码：${file_text}

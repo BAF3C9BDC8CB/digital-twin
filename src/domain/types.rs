@@ -377,29 +377,35 @@ impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             ignore_dirs: [
-                "node_modules", ".git", "target", "build", "__pycache__",
-                ".venv", "dist", ".next", "vendor", ".idea", ".vscode",
-                "coverage", ".nyc_output",
+                "node_modules",
+                ".git",
+                "target",
+                "build",
+                "__pycache__",
+                ".venv",
+                "dist",
+                ".next",
+                "vendor",
+                ".idea",
+                ".vscode",
+                "coverage",
+                ".nyc_output",
             ]
             .iter()
             .map(|s| s.to_string())
             .collect(),
             ignore_ext: [
-                ".class", ".jar", ".war", ".so", ".dll", ".exe", ".bin",
-                ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
-                ".zip", ".tar", ".gz", ".bz2",
-                ".pdf", ".lock",
+                ".class", ".jar", ".war", ".so", ".dll", ".exe", ".bin", ".png", ".jpg", ".jpeg",
+                ".gif", ".svg", ".ico", ".zip", ".tar", ".gz", ".bz2", ".pdf", ".lock",
             ]
             .iter()
             .map(|s| s.to_string())
             .collect(),
             max_file_size: 524_288, // 500 KB
-            document_extensions: [
-                "md", "txt", "pdf", "yaml", "yml", "properties",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+            document_extensions: ["md", "txt", "pdf", "yaml", "yml", "properties"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             max_doc_file_size: 5_242_880, // 5 MB
         }
     }

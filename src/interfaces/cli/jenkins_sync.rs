@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
+use crate::application::plugins::jenkins::client::JenkinsApiClient;
 use crate::application::sync::jenkins::JobSyncSource;
 use crate::application::sync::traits::SyncSource;
 use crate::domain::traits::GraphRepository;
-use crate::application::plugins::jenkins::client::JenkinsApiClient;
 
 /// Handle `dt jc-sync` — synchronise Jenkins data into the KG.
 ///
@@ -19,7 +19,11 @@ pub async fn handle_jenkins_sync(
     jenkins_user: &str,
     jenkins_token: &str,
 ) -> anyhow::Result<()> {
-    let client = Arc::new(JenkinsApiClient::new(jenkins_url, jenkins_user, jenkins_token));
+    let client = Arc::new(JenkinsApiClient::new(
+        jenkins_url,
+        jenkins_user,
+        jenkins_token,
+    ));
     tracing::info!("jenkins-sync starting: job={job:?}");
 
     let source = JobSyncSource::new(client, job);

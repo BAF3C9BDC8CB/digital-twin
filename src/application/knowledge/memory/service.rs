@@ -14,10 +14,10 @@
 
 use std::collections::HashMap;
 
-use async_trait::async_trait;
 use crate::application::hooks::{HookContext, HookEngine};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::entities::{Day, MemoryEvent, Session};
@@ -117,14 +117,8 @@ pub struct DefaultMemoryService {
 impl DefaultMemoryService {
     /// Create a new [`DefaultMemoryService`] backed by the given
     /// graph repository.
-    pub fn new(
-        graph: Arc<dyn GraphRepository>,
-        hook_engine: Option<Arc<HookEngine>>,
-    ) -> Self {
-        Self {
-            graph,
-            hook_engine,
-        }
+    pub fn new(graph: Arc<dyn GraphRepository>, hook_engine: Option<Arc<HookEngine>>) -> Self {
+        Self { graph, hook_engine }
     }
 }
 
@@ -149,7 +143,12 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn create_session(&self, session: &Session) -> Result<(), DtError> {
-        let day_id = session.session_id.split('-').take(3).collect::<Vec<_>>().join("-");
+        let day_id = session
+            .session_id
+            .split('-')
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("-");
         self.ensure_day(&day_id).await?;
 
         let cypher = r#"
@@ -194,12 +193,8 @@ impl MemoryService for DefaultMemoryService {
                 .unwrap_or(serde_json::Value::Null),
         );
 
-        let kd = serde_json::to_string(&session.key_decisions)
-            .unwrap_or_else(|_| "[]".to_string());
-        params.insert(
-            "key_decisions".into(),
-            serde_json::Value::String(kd),
-        );
+        let kd = serde_json::to_string(&session.key_decisions).unwrap_or_else(|_| "[]".to_string());
+        params.insert("key_decisions".into(), serde_json::Value::String(kd));
 
         self.graph.write_query(cypher, params).await?;
         Ok(())
@@ -228,17 +223,35 @@ impl MemoryService for DefaultMemoryService {
 
         // Special-case: Deployment needs virtual variables for side-effect templates.
         if event.event_type == super::entities::EventType::Deployment {
-            let job = ctx.fields.get("job").cloned().unwrap_or_else(|| event.entity_id.clone());
-            let env = ctx.fields.get("env").cloned().unwrap_or_else(|| "test".to_string());
+            let job = ctx
+                .fields
+                .get("job")
+                .cloned()
+                .unwrap_or_else(|| event.entity_id.clone());
+            let env = ctx
+                .fields
+                .get("env")
+                .cloned()
+                .unwrap_or_else(|| "test".to_string());
             let build_number = ctx.fields.get("build_number").cloned().unwrap_or_default();
-            ctx.fields.insert("job_id".into(), format!("dt://jenkins/job/{}", job));
-            ctx.fields.insert("build_id".into(), if build_number.is_empty() {
-                format!("dt://jenkins/job/{}/build/unknown", job)
-            } else {
-                format!("dt://jenkins/job/{}/build/{}", job, build_number)
-            });
-            ctx.fields.insert("instance_id".into(), format!("dt://service/{}/instance/{}", job, env));
-            ctx.fields.insert("timestamp_raw".into(), event.timestamp.timestamp_millis().to_string());
+            ctx.fields
+                .insert("job_id".into(), format!("dt://jenkins/job/{}", job));
+            ctx.fields.insert(
+                "build_id".into(),
+                if build_number.is_empty() {
+                    format!("dt://jenkins/job/{}/build/unknown", job)
+                } else {
+                    format!("dt://jenkins/job/{}/build/{}", job, build_number)
+                },
+            );
+            ctx.fields.insert(
+                "instance_id".into(),
+                format!("dt://service/{}/instance/{}", job, env),
+            );
+            ctx.fields.insert(
+                "timestamp_raw".into(),
+                event.timestamp.timestamp_millis().to_string(),
+            );
         }
 
         if let Some(ref engine) = self.hook_engine {
@@ -290,10 +303,7 @@ mod tests {
     }
 
     impl CountingRepo {
-        fn new(
-            write_count: Arc<AtomicUsize>,
-            read_count: Arc<AtomicUsize>,
-        ) -> Self {
+        fn new(write_count: Arc<AtomicUsize>, read_count: Arc<AtomicUsize>) -> Self {
             Self {
                 write_count,
                 read_count,

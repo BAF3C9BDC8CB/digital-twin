@@ -19,7 +19,6 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 核心要点：
 - 项目配置在 `config.yaml` 的 `projects` 段，按 `- base:` 分组列表
 - 完整路径 = base + 项目名（或指定的相对路径 `name: rel_path`）
-- 先用 `dt list --all` 快速查看已有项目状态（磁盘、向量数、方法数）
 - 递归扫描子目录，**有源码文件即为项目候选**（不依赖 pom.xml / package.json）
 - 对比 `config.yaml` 去重，检查 `ignored_dirs.yaml` 跳过
 - 发现候选时**必须**用 `question` 工具提示用户，不得静默操作

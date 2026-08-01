@@ -96,11 +96,7 @@ impl VerifyService {
 
     /// Check code-config consistency: any config keys referenced in code
     /// must exist in the graph.
-    async fn check_code_config(
-        &self,
-        _files: &[String],
-        _project: Option<&str>,
-    ) -> Vec<Check> {
+    async fn check_code_config(&self, _files: &[String], _project: Option<&str>) -> Vec<Check> {
         // Placeholder: real implementation would:
         // 1. Parse modified files for config keys
         // 2. Query the graph to verify they exist as NacosConfig nodes
@@ -115,11 +111,7 @@ impl VerifyService {
 
     /// Check API consistency: API endpoints referenced in code match
     /// registered services.
-    async fn check_api(
-        &self,
-        files: &[String],
-        _project: Option<&str>,
-    ) -> Vec<Check> {
+    async fn check_api(&self, files: &[String], _project: Option<&str>) -> Vec<Check> {
         if files.is_empty() {
             return vec![];
         }
@@ -134,11 +126,7 @@ impl VerifyService {
     }
 
     /// Check DB consistency: entity/model changes match expected schema.
-    async fn check_db(
-        &self,
-        _files: &[String],
-        _project: Option<&str>,
-    ) -> Vec<Check> {
+    async fn check_db(&self, _files: &[String], _project: Option<&str>) -> Vec<Check> {
         vec![Check {
             category: "db".into(),
             description: "Database schema matches entity definitions".into(),
@@ -165,10 +153,7 @@ impl VerifyService {
             "#;
 
             let mut params = std::collections::HashMap::new();
-            params.insert(
-                "file".to_string(),
-                serde_json::Value::String(file.clone()),
-            );
+            params.insert("file".to_string(), serde_json::Value::String(file.clone()));
 
             match self.graph.read_query(cypher, params).await {
                 Ok(result) => {
@@ -240,9 +225,18 @@ impl VerifyTrait for VerifyService {
             Status::Pass
         };
 
-        let passed = all_checks.iter().filter(|c| c.status == Status::Pass).count();
-        let warned = all_checks.iter().filter(|c| c.status == Status::Warn).count();
-        let failed = all_checks.iter().filter(|c| c.status == Status::Fail).count();
+        let passed = all_checks
+            .iter()
+            .filter(|c| c.status == Status::Pass)
+            .count();
+        let warned = all_checks
+            .iter()
+            .filter(|c| c.status == Status::Warn)
+            .count();
+        let failed = all_checks
+            .iter()
+            .filter(|c| c.status == Status::Fail)
+            .count();
 
         // Generate suggestions
         let mut suggestions = Vec::new();
@@ -259,7 +253,8 @@ impl VerifyTrait for VerifyService {
             ));
         }
         if request.files.is_empty() {
-            suggestions.push("No files specified — provide a list of modified files to verify".into());
+            suggestions
+                .push("No files specified — provide a list of modified files to verify".into());
         }
 
         Ok(VerifyReport {

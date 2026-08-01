@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{EmbedService, LlmService, RerankService, LlmCapabilities};
+use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
 /// Maximum number of retry attempts for rate-limited requests.
@@ -35,16 +35,13 @@ const RETRY_BASE_DELAY_MS: u64 = 1000;
 const DEFAULT_EMBED_MODEL: &str = "BAAI/bge-m3";
 const DEFAULT_RERANKER_MODEL: &str = "BAAI/bge-reranker-v2-m3";
 
-/// Detect proxy from env vars or common local ports.
-/// Build a reqwest client with proxy auto-detection.
+/// Detect proxy from environment variables.
 ///
 /// Priority:
 /// 1. `SILICONFLOW_PROXY` env var
-/// 2. `~/.config/digital-twin/config.yaml` → `services.siliconflow.proxy`
-/// 3. Standard `HTTPS_PROXY` / `HTTP_PROXY` env vars
+/// 2. Standard `HTTPS_PROXY` / `HTTP_PROXY` env vars
 fn build_http_client() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(120));
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(120));
 
     let proxy_url = detect_proxy();
 
@@ -57,7 +54,7 @@ fn build_http_client() -> reqwest::Client {
     builder.build().unwrap_or_default()
 }
 
-/// Detect proxy URL from multiple sources.
+/// Detect proxy URL from environment variables.
 fn detect_proxy() -> Option<String> {
     // Priority 1: explicit env var
     if let Ok(url) = std::env::var("SILICONFLOW_PROXY") {
@@ -66,27 +63,7 @@ fn detect_proxy() -> Option<String> {
         }
     }
 
-    // Priority 2: config files (home > project) — top-level `proxy` field
-    let config_paths = [
-        std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".config").join("digital-twin").join("config.yaml")),
-        Some(std::path::PathBuf::from("config/config.yaml")),
-    ];
-    for config_path in config_paths.iter().flatten() {
-        if let Ok(content) = std::fs::read_to_string(config_path) {
-            use serde::Deserialize;
-            #[derive(Deserialize)]
-            struct Cfg { proxy: Option<String> }
-            if let Ok(cfg) = serde_yaml::from_str::<Cfg>(&content) {
-                if let Some(url) = cfg.proxy {
-                    if !url.is_empty() {
-                        return Some(url);
-                    }
-                }
-            }
-        }
-    }
-
-    // Priority 3: standard proxy env vars
+    // Priority 2: standard proxy env vars
     std::env::var("HTTPS_PROXY")
         .or_else(|_| std::env::var("https_proxy"))
         .or_else(|_| std::env::var("HTTP_PROXY"))
@@ -102,7 +79,8 @@ pub fn embed_model_from_env() -> String {
 
 /// Return the reranker model name from env `SILICONFLOW_RERANKER_MODEL` or default.
 pub fn reranker_model_from_env() -> String {
-    std::env::var("SILICONFLOW_RERANKER_MODEL").unwrap_or_else(|_| DEFAULT_RERANKER_MODEL.to_string())
+    std::env::var("SILICONFLOW_RERANKER_MODEL")
+        .unwrap_or_else(|_| DEFAULT_RERANKER_MODEL.to_string())
 }
 
 /// Return the LLM model name from env `SILICONFLOW_LLM_MODEL` or empty.
@@ -117,7 +95,8 @@ pub fn api_key_from_env() -> String {
 
 /// Return the base URL from env `SILICONFLOW_BASE_URL` or default.
 pub fn base_url_from_env() -> String {
-    std::env::var("SILICONFLOW_BASE_URL").unwrap_or_else(|_| "https://api.siliconflow.cn/v1".to_string())
+    std::env::var("SILICONFLOW_BASE_URL")
+        .unwrap_or_else(|_| "https://api.siliconflow.cn/v1".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -192,8 +171,12 @@ impl SiliconFlowClient {
             if attempt > 0 {
                 let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << (attempt - 1)));
                 tracing::warn!(
-                    "SiliconFlow {} attempt {}/{} failed: {}, retrying in {:?}",
-                    operation, attempt, MAX_RETRIES, last_error, delay
+                    "SiliconFlow {} 第 {}/{} 次尝试失败: {}，{:?} 后重试",
+                    operation,
+                    attempt,
+                    MAX_RETRIES,
+                    last_error,
+                    delay
                 );
                 tokio::time::sleep(delay).await;
             }
@@ -329,7 +312,9 @@ impl SiliconFlowClient {
             .filter(|s| !s.is_empty())
             .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
             .ok_or_else(|| {
-                DtError::Repository("SiliconFlow: missing content/reasoning_content in chat response".into())
+                DtError::Repository(
+                    "SiliconFlow: missing content/reasoning_content in chat response".into(),
+                )
             })?;
 
         Ok(content.to_string())
@@ -440,11 +425,7 @@ impl LlmService for SiliconFlowClient {
 
 #[async_trait]
 impl RerankService for SiliconFlowClient {
-    async fn rerank(
-        &self,
-        query: &str,
-        documents: &[String],
-    ) -> Result<Vec<f32>, DtError> {
+    async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, DtError> {
         // Delegate to existing rerank() method
         SiliconFlowClient::rerank(self, query, documents).await
     }
@@ -506,9 +487,17 @@ mod tests {
         // Check the URL construction via the internal method
         let req = client.post("/embeddings");
         let built = req.build().unwrap();
-        assert_eq!(built.url().as_str(), "https://api.siliconflow.cn/v1/embeddings");
         assert_eq!(
-            built.headers().get("Authorization").unwrap().to_str().unwrap(),
+            built.url().as_str(),
+            "https://api.siliconflow.cn/v1/embeddings"
+        );
+        assert_eq!(
+            built
+                .headers()
+                .get("Authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "Bearer sk-key"
         );
     }

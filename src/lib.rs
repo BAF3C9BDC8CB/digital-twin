@@ -7,9 +7,9 @@
 //!   interfaces/       → gRPC server + CLI command handlers
 //!   shared/           → logging, coordinator, chunker
 
-pub mod proto;
+pub mod application;
 pub mod domain;
 pub mod infrastructure;
-pub mod application;
 pub mod interfaces;
+pub mod proto;
 pub mod shared;

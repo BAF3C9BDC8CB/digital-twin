@@ -18,13 +18,10 @@ pub async fn handle_sync(
 ) -> Result<SyncResponse, Status> {
     let start = Instant::now();
 
-    let graph = graph.ok_or_else(|| {
-        Status::unavailable("Graph backend not available")
-    })?;
+    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
 
-    let vector = vector.ok_or_else(|| {
-        Status::unavailable("Qdrant vector backend not available")
-    })?;
+    let vector =
+        vector.ok_or_else(|| Status::unavailable("Qdrant vector backend not available"))?;
 
     // Use real SiliconFlow embed API if available, fall back to zero-vector noop.
     let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
@@ -32,8 +29,7 @@ pub async fn handle_sync(
         Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
     });
 
-    let bridge =
-        crate::application::sync::kg_bridge::KgBridge::new(graph, embed, vector);
+    let bridge = crate::application::sync::kg_bridge::KgBridge::new(graph, embed, vector);
 
     let report = if req.incremental {
         bridge.sync_incremental().await

@@ -173,21 +173,18 @@ impl TestReport {
         categories.sort();
 
         for cat in &categories {
-            let cat_checks: Vec<&CheckResult> = self
-                .checks
-                .iter()
-                .filter(|c| c.category == *cat)
-                .collect();
+            let cat_checks: Vec<&CheckResult> =
+                self.checks.iter().filter(|c| c.category == *cat).collect();
 
             println!("  [{}] ({})", cat, cat_checks.len());
 
             for check in &cat_checks {
                 let icon = if check.skipped {
-                    "\x1b[33m-\x1b[0m"   // Yellow
+                    "\x1b[33m-\x1b[0m" // Yellow
                 } else if check.passed {
-                    "\x1b[32m✓\x1b[0m"   // Green
+                    "\x1b[32m✓\x1b[0m" // Green
                 } else {
-                    "\x1b[31m✗\x1b[0m"   // Red
+                    "\x1b[31m✗\x1b[0m" // Red
                 };
 
                 println!("    {} {}", icon, check.name);
@@ -249,7 +246,12 @@ mod tests {
     #[test]
     fn add_failed_check() {
         let mut r = TestReport::new();
-        r.add(CheckResult::failed("test-1", "Graph", "count > 0", "count = 0"));
+        r.add(CheckResult::failed(
+            "test-1",
+            "Graph",
+            "count > 0",
+            "count = 0",
+        ));
         assert_eq!(r.total, 1);
         assert_eq!(r.passed, 0);
         assert_eq!(r.failed, 1);
@@ -258,7 +260,11 @@ mod tests {
     #[test]
     fn add_skipped_check() {
         let mut r = TestReport::new();
-        r.add(CheckResult::skipped("test-1", "Vector", "service unavailable"));
+        r.add(CheckResult::skipped(
+            "test-1",
+            "Vector",
+            "service unavailable",
+        ));
         assert_eq!(r.total, 1);
         assert_eq!(r.passed, 0);
         assert_eq!(r.skipped, 1);

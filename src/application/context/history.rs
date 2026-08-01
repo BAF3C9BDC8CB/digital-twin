@@ -91,7 +91,10 @@ impl HistoryService {
     fn tokenize(text: &str) -> Vec<String> {
         text.split_whitespace()
             .filter(|w| w.len() > 2)
-            .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+            .map(|w| {
+                w.trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_lowercase()
+            })
             .filter(|w| !w.is_empty())
             .take(10)
             .collect()
@@ -179,10 +182,26 @@ impl HistoryTrait for HistoryService {
             for row_val in rows {
                 let row = row_val.get("row").and_then(|r| r.as_array());
                 if let Some(row) = row {
-                    let id = row.first().and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let title = row.get(1).and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let description = row.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let etype = row.get(3).and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                    let id = row
+                        .first()
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let title = row
+                        .get(1)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let description = row
+                        .get(2)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let etype = row
+                        .get(3)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
                     let timestamp = row.get(4).and_then(|v| v.as_str()).map(|s| s.to_string());
                     let project = row.get(5).and_then(|v| v.as_str()).map(|s| s.to_string());
                     let success = row.get(6).and_then(|v| v.as_bool());

@@ -3,11 +3,11 @@
 //! Cross-references information from different worlds (e.g., Reality vs Knowledge,
 //! Reality vs Memory) to flag potential conflicts as alerts.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
 
-use crate::application::context::models::{Alert, AlertSeverity, ContextState, WorldItem};
 use super::ContextStage;
+use crate::application::context::models::{Alert, AlertSeverity, ContextState, WorldItem};
 
 /// Detects conflicts and flags alerts.
 pub struct ResolverStage;
@@ -22,11 +22,7 @@ impl ContextStage for ResolverStage {
         let mut alerts: Vec<Alert> = Vec::new();
 
         // 1.  Cross-reference Reality ↔ Memory (experiences)
-        detect_reality_memory_conflicts(
-            &state.reality_deduped,
-            &state.memory_deduped,
-            &mut alerts,
-        );
+        detect_reality_memory_conflicts(&state.reality_deduped, &state.memory_deduped, &mut alerts);
 
         // 2.  Cross-reference Reality ↔ Knowledge (concept/playbook mismatch)
         detect_reality_knowledge_conflicts(
@@ -132,11 +128,7 @@ fn detect_low_coverage(
     reasoning: &[WorldItem],
     alerts: &mut Vec<Alert>,
 ) {
-    let total = reality.len()
-        + knowledge.len()
-        + memory.len()
-        + semantic.len()
-        + reasoning.len();
+    let total = reality.len() + knowledge.len() + memory.len() + semantic.len() + reasoning.len();
 
     if total == 0 {
         alerts.push(Alert {
@@ -184,10 +176,12 @@ mod tests {
             WorldItem::new("r2", "user-svc", "User service").with_type("Service"),
             WorldItem::new("r3", "order-svc", "Order service").with_type("Service"),
         ];
-        state.memory_deduped = vec![
-            WorldItem::new("m1", "payment-svc memory leak", "The payment-svc has a known memory leak")
-                .with_type("Experience"),
-        ];
+        state.memory_deduped = vec![WorldItem::new(
+            "m1",
+            "payment-svc memory leak",
+            "The payment-svc has a known memory leak",
+        )
+        .with_type("Experience")];
 
         let stage = ResolverStage;
         let result = stage.process(state).await.unwrap();
@@ -206,9 +200,11 @@ mod tests {
             WorldItem::new("r2", "payment-svc", "Payment service").with_type("Service"),
             WorldItem::new("r3", "order-svc", "Order service").with_type("Service"),
         ];
-        state.memory_deduped = vec![
-            WorldItem::new("m1", "Deploy success", "Deployment went smoothly").with_type("Experience"),
-        ];
+        state.memory_deduped =
+            vec![
+                WorldItem::new("m1", "Deploy success", "Deployment went smoothly")
+                    .with_type("Experience"),
+            ];
 
         let stage = ResolverStage;
         let result = stage.process(state).await.unwrap();
@@ -231,9 +227,7 @@ mod tests {
     #[tokio::test]
     async fn resolver_limited_coverage_alert() {
         let mut state = make_state();
-        state.reality_deduped = vec![
-            WorldItem::new("r1", "test", "test").with_type("Service"),
-        ];
+        state.reality_deduped = vec![WorldItem::new("r1", "test", "test").with_type("Service")];
 
         let stage = ResolverStage;
         let result = stage.process(state).await.unwrap();
@@ -244,12 +238,8 @@ mod tests {
 
     #[test]
     fn detect_reality_memory_conflicts_no_warning_keywords() {
-        let reality = vec![
-            WorldItem::new("r1", "svc", "content").with_type("S"),
-        ];
-        let memory = vec![
-            WorldItem::new("m1", "svc", "everything is fine").with_type("E"),
-        ];
+        let reality = vec![WorldItem::new("r1", "svc", "content").with_type("S")];
+        let memory = vec![WorldItem::new("m1", "svc", "everything is fine").with_type("E")];
         let mut alerts = Vec::new();
         detect_reality_memory_conflicts(&reality, &memory, &mut alerts);
         assert!(alerts.is_empty());

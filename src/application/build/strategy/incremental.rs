@@ -1,10 +1,10 @@
 //! Incremental build strategy — only processes files that have changed since
 //! the last build, using SHA1 hashes stored in SQLite.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::FileSnapshot;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -44,7 +44,9 @@ impl BuildStrategy for IncrementalStrategy {
         let mut current_map: HashMap<String, (String, f64)> = HashMap::new();
         for path in all_files {
             let rel = crate::infrastructure::scanner::rel_path(root, path);
-            let current_mtime = path.metadata().ok()
+            let current_mtime = path
+                .metadata()
+                .ok()
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs_f64())

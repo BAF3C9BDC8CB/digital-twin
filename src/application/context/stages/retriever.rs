@@ -11,14 +11,14 @@
 //! | Runtime   | K8s API     | Placeholder (real-time)        |
 //! | Reasoning | Memgraph    | Cypher for past analyses       |
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{GraphRepository, VectorRepository, EmbedService};
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
-use crate::application::context::models::{ContextState, WorldItem};
 use super::ContextStage;
+use crate::application::context::models::{ContextState, WorldItem};
 
 /// The six world names used throughout the pipeline.
 pub const WORLDS: [&str; 6] = [
@@ -100,10 +100,7 @@ impl ContextStage for RetrieverStage {
 
             match query_world(world, task, graph, vector, embed).await {
                 Ok(items) => {
-                    tracing::info!(
-                        "[retriever] {world}: {} items retrieved",
-                        items.len()
-                    );
+                    tracing::info!("[retriever] {world}: {} items retrieved", items.len());
                     match world {
                         "reality" => state.reality_raw = items,
                         "knowledge" => state.knowledge_raw = items,
@@ -178,9 +175,21 @@ async fn query_reality(
             labels.map_or(true, |l| {
                 l.iter().any(|v| {
                     v.as_str().map_or(false, |s| {
-                        matches!(s, "Method" | "Class" | "Module" | "Server" | "Database"
-                            | "K8sDeployment" | "K8sService" | "Service" | "ServiceInstance"
-                            | "NacosConfig" | "Endpoint" | "ConfigKey")
+                        matches!(
+                            s,
+                            "Method"
+                                | "Class"
+                                | "Module"
+                                | "Server"
+                                | "Database"
+                                | "K8sDeployment"
+                                | "K8sService"
+                                | "Service"
+                                | "ServiceInstance"
+                                | "NacosConfig"
+                                | "Endpoint"
+                                | "ConfigKey"
+                        )
                     })
                 })
             })
@@ -252,7 +261,12 @@ async fn query_knowledge(
     );
     params.insert(
         "keywords".to_string(),
-        serde_json::Value::Array(keywords.into_iter().map(|k| serde_json::Value::String(k)).collect()),
+        serde_json::Value::Array(
+            keywords
+                .into_iter()
+                .map(|k| serde_json::Value::String(k))
+                .collect(),
+        ),
     );
 
     let result = graph.read_query(cypher, params).await?;
@@ -298,7 +312,12 @@ async fn query_memory(
     );
     params.insert(
         "keywords".to_string(),
-        serde_json::Value::Array(keywords.into_iter().map(|k| serde_json::Value::String(k)).collect()),
+        serde_json::Value::Array(
+            keywords
+                .into_iter()
+                .map(|k| serde_json::Value::String(k))
+                .collect(),
+        ),
     );
 
     let result = graph.read_query(cypher, params).await?;
@@ -376,7 +395,12 @@ async fn query_reasoning(
     );
     params.insert(
         "keywords".to_string(),
-        serde_json::Value::Array(keywords.iter().map(|k| serde_json::Value::String(k.clone())).collect()),
+        serde_json::Value::Array(
+            keywords
+                .iter()
+                .map(|k| serde_json::Value::String(k.clone()))
+                .collect(),
+        ),
     );
 
     let cypher = r#"
@@ -408,7 +432,10 @@ async fn query_reasoning(
 fn tokenize(text: &str) -> Vec<String> {
     text.split_whitespace()
         .filter(|w| w.len() > 2)
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
         .filter(|w| !w.is_empty())
         .take(10)
         .collect()
@@ -428,11 +455,27 @@ fn parse_graph_search_results(raw: &serde_json::Value, world: &str) -> Vec<World
     let mut items = Vec::with_capacity(rows.len());
 
     for (i, obj) in rows.iter().enumerate() {
-        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-        let entity_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string();
-        let description = obj.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let entity_type = obj
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let description = obj
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let score = obj.get("score").and_then(|v| v.as_f64()).unwrap_or(0.5);
-        let source_file = obj.get("source_file").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let source_file = obj
+            .get("source_file")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         let id = format!("{world}::{i}");
 
@@ -496,7 +539,11 @@ mod tests {
 
     #[test]
     fn retriever_stage_new() {
-        let stage = RetrieverStage::new(None::<Arc<dyn GraphRepository>>, None::<Arc<dyn VectorRepository>>, None::<Arc<dyn EmbedService>>);
+        let stage = RetrieverStage::new(
+            None::<Arc<dyn GraphRepository>>,
+            None::<Arc<dyn VectorRepository>>,
+            None::<Arc<dyn EmbedService>>,
+        );
         assert_eq!(stage.name(), "retriever");
     }
 

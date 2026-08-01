@@ -5,10 +5,10 @@
 //! - [`Service`] nodes linked via `REGISTERED_IN`
 //! - Relationships: `REGISTERED_IN`
 
-use async_trait::async_trait;
-use chrono::Utc;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
+use chrono::Utc;
 use std::collections::HashMap;
 
 use super::client::NacosClient;
@@ -115,7 +115,10 @@ SET ns.name = $name,
                             ("ns_name", serde_json::json!(ns_name)),
                             ("group_name", serde_json::json!(&svc_item.group_name)),
                             ("ip_count", serde_json::json!(svc_item.ip_count)),
-                            ("healthy", serde_json::json!(svc_item.healthy_instance_count)),
+                            (
+                                "healthy",
+                                serde_json::json!(svc_item.healthy_instance_count),
+                            ),
                             ("ts", serde_json::json!(&ts)),
                         ]),
                     )
@@ -174,11 +177,14 @@ MERGE (s)-[:REGISTERED_IN]->(ns)
                 links += 1;
 
                 // 7. Fetch and MERGE NacosInstance nodes
-                if let Ok(Some(inst_resp)) = self.client.list_instances(&svc_item.name, ns_id).await {
+                if let Ok(Some(inst_resp)) = self.client.list_instances(&svc_item.name, ns_id).await
+                {
                     if let Some(instances) = &inst_resp.list {
                         for inst in instances {
-                            let instance_id = format!("dt://nacos/{}/{}/{}",
-                                ns_id, svc_item.name, inst.instance_id);
+                            let instance_id = format!(
+                                "dt://nacos/{}/{}/{}",
+                                ns_id, svc_item.name, inst.instance_id
+                            );
                             graph
                                 .write_query(
                                     r#"MERGE (i:NacosInstance {instance_id: $instance_id})

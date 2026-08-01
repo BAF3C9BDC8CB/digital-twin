@@ -103,7 +103,11 @@ impl CrossWorldSearch {
         vector: Option<Arc<dyn VectorRepository>>,
         embed: Option<Arc<dyn EmbedService>>,
     ) -> Self {
-        Self { graph, vector, embed }
+        Self {
+            graph,
+            vector,
+            embed,
+        }
     }
 
     /// Create with no backends (for testing).
@@ -141,7 +145,11 @@ impl CrossWorldSearch {
         let method_cols: Vec<String> = collections
             .into_iter()
             .filter(|c| c == crate::shared::collections::CODE_METHODS || c.ends_with("_methods"))
-            .filter(|c| project.map_or(true, |p| c == crate::shared::collections::CODE_METHODS || c == &format!("{}_methods", p)))
+            .filter(|c| {
+                project.map_or(true, |p| {
+                    c == crate::shared::collections::CODE_METHODS || c == &format!("{}_methods", p)
+                })
+            })
             .collect();
 
         if method_cols.is_empty() {
@@ -163,10 +171,8 @@ impl CrossWorldSearch {
                         if score < min_score {
                             continue;
                         }
-                        let payload =
-                            hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
-                        let name =
-                            payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
+                        let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         if name.is_empty() || name == "?" {
                             continue;
                         }
@@ -250,11 +256,7 @@ impl CrossWorldSearch {
     }
 
     /// Search the Knowledge World via graph.
-    async fn search_knowledge(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchHit>, DtError> {
+    async fn search_knowledge(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, DtError> {
         let Some(ref graph) = self.graph else {
             return Ok(Vec::new());
         };
@@ -325,11 +327,7 @@ impl CrossWorldSearch {
     }
 
     /// Search the vector store via Qdrant.
-    async fn search_vector(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<SearchHit>, DtError> {
+    async fn search_vector(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, DtError> {
         let (Some(ref vector), Some(ref embed)) = (&self.vector, &self.embed) else {
             return Ok(Vec::new());
         };
@@ -365,8 +363,6 @@ impl CrossWorldSearch {
 
         Ok(hits)
     }
-
-
 }
 
 #[async_trait::async_trait]

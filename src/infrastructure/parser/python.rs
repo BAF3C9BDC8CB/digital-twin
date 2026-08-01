@@ -25,10 +25,25 @@ impl PythonParser {
                 let name = c[1].to_string();
                 if matches!(
                     name.as_str(),
-                    "if" | "elif" | "for" | "while" | "with" | "return"
-                        | "raise" | "print" | "isinstance" | "is" | "in"
-                        | "not" | "and" | "or" | "def" | "class" | "import"
-                        | "from" | "try" | "except"
+                    "if" | "elif"
+                        | "for"
+                        | "while"
+                        | "with"
+                        | "return"
+                        | "raise"
+                        | "print"
+                        | "isinstance"
+                        | "is"
+                        | "in"
+                        | "not"
+                        | "and"
+                        | "or"
+                        | "def"
+                        | "class"
+                        | "import"
+                        | "from"
+                        | "try"
+                        | "except"
                 ) {
                     None
                 } else {
@@ -49,7 +64,10 @@ impl ParseStrategy for PythonParser {
     }
 
     fn can_parse(&self, path: &Path) -> bool {
-        path.extension().and_then(|e| e.to_str()).map(|e| e == "py").unwrap_or(false)
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e == "py")
+            .unwrap_or(false)
     }
 
     fn parse(&self, source: &str, path: &Path, project: &str) -> Result<ParseResult, DtError> {
@@ -62,7 +80,8 @@ impl ParseStrategy for PythonParser {
         // Python class definition
         let class_re = Regex::new(r"(?m)^\s*class\s+(\w+)\s*(\([^)]*\))?\s*:").unwrap();
         // Python function/method definition
-        let func_re = Regex::new(r"(?m)^\s*def\s+(\w+)\s*\(([^)]*)\)\s*(->\s*[\w\[\],\s]+)?\s*:").unwrap();
+        let func_re =
+            Regex::new(r"(?m)^\s*def\s+(\w+)\s*\(([^)]*)\)\s*(->\s*[\w\[\],\s]+)?\s*:").unwrap();
 
         // Find classes first
         for caps in class_re.captures_iter(source) {
@@ -105,10 +124,23 @@ impl ParseStrategy for PythonParser {
         // Find functions
         for caps in func_re.captures_iter(source) {
             let func_name = caps[1].to_string();
-            let params = caps.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let return_annotation = caps.get(3).map(|m| m.as_str().to_string()).unwrap_or_default();
-            let return_type = return_annotation.trim_start_matches("-> ").trim().to_string();
-            let ret_type = if return_type.is_empty() { "None" } else { &return_type };
+            let params = caps
+                .get(2)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let return_annotation = caps
+                .get(3)
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_default();
+            let return_type = return_annotation
+                .trim_start_matches("-> ")
+                .trim()
+                .to_string();
+            let ret_type = if return_type.is_empty() {
+                "None"
+            } else {
+                &return_type
+            };
 
             let full_match = caps.get(0).unwrap();
             let start_byte = full_match.start();
@@ -131,14 +163,23 @@ impl ParseStrategy for PythonParser {
                 .next()
                 .unwrap_or_else(|| "_module_".to_string());
 
-            let method_id = make_method_id(project, &file_path, &current_class, &func_name, start_line);
+            let method_id =
+                make_method_id(project, &file_path, &current_class, &func_name, start_line);
 
             // Extract body
-            let indent = source.lines().nth(start_line - 1).map(|l| l.len() - l.trim_start().len()).unwrap_or(4) + 4;
+            let indent = source
+                .lines()
+                .nth(start_line - 1)
+                .map(|l| l.len() - l.trim_start().len())
+                .unwrap_or(4)
+                + 4;
             let body = extract_python_body(source, start_line - 1, indent);
             let calls = Self::extract_calls(&body);
 
-            let signature = format!("def {}({}){} -> {}", func_name, params, return_annotation, ret_type);
+            let signature = format!(
+                "def {}({}){} -> {}",
+                func_name, params, return_annotation, ret_type
+            );
 
             let end_line = start_line + body.chars().filter(|&c| c == '\n').count();
 
@@ -181,17 +222,18 @@ fn extract_python_body(source: &str, def_line_idx: usize, indent: usize) -> Stri
     for line in lines.iter().skip(def_line_idx) {
         let leading = line.len().saturating_sub(line.trim_start().len());
         // Include the def line itself, empty lines, or indented lines
-        if body_lines.is_empty()
-            || line.trim().is_empty()
-            || leading >= indent
-        {
+        if body_lines.is_empty() || line.trim().is_empty() || leading >= indent {
             body_lines.push(line.to_string());
         } else {
             break;
         }
     }
     // Trim trailing blank lines so end_line points to the last actual code/comment line
-    while body_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+    while body_lines
+        .last()
+        .map(|l| l.trim().is_empty())
+        .unwrap_or(false)
+    {
         body_lines.pop();
     }
     body_lines.join("\n")
@@ -209,7 +251,9 @@ mod tests {
     #[test]
     fn parses_function_and_class() {
         let src = "def hello():\n    pass\n\nclass Foo:\n    def method(self, x: int) -> str:\n        return str(x)\n";
-        let result = PythonParser.parse(src, &PathBuf::from("test.py"), "test").unwrap();
+        let result = PythonParser
+            .parse(src, &PathBuf::from("test.py"), "test")
+            .unwrap();
         assert!(result.methods.len() >= 2);
         assert!(result.classes.len() >= 1);
         assert_eq!(result.classes[0].name, "Foo");
@@ -223,12 +267,15 @@ mod tests {
 
     #[test]
     fn check_payment_line_numbers() {
-        let source = std::fs::read_to_string(
-            "/data/myProject/digital-twin-v2/test/project/payment.py"
-        ).expect("read payment.py");
-        let result = PythonParser.parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
+        let source =
+            std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
+                .expect("read payment.py");
+        let result = PythonParser
+            .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
             .expect("parse");
-        let methods: Vec<String> = result.methods.iter()
+        let methods: Vec<String> = result
+            .methods
+            .iter()
             .map(|m| format!("{} L{}-{}", m.name, m.start_line, m.end_line))
             .collect();
         println!("Python methods: {:?}", methods);

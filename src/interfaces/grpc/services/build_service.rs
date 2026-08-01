@@ -4,9 +4,7 @@
 //! repository respectively, converting gRPC messages to/from domain types.
 
 use crate::application::context::search_mcp::CrossWorldSearchTrait;
-use crate::domain::traits::{
-    BuildService, EmbedService, GraphRepository, VectorRepository,
-};
+use crate::domain::traits::{BuildService, EmbedService, GraphRepository, VectorRepository};
 use crate::domain::types::BatchConfig;
 use crate::proto::dt::core::*;
 use std::sync::Arc;
@@ -50,11 +48,12 @@ pub async fn handle_build(
         parser_registry,
         graph,
         vector,
-        None, // snapshot — not required for gRPC build
-        None, // embed — using noop
-        None, // siliconflow — not wired through gRPC yet
+        None,  // snapshot — not required for gRPC build
+        None,  // embed — using noop
+        None,  // siliconflow — not wired through gRPC yet
         false, // gRPC builds default to incremental
         BatchConfig::default(),
+        false, // skip_embed
     );
 
     match service.build(&project_name, &project_path).await {
@@ -98,7 +97,8 @@ pub async fn handle_search(
             siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
             siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
             siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
-            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(
+            ),
             siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
             xinference_url: String::new(),
             xinference_api_key: String::new(),
@@ -113,8 +113,7 @@ pub async fn handle_search(
     let embed: Option<Arc<dyn EmbedService>> = Some(embed_svc);
 
     // Build CrossWorldSearch and delegate
-    let cws =
-        crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed);
+    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed);
     let cws_req = crate::application::context::search_mcp::SearchRequest {
         query: req.query,
         world: Some("code".into()),
@@ -171,7 +170,8 @@ async fn search_via_vector(
             siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
             siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
             siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
-            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(
+            ),
             siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
             xinference_url: String::new(),
             xinference_api_key: String::new(),
@@ -186,7 +186,9 @@ async fn search_via_vector(
     let embed: Arc<dyn EmbedService> = embed_svc;
 
     // 2. Generate query vector
-    let vectors = embed.embed_batch(&[query.to_string()]).await
+    let vectors = embed
+        .embed_batch(&[query.to_string()])
+        .await
         .map_err(|e| Status::internal(format!("embed failed: {e}")))?;
     if vectors.is_empty() {
         return Ok(vec![]);
@@ -194,10 +196,15 @@ async fn search_via_vector(
     let query_vec = vectors[0].clone();
 
     // 3. Discover method collections
-    let collections = vec_repo.list_collections().await
+    let collections = vec_repo
+        .list_collections()
+        .await
         .map_err(|e| Status::internal(format!("list collections: {e}")))?;
-    let method_cols: Vec<&str> = collections.iter()
-        .filter(|c| c.as_str() == crate::shared::collections::CODE_METHODS || c.ends_with("_methods"))
+    let method_cols: Vec<&str> = collections
+        .iter()
+        .filter(|c| {
+            c.as_str() == crate::shared::collections::CODE_METHODS || c.ends_with("_methods")
+        })
         .map(|s| s.as_str())
         .collect();
 
@@ -212,21 +219,38 @@ async fn search_via_vector(
             Ok(results) => {
                 for r in results {
                     let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    if score < 0.3 { continue; }
+                    if score < 0.3 {
+                        continue;
+                    }
                     let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
-                    let name = payload.get("name").and_then(|v| v.as_str())
+                    let name = payload
+                        .get("name")
+                        .and_then(|v| v.as_str())
                         .filter(|s| !s.is_empty() && *s != "?")
                         .unwrap_or("");
-                    if name.is_empty() { continue; }
-                    let file_path = payload.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let signature = payload.get("signature").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    all_results.push((score, SearchResult {
-                        score: score as f32,
-                        name: name.to_string(),
-                        file_path,
-                        start_line: 0,
-                        signature,
-                    }));
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let file_path = payload
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let signature = payload
+                        .get("signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    all_results.push((
+                        score,
+                        SearchResult {
+                            score: score as f32,
+                            name: name.to_string(),
+                            file_path,
+                            start_line: 0,
+                            signature,
+                        },
+                    ));
                 }
             }
             Err(e) => {
@@ -273,10 +297,7 @@ async fn search_via_graph(
             let results: Vec<SearchResult> = rows
                 .iter()
                 .map(|row| SearchResult {
-                    score: row
-                        .get("score")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(1.0) as f32,
+                    score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
                     name: row
                         .get("name")
                         .and_then(|v| v.as_str())
@@ -287,10 +308,7 @@ async fn search_via_graph(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
-                    start_line: row
-                        .get("start_line")
-                        .and_then(|v| v.as_i64())
-                        .unwrap_or(0) as i32,
+                    start_line: row.get("start_line").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                     signature: row
                         .get("signature")
                         .and_then(|v| v.as_str())
@@ -348,7 +366,9 @@ mod tests {
             path: String::new(),
             project: String::new(),
         };
-        let resp = handle_search(req, None, None).await.expect("should succeed");
+        let resp = handle_search(req, None, None)
+            .await
+            .expect("should succeed");
         assert_eq!(resp.total, 0);
         assert!(resp.results.is_empty());
     }

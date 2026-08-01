@@ -3,16 +3,18 @@
 //! This module defines the `BuildCommand` struct with clap arguments
 //! and provides the `run()` method that executes the build pipeline.
 
-use clap::Parser;
 use crate::domain::error::DtError;
-use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::traits::{
+    BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
+};
 use crate::domain::types::BatchConfig;
+use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::service::BuildServiceImpl;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::siliconflow::SiliconFlowClient;
-use super::service::BuildServiceImpl;
 
 /// Build command — index a project's source code into the knowledge graph.
 ///
@@ -22,7 +24,10 @@ use super::service::BuildServiceImpl;
 /// dt build /path/to/project --name my-project --full
 /// ```
 #[derive(Parser, Debug, Clone)]
-#[command(name = "build", about = "Index project source code into the knowledge graph")]
+#[command(
+    name = "build",
+    about = "Index project source code into the knowledge graph"
+)]
 pub struct BuildCommand {
     /// Path to the project root directory.
     #[arg(value_name = "PATH")]
@@ -39,6 +44,10 @@ pub struct BuildCommand {
     /// Show verbose output.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Skip vector embedding (processors.embed=false).
+    #[arg(long = "skip-embed")]
+    pub skip_embed: bool,
 }
 
 /// Dependencies needed to run a build.
@@ -49,6 +58,8 @@ pub struct BuildDependencies {
     pub embed: Option<Arc<dyn EmbedService>>,
     pub siliconflow: Option<Arc<SiliconFlowClient>>,
     pub batch_config: Option<BatchConfig>,
+    /// Skip vector embedding (preserve existing vectors in Qdrant).
+    pub skip_embed: bool,
 }
 
 impl BuildCommand {
@@ -74,9 +85,12 @@ impl BuildCommand {
             deps.siliconflow,
             self.full,
             batch,
+            deps.skip_embed || self.skip_embed,
         );
 
-        let report = service.build(&self.project_name, &self.project_path).await?;
+        let report = service
+            .build(&self.project_name, &self.project_path)
+            .await?;
 
         if self.verbose {
             tracing::info!(
@@ -110,7 +124,8 @@ mod tests {
         let cmd = BuildCommand::try_parse_from([
             "build",
             "/tmp/test-project",
-            "--name", "test",
+            "--name",
+            "test",
             "--full",
         ]);
         assert!(cmd.is_ok());

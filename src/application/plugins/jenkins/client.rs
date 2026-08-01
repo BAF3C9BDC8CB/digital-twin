@@ -85,11 +85,7 @@ impl JenkinsApiClient {
         let url = format!("{}{}", self.base_url, path);
         let mut form = Vec::new();
         for (k, v) in params {
-            form.push(format!(
-                "{}={}",
-                urlencoding(k),
-                urlencoding(v)
-            ));
+            form.push(format!("{}={}", urlencoding(k), urlencoding(v)));
         }
         let body = form.join("&");
 
@@ -188,11 +184,7 @@ impl JenkinsApiClient {
     }
 
     /// Show build history for a job.
-    pub async fn get_history(
-        &self,
-        job: &str,
-        limit: Option<u32>,
-    ) -> Result<String, DtError> {
+    pub async fn get_history(&self, job: &str, limit: Option<u32>) -> Result<String, DtError> {
         let limit = limit.unwrap_or(10);
         let encoded = urlencoding(job);
         let json = self
@@ -214,13 +206,15 @@ impl JenkinsApiClient {
                 return Ok(format!("{out}(no builds)\n"));
             }
             for build in builds {
-                let num = build["number"].as_i64().map_or("?".to_string(), |n| n.to_string());
+                let num = build["number"]
+                    .as_i64()
+                    .map_or("?".to_string(), |n| n.to_string());
                 let result = build["result"].as_str().unwrap_or("RUNNING");
                 let duration_ms = build["duration"].as_i64().unwrap_or(0);
                 let duration = format_duration(duration_ms);
-                let ts = build["timestamp"].as_i64().map_or("-".to_string(), |t| {
-                    format_epoch_ms(t)
-                });
+                let ts = build["timestamp"]
+                    .as_i64()
+                    .map_or("-".to_string(), |t| format_epoch_ms(t));
                 out.push_str(&format!(
                     "{:<8} {:<10} {:<12} {:<20}\n",
                     num, result, duration, ts,
@@ -233,18 +227,11 @@ impl JenkinsApiClient {
     }
 
     /// Get console output for a specific build.
-    pub async fn get_build_log(
-        &self,
-        job: &str,
-        build: Option<&str>,
-    ) -> Result<String, DtError> {
+    pub async fn get_build_log(&self, job: &str, build: Option<&str>) -> Result<String, DtError> {
         let encoded_job = urlencoding(job);
         let build_id = build.unwrap_or("lastBuild");
         let text = self
-            .get_text(&format!(
-                "/job/{}/{}/consoleText",
-                encoded_job, build_id
-            ))
+            .get_text(&format!("/job/{}/{}/consoleText", encoded_job, build_id))
             .await?;
         Ok(text)
     }
@@ -256,11 +243,8 @@ impl JenkinsApiClient {
         params: &[(&str, &str)],
     ) -> Result<String, DtError> {
         let encoded = urlencoding(job);
-        self.post_with_params(
-            &format!("/job/{}/buildWithParameters", encoded),
-            params,
-        )
-        .await
+        self.post_with_params(&format!("/job/{}/buildWithParameters", encoded), params)
+            .await
     }
 }
 
@@ -315,13 +299,15 @@ impl JenkinsApiClient {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|j| serde_json::from_value(j.clone()).unwrap_or_else(|_| JenkinsJobInfo {
-                        name: j["name"].as_str().unwrap_or("?").to_string(),
-                        url: j["url"].as_str().unwrap_or("").to_string(),
-                        color: j["color"].as_str().unwrap_or("").to_string(),
-                        description: j["description"].as_str().unwrap_or("").to_string(),
-                        full_name: j["fullName"].as_str().unwrap_or("").to_string(),
-                    }))
+                    .map(|j| {
+                        serde_json::from_value(j.clone()).unwrap_or_else(|_| JenkinsJobInfo {
+                            name: j["name"].as_str().unwrap_or("?").to_string(),
+                            url: j["url"].as_str().unwrap_or("").to_string(),
+                            color: j["color"].as_str().unwrap_or("").to_string(),
+                            description: j["description"].as_str().unwrap_or("").to_string(),
+                            full_name: j["fullName"].as_str().unwrap_or("").to_string(),
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -346,25 +332,46 @@ impl JenkinsApiClient {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|_| JenkinsViewInfo {
-                        name: v["name"].as_str().unwrap_or("?").to_string(),
-                        description: v["description"].as_str().unwrap_or("").to_string(),
-                        url: String::new(),
-                        jobs: v["jobs"]
-                            .as_array()
-                            .map(|jarr| {
-                                jarr.iter()
-                                    .map(|j| serde_json::from_value(j.clone()).unwrap_or_else(|_| JenkinsJobInfo {
-                                        name: j["name"].as_str().unwrap_or("?").to_string(),
-                                        url: j["url"].as_str().unwrap_or("").to_string(),
-                                        color: j["color"].as_str().unwrap_or("").to_string(),
-                                        description: j["description"].as_str().unwrap_or("").to_string(),
-                                        full_name: j["fullName"].as_str().unwrap_or("").to_string(),
-                                    }))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                    }))
+                    .map(|v| {
+                        serde_json::from_value(v.clone()).unwrap_or_else(|_| JenkinsViewInfo {
+                            name: v["name"].as_str().unwrap_or("?").to_string(),
+                            description: v["description"].as_str().unwrap_or("").to_string(),
+                            url: String::new(),
+                            jobs: v["jobs"]
+                                .as_array()
+                                .map(|jarr| {
+                                    jarr.iter()
+                                        .map(|j| {
+                                            serde_json::from_value(j.clone()).unwrap_or_else(|_| {
+                                                JenkinsJobInfo {
+                                                    name: j["name"]
+                                                        .as_str()
+                                                        .unwrap_or("?")
+                                                        .to_string(),
+                                                    url: j["url"]
+                                                        .as_str()
+                                                        .unwrap_or("")
+                                                        .to_string(),
+                                                    color: j["color"]
+                                                        .as_str()
+                                                        .unwrap_or("")
+                                                        .to_string(),
+                                                    description: j["description"]
+                                                        .as_str()
+                                                        .unwrap_or("")
+                                                        .to_string(),
+                                                    full_name: j["fullName"]
+                                                        .as_str()
+                                                        .unwrap_or("")
+                                                        .to_string(),
+                                                }
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -375,8 +382,16 @@ impl JenkinsApiClient {
     ///
     /// Uses `full_name` for folder-qualified path. Falls back to `job_name`
     /// if `full_name` is empty (some Jenkins job types omit fullName).
-    pub async fn get_all_builds(&self, job_name: &str, full_name: &str) -> Result<Vec<JenkinsBuildInfo>, DtError> {
-        let name = if full_name.is_empty() { job_name } else { full_name };
+    pub async fn get_all_builds(
+        &self,
+        job_name: &str,
+        full_name: &str,
+    ) -> Result<Vec<JenkinsBuildInfo>, DtError> {
+        let name = if full_name.is_empty() {
+            job_name
+        } else {
+            full_name
+        };
         let path = name.replace('/', "/job/");
         let json = self
             .get_json(&format!(
@@ -388,13 +403,15 @@ impl JenkinsApiClient {
             .as_array()
             .map(|arr| {
                 arr.iter()
-                    .map(|b| serde_json::from_value(b.clone()).unwrap_or_else(|_| JenkinsBuildInfo {
-                        number: b["number"].as_i64().unwrap_or(0),
-                        result: b["result"].as_str().map(|s| s.to_string()),
-                        timestamp: b["timestamp"].as_i64().unwrap_or(0),
-                        duration: b["duration"].as_i64().unwrap_or(0),
-                        url: b["url"].as_str().unwrap_or("").to_string(),
-                    }))
+                    .map(|b| {
+                        serde_json::from_value(b.clone()).unwrap_or_else(|_| JenkinsBuildInfo {
+                            number: b["number"].as_i64().unwrap_or(0),
+                            result: b["result"].as_str().map(|s| s.to_string()),
+                            timestamp: b["timestamp"].as_i64().unwrap_or(0),
+                            duration: b["duration"].as_i64().unwrap_or(0),
+                            url: b["url"].as_str().unwrap_or("").to_string(),
+                        })
+                    })
                     .collect()
             })
             .unwrap_or_default();

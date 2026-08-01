@@ -2,8 +2,8 @@
 //!
 //! Uses `qdrant-client` crate for async gRPC communication.
 
-use qdrant_client::Qdrant;
 use crate::domain::error::DtError;
+use qdrant_client::Qdrant;
 
 /// Qdrant gRPC client wrapping the `qdrant-client` crate's `Qdrant` client.
 #[derive(Clone)]

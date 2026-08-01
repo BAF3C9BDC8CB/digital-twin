@@ -228,10 +228,7 @@ async fn count_nodes(graph: &dyn GraphRepository) -> Result<usize, DtError> {
 /// Count all relationships in the graph.
 async fn count_relationships(graph: &dyn GraphRepository) -> Result<usize, DtError> {
     let result = graph
-        .read_query(
-            "MATCH ()-[r]->() RETURN count(r) AS total",
-            HashMap::new(),
-        )
+        .read_query("MATCH ()-[r]->() RETURN count(r) AS total", HashMap::new())
         .await?;
     Ok(extract_count(&result, "total"))
 }

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde_json::Value;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct SideEffectRunner {
     graph: Arc<dyn GraphRepository>,

@@ -1,8 +1,8 @@
 //! Synchronisation traits and types for the Digital Twin system.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
 
 // ---------------------------------------------------------------------------
 // SyncReport

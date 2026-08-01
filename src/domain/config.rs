@@ -55,8 +55,9 @@ impl SecretString {
     /// - `Plain` returns the value as-is
     pub fn resolve(&self) -> Result<String, DtError> {
         match self {
-            Self::Env(var) => env::var(var)
-                .map_err(|e| DtError::Config(format!("env var {var} not set: {e}"))),
+            Self::Env(var) => {
+                env::var(var).map_err(|e| DtError::Config(format!("env var {var} not set: {e}")))
+            }
             Self::Vault(path) => Err(DtError::Config(format!(
                 "vault backend not yet implemented (path: {path})"
             ))),

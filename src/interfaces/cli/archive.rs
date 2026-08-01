@@ -168,7 +168,7 @@ pub async fn run_archive(before: Option<&str>, dry_run: bool) -> anyhow::Result<
     println!("  Space freed:      {} bytes", freed);
 
     tracing::info!(
-        "archive created: {} ({} events, {} bytes freed)",
+        "归档已创建: {} ({} 个事件, {} 字节释放)",
         archive_path.display(),
         events_to_archive,
         freed,
@@ -207,7 +207,10 @@ pub async fn list_archives() -> anyhow::Result<Vec<ArchiveEntry>> {
             .unwrap_or("unknown")
             .to_string();
 
-        let size_bytes = tokio::fs::metadata(&path).await.map(|m| m.len()).unwrap_or(0);
+        let size_bytes = tokio::fs::metadata(&path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         // Try to read event count from the archive
         let events_count = read_archive_event_count(&path).await.unwrap_or(0);
@@ -265,7 +268,12 @@ async fn read_archive_event_count(path: &PathBuf) -> anyhow::Result<usize> {
 
     let decoder = GzDecoder::new(&content[..]);
     let mut json_str = String::new();
-    if decoder.take(10_000_000).read_to_string(&mut json_str).is_ok() && !json_str.is_empty() {
+    if decoder
+        .take(10_000_000)
+        .read_to_string(&mut json_str)
+        .is_ok()
+        && !json_str.is_empty()
+    {
         if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&json_str) {
             return Ok(meta["events_count"].as_u64().unwrap_or(0) as usize);
         }

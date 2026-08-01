@@ -3,9 +3,9 @@
 pub mod full_rebuild;
 pub mod incremental;
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::types::FileSnapshot;
+use async_trait::async_trait;
 use std::path::Path;
 
 /// Strategy for determining what files to process in a build.

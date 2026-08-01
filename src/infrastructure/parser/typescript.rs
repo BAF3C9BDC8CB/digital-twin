@@ -16,9 +16,26 @@ fn extract_calls(body: &str) -> Vec<String> {
         .captures_iter(body)
         .filter_map(|c| {
             let name = c[1].to_string();
-            if matches!(name.as_str(), "if" | "for" | "while" | "switch" | "return" | "throw"
-                | "new" | "typeof" | "instanceof" | "catch" | "try" | "await" | "async"
-                | "import" | "export" | "from" | "default" | "break") {
+            if matches!(
+                name.as_str(),
+                "if" | "for"
+                    | "while"
+                    | "switch"
+                    | "return"
+                    | "throw"
+                    | "new"
+                    | "typeof"
+                    | "instanceof"
+                    | "catch"
+                    | "try"
+                    | "await"
+                    | "async"
+                    | "import"
+                    | "export"
+                    | "from"
+                    | "default"
+                    | "break"
+            ) {
                 None
             } else {
                 Some(name)
@@ -32,15 +49,22 @@ fn extract_calls(body: &str) -> Vec<String> {
 }
 
 fn extract_module(path: &Path) -> String {
-    path.parent().and_then(|p| p.to_str()).map(|s| s.replace(['/', '\\'], ".")).unwrap_or_default()
+    path.parent()
+        .and_then(|p| p.to_str())
+        .map(|s| s.replace(['/', '\\'], "."))
+        .unwrap_or_default()
 }
 
 impl ParseStrategy for TypeScriptParser {
-    fn language(&self) -> Language { Language::TypeScript }
+    fn language(&self) -> Language {
+        Language::TypeScript
+    }
 
     fn can_parse(&self, path: &Path) -> bool {
-        path.extension().and_then(|e| e.to_str())
-            .map(|e| e == "ts" || e == "tsx").unwrap_or(false)
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e == "ts" || e == "tsx")
+            .unwrap_or(false)
     }
 
     fn parse(&self, source: &str, path: &Path, project: &str) -> Result<ParseResult, DtError> {
@@ -50,9 +74,15 @@ impl ParseStrategy for TypeScriptParser {
         let mut classes = Vec::new();
 
         // Class declarations
-        let class_re = Regex::new(r"(?m)^\s*(export\s+)?(abstract\s+)?(class|interface|enum)\s+(\w+)\s*[^{]*\{").unwrap();
+        let class_re = Regex::new(
+            r"(?m)^\s*(export\s+)?(abstract\s+)?(class|interface|enum)\s+(\w+)\s*[^{]*\{",
+        )
+        .unwrap();
         // Function declarations (including methods)
-        let func_re = Regex::new(r"(?m)^\s*(export\s+)?(async\s+)?function\s+(\w+)\s*\(([^)]*)\)\s*[:\w\s<>]*\s*\{").unwrap();
+        let func_re = Regex::new(
+            r"(?m)^\s*(export\s+)?(async\s+)?function\s+(\w+)\s*\(([^)]*)\)\s*[:\w\s<>]*\s*\{",
+        )
+        .unwrap();
         // Arrow functions assigned to const/let
         let arrow_re = Regex::new(r"(?m)^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\([^)]*\)\s*[:\w\s<>]*\s*=>\s*\{").unwrap();
         // Method definitions inside class bodies
@@ -70,9 +100,15 @@ impl ParseStrategy for TypeScriptParser {
             let start_line = source[..start_byte].lines().count() + 1;
             let class_id = make_class_id(project, &module, &class_name);
             classes.push(ClassBlock {
-                class_id, name: class_name, kind,
-                file_path: file_path.clone(), package_or_module: module.clone(),
-                project: project.to_string(), start_line, end_line: 0, method_ids: Vec::new(),
+                class_id,
+                name: class_name,
+                kind,
+                file_path: file_path.clone(),
+                package_or_module: module.clone(),
+                project: project.to_string(),
+                start_line,
+                end_line: 0,
+                method_ids: Vec::new(),
             });
         }
 
@@ -81,9 +117,16 @@ impl ParseStrategy for TypeScriptParser {
         class_starts.sort();
         let total = source.lines().count();
         for c in &mut classes {
-            let next = class_starts.iter().filter(|&&l| l > c.start_line).min().copied().unwrap_or(total + 1);
+            let next = class_starts
+                .iter()
+                .filter(|&&l| l > c.start_line)
+                .min()
+                .copied()
+                .unwrap_or(total + 1);
             c.end_line = next.saturating_sub(1);
-            if c.end_line == 0 { c.end_line = total; }
+            if c.end_line == 0 {
+                c.end_line = total;
+            }
         }
 
         // Top-level functions
@@ -93,19 +136,32 @@ impl ParseStrategy for TypeScriptParser {
             let start_byte = caps.get(0).unwrap().start();
             let start_line = source[..start_byte].lines().count() + 1;
             let brace_pos = caps.get(0).unwrap().end() - 1;
-            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
-            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
+            let end_line_calc =
+                start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source
+                .lines()
+                .skip(start_line - 1)
+                .take(end_line_calc - start_line + 1)
+                .collect::<Vec<_>>()
+                .join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, "_module_", &name, start_line);
             methods.push(MethodBlock {
-                method_id, name: name.clone(),
+                method_id,
+                name: name.clone(),
                 signature: format!("function {}({})", name, params),
-                params, return_type: "any".into(),
+                params,
+                return_type: "any".into(),
                 class_name: "_module_".into(),
-                file_path: file_path.clone(), package_or_module: module.clone(),
-                language: "typescript".into(), project: project.to_string(),
-                start_line, end_line: end_line_calc,
-                calls, comment: String::new(), source_text: body,
+                file_path: file_path.clone(),
+                package_or_module: module.clone(),
+                language: "typescript".into(),
+                project: project.to_string(),
+                start_line,
+                end_line: end_line_calc,
+                calls,
+                comment: String::new(),
+                source_text: body,
             });
         }
 
@@ -115,19 +171,32 @@ impl ParseStrategy for TypeScriptParser {
             let start_byte = caps.get(0).unwrap().start();
             let start_line = source[..start_byte].lines().count() + 1;
             let brace_pos = caps.get(0).unwrap().end() - 1;
-            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
-            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
+            let end_line_calc =
+                start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source
+                .lines()
+                .skip(start_line - 1)
+                .take(end_line_calc - start_line + 1)
+                .collect::<Vec<_>>()
+                .join("\n");
             let calls = extract_calls(&body);
             let method_id = make_method_id(project, &file_path, "_module_", &name, start_line);
             methods.push(MethodBlock {
-                method_id, name: name.clone(),
+                method_id,
+                name: name.clone(),
                 signature: format!("const {} = (...) => {{", name),
-                params: "...".into(), return_type: "any".into(),
+                params: "...".into(),
+                return_type: "any".into(),
                 class_name: "_module_".into(),
-                file_path: file_path.clone(), package_or_module: module.clone(),
-                language: "typescript".into(), project: project.to_string(),
-                start_line, end_line: end_line_calc,
-                calls, comment: String::new(), source_text: body,
+                file_path: file_path.clone(),
+                package_or_module: module.clone(),
+                language: "typescript".into(),
+                project: project.to_string(),
+                start_line,
+                end_line: end_line_calc,
+                calls,
+                comment: String::new(),
+                source_text: body,
             });
         }
 
@@ -135,7 +204,13 @@ impl ParseStrategy for TypeScriptParser {
         for caps in method_re.captures_iter(source) {
             let method_name = caps[2].to_string();
             let params = caps[3].to_string();
-            if method_name == "class" || method_name == "interface" || method_name == "enum" || method_name == "export" { continue; }
+            if method_name == "class"
+                || method_name == "interface"
+                || method_name == "enum"
+                || method_name == "export"
+            {
+                continue;
+            }
             let start_byte = caps.get(0).unwrap().start();
             let start_line = {
                 let raw = source[..start_byte].lines().count() + 1;
@@ -147,22 +222,45 @@ impl ParseStrategy for TypeScriptParser {
                 }
                 adj
             };
-            let current_class = classes.iter().filter(|c| c.start_line <= start_line && c.end_line >= start_line)
-                .map(|c| c.name.clone()).next().unwrap_or_else(|| "_module_".to_string());
+            let current_class = classes
+                .iter()
+                .filter(|c| c.start_line <= start_line && c.end_line >= start_line)
+                .map(|c| c.name.clone())
+                .next()
+                .unwrap_or_else(|| "_module_".to_string());
             let brace_pos = caps.get(0).unwrap().end() - 1;
-            let end_line_calc = start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
-            let body = source.lines().skip(start_line - 1).take(end_line_calc - start_line + 1).collect::<Vec<_>>().join("\n");
+            let end_line_calc =
+                start_line + crate::infrastructure::parser::find_brace_end_line(source, brace_pos);
+            let body = source
+                .lines()
+                .skip(start_line - 1)
+                .take(end_line_calc - start_line + 1)
+                .collect::<Vec<_>>()
+                .join("\n");
             let calls = extract_calls(&body);
-            let method_id = make_method_id(project, &file_path, &current_class, &method_name, start_line);
+            let method_id = make_method_id(
+                project,
+                &file_path,
+                &current_class,
+                &method_name,
+                start_line,
+            );
             methods.push(MethodBlock {
-                method_id, name: method_name.clone(),
+                method_id,
+                name: method_name.clone(),
                 signature: format!("{}({})", method_name, params),
-                params, return_type: "any".into(),
+                params,
+                return_type: "any".into(),
                 class_name: current_class,
-                file_path: file_path.clone(), package_or_module: module.clone(),
-                language: "typescript".into(), project: project.to_string(),
-                start_line, end_line: end_line_calc,
-                calls, comment: String::new(), source_text: body,
+                file_path: file_path.clone(),
+                package_or_module: module.clone(),
+                language: "typescript".into(),
+                project: project.to_string(),
+                start_line,
+                end_line: end_line_calc,
+                calls,
+                comment: String::new(),
+                source_text: body,
             });
         }
 
@@ -187,7 +285,9 @@ mod tests {
     #[test]
     fn parses_function_and_class() {
         let src = "export class App {\n  greet(name: string): string { return 'Hi ' + name; }\n}\n";
-        let result = TypeScriptParser.parse(src, &PathBuf::from("App.ts"), "test").unwrap();
+        let result = TypeScriptParser
+            .parse(src, &PathBuf::from("App.ts"), "test")
+            .unwrap();
         assert!(result.classes.len() >= 1);
     }
 

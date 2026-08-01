@@ -49,9 +49,7 @@ pub enum Role {
 ///     .layer(layer);
 /// ```
 #[allow(clippy::result_large_err)] // tonic::Status is large by API contract
-pub fn auth_interceptor(
-    mut req: tonic::Request<()>,
-) -> Result<tonic::Request<()>, tonic::Status> {
+pub fn auth_interceptor(mut req: tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> {
     let role = match req.remote_addr() {
         // Unix domain socket — locally trusted client
         None => Role::AdminRole,

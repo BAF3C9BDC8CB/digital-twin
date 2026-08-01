@@ -55,7 +55,11 @@ impl JobSyncSource {
     ///
     /// Falls back to `name` when `full_name` is empty (top-level jobs).
     fn job_id(full_name: &str, name: &str) -> String {
-        let id = if full_name.is_empty() { name } else { full_name };
+        let id = if full_name.is_empty() {
+            name
+        } else {
+            full_name
+        };
         format!("dt://jenkins/job/{id}")
     }
 
@@ -63,7 +67,11 @@ impl JobSyncSource {
     ///
     /// Falls back to `name` when `full_name` is empty.
     fn build_id(full_name: &str, name: &str, build_number: i64) -> String {
-        let id = if full_name.is_empty() { name } else { full_name };
+        let id = if full_name.is_empty() {
+            name
+        } else {
+            full_name
+        };
         format!("dt://jenkins/job/{id}/build/{build_number}")
     }
 }
@@ -97,7 +105,11 @@ impl SyncSource for JobSyncSource {
         let mut job_to_views: HashMap<String, Vec<String>> = HashMap::new();
         for view in &views {
             for job in &view.jobs {
-                let key = if job.full_name.is_empty() { job.name.clone() } else { job.full_name.clone() };
+                let key = if job.full_name.is_empty() {
+                    job.name.clone()
+                } else {
+                    job.full_name.clone()
+                };
                 job_to_views.entry(key).or_default().push(view.name.clone());
             }
         }
@@ -117,7 +129,10 @@ impl SyncSource for JobSyncSource {
             let mut params = HashMap::new();
             params.insert("view_id".to_string(), serde_json::json!(vid));
             params.insert("name".to_string(), serde_json::json!(&view.name));
-            params.insert("description".to_string(), serde_json::json!(&view.description));
+            params.insert(
+                "description".to_string(),
+                serde_json::json!(&view.description),
+            );
             graph.write_query(cypher, params).await?;
         }
 
@@ -126,7 +141,10 @@ impl SyncSource for JobSyncSource {
 
         // Apply job filter if set
         let jobs: Vec<_> = if let Some(ref filter) = self.job_filter {
-            all_jobs.into_iter().filter(|j| j.name == *filter || j.full_name == *filter).collect()
+            all_jobs
+                .into_iter()
+                .filter(|j| j.name == *filter || j.full_name == *filter)
+                .collect()
         } else {
             all_jobs
         };
@@ -137,16 +155,16 @@ impl SyncSource for JobSyncSource {
             return Ok(report);
         }
 
-        println!(
-            "Jenkins sync: {} views, {} jobs",
-            views.len(),
-            jobs.len(),
-        );
+        println!("Jenkins sync: {} views, {} jobs", views.len(), jobs.len(),);
 
         // ── 4. Process each job ──────────────────────────────────────────
         for job in &jobs {
             let jid = Self::job_id(&job.full_name, &job.name);
-            let key = if job.full_name.is_empty() { &job.name } else { &job.full_name };
+            let key = if job.full_name.is_empty() {
+                &job.name
+            } else {
+                &job.full_name
+            };
 
             print!("  job: {}... ", job.name);
 
@@ -171,7 +189,10 @@ impl SyncSource for JobSyncSource {
             params.insert("name".to_string(), serde_json::json!(&job.name));
             params.insert("url".to_string(), serde_json::json!(&job.url));
             params.insert("color".to_string(), serde_json::json!(&job.color));
-            params.insert("description".to_string(), serde_json::json!(&job.description));
+            params.insert(
+                "description".to_string(),
+                serde_json::json!(&job.description),
+            );
             params.insert("full_name".to_string(), serde_json::json!(&job.full_name));
             graph.write_query(merge_job, params).await?;
             report.configs += 1;
@@ -297,10 +318,7 @@ mod tests {
 
     #[test]
     fn view_id_format() {
-        assert_eq!(
-            JobSyncSource::view_id("JAVA"),
-            "dt://jenkins/view/JAVA"
-        );
+        assert_eq!(JobSyncSource::view_id("JAVA"), "dt://jenkins/view/JAVA");
     }
 
     #[test]

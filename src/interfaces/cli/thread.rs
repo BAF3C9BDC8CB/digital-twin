@@ -4,9 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::application::knowledge::thread::service::{
-    ThreadRequest, ThreadService, ThreadTrait,
-};
+use crate::application::knowledge::thread::service::{ThreadRequest, ThreadService, ThreadTrait};
 use crate::domain::traits::GraphRepository;
 
 /// Handle `dt thread` — create, list, append to, or close Digital Threads.
@@ -69,10 +67,7 @@ pub async fn handle_thread(
                     if let Some(ref list) = response.list {
                         println!("  Total threads: {}", list.total);
                         for t in &list.threads {
-                            println!(
-                                "    [{}] {} ({} events)",
-                                t.status, t.title, t.event_count,
-                            );
+                            println!("    [{}] {} ({} events)", t.status, t.title, t.event_count,);
                         }
                     }
                 }

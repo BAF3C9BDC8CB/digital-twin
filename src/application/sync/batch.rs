@@ -142,7 +142,9 @@ async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
             Err(e) => {
                 tracing::warn!(
                     "[sync-acc] fetch {} {}={}: {e}",
-                    item.label, item.prop_key, item.prop_value
+                    item.label,
+                    item.prop_key,
+                    item.prop_value
                 );
             }
         }

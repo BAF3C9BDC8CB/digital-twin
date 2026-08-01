@@ -37,7 +37,10 @@ impl ProcessorOutput {
     /// out.set("nested", serde_json::json!({"a": [1, 2, 3]}));
     /// ```
     pub fn set(&mut self, key: &str, value: impl Serialize) {
-        self.inner.insert(key.to_string(), serde_json::to_value(value).unwrap_or(serde_json::Value::Null));
+        self.inner.insert(
+            key.to_string(),
+            serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        );
     }
 
     /// Get a reference to a value by key.
@@ -99,7 +102,10 @@ mod tests {
     #[test]
     fn set_and_get_nested_json() {
         let mut out = ProcessorOutput::new();
-        out.set("entities", json!({ "methods": ["foo", "bar"], "classes": ["Baz"] }));
+        out.set(
+            "entities",
+            json!({ "methods": ["foo", "bar"], "classes": ["Baz"] }),
+        );
         let val = out.get("entities").unwrap();
         assert_eq!(val["methods"][0], json!("foo"));
         assert_eq!(val["classes"][0], json!("Baz"));

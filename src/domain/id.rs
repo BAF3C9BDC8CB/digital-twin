@@ -4,7 +4,13 @@
 //! code entities across projects.
 
 /// Generate a method ID: `dt://entity/{project}/class/{class_name}/method/{method_name}@{line}`
-pub fn make_method_id(project: &str, file_path: &str, class_name: &str, method_name: &str, start_line: usize) -> String {
+pub fn make_method_id(
+    project: &str,
+    file_path: &str,
+    class_name: &str,
+    method_name: &str,
+    start_line: usize,
+) -> String {
     // Sanitize slashes in file_path
     let _clean_file = file_path.replace('/', ".");
     format!(

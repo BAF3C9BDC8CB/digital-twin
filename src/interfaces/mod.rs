@@ -1,2 +1,2 @@
-pub mod grpc;
 pub mod cli;
+pub mod grpc;

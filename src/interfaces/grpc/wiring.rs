@@ -12,13 +12,15 @@
 //! The SiliconFlow API client is also connected here; if unavailable it falls
 //! back to [`NoopEmbedService`] (zero-vector embedding).
 
+use crate::application::build::service::BuildServiceImpl;
 use crate::application::hooks::engine::HookEngine;
 use crate::application::hooks::registry::HookRegistry;
-use crate::domain::traits::{BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
+use crate::domain::traits::{
+    BuildService, EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
+};
 use crate::domain::types::BatchConfig;
-use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use crate::infrastructure::parser::ParserRegistry;
-use crate::application::build::service::BuildServiceImpl;
+use crate::shared::coordinator::{CoordinatedBuildService, WriteCoordinator};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,7 +78,9 @@ struct SqliteConfig {
 
 impl Default for SqliteConfig {
     fn default() -> Self {
-        Self { path: default_sqlite_path() }
+        Self {
+            path: default_sqlite_path(),
+        }
     }
 }
 
@@ -154,9 +158,10 @@ pub async fn wire() -> AppComponents {
         vector.clone(),
         snapshot,
         embed.clone(),
-        None, // siliconflow — not wired through gRPC yet
+        None,  // siliconflow — not wired through gRPC yet
         false, // gRPC builds default to incremental
         batch_config,
+        false, // skip_embed
     ));
 
     // ---- Wrap with WriteCoordinator ----
@@ -264,7 +269,8 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await {
+    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
+    {
         Ok(client) => {
             tracing::info!("Memgraph connected: {}", bolt_url);
             Some(Arc::new(client) as Arc<dyn GraphRepository>)
@@ -307,10 +313,13 @@ async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     use crate::infrastructure::embedder::ProviderConfig;
 
     let provider_cfg = ProviderConfig {
-        siliconflow_url: std::env::var("SILICONFLOW_BASE_URL").unwrap_or_else(|_| "https://api.siliconflow.cn/v1".into()),
+        siliconflow_url: std::env::var("SILICONFLOW_BASE_URL")
+            .unwrap_or_else(|_| "https://api.siliconflow.cn/v1".into()),
         siliconflow_api_key: std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
-        siliconflow_model_embed: std::env::var("SILICONFLOW_EMBED_MODEL").unwrap_or_else(|_| "BAAI/bge-m3".into()),
-        siliconflow_model_reranker: std::env::var("SILICONFLOW_RERANKER_MODEL").unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".into()),
+        siliconflow_model_embed: std::env::var("SILICONFLOW_EMBED_MODEL")
+            .unwrap_or_else(|_| "BAAI/bge-m3".into()),
+        siliconflow_model_reranker: std::env::var("SILICONFLOW_RERANKER_MODEL")
+            .unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".into()),
         siliconflow_model_llm: std::env::var("SILICONFLOW_LLM_MODEL").unwrap_or_default(),
         xinference_url: String::new(),
         xinference_api_key: String::new(),

@@ -50,7 +50,10 @@ impl PluginRegistry {
     }
 
     /// Initialize all plugins in registration order.
-    pub async fn init_all(&self, ctx: &PluginContext) -> Vec<(&'static str, Result<(), PluginError>)> {
+    pub async fn init_all(
+        &self,
+        ctx: &PluginContext,
+    ) -> Vec<(&'static str, Result<(), PluginError>)> {
         let mut results = Vec::with_capacity(self.plugins.len());
         for p in &self.plugins {
             let res = p.init(ctx).await;

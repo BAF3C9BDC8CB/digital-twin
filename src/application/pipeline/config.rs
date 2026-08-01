@@ -36,6 +36,12 @@ pub struct PipelineConfig {
     /// Ecosystem-level settings that span multiple projects.
     #[serde(default)]
     pub ecosystem: Option<EcosystemConfig>,
+
+    /// Provider routing and model configuration.
+    /// Controls which provider handles embed / rerank / LLM capabilities
+    /// and which model to use for each.
+    #[serde(default)]
+    pub providers: Option<ProvidersConfig>,
 }
 
 const fn default_enabled() -> bool {
@@ -115,6 +121,11 @@ pub struct ProcessorsConfig {
     /// Store results to graph + vector databases.
     #[serde(default = "default_true")]
     pub store: bool,
+
+    /// Skip embedding (向量生成). Set to false when you already have vectors
+    /// in Qdrant and want to avoid re-embedding (e.g., no bge-m3 model running).
+    #[serde(default = "default_true")]
+    pub embed: bool,
 }
 
 const fn default_true() -> bool {
@@ -131,6 +142,7 @@ impl Default for ProcessorsConfig {
             extract_text: true,
             ocr: false,
             store: true,
+            embed: true,
         }
     }
 }
@@ -191,6 +203,102 @@ impl Default for EcosystemConfig {
     }
 }
 
+/// Provider routing and model configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProvidersConfig {
+    /// Which provider handles embedding ("siliconflow" or "xinference").
+    #[serde(default = "default_embed_provider")]
+    pub embed_provider: String,
+
+    /// Which provider handles reranking ("siliconflow" or "xinference").
+    #[serde(default = "default_rerank_provider")]
+    pub rerank_provider: String,
+
+    /// Which provider handles LLM chat ("siliconflow" or "xinference").
+    #[serde(default = "default_llm_provider")]
+    pub llm_provider: String,
+
+    /// SiliconFlow provider configuration.
+    #[serde(default)]
+    pub siliconflow: Option<SiliconFlowProviderConfig>,
+
+    /// XInference provider configuration.
+    #[serde(default)]
+    pub xinference: Option<XInferenceProviderConfig>,
+}
+
+fn default_embed_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_rerank_provider() -> String {
+    "siliconflow".to_string()
+}
+fn default_llm_provider() -> String {
+    "siliconflow".to_string()
+}
+
+/// SiliconFlow provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiliconFlowProviderConfig {
+    #[serde(default = "default_sf_url")]
+    pub url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model_embed: String,
+    #[serde(default)]
+    pub model_reranker: String,
+    #[serde(default)]
+    pub model_llm: String,
+}
+
+fn default_sf_url() -> String {
+    "https://api.siliconflow.cn/v1".into()
+}
+
+impl Default for SiliconFlowProviderConfig {
+    fn default() -> Self {
+        Self {
+            url: default_sf_url(),
+            api_key: String::new(),
+            model_embed: String::new(),
+            model_reranker: String::new(),
+            model_llm: String::new(),
+        }
+    }
+}
+
+/// XInference provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XInferenceProviderConfig {
+    #[serde(default = "default_xi_url")]
+    pub url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model_embed: String,
+    #[serde(default)]
+    pub model_reranker: String,
+    #[serde(default)]
+    pub model_llm: String,
+}
+
+fn default_xi_url() -> String {
+    "http://localhost:9997/v1".into()
+}
+
+impl Default for XInferenceProviderConfig {
+    fn default() -> Self {
+        Self {
+            url: default_xi_url(),
+            api_key: String::new(),
+            model_embed: String::new(),
+            model_reranker: String::new(),
+            model_llm: String::new(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
@@ -223,6 +331,7 @@ impl Default for PipelineConfig {
             processors: ProcessorsConfig::default(),
             llm: Some(LlmConfig::default()),
             ecosystem: None,
+            providers: None,
         }
     }
 }

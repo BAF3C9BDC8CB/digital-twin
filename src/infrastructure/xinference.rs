@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{EmbedService, LlmService, RerankService, LlmCapabilities};
+use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
 /// HTTP client for XInference's OpenAI-compatible local API.
@@ -59,7 +59,10 @@ impl XInferenceClient {
     /// Build an authenticated POST request (api_key optional for local).
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
-        let mut req = self.http.post(&url).header("Content-Type", "application/json");
+        let mut req = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json");
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
@@ -79,15 +82,19 @@ impl XInferenceClient {
             if attempt > 0 {
                 let delay = Duration::from_millis(1000 * (1 << (attempt - 1)));
                 tracing::warn!(
-                    "XInference {} attempt {}/{} failed: {}, retrying in {:?}",
-                    operation, attempt, max_retries, last_error, delay
+                    "XInference {} 第 {}/{} 次尝试失败: {}，{:?} 后重试",
+                    operation,
+                    attempt,
+                    max_retries,
+                    last_error,
+                    delay
                 );
                 tokio::time::sleep(delay).await;
             }
 
-            let req_built = req.try_clone().ok_or_else(|| {
-                DtError::Repository("XInference: failed to clone request".into())
-            })?;
+            let req_built = req
+                .try_clone()
+                .ok_or_else(|| DtError::Repository("XInference: failed to clone request".into()))?;
 
             match req_built.send().await {
                 Ok(resp) => {
@@ -101,7 +108,8 @@ impl XInferenceClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "XInference {} error ({}): {}", operation, status, body
+                        "XInference {} error ({}): {}",
+                        operation, status, body
                     )));
                 }
                 Err(e) => {
@@ -110,7 +118,8 @@ impl XInferenceClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "XInference {} request failed: {}", operation, e
+                        "XInference {} request failed: {}",
+                        operation, e
                     )));
                 }
             }
@@ -245,7 +254,8 @@ impl EmbedService for XInferenceClient {
         match self.http.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => Ok(HealthStatus::Healthy),
             Ok(resp) => Ok(HealthStatus::Unhealthy(format!(
-                "XInference health: HTTP {}", resp.status()
+                "XInference health: HTTP {}",
+                resp.status()
             ))),
             Err(e) => Ok(HealthStatus::Unhealthy(format!("XInference health: {e}"))),
         }
@@ -300,7 +310,7 @@ mod tests {
             "",
             "BAAI/bge-m3",
             "BAAI/bge-reranker-v2-m3",
-            "",  // no LLM
+            "", // no LLM
         );
         assert_eq!(client.base_url, "http://localhost:9997/v1");
         assert_eq!(client.model_embed, "BAAI/bge-m3");
@@ -309,24 +319,27 @@ mod tests {
 
     #[test]
     fn capabilities_reflect_model_config() {
-        let full = XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "qwen");
+        let full =
+            XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "qwen");
         let caps = full.capabilities();
         assert!(caps.embed);
         assert!(caps.rerank);
         assert!(caps.chat);
 
-        let no_llm = XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "");
+        let no_llm =
+            XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "");
         let caps = no_llm.capabilities();
         assert!(caps.embed);
         assert!(caps.rerank);
-        assert!(!caps.chat);  // LLM disabled
+        assert!(!caps.chat); // LLM disabled
     }
 
     #[test]
     fn client_is_send_sync() {
         fn assert_send<T: Send>(_t: &T) {}
         fn assert_sync<T: Sync>(_t: &T) {}
-        let client = XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "");
+        let client =
+            XInferenceClient::new("http://localhost:9997/v1", "", "bge-m3", "reranker", "");
         assert_send(&client);
         assert_sync(&client);
     }

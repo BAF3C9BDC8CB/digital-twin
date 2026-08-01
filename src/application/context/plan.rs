@@ -152,9 +152,21 @@ impl PlanService {
         for row_val in rows {
             let row = row_val.get("row").and_then(|r| r.as_array());
             if let Some(row) = row {
-                let id = row.first().and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                let title = row.get(1).and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                let domain = row.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = row
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let title = row
+                    .get(1)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let domain = row
+                    .get(2)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 return Ok(Some(PlaybookRef {
                     id,
                     title,

@@ -4,21 +4,21 @@
 //! compresses lower-priority items by truncating their content.  It also
 //! injects high-severity experience alerts into the alert list.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
 
-use crate::application::context::models::{Alert, AlertSeverity, ContextState, WorldItem};
 use super::ContextStage;
+use crate::application::context::models::{Alert, AlertSeverity, ContextState, WorldItem};
 
 /// Priority order for trimming: lower-priority worlds get trimmed first.
 #[allow(dead_code)]
 const WORLD_PRIORITY: [&str; 6] = [
-    "semantic",  // Trim first — broad, less precise
+    "semantic", // Trim first — broad, less precise
     "knowledge",
     "reasoning",
     "memory",
     "runtime",
-    "reality",   // Trim last — most directly actionable
+    "reality", // Trim last — most directly actionable
 ];
 
 /// Compresses content by token budget and injects experience alerts.
@@ -47,9 +47,7 @@ impl ContextStage for SummarizerStage {
             );
             compress_by_priority(&mut state, max_tokens);
         } else {
-            tracing::info!(
-                "[summarizer] token budget ok: {estimated}/{max_tokens}"
-            );
+            tracing::info!("[summarizer] token budget ok: {estimated}/{max_tokens}");
         }
 
         Ok(state)
@@ -92,10 +90,7 @@ fn inject_experience_alerts(memory: &[WorldItem], alerts: &mut Vec<Alert>) {
         alerts.push(Alert {
             severity,
             source: "summarizer".into(),
-            message: format!(
-                "[{}] {}: {}",
-                item.entity_type, item.label, item.content
-            ),
+            message: format!("[{}] {}: {}", item.entity_type, item.label, item.content),
             related_id: Some(item.id.clone()),
         });
     }
@@ -217,10 +212,12 @@ mod tests {
 
     #[test]
     fn inject_experience_alerts_critical() {
-        let memory = vec![
-            WorldItem::new("m1", "Critical bug", "Security vulnerability causing data loss")
-                .with_type("Experience"),
-        ];
+        let memory = vec![WorldItem::new(
+            "m1",
+            "Critical bug",
+            "Security vulnerability causing data loss",
+        )
+        .with_type("Experience")];
         let mut alerts = Vec::new();
         inject_experience_alerts(&memory, &mut alerts);
         assert_eq!(alerts.len(), 1);
@@ -259,9 +256,11 @@ mod tests {
     #[test]
     fn estimate_current_tokens_with_items() {
         let mut state = ContextState::new("test", &ContextOptions::default());
-        state.reality_deduped = vec![
-            WorldItem::new("r1", "Payment Service", "Handles payment processing").with_type("S"),
-        ];
+        state.reality_deduped =
+            vec![
+                WorldItem::new("r1", "Payment Service", "Handles payment processing")
+                    .with_type("S"),
+            ];
         let tokens = estimate_current_tokens(&state);
         // "Payment Service"(16) + "Handles payment processing"(26) + "S"(1) = 43 / 4 = 10
         assert_eq!(tokens, 10);
@@ -270,9 +269,8 @@ mod tests {
     #[test]
     fn compress_by_priority_trims_low_priority() {
         let mut state = ContextState::new("test", &ContextOptions::default());
-        state.semantic_deduped = vec![
-            WorldItem::new("s1", "Doc", &"x".repeat(1000)).with_type("D"),
-        ];
+        state.semantic_deduped =
+            vec![WorldItem::new("s1", "Doc", &"x".repeat(1000)).with_type("D")];
         let before = estimate_current_tokens(&state);
         compress_by_priority(&mut state, 50);
         let after = estimate_current_tokens(&state);
@@ -291,9 +289,7 @@ mod tests {
     #[tokio::test]
     async fn summarizer_within_budget() {
         let mut state = ContextState::new("test", &ContextOptions::default());
-        state.reality_deduped = vec![
-            WorldItem::new("r1", "Sv", "OK").with_type("S"),
-        ];
+        state.reality_deduped = vec![WorldItem::new("r1", "Sv", "OK").with_type("S")];
         // Copy before processing
         let expected_items = state.reality_deduped.clone();
 
@@ -307,10 +303,11 @@ mod tests {
     #[tokio::test]
     async fn summarizer_injects_experience_alerts() {
         let mut state = ContextState::new("test", &ContextOptions::default());
-        state.memory_deduped = vec![
-            WorldItem::new("m1", "Memory Leak", "Critical memory leak causing outage")
-                .with_type("Experience"),
-        ];
+        state.memory_deduped =
+            vec![
+                WorldItem::new("m1", "Memory Leak", "Critical memory leak causing outage")
+                    .with_type("Experience"),
+            ];
 
         let stage = SummarizerStage;
         let result = stage.process(state).await.unwrap();
@@ -321,6 +318,8 @@ mod tests {
             .filter(|a| a.source == "summarizer")
             .collect();
         assert!(!experience_alerts.is_empty());
-        assert!(experience_alerts.iter().any(|a| a.severity == AlertSeverity::Critical));
+        assert!(experience_alerts
+            .iter()
+            .any(|a| a.severity == AlertSeverity::Critical));
     }
 }

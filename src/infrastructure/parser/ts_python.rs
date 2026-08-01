@@ -62,11 +62,16 @@ impl TsPythonParser {
                     let params = Self::format_params(source, &child);
                     let return_type = Self::format_return_type(source, &child);
                     let sig_line = tree_sitter_utils::node_text(source, &child)
-                        .lines().next().unwrap_or("").trim().to_string();
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     let comment = tree_sitter_utils::extract_comment(source, &child);
                     let body = Self::get_body(source, &child);
                     let calls = tree_sitter_utils::extract_calls_from_body(source, &child);
-                    let method_id = make_method_id(project, file_path, class_name, &name, start_line);
+                    let method_id =
+                        make_method_id(project, file_path, class_name, &name, start_line);
                     methods.push(MethodBlock {
                         method_id,
                         name,
@@ -120,14 +125,25 @@ impl TsPythonParser {
     }
 
     /// Build a MethodBlock from a module-level function_definition node directly.
-    fn build_module_fn(source: &str, node: &tree_sitter::Node, project: &str, file_path: &str, module: &str, methods: &mut Vec<MethodBlock>) {
+    fn build_module_fn(
+        source: &str,
+        node: &tree_sitter::Node,
+        project: &str,
+        file_path: &str,
+        module: &str,
+        methods: &mut Vec<MethodBlock>,
+    ) {
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = tree_sitter_utils::node_text(source, &name_node).to_string();
             let (start_line, end_line) = tree_sitter_utils::node_range(node);
             let params = Self::format_params(source, node);
             let return_type = Self::format_return_type(source, node);
             let sig_line = tree_sitter_utils::node_text(source, node)
-                .lines().next().unwrap_or("").trim().to_string();
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let comment = tree_sitter_utils::extract_comment(source, node);
             let body = Self::get_body(source, node);
             let calls = tree_sitter_utils::extract_calls_from_body(source, node);
@@ -154,21 +170,29 @@ impl TsPythonParser {
 }
 
 impl ParseStrategy for TsPythonParser {
-    fn language(&self) -> Language { Language::Python }
+    fn language(&self) -> Language {
+        Language::Python
+    }
     fn can_parse(&self, path: &Path) -> bool {
-        path.extension().and_then(|e| e.to_str()).map(|e| e == "py").unwrap_or(false)
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e == "py")
+            .unwrap_or(false)
     }
     fn parse(&self, source: &str, path: &Path, project: &str) -> Result<ParseResult, DtError> {
         let mut parser = Parser::new();
         let ts_lang: tree_sitter::Language = tree_sitter_python::LANGUAGE.into();
-        parser.set_language(&ts_lang)
+        parser
+            .set_language(&ts_lang)
             .map_err(|e| DtError::Repository(format!("tree-sitter python init: {e}")))?;
 
-        let tree = parser.parse(source, None)
+        let tree = parser
+            .parse(source, None)
             .ok_or_else(|| DtError::Repository("tree-sitter parse returned None".into()))?;
 
         let file_path = path.to_string_lossy().to_string().replace('\\', "/");
-        let module = path.parent()
+        let module = path
+            .parent()
             .and_then(|p| p.to_str())
             .map(|s| s.replace(['/', '\\'], "."))
             .unwrap_or_default();
@@ -190,7 +214,16 @@ impl ParseStrategy for TsPythonParser {
         for cls in &classes {
             // We need to re-find the class node in the tree
             let mut cursor = root.walk();
-            find_class_methods(source, &root, &mut cursor, project, &file_path, &module, &cls.name, &mut methods);
+            find_class_methods(
+                source,
+                &root,
+                &mut cursor,
+                project,
+                &file_path,
+                &module,
+                &cls.name,
+                &mut methods,
+            );
         }
 
         // Module-level (top-level) functions
@@ -198,7 +231,14 @@ impl ParseStrategy for TsPythonParser {
             let mut cursor = root.walk();
             for child in root.children(&mut cursor) {
                 if child.kind() == "function_definition" {
-                    Self::build_module_fn(source, &child, project, &file_path, &module, &mut methods);
+                    Self::build_module_fn(
+                        source,
+                        &child,
+                        project,
+                        &file_path,
+                        &module,
+                        &mut methods,
+                    );
                 }
             }
         }
@@ -265,26 +305,39 @@ mod tests {
 
     #[test]
     fn parses_payment_py() {
-        let source = std::fs::read_to_string(
-            "/data/myProject/digital-twin-v2/test/project/payment.py"
-        ).expect("read payment.py");
+        let source =
+            std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
+                .expect("read payment.py");
         let parser = TsPythonParser;
-        let result = parser.parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
+        let result = parser
+            .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
             .expect("parse");
 
         assert_eq!(result.methods.len(), 3, "Expected 3 methods");
         assert_eq!(result.classes.len(), 1, "Expected 1 class (PaymentGateway)");
 
-        let pp = result.methods.iter().find(|m| m.name == "process_payment").unwrap();
+        let pp = result
+            .methods
+            .iter()
+            .find(|m| m.name == "process_payment")
+            .unwrap();
         assert_eq!(pp.start_line, 9);
         assert_eq!(pp.end_line, 12);
         assert_eq!(pp.class_name, "PaymentGateway");
 
-        let cp = result.methods.iter().find(|m| m.name == "_call_provider").unwrap();
+        let cp = result
+            .methods
+            .iter()
+            .find(|m| m.name == "_call_provider")
+            .unwrap();
         assert_eq!(cp.start_line, 15);
         assert_eq!(cp.end_line, 17);
 
-        let rp = result.methods.iter().find(|m| m.name == "refund_payment").unwrap();
+        let rp = result
+            .methods
+            .iter()
+            .find(|m| m.name == "refund_payment")
+            .unwrap();
         assert_eq!(rp.start_line, 20);
         assert_eq!(rp.end_line, 22);
         assert_eq!(rp.class_name, "_module_");

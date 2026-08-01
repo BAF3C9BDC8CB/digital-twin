@@ -13,9 +13,9 @@
 //
 // Affected labels: :Observation, :Analysis, :Decision.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 /// Manages the lifecycle of reasoning graph nodes.
@@ -82,10 +82,7 @@ impl LifecycleManager for DefaultLifecycleManager {
             "session_id".into(),
             serde_json::Value::String(session_id.to_string()),
         );
-        params.insert(
-            "now".into(),
-            serde_json::Value::String(now),
-        );
+        params.insert("now".into(), serde_json::Value::String(now));
 
         let result = self.graph.write_query(cypher, params).await?;
         let count = result
@@ -112,10 +109,7 @@ impl LifecycleManager for DefaultLifecycleManager {
         "#;
 
         let mut params = std::collections::HashMap::new();
-        params.insert(
-            "threshold".into(),
-            serde_json::Value::String(threshold_str),
-        );
+        params.insert("threshold".into(), serde_json::Value::String(threshold_str));
 
         let result = self.graph.write_query(cypher, params).await?;
         let count = result
@@ -143,10 +137,7 @@ impl LifecycleManager for DefaultLifecycleManager {
 
         let result = self.graph.write_query(cypher, params).await?;
 
-        let affected = result
-            .as_array()
-            .map(|rows| rows.len())
-            .unwrap_or(0);
+        let affected = result.as_array().map(|rows| rows.len()).unwrap_or(0);
 
         if affected == 0 {
             return Err(DtError::NotFound(format!(
@@ -283,7 +274,9 @@ mod tests {
         }
 
         let counter = Arc::new(AtomicUsize::new(0));
-        let repo = Arc::new(CleanupRepo { counter: counter.clone() });
+        let repo = Arc::new(CleanupRepo {
+            counter: counter.clone(),
+        });
         let mgr = DefaultLifecycleManager::new(repo);
 
         let count = mgr.cleanup_stale(30).await.expect("cleanup_stale");
@@ -294,7 +287,9 @@ mod tests {
     #[tokio::test]
     async fn confirm_decision_sets_verified() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let repo = Arc::new(ConfirmRepo { counter: counter.clone() });
+        let repo = Arc::new(ConfirmRepo {
+            counter: counter.clone(),
+        });
         let mgr = DefaultLifecycleManager::new(repo);
 
         mgr.confirm_decision("dec://test/001")

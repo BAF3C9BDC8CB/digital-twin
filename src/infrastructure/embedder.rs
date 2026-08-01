@@ -4,11 +4,11 @@
 //! function [`create_embed_router`] that builds a provider router from
 //! configuration (SiliconFlow + XInference).
 
-use async_trait::async_trait;
-use std::sync::Arc;
 use crate::domain::error::DtError;
 use crate::domain::traits::EmbedService;
 use crate::domain::types::HealthStatus;
+use async_trait::async_trait;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // NoopEmbedService — zero-vectors for testing / offline development
@@ -39,7 +39,10 @@ impl Default for NoopEmbedService {
 #[async_trait]
 impl EmbedService for NoopEmbedService {
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-        Ok(texts.iter().map(|_| vec![0.0_f32; self.dim as usize]).collect())
+        Ok(texts
+            .iter()
+            .map(|_| vec![0.0_f32; self.dim as usize])
+            .collect())
     }
 
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
@@ -73,6 +76,27 @@ pub struct ProviderConfig {
     pub llm_provider: String,
 }
 
+impl ProviderConfig {
+    /// Return a default SiliconFlow-only config (for fallback when pipeline.yaml is unavailable).
+    pub fn default_siliconflow() -> Self {
+        Self {
+            siliconflow_url: "https://api.siliconflow.cn/v1".into(),
+            siliconflow_api_key: std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
+            siliconflow_model_embed: "BAAI/bge-m3".into(),
+            siliconflow_model_reranker: "BAAI/bge-reranker-v2-m3".into(),
+            siliconflow_model_llm: "Qwen3-14B".into(),
+            xinference_url: String::new(),
+            xinference_api_key: String::new(),
+            xinference_model_embed: String::new(),
+            xinference_model_reranker: String::new(),
+            xinference_model_llm: String::new(),
+            embed_provider: "siliconflow".into(),
+            rerank_provider: "siliconflow".into(),
+            llm_provider: "siliconflow".into(),
+        }
+    }
+}
+
 /// Build an [`EmbedProviderRouter`] from provider configuration.
 ///
 /// Creates `SiliconFlowClient` and `XInferenceClient` as configured,
@@ -81,25 +105,29 @@ pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
     use crate::infrastructure::provider_router::{EmbedProviderRouter, ProviderRouterConfig};
 
     let siliconflow = if !cfg.siliconflow_url.is_empty() {
-        Some(Arc::new(crate::infrastructure::siliconflow::SiliconFlowClient::new(
-            cfg.siliconflow_url,
-            cfg.siliconflow_api_key,
-            cfg.siliconflow_model_embed,
-            cfg.siliconflow_model_reranker,
-            cfg.siliconflow_model_llm,
-        )))
+        Some(Arc::new(
+            crate::infrastructure::siliconflow::SiliconFlowClient::new(
+                cfg.siliconflow_url,
+                cfg.siliconflow_api_key,
+                cfg.siliconflow_model_embed,
+                cfg.siliconflow_model_reranker,
+                cfg.siliconflow_model_llm,
+            ),
+        ))
     } else {
         None
     };
 
     let xinference = if !cfg.xinference_url.is_empty() {
-        Some(Arc::new(crate::infrastructure::xinference::XInferenceClient::new(
-            cfg.xinference_url,
-            cfg.xinference_api_key,
-            cfg.xinference_model_embed,
-            cfg.xinference_model_reranker,
-            cfg.xinference_model_llm,
-        )))
+        Some(Arc::new(
+            crate::infrastructure::xinference::XInferenceClient::new(
+                cfg.xinference_url,
+                cfg.xinference_api_key,
+                cfg.xinference_model_embed,
+                cfg.xinference_model_reranker,
+                cfg.xinference_model_llm,
+            ),
+        ))
     } else {
         None
     };

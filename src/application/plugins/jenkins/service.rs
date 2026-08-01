@@ -2,11 +2,11 @@
 //!
 //! Uses `JenkinsApiClient` for all Jenkins operations via direct HTTP.
 
-use async_trait::async_trait;
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
+use async_trait::async_trait;
 
-use crate::application::plugins::Plugin;
 use crate::application::plugins::jenkins::client::JenkinsApiClient;
+use crate::application::plugins::Plugin;
 use crate::domain::error::DtError;
 
 /// Jenkins CI/CD plugin backed by native HTTP client.
@@ -34,20 +34,12 @@ impl JenkinsPluginService {
     }
 
     /// Show build history for a job.
-    pub async fn get_history(
-        &self,
-        job: &str,
-        limit: Option<u32>,
-    ) -> Result<String, DtError> {
+    pub async fn get_history(&self, job: &str, limit: Option<u32>) -> Result<String, DtError> {
         self.client.get_history(job, limit).await
     }
 
     /// Get console output for a specific build of a job.
-    pub async fn get_build_log(
-        &self,
-        job: &str,
-        build: Option<&str>,
-    ) -> Result<String, DtError> {
+    pub async fn get_build_log(&self, job: &str, build: Option<&str>) -> Result<String, DtError> {
         self.client.get_build_log(job, build).await
     }
 
@@ -88,7 +80,8 @@ impl Plugin for JenkinsPluginService {
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
-        ctx.log.info("[jenkins] plugin initialized (native HTTP client)");
+        ctx.log
+            .info("[jenkins] plugin initialized (native HTTP client)");
         Ok(())
     }
 

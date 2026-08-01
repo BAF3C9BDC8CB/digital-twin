@@ -36,11 +36,7 @@ pub struct ParsedDocument {
 }
 
 /// Parse a document file, returning structured document metadata.
-pub fn parse_document(
-    path: &Path,
-    project: &str,
-    root: &Path,
-) -> Result<ParsedDocument, String> {
+pub fn parse_document(path: &Path, project: &str, root: &Path) -> Result<ParsedDocument, String> {
     let rel_path = crate::infrastructure::scanner::rel_path(root, path);
     let doc_id = crate::domain::id::make_document_id(project, &rel_path);
     let name = path
@@ -73,7 +69,9 @@ pub fn parse_document(
     // UTF-8 decoding — fall back to metadata-only stub instead of erroring.
     let raw_content = match std::fs::read_to_string(path) {
         Ok(s) => s,
-        Err(_) => return parse_binary_stub(path, project, &name, &rel_path, &doc_id, size, &modified),
+        Err(_) => {
+            return parse_binary_stub(path, project, &name, &rel_path, &doc_id, size, &modified)
+        }
     };
 
     let (doc_type, title, content) = match extension.as_str() {
@@ -114,7 +112,12 @@ fn parse_markdown(raw: &str, filename: &str) -> (String, String, String) {
     let title = raw
         .lines()
         .find(|line| line.trim_start().starts_with("# "))
-        .map(|line| line.trim_start().trim_start_matches("# ").trim().to_string())
+        .map(|line| {
+            line.trim_start()
+                .trim_start_matches("# ")
+                .trim()
+                .to_string()
+        })
         .unwrap_or_else(|| {
             // Try first non-empty line as fallback title
             raw.lines()
@@ -213,7 +216,12 @@ fn strip_markers(text: &str, marker: &str) -> String {
         };
         if start < end {
             let inner = &result[start + marker.len()..end];
-            result = format!("{}{}{}", &result[..start], inner, &result[end + marker.len()..]);
+            result = format!(
+                "{}{}{}",
+                &result[..start],
+                inner,
+                &result[end + marker.len()..]
+            );
         } else {
             break;
         }

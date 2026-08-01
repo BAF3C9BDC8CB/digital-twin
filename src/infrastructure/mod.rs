@@ -1,9 +1,10 @@
-pub mod memgraph;
-pub mod qdrant;
-pub mod sqlite;
 pub mod embedder;
-pub mod siliconflow;
-pub mod xinference;
-pub mod provider_router;
-pub mod scanner;
+pub mod hanlp;
+pub mod memgraph;
 pub mod parser;
+pub mod provider_router;
+pub mod qdrant;
+pub mod scanner;
+pub mod siliconflow;
+pub mod sqlite;
+pub mod xinference;

@@ -1,7 +1,7 @@
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use serde_json::Value;
 
 use super::id_generator::IdGenerator;
 use super::node_writer::NodeWriter;
@@ -67,7 +67,8 @@ impl HookEngine {
         let event_id = IdGenerator::generate(&cfg.id, ctx);
 
         // Step 1: 读取节点现有 schema 状态
-        let old_state = match self.node_writer
+        let old_state = match self
+            .node_writer
             .read_schema_state(&cfg.label, &cfg.id_field, &event_id)
             .await
         {
@@ -79,10 +80,16 @@ impl HookEngine {
         let props = PropertyMapper::map(&cfg.properties, ctx, &event_id);
 
         // Step 3: 写入节点 + 迁移废弃属性
-        let migrated = match self.node_writer
+        let migrated = match self
+            .node_writer
             .write_with_migration(
-                &cfg.label, &cfg.id_field, &event_id, &props,
-                &old_state, &cfg.property_names, &cfg.schema_hash,
+                &cfg.label,
+                &cfg.id_field,
+                &event_id,
+                &props,
+                &old_state,
+                &cfg.property_names,
+                &cfg.schema_hash,
             )
             .await
         {
@@ -91,7 +98,8 @@ impl HookEngine {
         };
 
         // Step 4: 创建关系 + 删除废弃关系
-        if let Err(e) = self.rel_writer
+        if let Err(e) = self
+            .rel_writer
             .write_and_cleanup(&cfg.relationships, ctx, &event_id, migrated)
             .await
         {
@@ -109,7 +117,9 @@ impl HookEngine {
         if migrated {
             tracing::info!(
                 "[migrate] {} {} schema updated (hash: {})",
-                cfg.label, event_id, cfg.schema_hash,
+                cfg.label,
+                event_id,
+                cfg.schema_hash,
             );
         }
 
@@ -167,11 +177,7 @@ mod tests {
 
     #[async_trait]
     impl crate::domain::traits::GraphRepository for TrackedRepo {
-        async fn read_query(
-            &self,
-            q: &str,
-            _p: HashMap<String, Value>,
-        ) -> Result<Value, DtError> {
+        async fn read_query(&self, q: &str, _p: HashMap<String, Value>) -> Result<Value, DtError> {
             // Track the query for verification
             self.queries.lock().unwrap().push(q.to_string());
 
@@ -182,11 +188,7 @@ mod tests {
             Ok(Value::Null)
         }
 
-        async fn write_query(
-            &self,
-            q: &str,
-            _p: HashMap<String, Value>,
-        ) -> Result<Value, DtError> {
+        async fn write_query(&self, q: &str, _p: HashMap<String, Value>) -> Result<Value, DtError> {
             self.queries.lock().unwrap().push(q.to_string());
             self.write_count.fetch_add(1, Ordering::SeqCst);
             Ok(Value::Null)
@@ -265,7 +267,11 @@ event_types:
         assert!(!cfg.schema_hash.is_empty());
 
         // Verify the hash starts with "sch_"
-        assert!(cfg.schema_hash.starts_with("sch_"), "bad hash: {}", cfg.schema_hash);
+        assert!(
+            cfg.schema_hash.starts_with("sch_"),
+            "bad hash: {}",
+            cfg.schema_hash
+        );
 
         std::fs::remove_file(&path).ok();
     }

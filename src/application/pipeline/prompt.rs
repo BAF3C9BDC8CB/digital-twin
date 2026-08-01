@@ -76,19 +76,16 @@ impl PromptRegistry {
             let path = entry.path();
 
             // Only accept .yaml / .yml files
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext != "yaml" && ext != "yml" {
                 continue;
             }
 
-            let content =
-                std::fs::read_to_string(&path).map_err(|e| format!("cannot read {:?}: {e}", path))?;
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| format!("cannot read {:?}: {e}", path))?;
 
-            let prompt: Prompt =
-                serde_yaml::from_str(&content).map_err(|e| format!("parse error in {:?}: {e}", path))?;
+            let prompt: Prompt = serde_yaml::from_str(&content)
+                .map_err(|e| format!("parse error in {:?}: {e}", path))?;
 
             let key = prompt.name.clone();
             prompts.insert(key, prompt);
@@ -150,7 +147,8 @@ fn render_template(template: &str, context: &serde_json::Value) -> String {
 
     re.replace_all(template, |caps: &regex::Captures<'_>| {
         let key_path = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        resolve_json_path(context, key_path).unwrap_or_else(|| caps.get(0).unwrap().as_str().to_string())
+        resolve_json_path(context, key_path)
+            .unwrap_or_else(|| caps.get(0).unwrap().as_str().to_string())
     })
     .to_string()
 }

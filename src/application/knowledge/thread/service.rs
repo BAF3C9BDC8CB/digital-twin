@@ -230,8 +230,14 @@ impl ThreadService {
 
         let mut params = std::collections::HashMap::new();
         params.insert("title".into(), serde_json::Value::String(title.to_string()));
-        params.insert("description".into(), serde_json::Value::String(desc.to_string()));
-        params.insert("project".into(), serde_json::Value::String(proj.to_string()));
+        params.insert(
+            "description".into(),
+            serde_json::Value::String(desc.to_string()),
+        );
+        params.insert(
+            "project".into(),
+            serde_json::Value::String(proj.to_string()),
+        );
         params.insert("now".into(), serde_json::Value::String(now.clone()));
 
         let result = self.graph.write_query(cypher, params).await?;
@@ -281,8 +287,14 @@ impl ThreadService {
         "#;
 
         let mut params = std::collections::HashMap::new();
-        params.insert("thread_id".into(), serde_json::Value::String(thread_id.to_string()));
-        params.insert("session_id".into(), serde_json::Value::String(session_id.to_string()));
+        params.insert(
+            "thread_id".into(),
+            serde_json::Value::String(thread_id.to_string()),
+        );
+        params.insert(
+            "session_id".into(),
+            serde_json::Value::String(session_id.to_string()),
+        );
         params.insert("summary".into(), serde_json::Value::String(sum.to_string()));
         params.insert("now".into(), serde_json::Value::String(now.clone()));
 
@@ -335,10 +347,22 @@ impl ThreadService {
         "#;
 
         let mut params = std::collections::HashMap::new();
-        params.insert("thread_id".into(), serde_json::Value::String(thread_id.to_string()));
-        params.insert("decision".into(), serde_json::Value::String(decision.to_string()));
-        params.insert("reason".into(), serde_json::Value::String(reason.unwrap_or("").to_string()));
-        params.insert("impact".into(), serde_json::Value::String(impact.unwrap_or("").to_string()));
+        params.insert(
+            "thread_id".into(),
+            serde_json::Value::String(thread_id.to_string()),
+        );
+        params.insert(
+            "decision".into(),
+            serde_json::Value::String(decision.to_string()),
+        );
+        params.insert(
+            "reason".into(),
+            serde_json::Value::String(reason.unwrap_or("").to_string()),
+        );
+        params.insert(
+            "impact".into(),
+            serde_json::Value::String(impact.unwrap_or("").to_string()),
+        );
         params.insert("now".into(), serde_json::Value::String(now.clone()));
 
         let result = self.graph.write_query(cypher, params).await?;
@@ -513,16 +537,28 @@ impl ThreadService {
             let is_driver_format = row_val.as_object().is_some();
             let get = |key: &str, default: &str| -> String {
                 if is_driver_format {
-                    row_val.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
+                    row_val
+                        .get(key)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(default)
+                        .to_string()
                 } else {
                     // Legacy: positional array by index
                     let idx = match key {
-                        "id" => 0, "title" => 1, "description" => 2, "status" => 3,
-                        "project" => 4, "created_at" => 5, "updated_at" => 6,
-                        "closed_at" => 7, "session_count" => 8, "decision_count" => 9,
+                        "id" => 0,
+                        "title" => 1,
+                        "description" => 2,
+                        "status" => 3,
+                        "project" => 4,
+                        "created_at" => 5,
+                        "updated_at" => 6,
+                        "closed_at" => 7,
+                        "session_count" => 8,
+                        "decision_count" => 9,
                         _ => return default.to_string(),
                     };
-                    row_val.get("row")
+                    row_val
+                        .get("row")
                         .and_then(|r| r.as_array())
                         .and_then(|arr| arr.get(idx))
                         .and_then(|v| v.as_str())
@@ -532,10 +568,18 @@ impl ThreadService {
             };
             let get_opt = |key: &str| -> Option<String> {
                 if is_driver_format {
-                    row_val.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+                    row_val
+                        .get(key)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
                 } else {
-                    let idx = match key { "project" => 4, "closed_at" => 7, _ => return None };
-                    row_val.get("row")
+                    let idx = match key {
+                        "project" => 4,
+                        "closed_at" => 7,
+                        _ => return None,
+                    };
+                    row_val
+                        .get("row")
                         .and_then(|r| r.as_array())
                         .and_then(|arr| arr.get(idx))
                         .and_then(|v| v.as_str())
@@ -546,8 +590,13 @@ impl ThreadService {
                 if is_driver_format {
                     row_val.get(key).and_then(|v| v.as_i64()).unwrap_or(0) as usize
                 } else {
-                    let idx = match key { "session_count" => 8, "decision_count" => 9, _ => return 0 };
-                    row_val.get("row")
+                    let idx = match key {
+                        "session_count" => 8,
+                        "decision_count" => 9,
+                        _ => return 0,
+                    };
+                    row_val
+                        .get("row")
                         .and_then(|r| r.as_array())
                         .and_then(|arr| arr.get(idx))
                         .and_then(|v| v.as_i64())
@@ -606,9 +655,15 @@ impl ThreadService {
         "#;
 
         let mut params = std::collections::HashMap::new();
-        params.insert("thread_id".into(), serde_json::Value::String(thread_id.to_string()));
+        params.insert(
+            "thread_id".into(),
+            serde_json::Value::String(thread_id.to_string()),
+        );
         params.insert("now".into(), serde_json::Value::String(now.clone()));
-        params.insert("outcome".into(), serde_json::Value::String(outcome_val.to_string()));
+        params.insert(
+            "outcome".into(),
+            serde_json::Value::String(outcome_val.to_string()),
+        );
 
         let result = self.graph.write_query(cypher, params).await?;
         let row = Self::first_row_obj(&result);
@@ -671,8 +726,14 @@ impl ThreadTrait for ThreadService {
         let action_name = request.action.clone();
 
         match action {
-            ThreadAction::Create { title, description, project } => {
-                let thread = self.create_thread(&title, description.as_deref(), project.as_deref()).await?;
+            ThreadAction::Create {
+                title,
+                description,
+                project,
+            } => {
+                let thread = self
+                    .create_thread(&title, description.as_deref(), project.as_deref())
+                    .await?;
                 let msg = format!("Thread '{}' created", thread.title);
                 Ok(ThreadResponse {
                     action: action_name,
@@ -681,8 +742,14 @@ impl ThreadTrait for ThreadService {
                     message: msg,
                 })
             }
-            ThreadAction::AddSession { thread_id, session_id, summary } => {
-                let thread = self.add_session(&thread_id, &session_id, summary.as_deref()).await?;
+            ThreadAction::AddSession {
+                thread_id,
+                session_id,
+                summary,
+            } => {
+                let thread = self
+                    .add_session(&thread_id, &session_id, summary.as_deref())
+                    .await?;
                 let msg = format!("Session '{}' added to thread", session_id);
                 Ok(ThreadResponse {
                     action: action_name,
@@ -691,8 +758,15 @@ impl ThreadTrait for ThreadService {
                     message: msg,
                 })
             }
-            ThreadAction::AddDecision { thread_id, decision, reason, impact } => {
-                let thread = self.add_decision(&thread_id, &decision, reason.as_deref(), impact.as_deref()).await?;
+            ThreadAction::AddDecision {
+                thread_id,
+                decision,
+                reason,
+                impact,
+            } => {
+                let thread = self
+                    .add_decision(&thread_id, &decision, reason.as_deref(), impact.as_deref())
+                    .await?;
                 Ok(ThreadResponse {
                     action: action_name,
                     thread: Some(thread),
@@ -711,7 +785,9 @@ impl ThreadTrait for ThreadService {
                 })
             }
             ThreadAction::List { project, limit } => {
-                let list = self.list_threads(project.as_deref(), limit.unwrap_or(20)).await?;
+                let list = self
+                    .list_threads(project.as_deref(), limit.unwrap_or(20))
+                    .await?;
                 let total = list.total;
                 Ok(ThreadResponse {
                     action: action_name,
@@ -866,9 +942,18 @@ mod tests {
             "description": "Description",
             "status": "active"
         }));
-        assert_eq!(ThreadService::row_val_str(&row, "title", "fallback"), "MyTitle");
-        assert_eq!(ThreadService::row_val_str(&row, "description", "fallback"), "Description");
-        assert_eq!(ThreadService::row_val_str(&row, "missing", "fallback"), "fallback");
+        assert_eq!(
+            ThreadService::row_val_str(&row, "title", "fallback"),
+            "MyTitle"
+        );
+        assert_eq!(
+            ThreadService::row_val_str(&row, "description", "fallback"),
+            "Description"
+        );
+        assert_eq!(
+            ThreadService::row_val_str(&row, "missing", "fallback"),
+            "fallback"
+        );
     }
 
     #[test]
@@ -876,7 +961,10 @@ mod tests {
         let row = Some(serde_json::json!({
             "project": "hello"
         }));
-        assert_eq!(ThreadService::row_val_str_opt(&row, "project"), Some("hello".into()));
+        assert_eq!(
+            ThreadService::row_val_str_opt(&row, "project"),
+            Some("hello".into())
+        );
         assert_eq!(ThreadService::row_val_str_opt(&row, "missing"), None);
     }
 
@@ -895,6 +983,9 @@ mod tests {
         assert!(result.is_some());
         let obj = result.unwrap();
         assert_eq!(obj.get("id").and_then(|v| v.as_str()), Some("4:abc123"));
-        assert_eq!(obj.get("title").and_then(|v| v.as_str()), Some("Test Thread"));
+        assert_eq!(
+            obj.get("title").and_then(|v| v.as_str()),
+            Some("Test Thread")
+        );
     }
 }

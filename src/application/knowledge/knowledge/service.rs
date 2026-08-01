@@ -20,9 +20,9 @@
 //!
 //! [`embed_kg_node`]: crate::application::sync::kg_bridge::embed_kg_node
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::annotation::parse_details;
@@ -150,10 +150,7 @@ impl DefaultKnowledgeService {
     /// Writes to the unified `kg_nodes` collection via [`embed_kg_node`]
     /// (instead of the legacy `{project}_semantic` collection) so that all
     /// knowledge-world nodes share a single searchable index.
-    async fn auto_vectorize_experience(
-        &self,
-        experience: &Experience,
-    ) -> Result<(), DtError> {
+    async fn auto_vectorize_experience(&self, experience: &Experience) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
             None => return Ok(()),
@@ -183,10 +180,7 @@ impl DefaultKnowledgeService {
     }
 
     /// Auto-vectorise a knowledge node's name + title + summary into Qdrant kg_nodes.
-    async fn auto_vectorize_knowledge(
-        &self,
-        knowledge: &Knowledge,
-    ) -> Result<(), DtError> {
+    async fn auto_vectorize_knowledge(&self, knowledge: &Knowledge) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
             None => return Ok(()),
@@ -217,10 +211,7 @@ impl DefaultKnowledgeService {
     }
 
     /// Auto-vectorise a concept node into Qdrant kg_nodes.
-    async fn auto_vectorize_concept(
-        &self,
-        concept: &Concept,
-    ) -> Result<(), DtError> {
+    async fn auto_vectorize_concept(&self, concept: &Concept) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
             None => return Ok(()),
@@ -250,10 +241,7 @@ impl DefaultKnowledgeService {
     }
 
     /// Auto-vectorise a playbook node into Qdrant kg_nodes.
-    async fn auto_vectorize_playbook(
-        &self,
-        playbook: &Playbook,
-    ) -> Result<(), DtError> {
+    async fn auto_vectorize_playbook(&self, playbook: &Playbook) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
             None => return Ok(()),
@@ -349,10 +337,7 @@ impl KnowledgeService for DefaultKnowledgeService {
             "project".into(),
             serde_json::Value::String(knowledge.project.clone()),
         );
-        params.insert(
-            "confidence".into(),
-            serde_json::json!(knowledge.confidence),
-        );
+        params.insert("confidence".into(), serde_json::json!(knowledge.confidence));
         params.insert(
             "verified_by".into(),
             knowledge
@@ -369,10 +354,7 @@ impl KnowledgeService for DefaultKnowledgeService {
             "updated_at".into(),
             serde_json::Value::String(knowledge.updated_at.clone()),
         );
-        params.insert(
-            "version".into(),
-            serde_json::json!(knowledge.version),
-        );
+        params.insert("version".into(), serde_json::json!(knowledge.version));
 
         self.graph.write_query(cypher, params).await?;
 
@@ -526,8 +508,8 @@ impl KnowledgeService for DefaultKnowledgeService {
 
     async fn write_playbook(&self, playbook: &Playbook) -> Result<(), DtError> {
         // Serialize steps as JSON array string for storage
-        let steps_json = serde_json::to_string(&playbook.steps)
-            .unwrap_or_else(|_| "[]".to_string());
+        let steps_json =
+            serde_json::to_string(&playbook.steps).unwrap_or_else(|_| "[]".to_string());
 
         let cypher = r#"
             MERGE (p:Playbook {playbook_id: $playbook_id})
@@ -562,10 +544,7 @@ impl KnowledgeService for DefaultKnowledgeService {
             "description".into(),
             serde_json::Value::String(playbook.description.clone()),
         );
-        params.insert(
-            "steps".into(),
-            serde_json::Value::String(steps_json),
-        );
+        params.insert("steps".into(), serde_json::Value::String(steps_json));
         params.insert(
             "domain".into(),
             serde_json::Value::String(playbook.domain.clone()),
@@ -634,10 +613,7 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         let new_version = current_version + 1;
         let new_knowledge_id = format!("{}/v{}", knowledge_id, new_version);
-        let version_id = format!(
-            "dt://knowledge-version/{}/v{}",
-            knowledge_id, new_version
-        );
+        let version_id = format!("dt://knowledge-version/{}/v{}", knowledge_id, new_version);
         let now = chrono::Utc::now().to_rfc3339();
 
         // 2. Create new version node, copying properties from old node.
@@ -682,30 +658,15 @@ impl KnowledgeService for DefaultKnowledgeService {
             "new_knowledge_id".into(),
             serde_json::Value::String(new_knowledge_id),
         );
-        write_params.insert(
-            "new_version".into(),
-            serde_json::json!(new_version),
-        );
-        write_params.insert(
-            "version_id".into(),
-            serde_json::Value::String(version_id),
-        );
-        write_params.insert(
-            "diff".into(),
-            serde_json::Value::String(diff.to_string()),
-        );
+        write_params.insert("new_version".into(), serde_json::json!(new_version));
+        write_params.insert("version_id".into(), serde_json::Value::String(version_id));
+        write_params.insert("diff".into(), serde_json::Value::String(diff.to_string()));
         write_params.insert(
             "session_id".into(),
             serde_json::Value::String(session_id.to_string()),
         );
-        write_params.insert(
-            "timestamp".into(),
-            serde_json::Value::String(now.clone()),
-        );
-        write_params.insert(
-            "updated_at".into(),
-            serde_json::Value::String(now),
-        );
+        write_params.insert("timestamp".into(), serde_json::Value::String(now.clone()));
+        write_params.insert("updated_at".into(), serde_json::Value::String(now));
 
         self.graph.write_query(write_cypher, write_params).await?;
         Ok(())
@@ -734,7 +695,10 @@ pub fn knowledge_from_details(
 
     Knowledge {
         knowledge_id: knowledge_id.to_string(),
-        name: kv.get("name").cloned().unwrap_or_else(|| entity_type.to_string()),
+        name: kv
+            .get("name")
+            .cloned()
+            .unwrap_or_else(|| entity_type.to_string()),
         title: kv.get("title").cloned().unwrap_or_default(),
         domain: kv.get("domain").cloned().unwrap_or_default(),
         summary: kv.get("summary").cloned().unwrap_or_default(),
@@ -762,11 +726,7 @@ pub fn knowledge_from_details(
 /// "title: Redis超时; summary: 教训; content: ...; domain: 支付;
 ///  severity: warning; project: test"
 /// ```
-pub fn experience_from_details(
-    experience_id: &str,
-    project: &str,
-    details: &str,
-) -> Experience {
+pub fn experience_from_details(experience_id: &str, project: &str, details: &str) -> Experience {
     let kv = parse_details(details);
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -844,8 +804,7 @@ pub fn playbook_from_details(playbook_id: &str, project: &str, details: &str) ->
 mod tests {
     use super::*;
     use crate::application::knowledge::knowledge::entities::{
-        Concept, Domain, Experience, ExperienceSeverity, Knowledge, KnowledgeSource, Playbook,
-        Step,
+        Concept, Domain, Experience, ExperienceSeverity, Knowledge, KnowledgeSource, Playbook, Step,
     };
     use crate::domain::types::HealthStatus;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1111,10 +1070,7 @@ mod tests {
 
     #[test]
     fn domain_from_details_parses_fields() {
-        let d = domain_from_details(
-            "dt://domain/支付",
-            "name: 支付; description: 支付相关知识",
-        );
+        let d = domain_from_details("dt://domain/支付", "name: 支付; description: 支付相关知识");
         assert_eq!(d.name, "支付");
         assert_eq!(d.description, "支付相关知识");
     }
@@ -1157,30 +1113,43 @@ mod tests {
     }
 
     impl TrackingVectorRepo {
-        fn new(
-            upsert_count: Arc<AtomicUsize>,
-        ) -> Self {
+        fn new(upsert_count: Arc<AtomicUsize>) -> Self {
             Self { upsert_count }
         }
     }
 
     #[async_trait]
     impl VectorRepository for TrackingVectorRepo {
-        async fn ensure_collection(&self, _c: &str, _d: u32) -> Result<(), DtError> { Ok(()) }
-        async fn search(&self, _c: &str, _v: Vec<f32>, _l: u64) -> Result<Vec<serde_json::Value>, DtError> {
+        async fn ensure_collection(&self, _c: &str, _d: u32) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn search(
+            &self,
+            _c: &str,
+            _v: Vec<f32>,
+            _l: u64,
+        ) -> Result<Vec<serde_json::Value>, DtError> {
             Ok(vec![])
         }
         async fn upsert(&self, _c: &str, _p: Vec<serde_json::Value>) -> Result<(), DtError> {
             self.upsert_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
-        async fn delete_by_filter(&self, _c: &str, _f: serde_json::Value) -> Result<(), DtError> { Ok(()) }
-        async fn list_collections(&self) -> Result<Vec<String>, DtError> { Ok(vec![]) }
+        async fn delete_by_filter(&self, _c: &str, _f: serde_json::Value) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn list_collections(&self) -> Result<Vec<String>, DtError> {
+            Ok(vec![])
+        }
         async fn collection_info(&self, _n: &str) -> Result<CollectionInfo, DtError> {
             Err(DtError::NotFound("mock".into()))
         }
-        async fn delete_collection(&self, _n: &str) -> Result<(), DtError> { Ok(()) }
-        async fn health_check(&self) -> Result<HealthStatus, DtError> { Ok(HealthStatus::Healthy) }
+        async fn delete_collection(&self, _n: &str) -> Result<(), DtError> {
+            Ok(())
+        }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
     }
 
     /// CountingRepoExtended — wraps CountingRepo as GraphRepository + tracks calls.
@@ -1192,13 +1161,20 @@ mod tests {
 
     impl CountingRepoVector {
         fn new(write_count: Arc<AtomicUsize>, read_count: Arc<AtomicUsize>) -> Self {
-            Self { write_count, read_count }
+            Self {
+                write_count,
+                read_count,
+            }
         }
     }
 
     #[async_trait]
     impl GraphRepository for CountingRepoVector {
-        async fn read_query(&self, _q: &str, _p: std::collections::HashMap<String, serde_json::Value>) -> Result<serde_json::Value, DtError> {
+        async fn read_query(
+            &self,
+            _q: &str,
+            _p: std::collections::HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
             self.read_count.fetch_add(1, Ordering::SeqCst);
             // Response must include an "eid" field so that
             // `embed_kg_node` (called by auto_vectorize_*) can fetch the
@@ -1206,7 +1182,11 @@ mod tests {
             // "version" field is preserved for any consumer that reads it.
             Ok(serde_json::json!([{"version": 1, "eid": "4:1:mock-experience"}]))
         }
-        async fn write_query(&self, _q: &str, _p: std::collections::HashMap<String, serde_json::Value>) -> Result<serde_json::Value, DtError> {
+        async fn write_query(
+            &self,
+            _q: &str,
+            _p: std::collections::HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
             self.write_count.fetch_add(1, Ordering::SeqCst);
             Ok(serde_json::Value::Null)
         }
@@ -1221,11 +1201,10 @@ mod tests {
         let read = Arc::new(AtomicUsize::new(0));
         let upsert = Arc::new(AtomicUsize::new(0));
 
-        let graph: Arc<dyn GraphRepository> = Arc::new(CountingRepoVector::new(write.clone(), read.clone()));
+        let graph: Arc<dyn GraphRepository> =
+            Arc::new(CountingRepoVector::new(write.clone(), read.clone()));
         let embed: Arc<dyn EmbedService> = Arc::new(MockEmbed);
-        let vector: Arc<dyn VectorRepository> = Arc::new(TrackingVectorRepo::new(
-            upsert.clone(),
-        ));
+        let vector: Arc<dyn VectorRepository> = Arc::new(TrackingVectorRepo::new(upsert.clone()));
 
         let svc = DefaultKnowledgeService::with_vectorization(graph, embed, vector);
         assert!(svc.has_vectorization());
@@ -1252,7 +1231,8 @@ mod tests {
     async fn write_experience_without_vectorization_does_not_panic() {
         let write = Arc::new(AtomicUsize::new(0));
         let read = Arc::new(AtomicUsize::new(0));
-        let repo: Arc<dyn GraphRepository> = Arc::new(CountingRepo::new(write.clone(), read.clone()));
+        let repo: Arc<dyn GraphRepository> =
+            Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultKnowledgeService::new(repo);
         assert!(!svc.has_vectorization());
 

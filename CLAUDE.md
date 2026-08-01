@@ -56,7 +56,7 @@ src/
 | Runtime | Pod status, service runtime | K8s API (live) |
 | Reasoning | Observation → Analysis → Decision chain | Memgraph (with TTL) |
 
-**CLI binary** (`src/main.rs`): `dt` with 26+ commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
+**CLI binary** (`src/main.rs`): `dt` with 29 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
 
 ## Pipeline Engine
 

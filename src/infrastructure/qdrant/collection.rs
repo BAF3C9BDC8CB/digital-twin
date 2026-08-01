@@ -64,11 +64,7 @@ impl CollectionKind {
 ///     "kg_nodes_v1"
 /// );
 /// ```
-pub fn collection_name(
-    project: &str,
-    kind: CollectionKind,
-    model_version: &str,
-) -> String {
+pub fn collection_name(project: &str, kind: CollectionKind, model_version: &str) -> String {
     match kind {
         CollectionKind::Methods | CollectionKind::Semantic => {
             format!("{}_{}_{}", project, kind.as_str(), model_version)

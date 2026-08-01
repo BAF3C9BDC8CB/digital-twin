@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use serde_json::Value;
 use super::types::{HookContext, PropertyConfig};
+use serde_json::Value;
+use std::collections::HashMap;
 
 pub struct PropertyMapper;
 
@@ -23,7 +23,8 @@ impl PropertyMapper {
             if value.is_null() && prop.required {
                 tracing::warn!(
                     "missing required property '{}' for hook '{}'",
-                    prop.name, ctx.hook_name
+                    prop.name,
+                    ctx.hook_name
                 );
             }
 
@@ -35,12 +36,7 @@ impl PropertyMapper {
         map
     }
 
-    fn resolve_value(
-        prop: &PropertyConfig,
-        ctx: &HookContext,
-        event_id: &str,
-        now: &str,
-    ) -> Value {
+    fn resolve_value(prop: &PropertyConfig, ctx: &HookContext, event_id: &str, now: &str) -> Value {
         match prop.from.as_str() {
             "id" => Value::String(event_id.to_string()),
             "now" => Value::String(now.to_string()),
@@ -48,11 +44,7 @@ impl PropertyMapper {
                 let key = s.trim_start_matches("context.");
                 ctx.get(key)
                     .map(|v| Value::String(v.to_string()))
-                    .or_else(|| {
-                        prop.default
-                            .as_ref()
-                            .map(|d| Value::String(d.clone()))
-                    })
+                    .or_else(|| prop.default.as_ref().map(|d| Value::String(d.clone())))
                     .unwrap_or(Value::Null)
             }
             _ => Value::Null,
@@ -91,7 +83,10 @@ mod tests {
         let ctx = make_ctx("my-app");
         let props = PropertyMapper::map(&cfg, &ctx, "my-event-id");
 
-        assert_eq!(props.get("deploy_id").unwrap(), &Value::String("my-event-id".into()));
+        assert_eq!(
+            props.get("deploy_id").unwrap(),
+            &Value::String("my-event-id".into())
+        );
     }
 
     #[test]
@@ -141,8 +136,14 @@ mod tests {
         let ctx = make_ctx("my-app");
         let props = PropertyMapper::map(&[], &ctx, "id");
 
-        assert_eq!(props.get("_label").unwrap(), &Value::String("jenkins_deploy_completed".into()));
+        assert_eq!(
+            props.get("_label").unwrap(),
+            &Value::String("jenkins_deploy_completed".into())
+        );
         assert!(props.contains_key("_created_at"));
-        assert_eq!(props.get("event_type").unwrap(), &Value::String("jenkins_deploy_completed".into()));
+        assert_eq!(
+            props.get("event_type").unwrap(),
+            &Value::String("jenkins_deploy_completed".into())
+        );
     }
 }

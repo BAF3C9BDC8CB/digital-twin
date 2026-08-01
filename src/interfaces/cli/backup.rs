@@ -89,10 +89,7 @@ pub async fn create_backup() -> Result<BackupReport> {
     let date = Utc::now().format("%Y-%m-%d").to_string();
     let backup_dir = PathBuf::from(BACKUP_ROOT).join(&date);
 
-    tracing::info!(
-        "dt_backup: creating backup for {date} at {}",
-        backup_dir.display()
-    );
+    tracing::info!("正在为 {date} 创建备份, 保存至 {}", backup_dir.display());
 
     // Ensure backup directory exists
     tokio::fs::create_dir_all(&backup_dir).await?;
@@ -107,7 +104,7 @@ pub async fn create_backup() -> Result<BackupReport> {
 
     // ---- Generate checksums ----
     if let Err(e) = crate::interfaces::cli::backup_verify::generate_checksums(&backup_dir).await {
-        tracing::warn!("checksum generation failed: {e}");
+        tracing::warn!("校验和生成失败: {e}");
     }
 
     let duration = start.elapsed().as_secs_f64();
@@ -140,14 +137,14 @@ pub async fn restore_backup(date: &str) -> Result<()> {
         return Ok(());
     }
 
-    tracing::info!("dt_backup: restoring backup from {date}");
+    tracing::info!("正在从 {date} 恢复备份");
 
     // ---- Restore each component ----
     crate::interfaces::cli::backup_memgraph::restore_graph(&backup_dir).await?;
     crate::interfaces::cli::backup_qdrant::restore_collections(&backup_dir).await?;
     crate::interfaces::cli::backup_sqlite::restore_database(&backup_dir).await?;
 
-    tracing::info!("dt_backup: restore complete for {date}");
+    tracing::info!("{date} 备份恢复完成");
 
     Ok(())
 }

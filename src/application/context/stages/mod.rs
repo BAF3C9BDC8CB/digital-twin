@@ -3,21 +3,21 @@
 //! Each stage implements [`ContextStage`] and transforms the
 //! [`ContextState`](super::models::ContextState) in sequence.
 
-mod retriever;
-mod ranker;
 mod dedup;
+mod ranker;
 mod resolver;
+mod retriever;
 mod summarizer;
 
-pub use retriever::RetrieverStage;
-pub use ranker::RankerStage;
 pub use dedup::DedupStage;
+pub use ranker::RankerStage;
 pub use resolver::ResolverStage;
+pub use retriever::RetrieverStage;
 pub use summarizer::SummarizerStage;
 
-use async_trait::async_trait;
 use crate::application::context::models::ContextState;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
 
 /// A single stage in the Context Pipeline.
 ///

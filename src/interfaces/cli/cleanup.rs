@@ -83,7 +83,10 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
         "  Relationships deleted : {}",
         memgraph_report.relationships_deleted
     );
-    println!("  Elapsed               : {} ms", memgraph_report.elapsed_ms);
+    println!(
+        "  Elapsed               : {} ms",
+        memgraph_report.elapsed_ms
+    );
 
     // --- Qdrant ---
     // NoopVectorRepo does not expose collection-management methods; in the
@@ -125,10 +128,7 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
 
     println!();
     println!("Clean complete:");
-    println!(
-        "  Nodes deleted              : {}",
-        combined.nodes_deleted
-    );
+    println!("  Nodes deleted              : {}", combined.nodes_deleted);
     println!(
         "  Relationships deleted      : {}",
         combined.relationships_deleted
@@ -161,14 +161,23 @@ macro_rules! check_health {
         let status = $repo.health_check().await;
         let latency_ms = start.elapsed().as_millis() as u64;
         match status {
-            Ok(HealthStatus::Healthy) => (true, format!("✅ {:<8}: healthy ({} ms)", $name, latency_ms)),
+            Ok(HealthStatus::Healthy) => (
+                true,
+                format!("✅ {:<8}: healthy ({} ms)", $name, latency_ms),
+            ),
             Ok(HealthStatus::Degraded(reason)) => (
                 false,
-                format!("⚠️  {:<8}: degraded — {} ({} ms)", $name, reason, latency_ms),
+                format!(
+                    "⚠️  {:<8}: degraded — {} ({} ms)",
+                    $name, reason, latency_ms
+                ),
             ),
             Ok(HealthStatus::Unhealthy(reason)) => (
                 false,
-                format!("❌ {:<8}: unhealthy — {} ({} ms)", $name, reason, latency_ms),
+                format!(
+                    "❌ {:<8}: unhealthy — {} ({} ms)",
+                    $name, reason, latency_ms
+                ),
             ),
             Err(e) => (
                 false,
@@ -236,7 +245,10 @@ pub async fn run_health(
     let (healthy, detail) = if let Some(e) = embed {
         check_health!("SiliconFlow", e)
     } else {
-        (false, "  ❌ SiliconFlow : no backend configured".to_string())
+        (
+            false,
+            "  ❌ SiliconFlow : no backend configured".to_string(),
+        )
     };
     println!("  {detail}");
     if !healthy {
@@ -252,8 +264,6 @@ pub async fn run_health(
 
     Ok(())
 }
-
-
 
 // ---------------------------------------------------------------------------
 // dt cleanup --targets reasoning
@@ -285,7 +295,10 @@ pub async fn clean_reasoning_stale(
         let result = graph.read_query(count_query, empty_params).await?;
         let reasoning_stale_deleted = extract_count(&result, "count");
 
-        println!("[dry-run] Would delete {} stale reasoning node(s)", reasoning_stale_deleted);
+        println!(
+            "[dry-run] Would delete {} stale reasoning node(s)",
+            reasoning_stale_deleted
+        );
 
         return Ok(CleanReport {
             nodes_deleted: 0,
@@ -487,7 +500,10 @@ pub async fn run_cleanup_snapshots(dry_run: bool) -> anyhow::Result<CleanReport>
     let snapshots_orphaned: usize = 0;
 
     if dry_run {
-        println!("  Orphaned snapshots (would delete): {}", snapshots_orphaned);
+        println!(
+            "  Orphaned snapshots (would delete): {}",
+            snapshots_orphaned
+        );
         println!();
     } else {
         println!("  Orphaned snapshots deleted: {}", snapshots_orphaned);
@@ -555,10 +571,7 @@ pub async fn run_cleanup_all(dry_run: bool) -> anyhow::Result<CleanReport> {
         "  Reasoning stale deleted:  {}",
         combined.reasoning_stale_deleted
     );
-    println!(
-        "  Memory events archived:   {}",
-        combined.memory_archived
-    );
+    println!("  Memory events archived:   {}", combined.memory_archived);
     println!(
         "  Snapshots orphaned:       {}",
         combined.snapshots_orphaned
@@ -582,8 +595,8 @@ async fn run_cleanup_reasoning_inner(dry_run: bool) -> anyhow::Result<CleanRepor
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::domain::error::DtError;
+    use async_trait::async_trait;
 
     #[tokio::test]
     async fn run_schema_init_succeeds_with_noop() {
@@ -595,7 +608,10 @@ mod tests {
     async fn run_clean_without_confirm_prints_warning() {
         // Should not panic or error — it just warns and exits.
         let result = run_clean(false, None).await;
-        assert!(result.is_ok(), "clean without --confirm should succeed (just warns)");
+        assert!(
+            result.is_ok(),
+            "clean without --confirm should succeed (just warns)"
+        );
     }
 
     #[tokio::test]
@@ -610,7 +626,10 @@ mod tests {
     #[tokio::test]
     async fn run_health_succeeds() {
         let result = run_health(None, None, None, None).await;
-        assert!(result.is_ok(), "health check should succeed with noop repos");
+        assert!(
+            result.is_ok(),
+            "health check should succeed with noop repos"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -653,7 +672,9 @@ mod tests {
             read_count: 5,
             write_calls: std::sync::Mutex::new(Vec::new()),
         };
-        let report = clean_reasoning_stale(&mock, true).await.expect("should succeed");
+        let report = clean_reasoning_stale(&mock, true)
+            .await
+            .expect("should succeed");
         assert_eq!(report.reasoning_stale_deleted, 5);
         // In dry-run mode, no write should happen
         assert!(mock.write_calls.lock().unwrap().is_empty());
@@ -665,7 +686,9 @@ mod tests {
             read_count: 3,
             write_calls: std::sync::Mutex::new(Vec::new()),
         };
-        let report = clean_reasoning_stale(&mock, false).await.expect("should succeed");
+        let report = clean_reasoning_stale(&mock, false)
+            .await
+            .expect("should succeed");
         assert_eq!(report.reasoning_stale_deleted, 3);
         // Should have called DETACH DELETE
         let calls = mock.write_calls.lock().unwrap();
@@ -681,7 +704,9 @@ mod tests {
             read_count: 0,
             write_calls: std::sync::Mutex::new(Vec::new()),
         };
-        let report = clean_reasoning_stale(&mock, false).await.expect("should succeed");
+        let report = clean_reasoning_stale(&mock, false)
+            .await
+            .expect("should succeed");
         assert_eq!(report.reasoning_stale_deleted, 0);
         // No delete should happen when count is 0
         assert!(mock.write_calls.lock().unwrap().is_empty());

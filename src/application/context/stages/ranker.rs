@@ -4,11 +4,11 @@
 //! below the configured minimum score threshold, and caps the number of items
 //! per world if a max limit is configured.
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
 
-use crate::application::context::models::{ContextState, WorldItem};
 use super::ContextStage;
+use crate::application::context::models::{ContextState, WorldItem};
 
 /// Ranks items per world and filters low-relevance results.
 pub struct RankerStage;
@@ -125,9 +125,13 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, &score)| {
-                WorldItem::new(format!("id{i}"), format!("Item {i}"), format!("content {i}"))
-                    .with_score(score)
-                    .with_type("Test")
+                WorldItem::new(
+                    format!("id{i}"),
+                    format!("Item {i}"),
+                    format!("content {i}"),
+                )
+                .with_score(score)
+                .with_type("Test")
             })
             .collect()
     }
@@ -171,9 +175,13 @@ mod tests {
     async fn ranker_respects_max_items() {
         let items: Vec<WorldItem> = (0..30)
             .map(|i| {
-                WorldItem::new(format!("id{i}"), format!("Item {i}"), format!("content {i}"))
-                    .with_score(0.9)
-                    .with_type("Test")
+                WorldItem::new(
+                    format!("id{i}"),
+                    format!("Item {i}"),
+                    format!("content {i}"),
+                )
+                .with_score(0.9)
+                .with_type("Test")
             })
             .collect();
 

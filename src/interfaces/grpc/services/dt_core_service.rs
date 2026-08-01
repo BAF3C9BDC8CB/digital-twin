@@ -14,13 +14,13 @@
 
 use crate::application::hooks::HookEngine;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
+use crate::proto::dt::common;
 use crate::proto::dt::core::dt_core_server::DtCore;
 use crate::proto::dt::core::*;
-use crate::proto::dt::common;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use super::{build_service, context_service, sync_service, knowledge_service, memory_service};
+use super::{build_service, context_service, knowledge_service, memory_service, sync_service};
 
 /// gRPC service implementation for `dt.core.DtCore`.
 ///
@@ -42,7 +42,12 @@ impl DtCoreServiceImpl {
         embed: Option<Arc<dyn EmbedService>>,
         hook_engine: Option<Arc<HookEngine>>,
     ) -> Self {
-        Self { graph, vector, embed, hook_engine }
+        Self {
+            graph,
+            vector,
+            embed,
+            hook_engine,
+        }
     }
 }
 
@@ -53,7 +58,8 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<BuildRequest>,
     ) -> Result<Response<BuildResponse>, Status> {
         let req = request.into_inner();
-        let resp = build_service::handle_build(req, self.graph.clone(), self.vector.clone()).await?;
+        let resp =
+            build_service::handle_build(req, self.graph.clone(), self.vector.clone()).await?;
         Ok(Response::new(resp))
     }
 
@@ -62,7 +68,8 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
-        let resp = build_service::handle_search(req, self.graph.clone(), self.vector.clone()).await?;
+        let resp =
+            build_service::handle_search(req, self.graph.clone(), self.vector.clone()).await?;
         Ok(Response::new(resp))
     }
 
@@ -86,7 +93,9 @@ impl DtCore for DtCoreServiceImpl {
         request: Request<EventRequest>,
     ) -> Result<Response<common::Empty>, Status> {
         let req = request.into_inner();
-        let resp = memory_service::handle_record_event(req, self.graph.clone(), self.hook_engine.clone()).await?;
+        let resp =
+            memory_service::handle_record_event(req, self.graph.clone(), self.hook_engine.clone())
+                .await?;
         Ok(Response::new(resp))
     }
 
@@ -99,12 +108,15 @@ impl DtCore for DtCoreServiceImpl {
         Ok(Response::new(resp))
     }
 
-    async fn sync(
-        &self,
-        request: Request<SyncRequest>,
-    ) -> Result<Response<SyncResponse>, Status> {
+    async fn sync(&self, request: Request<SyncRequest>) -> Result<Response<SyncResponse>, Status> {
         let req = request.into_inner();
-        let resp = sync_service::handle_sync(req, self.graph.clone(), self.vector.clone(), self.embed.clone()).await?;
+        let resp = sync_service::handle_sync(
+            req,
+            self.graph.clone(),
+            self.vector.clone(),
+            self.embed.clone(),
+        )
+        .await?;
         Ok(Response::new(resp))
     }
 }

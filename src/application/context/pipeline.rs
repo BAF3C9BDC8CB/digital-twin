@@ -16,15 +16,10 @@
 
 use super::models::{AggregatedContext, ContextOptions, ContextState};
 use super::stages::{
-    ContextStage,
-    RetrieverStage,
-    RankerStage,
-    DedupStage,
-    ResolverStage,
-    SummarizerStage,
+    ContextStage, DedupStage, RankerStage, ResolverStage, RetrieverStage, SummarizerStage,
 };
 use crate::domain::error::DtError;
-use crate::domain::traits::{GraphRepository, VectorRepository, EmbedService};
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use std::sync::Arc;
 
 /// The Context Builder pipeline.
@@ -104,9 +99,10 @@ impl ContextPipeline {
         for stage in &self.stages {
             let stage_name = stage.name();
             tracing::debug!("[pipeline] entering stage: {stage_name}");
-            state = stage.process(state).await.map_err(|e| {
-                DtError::General(format!("stage '{stage_name}' failed: {e}"))
-            })?;
+            state = stage
+                .process(state)
+                .await
+                .map_err(|e| DtError::General(format!("stage '{stage_name}' failed: {e}")))?;
             tracing::debug!("[pipeline] stage '{stage_name}' complete");
         }
 

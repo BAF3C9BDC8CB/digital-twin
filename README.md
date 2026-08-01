@@ -4,15 +4,15 @@
 
 ## 架构
 
-单 crate DDD 分层 (src/domain → src/infrastructure → src/application → src/interfaces)，六世界模型：
+单 crate DDD 分层 (`src/domain/ → src/infrastructure/ → src/application/ → src/interfaces/`)，六世界模型：
 
 ```
 src/
-  domain/          # 领域层: types, traits, error, config, id
-  infrastructure/  # 基础设施: memgraph, qdrant, sqlite, parser, scanner, embedder
-  application/     # 应用层: build, sync, context, knowledge, plugins
-  interfaces/      # 接口层: gRPC server, CLI
-  shared/          # 横切: logging, metrics, coordinator, chunker, vectorizer
+  domain/          # 领域层: types, traits, error, config, id (零内部依赖)
+  infrastructure/  # 基础设施: memgraph, qdrant, sqlite, parser, scanner, embedder, hanlp
+  application/     # 应用层: build, sync, context, knowledge, pipeline, hooks, plugins
+  interfaces/      # 接口层: gRPC server, CLI command handlers
+  shared/          # 横切: logging, coordinator, chunker, vectorizer, collections
 ```
 
 六世界聚合上下文：
@@ -30,9 +30,10 @@ src/
 
 ### 依赖
 
-- Memgraph 5.x (Bolt :7687)
-- Qdrant (gRPC :6334)
-- SiliconFlow API (BGE-M3 embed + BGE-reranker + Qwen2.5 LLM)
+- Memgraph 5.x (Bolt `:7688`，默认 `:7687`)
+- Qdrant (gRPC `:6334`)
+- SiliconFlow API (BGE-M3 embed + BGE-reranker + Qwen3.5 LLM)
+- HanLP (可选，本地 NLP 服务 `:8765`)
 
 ### 构建
 
@@ -41,52 +42,69 @@ cargo build --release
 ./target/release/dt --help
 ```
 
-## CLI 命令 (26 个)
+配置从 `~/.config/digital-twin/config.yaml` 加载。
+
+## CLI 命令 (29 个)
 
 ### 管线
 
 | 命令 | 功能 |
 |------|------|
-| `dt build` | 构建项目索引到知识图谱 |
+| `dt build` | 构建项目索引到知识图谱（增量模式，基于 SQLite 哈希缓存） |
 | `dt build --test` | 管线集成测试 — 对真实项目运行 BuildCommand，验证 KG+Qdrant |
-| `dt update` | 单文件增量更新 |
-| `dt watch` | 文件监视 daemon |
-| `dt nacos-sync` | 同步 Nacos 配置 |
-| `dt k8s-sync` | 同步 K8s 资源 |
-| `dt kg-sync` | KG 节点同步到 Qdrant |
+| `dt build --file <path>` | 单文件增量更新 |
+| `dt daemon` | 启动 gRPC daemon 服务端 |
+| `dt nacos-sync` | 同步 Nacos 配置到知识图谱 |
+| `dt k8s-sync` | 同步 K8s 资源到知识图谱 |
+| `dt kg-sync` | KG 节点同步到 Qdrant 向量库 |
+| `dt jc-sync` | 同步 Jenkins Views/Jobs/Builds 到知识图谱 |
 
 ### 搜索
 
+| 命令 | 功能 |
+|------|------|
 | `dt search` | 跨世界语义搜索（CrossWorldSearch 统一入口） |
-| `dt search-expand` | 多变体查询扩展（低级模型推荐） |
 | `dt search-kg` | KG 节点向量语义搜索 |
 
 ### 知识
 
-| `dt memorize` | 写入知识节点 |
-| `dt event` | 写入事件节点 |
-| `dt learn` | AI 任务后沉淀知识 |
-| `dt thread` | 管理 Digital Thread |
+| 命令 | 功能 |
+|------|------|
+| `dt memorize` | 写入知识节点（Knowledge/Experience/Concept/Domain/Playbook） |
+| `dt event` | 写入事件节点（Hook 驱动） |
+| `dt learn` | AI 任务后沉淀结构化知识到 Knowledge World |
+| `dt thread` | 管理 Digital Thread 生命周期 |
 
 ### 分析
 
+| 命令 | 功能 |
+|------|------|
 | `dt context` | 六世界聚合上下文 |
 | `dt plan` | 匹配 Playbook 生成执行计划 |
 | `dt domain` | 领域知识模型子图 |
 | `dt history` | 历史相似任务检索 |
-| `dt dependency` | 调用链与依赖分析 |
-| `dt verify` | 修改后一致性验证 |
+| `dt dependency` | 调用链与依赖影响分析 |
+| `dt verify` | 修改后一致性验证（配置/数据库/API） |
 
 ### 运维
 
+| 命令 | 功能 |
+|------|------|
 | `dt backup` | 分层备份 (Memgraph + Qdrant + SQLite) |
-| `dt archive` | Memory 数据归档 |
+| `dt archive` | Memory World 数据归档 |
 | `dt clean` | 清空所有数据 |
-| `dt clean --test` | 清理 `test-` 前缀的测试数据 |
-| `dt cleanup` | TTL 数据清理 |
-| `dt schema` | Schema 管理 (`dt schema init`) |
-| `dt health` | 健康检查 |
-| `dt metrics` | 指标查询 |
+| `dt cleanup` | TTL 分级清理（支持 dry-run 预览） |
+| `dt schema init` | Schema 初始化（约束+索引） |
+| `dt health` | 后端服务健康检查 |
+| `dt metrics` | gRPC 指标查询 |
+| `dt llm-status` | 查看所有项目的 LLM 分析状态 |
+
+### 插件
+
+| 命令 | 功能 |
+|------|------|
+| `dt kub` | K8s 操作（pods/logs/download/status） |
+| `dt jcli` | Jenkins CI/CD 操作 |
 
 ## 搜索架构
 
@@ -96,186 +114,34 @@ cargo build --release
 
 ```
 MCP/CLI → gRPC Search RPC → CrossWorldSearch.search()
-                               ├─ world=code → Qdrant {project}_methods
+                               ├─ world=code → Qdrant code_methods (全局集合)
                                ├─ world=knowledge → Memgraph (Concept/Decision/...)
                                └─ world=doc → Qdrant kg_nodes
 ```
 
-### 两个 Qdrant Collection
+### 三个 Qdrant 全局集合
 
 | Collection | 数据来源 | 内容 | 搜索工具 |
 |------------|---------|------|---------|
-| `{project}_methods` | `dt build` 代码索引 | 方法级源码向量（含 start_line/end_line/calls/llm_analysis） | `dt search` / `dt search-expand` |
+| `code_methods` | `dt build` 代码索引 | 方法级源码向量（含 start_line/end_line/calls/llm_analysis） | `dt search` |
+| `doc_chunks` | 文档分块 | 文档段落向量 | 内部使用 |
 | `kg_nodes` | `dt kg-sync` KG 节点同步 | 业务实体向量（Server/DB/NacosConfig/Knowledge/Decision 等） | `dt search-kg` |
 
-**关键：两者职责分离，不交叉。** 代码搜索直接走 `{project}_methods`，KG 搜索走 `kg_nodes`。
-
-### SearchHit 返回字段
-
-代码搜索返回完整的搜索命中，包含关联信息：
-
-```json
-{
-  "title": "updateOrderStatus",
-  "file_path": "src/service/order.rs",
-  "start_line": 42,
-  "end_line": 78,
-  "signature": "pub fn update_order_status(...)",
-  "calls": ["save_log", "notify_user"],
-  "element_id": "4:abc123",
-  "score": 0.85
-}
-```
-
-- `calls` — 静态调用列表（来自索引时的分析）
-- `element_id` — KG 节点 ID，可传入 `dt dependency` 深查调用链
+**关键：三者职责分离，不交叉。** 代码搜索走 `code_methods`，文档搜索走 `doc_chunks`，KG 搜索走 `kg_nodes`。
+旧版 `{project}_methods` 等命名集合仍被支持（后向兼容），通过 RRF 融合两端结果。
 
 ### 代码搜索流程
 
 1. MCP 层 `--path` → 解析为项目名（从 config.yaml）
 2. embed query → 向量
-3. 仅搜索 `{project}_methods` collection（按 project 过滤，修 #3）
-4. 读完整 payload（name/file_path/start_line/end_line/signature/calls/method_id，修 #2）
-5. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤（修 #10）
-6. 兜底：vector 不可用时用全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`（修 #6）
-
-### 依赖分析 (`dt dependency`)
-
-通过 Memgraph 知识图谱中的 `:CALLS` / `:DEPENDS_ON` / `:IMPORTS` 关系，用 Cypher 可变长路径实现多跳调用链遍历：
-
-```cypher
-MATCH p = (caller)-[:CALLS|DEPENDS_ON|IMPORTS*1..5]->(target)
-RETURN caller, length(p) AS distance
-```
-
-- `max_depth` 参数实际生效（上限 5 防爆炸，修 #4）
-- 返回 `DependencyGraph`：上游 callers + 下游 callees + impact analysis
-- 统一解析函数支持 Bolt + HTTP 两种 graph 返回格式（修 #7）
-
-### 关联：搜索 → KG 关系
-
-代码搜索返回 `element_id`，用户可传入 `dt dependency --target <element_id>` 展开完整调用链。搜索结果还附带 `calls` 静态调用列表，无需额外查询即可了解方法调用关系（修 #9）。
-
-## 项目结构
-
-```
-digital-twin-v2/
-├── README.md
-├── Cargo.toml                  # 单 crate (dt-daemon)
-├── config.yaml                 # 集中配置
-├── config/
-│   ├── pipeline.yaml           # Pipeline 引擎配置 (inference server URL, processor toggles)
-│   └── prompts/                # LLM prompt 模板 (YAML)
-│       ├── code_with_ast.yaml
-│       ├── document_with_nlp.yaml
-│       └── raw_text.yaml
-├── src/
-│   ├── main.rs                 # CLI 入口 (clap) + gRPC server 启动
-│   ├── lib.rs
-│   ├── domain/
-│   │   ├── config.rs           # AppConfig + SecretString
-│   │   ├── error.rs            # DomainError
-│   │   ├── id.rs               # 统一 ID 格式 (dt://entity/...)
-│   │   ├── traits.rs           # GraphRepository, VectorRepository, EmbedService, ...
-│   │   └── types.rs            # 六世界实体类型定义
-│   ├── infrastructure/
-│   │   ├── embedder.rs         # NoopEmbedService (fallback)
-│   │   ├── memgraph/           # Memgraph Bolt 驱动
-│   │   ├── parser/             # tree-sitter 多语言解析器
-│   │   ├── qdrant/             # Qdrant gRPC 驱动
-│   │   ├── scanner.rs          # 项目文件扫描
-│   │   └── sqlite/             # SQLite 快照缓存
-│   ├── application/
-│   │   ├── build/              # dt build / update / watch
-│   │   ├── context/            # Context Builder 管道 (6 world)
-│   │   │   ├── graph_parse.rs   # 统一 graph 结果解析 (Bolt+HTTP)
-│   │   ├── knowledge/          # memorize / learn / event
-│   │   ├── pipeline/           # Pipeline Engine (processor orchestration)
-│   │   │   ├── engine.rs       # ProcessorEngine: analyze_file / analyze_batch
-│   │   │   ├── registry.rs     # ProcessorRegistry + priority ordering
-│   │   │   ├── processor.rs    # Processor trait
-│   │   │   ├── config.rs       # PipelineConfig
-│   │   │   ├── context.rs      # PipelineContext (共享状态)
-│   │   │   ├── infer_client.rs # SiliconFlowChatClient (HTTP → SiliconFlow API)
-│   │   │   ├── prompt.rs       # PromptRegistry (YAML templates)
-│   │   │   ├── output.rs       # 输出类型
-│   │   │   ├── processors/
-│   │   │   │   ├── tree_sitter.rs   # AST 解析
-│   │   │   │   ├── chunk.rs         # 文档分块
-│   │   │   │   ├── hanlp_client.rs  # HanLP NLP（已禁用，端点不可用）
-│   │   │   │   ├── llm_client.rs    # LLM 摘要/标签
-│   │   │   │   └── store.rs         # 写入 Memgraph + Qdrant
-│   │   │   └── test/
-│   │   │       ├── runner.rs   # 跑管线集成测试
-│   │   │       ├── cleanup.rs  # 清理 test- 前缀数据
-│   │   │       └── report.rs   # 测试报告生成
-│   │   ├── plugins/            # Plugin trait + registry
-│   │   └── sync/               # nacos-sync / k8s-sync / kg-sync
-│   ├── interfaces/
-│   │   ├── cli/                # CLI 辅助模块 (cleanup, backup, archive)
-│   │   └── grpc/               # gRPC server + services + auth
-│   └── shared/
-│       ├── chunker.rs          # 文档分块策略
-│       ├── coordinator.rs      # WriteCoordinator 并发写入协调
-│       ├── logging/            # 统一日志 (tracing + JSON)
-│       └── vectorizer.rs       # 文本向量化工具
-├── docs/                       # 架构设计文档 (10 份)
-│   ├── architecture-v3-single-crate-layered.md
-│   ├── architecture-v2-six-worlds.md
-│   ├── architecture-v2-data-schema.md
-│   ├── architecture-v2-data-pipeline.md
-│   ├── architecture-v2-pipeline-impl.md
-│   ├── architecture-v2-project-structure.md
-│   ├── architecture-v2-mcp-api-spec.md
-│   └── superpowers/specs/
-│       ├── 2026-07-22-unstructured-data-pipeline-design.md
-│       ├── 2026-07-22-inference-server-refactor-design.md
-│       ├── 2026-07-22-build-test-design.md
-│       └── 2026-07-25-search-dependency-fix-design.md
-├── test/
-│   └── fixtures/               # 测试夹具
-│       ├── java/OrderController.java
-│       ├── python/payment.py
-│       ├── markdown/architecture.md
-│       └── yaml/config.yaml
-└── .weave/plans/               # 实施路线图
-    └── v2-implementation-roadmap.md
-```
-
-## 架构文档
-
-详见 [docs/](docs/) 目录 (10 份架构设计文档)：
-
-| 文档 | 内容 |
-|------|------|
-| [architecture-v3-single-crate-layered.md](docs/architecture-v3-single-crate-layered.md) | 当前架构: 单 crate DDD 五层 |
-| [architecture-v2-six-worlds.md](docs/architecture-v2-six-worlds.md) | 六世界模型设计 |
-| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Memgraph Schema: 25 约束 + 全文索引 |
-| [architecture-v2-data-pipeline.md](docs/architecture-v2-data-pipeline.md) | 数据采集管线设计 |
-| [architecture-v2-pipeline-impl.md](docs/architecture-v2-pipeline-impl.md) | 管道实现细节 |
-| [architecture-v2-project-structure.md](docs/architecture-v2-project-structure.md) | 项目结构设计 |
-| [architecture-v2-mcp-api-spec.md](docs/architecture-v2-mcp-api-spec.md) | 12 个 MCP 工具 API 规范 |
-| [2026-07-22-inference-server-refactor-design.md](docs/superpowers/specs/2026-07-22-inference-server-refactor-design.md) | 推理服务: SiliconFlow API 集成 |
-| [2026-07-22-unstructured-data-pipeline-design.md](docs/superpowers/specs/2026-07-22-unstructured-data-pipeline-design.md) | Pipeline Engine: 非结构化数据处理器编排 |
-| [2026-07-22-build-test-design.md](docs/superpowers/specs/2026-07-22-build-test-design.md) | 管线集成测试设计 |
-| [2026-07-25-search-dependency-fix-design.md](docs/superpowers/specs/2026-07-25-search-dependency-fix-design.md) | 搜索与依赖分析架构修复 |
-
-## SiliconFlow API 集成
-
-所有模型推理（embed/rerank/chat）通过 SiliconFlow 云 API 完成，无需本地推理服务。
-
-**模型配置**（`~/.config/digital-twin/config.yaml`）：
-- `model_embed`: BAAI/bge-m3（1024 维）
-- `model_reranker`: BAAI/bge-reranker-v2-m3
-- `model_llm`: Qwen/Qwen2.5-14B-Instruct
-
-**Rust 客户端**：
-- `SiliconFlowClient`（`src/infrastructure/siliconflow.rs`）— 实现 EmbedService trait，用于 embed/rerank/chat
-- `SiliconFlowChatClient`（`src/application/pipeline/infer_client.rs`）— Pipeline 引擎用的 HTTP 客户端
+3. 搜索 `code_methods` 全局集合（按 project payload 过滤）
+4. 读完整 payload（name/file_path/start_line/end_line/signature/calls/method_id）
+5. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤
+6. 兜底：vector 不可用时用 Memgraph 全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`
 
 ## Pipeline Engine
 
-处理器编排框架，将非结构化文件 (代码/文档/文本) 通过多阶段处理管道转换为结构化知识。
+处理器编排框架，将非结构化文件（代码/文档/文本）通过多阶段处理管道转换为结构化知识。
 
 **架构：**
 ```
@@ -284,37 +150,174 @@ File → TreeSitterProcessor → ChunkProcessor → HanlpClientProcessor → Llm
 
 **核心组件：**
 - **Processor trait** — 通用处理器接口，支持 `priority()` 排序自动编排
-- **ProcessorEngine** — `analyze_file()` / `analyze_batch()` 入口，CPU/GPU 阶段分离
+- **ProcessorEngine** — `analyze_file()` / `analyze_batch()` 入口，CPU/GPU 阶段分离（阈值 85）
 - **SiliconFlowChatClient** — HTTP 客户端连接 SiliconFlow API (chat/embed)
 - **PromptRegistry** — YAML 模板管理 (code_with_ast, document_with_nlp, raw_text)
 - **PipelineConfig** — `config/pipeline.yaml` 配置
 
-**内置处理器 (按优先级)：**
+**内置处理器（按优先级）：**
 
 | 处理器 | 优先级 | 阶段 | 功能 |
 |--------|--------|------|------|
-| TreeSitterProcessor | 0 | CPU | tree-sitter AST 解析 |
-| ChunkProcessor | 1 | CPU | 文档分块 + 边界检测 |
-| HanlpClientProcessor | 2 | GPU | HanLP NLP 标注 (分词/词性/命名实体) |
-| LlmClientProcessor | 3 | GPU | LLM 摘要生成 + 标签提取 |
-| StoreProcessor | 4 | CPU | 结果写入 Memgraph + Qdrant |
+| TreeSitterProcessor | 100 | CPU | tree-sitter AST 解析（7 种语言） |
+| ChunkProcessor | 90 | CPU | 文档分块 + 边界检测 |
+| HanlpClientProcessor | 80 | GPU | HanLP NLP 标注 (NER/关键词/摘要) |
+| LlmClientProcessor | 60 | GPU | LLM 摘要生成 + 标签提取 |
+| StoreProcessor | 10 | CPU | 结果写入 Memgraph + Qdrant (始终运行) |
 
 **测试命令：**
-- `dt build --test` — 对真实项目运行 BuildCommand，验证 KG+Qdrant 写入
+- `dt build --test` — 对真实项目运行 BuildCommand，验证 KG+Qdrant 输出与 `test/expected.json` 一致
 - `dt clean --test` — 删除所有 `test-` 前缀的测试数据
 
-## AI 集成 (OpenCode)
+## Build 策略
 
-`dt` CLI 通过 gRPC 与 OpenCode MCP Server 通信，实现以下自动触发：
+`src/application/build/strategy/` 下两种策略：
+
+- **IncrementalStrategy**（默认）：SHA-256 差异比较，基于 SQLite 快照，仅处理变更文件
+- **FullRebuildStrategy**：清除全部项目数据后完全重建
+
+# SiliconFlow API 集成
+
+所有模型推理（embed/rerank/chat）通过 SiliconFlow 云 API 完成，同时可配置本地 XInference 作为备选。
+
+**模型配置**（`~/.config/digital-twin/config.yaml` `services.siliconflow`）：
+- `model_embed`: BAAI/bge-m3（1024 维）
+- `model_reranker`: BAAI/bge-reranker-v2-m3
+- `model_llm`: Qwen3-14B（SiliconFlow）/ Qwen3.5-9B（默认）
+
+**双 Provider 路由**（`services.embed`）：
+- `embed_provider`: 指定 embed 用哪个 provider（siliconflow / xinference）
+- `rerank_provider`: 指定 rerank 用哪个 provider
+- `llm_provider`: 指定 LLM 用哪个 provider
+
+**Rust 客户端**：
+- `SiliconFlowClient`（`src/infrastructure/siliconflow.rs`）— 实现 EmbedService/LlmService/RerankService，含 3 次重试
+- `XInferenceClient`（`src/infrastructure/xinference.rs`）— 与 SiliconFlow 同接口，面向本地推理
+- `EmbedProviderRouter`（`src/infrastructure/provider_router.rs`）— 路由到配置的 provider
+- `SiliconFlowChatClient`（`src/application/pipeline/infer_client.rs`）— Pipeline 引擎专用 HTTP 客户端
+
+## Hook 事件系统
+
+`config/event-hooks.yaml` 配置的事件驱动写入系统（`src/application/hooks/`），自动将外部操作（代码修改/部署/配置变更/决策/Bug 修复/会话结束/K8s 事件）写入知识图谱。
+
+| Hook | 触发条件 | 写入标签 |
+|------|---------|---------|
+| `code_modified` | 代码修改 | `:Modification` |
+| `jenkins_deploy_completed` | Jenkins 部署完成 | `:Deployment` + JenkinsJob/Build/ServiceInstance |
+| `config_changed` | Nacos 配置变更 | `:ConfigChange` |
+| `decision_made` | 架构决策 | `:Decision` |
+| `session_ended` | 会话结束 | `:Conversation` |
+
+## 项目结构
+
+```
+digital-twin-v2/
+├── README.md
+├── Cargo.toml                  # 单 crate (dt-daemon)
+├── src/
+│   ├── main.rs                 # 入口 (clap CLI + tokio gRPC server)
+│   ├── lib.rs                  # 模块声明
+│   ├── domain/                 # 领域层 (5 文件)
+│   │   ├── config.rs           # AppConfig + SecretString
+│   │   ├── error.rs            # DtError 枚举
+│   │   ├── id.rs               # dt://entity/... ID 生成
+│   │   ├── traits.rs           # GraphRepository, VectorRepository, EmbedService, ...
+│   │   └── types.rs            # 实体类型定义
+│   ├── infrastructure/         # 基础设施层 (11 模块)
+│   │   ├── memgraph/           # Memgraph Bolt 客户端 + schema
+│   │   ├── qdrant/             # Qdrant gRPC 驱动
+│   │   ├── sqlite/             # SQLite 快照缓存
+│   │   ├── embedder.rs         # NoopEmbedService (fallback)
+│   │   ├── siliconflow.rs      # SiliconFlow 云 API 客户端
+│   │   ├── xinference.rs       # XInference 本地推理客户端
+│   │   ├── provider_router.rs  # 双 Provider 路由
+│   │   ├── hanlp.rs            # HanLP NLP 客户端
+│   │   ├── scanner.rs          # 文件扫描 + 变更检测
+│   │   └── parser/             # tree-sitter 解析器 (7 语言)
+│   ├── application/            # 应用层 (8 模块)
+│   │   ├── build/              # dt build (strategy/pipeline/watcher)
+│   │   ├── context/            # Context Builder (6-stage pipeline)
+│   │   ├── hooks/              # Hook 事件驱动系统
+│   │   ├── knowledge/          # knowledge/memory/reasoning/thread
+│   │   ├── pipeline/           # Pipeline Engine (processor orchestration)
+│   │   ├── plugins/            # K8s/Svc/Jenkins 插件
+│   │   ├── search.rs           # 搜索融合 (RRF) + 扩展
+│   │   └── sync/               # nacos/k8s/jenkins/kg 同步
+│   ├── interfaces/             # 接口层
+│   │   ├── cli/                # 17 个 CLI 命令处理模块
+│   │   └── grpc/               # gRPC server + 8 个 service 实现
+│   └── shared/                 # 横切关注点
+│       ├── logging/            # JSON 日志 (tracing)
+│       ├── coordinator.rs      # WriteCoordinator 并发写入协调
+│       ├── chunker.rs          # 文档分块策略
+│       ├── vectorizer.rs       # 配置/API/日志向量化
+│       └── collections.rs      # Qdrant 集合命名约定
+├── config/
+│   ├── config.yaml.example     # 配置模板
+│   ├── pipeline.yaml           # Pipeline 引擎配置
+│   │── prompts/                # LLM prompt 模板
+│   └── event-hooks.yaml        # Hook 事件定义
+├── docs/                       # 架构文档 (10+ 份)
+├── skill/
+│   ├── SKILL.md                # digital-twin 技能入口
+│   └── guides/                 # 操作指南 (12 份)
+├── mcp/                        # MCP 服务器
+│   ├── mcp-server.py           # DT MCP Server V2 (34 工具)
+│   └── mcp-session-hooks.py    # 会话生命周期钩子 (旧版)
+├── scripts/
+│   ├── build-all.sh            # 全项目构建
+│   ├── setup.sh                # 一键部署
+│   ├── check_claude.sh         # Claude 环境检查
+│   └── fixes/                  # 一次性修复脚本 (已过时)
+├── logs/                       # 会话日志
+├── test/
+│   ├── expected.json           # 回归基线 (19 文件)
+│   ├── fixtures/               # 测试夹具 (10 文件)
+│   └── project/                # 集成测试项目 (13 文件)
+└── .claude/                    # AI 团队配置
+    └── agents/                 # 5 个 AI Agent 角色定义
+```
+
+## 架构文档
+
+详见 [docs/](docs/) 目录。
+
+| 文档 | 内容 |
+|------|------|
+| [architecture-v3-single-crate-layered.md](docs/architecture-v3-single-crate-layered.md) | 当前架构: 单 crate DDD 五层 |
+| [architecture-v2-six-worlds.md](docs/architecture-v2-six-worlds.md) | 六世界模型设计 (DEPRECATED) |
+| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Memgraph Schema 设计 (DEPRECATED) |
+| [architecture-v2-mcp-api-spec.md](docs/architecture-v2-mcp-api-spec.md) | MCP API 规范 |
+
+## HanLP NLP 集成
+
+本地 HanLP 服务（`:8765`）提供中文文本分析能力：
+
+- **处理器**: `HanlpClientProcessor`（优先级 80，GPU 阶段）
+- **输出**: `entities`（NER 实体列表，含 text/tag/frequency）、`keywords`（关键词数组）、`summary`（摘要）
+- **配置**: `~/.config/digital-twin/config.yaml` 中 `services.hanlp`
+- **测试**: `test/expected.json` 已覆盖 19 个文件的 HanLP keyword 基线
+
+## 外部依赖
+
+- **Memgraph 5.x** (Bolt `:7688` 或 `:7687`)
+- **Qdrant** (gRPC `:6334`)
+- **SiliconFlow API** — embed (BGE-M3)、rerank (BGE-reranker)、chat (Qwen3-14B)
+- **HanLP** (可选，`:8765`) — 中文 NLP (NER、关键词)
+- **tree-sitter** — 多语言 AST 解析 (Java/Python/TypeScript/Go/Rust/PHP/JavaScript)
+
+## AI 集成 (OpenCode / Claude Code)
+
+`dt` CLI 提供 gRPC 服务和 MCP 工具接口，外部 AI 助手通过 MCP 协议调用：
 
 | 触发操作 | 自动执行 |
 |---------|---------|
-| 源码编辑 | `dt update --file <path>` |
-| 软件安装 | `dt event --type SoftwareInstalled ...` |
-| Nacos 配置变更 | `dt event --type ConfigChange ...` |
-| 架构决策 | `dt memorize --type Decision ...` |
-| 生产部署 | `dt event --type Deploy ...` |
-| 会话结束 | `dt event --type Conversation ...` |
+| 源码编辑 | `dt build --file <path>` |
+| 软件安装 | Hook: `code_modified` / `dt event --type SoftwareInstalled ...` |
+| Nacos 配置变更 | Hook: `config_changed` / `dt nacos-sync` |
+| 架构决策 | Hook: `decision_made` / `dt memorize --type Decision ...` |
+| 生产部署 | Hook: `jenkins_deploy_completed` |
+| 会话结束 | Hook: `session_ended` |
 
 ## 许可证
 

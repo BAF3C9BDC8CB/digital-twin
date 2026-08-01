@@ -264,7 +264,8 @@ impl VectorQueue {
             priority: Priority::High,
             response: Some(tx),
         });
-        rx.await.map_err(|_| DtError::Repository("queue closed".into()))?
+        rx.await
+            .map_err(|_| DtError::Repository("queue closed".into()))?
     }
 
     /// Embed text(s) at NORMAL priority (code indexing / build).
@@ -281,7 +282,8 @@ impl VectorQueue {
             priority: Priority::Normal,
             response: Some(tx),
         });
-        rx.await.map_err(|_| DtError::Repository("queue closed".into()))?
+        rx.await
+            .map_err(|_| DtError::Repository("queue closed".into()))?
     }
 
     /// Enqueue text(s) at LOW priority (background sync).  Non-blocking.
@@ -324,10 +326,7 @@ impl VectorQueue {
 // ---------------------------------------------------------------------------
 
 /// Process a single HIGH-priority task immediately.
-async fn process_high(
-    embed: &Arc<dyn EmbedService>,
-    task: EmbedTask,
-) {
+async fn process_high(embed: &Arc<dyn EmbedService>, task: EmbedTask) {
     let result = embed.embed_batch(&task.texts).await;
     if let Some(tx) = task.response {
         let _ = tx.send(result);
@@ -335,10 +334,7 @@ async fn process_high(
 }
 
 /// Embed all texts in a batch and respond to each caller.
-async fn flush_batch(
-    embed: &Arc<dyn EmbedService>,
-    buffer: &mut Vec<EmbedTask>,
-) {
+async fn flush_batch(embed: &Arc<dyn EmbedService>, buffer: &mut Vec<EmbedTask>) {
     if buffer.is_empty() {
         return;
     }

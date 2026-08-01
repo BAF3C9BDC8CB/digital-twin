@@ -108,10 +108,7 @@ pub mod expansion {
                     .collect(),
             ),
         );
-        params.insert(
-            "limit".to_string(),
-            serde_json::Value::from(limit as i64),
-        );
+        params.insert("limit".to_string(), serde_json::Value::from(limit as i64));
 
         let result = graph
             .read_query(&cypher, params)
@@ -174,7 +171,9 @@ pub mod expansion {
 
         impl MockGraph {
             fn new() -> Self {
-                Self { captured_query: std::sync::Mutex::new(String::new()) }
+                Self {
+                    captured_query: std::sync::Mutex::new(String::new()),
+                }
             }
         }
 
@@ -218,13 +217,16 @@ pub mod expansion {
             let result = expand_nodes(
                 &graph as &dyn GraphRepository,
                 &ids,
-                2,   // depth
-                50,  // limit
+                2,  // depth
+                50, // limit
             )
             .await
             .expect("expand_nodes should succeed");
 
-            assert!(!result.is_empty(), "should return at least one related node");
+            assert!(
+                !result.is_empty(),
+                "should return at least one related node"
+            );
             assert_eq!(result[0].element_id, "4:1:abc");
             assert_eq!(result[0].name, "createPay");
             assert_eq!(result[0].label, "Method");
@@ -232,9 +234,18 @@ pub mod expansion {
 
             // Verify the Cypher query contains key fragments
             let captured = graph.captured_query.lock().unwrap().clone();
-            assert!(captured.contains("*1..2"), "depth=2 should produce *1..2, got: {captured}");
-            assert!(captured.contains("elementId(n) IN $ids"), "should filter by elementId, got: {captured}");
-            assert!(captured.contains("LIMIT $limit"), "should have LIMIT, got: {captured}");
+            assert!(
+                captured.contains("*1..2"),
+                "depth=2 should produce *1..2, got: {captured}"
+            );
+            assert!(
+                captured.contains("elementId(n) IN $ids"),
+                "should filter by elementId, got: {captured}"
+            );
+            assert!(
+                captured.contains("LIMIT $limit"),
+                "should have LIMIT, got: {captured}"
+            );
         }
     }
 }
@@ -250,16 +261,47 @@ pub mod rewrite {
     impl QueryRewriter {
         pub fn with_defaults() -> Self {
             let mut mapping = HashMap::new();
-            mapping.insert("数据库".to_string(), vec!["database".to_string(), "db".to_string()]);
-            mapping.insert("密码".to_string(), vec!["password".to_string(), "pass".to_string(), "secret".to_string()]);
-            mapping.insert("配置".to_string(), vec!["config".to_string(), "configuration".to_string()]);
-            mapping.insert("服务".to_string(), vec!["service".to_string(), "server".to_string()]);
-            mapping.insert("部署".to_string(), vec!["deploy".to_string(), "deployment".to_string()]);
-            mapping.insert("地址".to_string(), vec!["address".to_string(), "host".to_string(), "url".to_string()]);
+            mapping.insert(
+                "数据库".to_string(),
+                vec!["database".to_string(), "db".to_string()],
+            );
+            mapping.insert(
+                "密码".to_string(),
+                vec![
+                    "password".to_string(),
+                    "pass".to_string(),
+                    "secret".to_string(),
+                ],
+            );
+            mapping.insert(
+                "配置".to_string(),
+                vec!["config".to_string(), "configuration".to_string()],
+            );
+            mapping.insert(
+                "服务".to_string(),
+                vec!["service".to_string(), "server".to_string()],
+            );
+            mapping.insert(
+                "部署".to_string(),
+                vec!["deploy".to_string(), "deployment".to_string()],
+            );
+            mapping.insert(
+                "地址".to_string(),
+                vec!["address".to_string(), "host".to_string(), "url".to_string()],
+            );
             mapping.insert("端口".to_string(), vec!["port".to_string()]);
-            mapping.insert("日志".to_string(), vec!["log".to_string(), "logging".to_string()]);
-            mapping.insert("缓存".to_string(), vec!["cache".to_string(), "redis".to_string()]);
-            mapping.insert("消息".to_string(), vec!["message".to_string(), "queue".to_string(), "mq".to_string()]);
+            mapping.insert(
+                "日志".to_string(),
+                vec!["log".to_string(), "logging".to_string()],
+            );
+            mapping.insert(
+                "缓存".to_string(),
+                vec!["cache".to_string(), "redis".to_string()],
+            );
+            mapping.insert(
+                "消息".to_string(),
+                vec!["message".to_string(), "queue".to_string(), "mq".to_string()],
+            );
             QueryRewriter { mapping }
         }
 

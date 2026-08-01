@@ -25,8 +25,8 @@
 //! // report.summary = "已沉淀 1 个知识模式, 1 个 Playbook, 1 条踩坑经验"
 //! ```
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::knowledge::entities::{
@@ -128,9 +128,9 @@ impl LearnServiceImpl<DefaultKnowledgeService> {
         embed: Arc<dyn EmbedService>,
         vector: Arc<dyn VectorRepository>,
     ) -> Self {
-        let svc = Arc::new(
-            DefaultKnowledgeService::with_vectorization(graph, embed, vector),
-        );
+        let svc = Arc::new(DefaultKnowledgeService::with_vectorization(
+            graph, embed, vector,
+        ));
         Self::new(svc)
     }
 }
@@ -217,10 +217,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 experience_id,
                 title: format!("{} — 决策 #{}", request.task, i + 1),
                 summary: decision.clone(),
-                content: format!(
-                    "## 决策\n{}\n\n## 任务上下文\n{}",
-                    decision, request.task,
-                ),
+                content: format!("## 决策\n{}\n\n## 任务上下文\n{}", decision, request.task,),
                 domain: domain.clone(),
                 severity: ExperienceSeverity::Info,
                 project: project.to_string(),
@@ -231,7 +228,8 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
         }
 
         // ---- 4. Pattern + pitfalls → Playbook ----
-        if request.pattern.is_some() || !request.pitfalls.is_empty()
+        if request.pattern.is_some()
+            || !request.pitfalls.is_empty()
             || !request.decisions.is_empty()
         {
             let playbook_id = format!(
@@ -400,7 +398,16 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
 /// the first 2 characters of the trimmed task.
 pub(crate) fn extract_domain(task: &str) -> String {
     // Common domain keywords in Chinese
-    let domains = ["支付", "部署", "日志", "配置", "监控", "安全", "测试", "数据库"];
+    let domains = [
+        "支付",
+        "部署",
+        "日志",
+        "配置",
+        "监控",
+        "安全",
+        "测试",
+        "数据库",
+    ];
     for d in &domains {
         if task.contains(d) {
             return d.to_string();
@@ -449,8 +456,8 @@ mod tests {
     use super::*;
     use crate::application::knowledge::knowledge::entities::{Concept, Domain};
     use crate::application::knowledge::knowledge::service::KnowledgeService;
-    use async_trait::async_trait;
     use crate::domain::error::DtError;
+    use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -517,7 +524,10 @@ mod tests {
         }
     }
 
-    fn spy() -> (Arc<SpyKnowledgeService>, LearnServiceImpl<SpyKnowledgeService>) {
+    fn spy() -> (
+        Arc<SpyKnowledgeService>,
+        LearnServiceImpl<SpyKnowledgeService>,
+    ) {
         let svc = Arc::new(SpyKnowledgeService::new(
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicUsize::new(0)),

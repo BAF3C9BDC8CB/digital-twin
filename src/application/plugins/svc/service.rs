@@ -3,10 +3,10 @@
 //! Reads project configuration from config.yaml, checks process status
 //! via /proc and port scanning, manages services with native Rust code.
 
+use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::process::Command;
-use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 
 use crate::application::plugins::Plugin;
 use crate::domain::error::DtError;
@@ -92,11 +92,7 @@ impl SvcPluginService {
     }
 
     /// Get recent logs for a service by tailing its log file.
-    pub fn get_logs(
-        &self,
-        name: &str,
-        lines: Option<u32>,
-    ) -> Result<String, DtError> {
+    pub fn get_logs(&self, name: &str, lines: Option<u32>) -> Result<String, DtError> {
         let proj = self
             .projects
             .iter()
@@ -110,7 +106,11 @@ impl SvcPluginService {
             if alt.exists() {
                 return tail_file(&alt, lines.unwrap_or(50));
             }
-            return Ok(format!("No log file found at {} or {}", log_file.display(), alt.display()));
+            return Ok(format!(
+                "No log file found at {} or {}",
+                log_file.display(),
+                alt.display()
+            ));
         }
 
         tail_file(&log_file, lines.unwrap_or(50))
@@ -201,7 +201,10 @@ fn check_process(name: &str) -> (&'static str, Option<u32>) {
                             if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
                                 if cmdline.contains(name) {
                                     // Also check if it's a Java app (not just any java process)
-                                    if cmdline.contains("-jar") || cmdline.contains("spring") || cmdline.contains(name) {
+                                    if cmdline.contains("-jar")
+                                        || cmdline.contains("spring")
+                                        || cmdline.contains(name)
+                                    {
                                         return ("RUNNING", Some(pid));
                                     }
                                 }

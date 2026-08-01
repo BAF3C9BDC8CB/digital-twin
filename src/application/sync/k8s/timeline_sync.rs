@@ -32,11 +32,7 @@ impl K8sEventTimelineSync {
     ///
     /// # Returns
     /// Always `Ok(())` in this skeleton implementation.
-    pub async fn watch(
-        &self,
-        _namespace: &str,
-        _resource_version: &str,
-    ) -> Result<(), DtError> {
+    pub async fn watch(&self, _namespace: &str, _resource_version: &str) -> Result<(), DtError> {
         tracing::debug!("[k8s/timeline] watch() called — skeleton, no-op");
         Ok(())
     }

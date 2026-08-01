@@ -682,7 +682,9 @@ async fn verify_knowledge_graph(
 
     // Helper: run a count query, return Option<i64>. None on query error
     // (error is reported by the caller once, here).
-    let count = |query: &str, graph: &Arc<dyn GraphRepository>, params: &HashMap<String, serde_json::Value>| {
+    let count = |query: &str,
+                 graph: &Arc<dyn GraphRepository>,
+                 params: &HashMap<String, serde_json::Value>| {
         let graph = graph.clone();
         let params = params.clone();
         let q = query.to_string();
@@ -747,7 +749,12 @@ async fn verify_knowledge_graph(
             }
             None => {
                 any_query_failed = true;
-                report.add(CheckResult::failed(label, "KG", "query succeeds", "query error"));
+                report.add(CheckResult::failed(
+                    label,
+                    "KG",
+                    "query succeeds",
+                    "query error",
+                ));
             }
         }
     }
@@ -966,7 +973,11 @@ async fn verify_vector_payloads(
         match point_payload(vector, kg).await {
             Some(payload) => {
                 let mut missing: Vec<&str> = Vec::new();
-                if payload.get("business_id").and_then(|x| x.as_str()).is_none() {
+                if payload
+                    .get("business_id")
+                    .and_then(|x| x.as_str())
+                    .is_none()
+                {
                     missing.push("business_id");
                 }
                 if payload.get("name").and_then(|x| x.as_str()).is_none() {
@@ -1004,7 +1015,10 @@ async fn verify_vector_payloads(
     }
 
     // doc_chunks — §7.3 fields (doc_id / block_index / entity_ids / text).
-    if summary["check_doc_chunks_payload"].as_bool().unwrap_or(true) {
+    if summary["check_doc_chunks_payload"]
+        .as_bool()
+        .unwrap_or(true)
+    {
         let dc = crate::shared::collections::DOC_CHUNKS;
         match point_payload(vector, dc).await {
             Some(payload) => {
@@ -1064,7 +1078,10 @@ async fn point_payload(
         .await
         .ok()?;
     let point = results.first()?;
-    let payload = point.get("payload").or(point.get("result")).unwrap_or(point);
+    let payload = point
+        .get("payload")
+        .or(point.get("result"))
+        .unwrap_or(point);
     Some(payload.clone())
 }
 

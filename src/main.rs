@@ -603,12 +603,6 @@ struct ServiceConfig {
     #[serde(default)]
     sqlite: SqliteConfig,
     #[serde(default)]
-    siliconflow: SiliconFlowConfig,
-    #[serde(default)]
-    xinference: XInferenceConfig,
-    #[serde(default)]
-    embed: EmbedRouterConfig,
-    #[serde(default)]
     hanlp: HanlpConfig,
 }
 
@@ -688,86 +682,6 @@ impl Default for SqliteConfig {
 
 fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
-}
-
-/// SiliconFlow service configuration from config.yaml `services.siliconflow`.
-#[derive(Debug, Deserialize, Default)]
-struct SiliconFlowConfig {
-    /// Base URL (e.g. https://api.siliconflow.cn/v1).
-    #[serde(default = "default_siliconflow_url")]
-    url: String,
-    /// API key for Bearer authentication.
-    #[serde(default = "default_siliconflow_api_key")]
-    api_key: String,
-    /// Embedding model name (e.g. BAAI/bge-m3).
-    #[serde(default = "default_model_embed")]
-    model_embed: String,
-    /// Reranker model name (e.g. BAAI/bge-reranker-v2-m3).
-    #[serde(default = "default_model_reranker")]
-    model_reranker: String,
-    /// LLM model name (e.g. Qwen/Qwen3-8B).
-    #[serde(default = "default_model_llm")]
-    model_llm: String,
-}
-
-fn default_siliconflow_url() -> String {
-    "https://api.siliconflow.cn/v1".to_string()
-}
-fn default_siliconflow_api_key() -> String {
-    "".to_string()
-}
-fn default_model_embed() -> String {
-    "BAAI/bge-m3".to_string()
-}
-fn default_model_reranker() -> String {
-    "BAAI/bge-reranker-v2-m3".to_string()
-}
-fn default_model_llm() -> String {
-    "Qwen/Qwen3.5-9B".to_string()
-}
-
-/// XInference service configuration from config.yaml `services.xinference`.
-#[derive(Debug, Deserialize, Default)]
-struct XInferenceConfig {
-    /// Base URL (e.g. http://localhost:9997/v1).
-    #[serde(default)]
-    url: String,
-    /// API key (optional, typically empty for local).
-    #[serde(default)]
-    api_key: String,
-    /// Embedding model name (e.g. BAAI/bge-m3).
-    #[serde(default)]
-    model_embed: String,
-    /// Reranker model name (e.g. BAAI/bge-reranker-v2-m3).
-    #[serde(default)]
-    model_reranker: String,
-    /// LLM model name (e.g. Qwen/Qwen3-8B).
-    #[serde(default)]
-    model_llm: String,
-}
-
-/// Embed provider routing configuration from config.yaml `services.embed`.
-#[derive(Debug, Deserialize, Default)]
-struct EmbedRouterConfig {
-    /// Which provider to use for embedding ("siliconflow" or "xinference").
-    #[serde(default = "default_embed_provider")]
-    embed_provider: String,
-    /// Which provider to use for reranking ("siliconflow" or "xinference").
-    #[serde(default = "default_rerank_provider")]
-    rerank_provider: String,
-    /// Which provider to use for LLM chat ("siliconflow" or "xinference").
-    #[serde(default = "default_llm_provider")]
-    llm_provider: String,
-}
-
-fn default_embed_provider() -> String {
-    "siliconflow".to_string()
-}
-fn default_rerank_provider() -> String {
-    "siliconflow".to_string()
-}
-fn default_llm_provider() -> String {
-    "siliconflow".to_string()
 }
 
 /// HanLP service configuration from config.yaml `services.hanlp`.
@@ -959,78 +873,50 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
 
 /// Connect to the embedding service using the provider router.
 ///
-/// Reads both SiliconFlow and XInference config from config.yaml,
-/// then builds a [`EmbedProviderRouter`] that routes requests to the
-/// configured provider per capability.
+/// Reads provider config exclusively from config/pipeline.yaml (PipelineConfig).
+/// This function is the single source of truth for embed service creation.
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
-    let cfg = load_config();
-    let (
-        sf_url,
-        sf_key,
-        sf_embed,
-        sf_rerank,
-        sf_llm,
-        xi_url,
-        xi_key,
-        xi_embed,
-        xi_rerank,
-        xi_llm,
-        emb_provider,
-        rerank_provider,
-        llm_provider,
-    ) = cfg
-        .as_ref()
-        .map(|c| {
-            (
-                c.services.siliconflow.url.clone(),
-                c.services.siliconflow.api_key.clone(),
-                c.services.siliconflow.model_embed.clone(),
-                c.services.siliconflow.model_reranker.clone(),
-                c.services.siliconflow.model_llm.clone(),
-                c.services.xinference.url.clone(),
-                c.services.xinference.api_key.clone(),
-                c.services.xinference.model_embed.clone(),
-                c.services.xinference.model_reranker.clone(),
-                c.services.xinference.model_llm.clone(),
-                c.services.embed.embed_provider.clone(),
-                c.services.embed.rerank_provider.clone(),
-                c.services.embed.llm_provider.clone(),
-            )
-        })
-        .unwrap_or_else(|| {
-            (
-                default_siliconflow_url(),
-                default_siliconflow_api_key(),
-                default_model_embed(),
-                default_model_reranker(),
-                default_model_llm(),
-                String::new(), // xinference url
-                String::new(), // xinference api_key
-                String::new(), // xinference model_embed
-                String::new(), // xinference model_reranker
-                String::new(), // xinference model_llm
-                default_embed_provider(),
-                default_rerank_provider(),
-                default_llm_provider(),
-            )
-        });
+    use dt_daemon::application::pipeline::config::PipelineConfig;
+
+    let pipeline_cfg = PipelineConfig::load().ok()?;
+    let pcfg = pipeline_cfg.providers?;
+
+    let sf = pcfg.siliconflow.as_ref();
+    let xi = pcfg.xinference.as_ref();
+
+    // At least one provider must have a non-empty URL
+    let sf_url = sf.map(|s| s.url.as_str()).unwrap_or("");
+    let xi_url = xi.map(|s| s.url.as_str()).unwrap_or("");
+    if sf_url.is_empty() && xi_url.is_empty() {
+        tracing::warn!("pipeline.yaml providers: 所有 provider URL 为空，跳过 embed 服务");
+        return None;
+    }
+
+    let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
     let cfg = dt_daemon::infrastructure::embedder::ProviderConfig {
-        siliconflow_url: sf_url,
-        siliconflow_api_key: sf_key,
-        siliconflow_model_embed: sf_embed,
-        siliconflow_model_reranker: sf_rerank,
-        siliconflow_model_llm: sf_llm,
-        xinference_url: xi_url,
-        xinference_api_key: xi_key,
-        xinference_model_embed: xi_embed,
-        xinference_model_reranker: xi_rerank,
-        xinference_model_llm: xi_llm,
-        embed_provider: emb_provider,
-        rerank_provider,
-        llm_provider,
+        siliconflow_url: sf_url.to_string(),
+        siliconflow_api_key: sf
+            .and_then(|s| {
+                if s.api_key.is_empty() {
+                    None
+                } else {
+                    Some(s.api_key.clone())
+                }
+            })
+            .unwrap_or_else(api_key_fallback),
+        siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
+        siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
+        siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        xinference_url: xi_url.to_string(),
+        xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
+        xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
+        xinference_model_reranker: xi.map(|s| s.model_reranker.clone()).unwrap_or_default(),
+        xinference_model_llm: xi.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        embed_provider: pcfg.embed_provider.clone(),
+        rerank_provider: pcfg.rerank_provider.clone(),
+        llm_provider: pcfg.llm_provider.clone(),
     };
-
     Some(dt_daemon::infrastructure::embedder::create_embed_router(
         cfg,
     ))

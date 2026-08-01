@@ -40,18 +40,36 @@ use tokio::sync::mpsc;
 
 /// Source-code file extensions that the watcher monitors.
 const SOURCE_EXTENSIONS: &[&str] = &[
-    "java", "py", "ts", "tsx", "go", "rs", "php", "js", "jsx", "mjs", "cjs",
-    "kt", "kts", "swift", "scala", "rb", "cpp", "cc", "cxx", "c", "h", "hpp",
-    "cs", "fs", "fsx", "vue", "svelte",
+    "java", "py", "ts", "tsx", "go", "rs", "php", "js", "jsx", "mjs", "cjs", "kt", "kts", "swift",
+    "scala", "rb", "cpp", "cc", "cxx", "c", "h", "hpp", "cs", "fs", "fsx", "vue", "svelte",
 ];
 
 /// Directory names whose contents are never watched.
 const IGNORE_DIRS: &[&str] = &[
-    "node_modules", ".git", "target", "build", "__pycache__",
-    ".venv", "dist", ".next", "vendor", ".idea", ".vscode",
-    "coverage", ".nyc_output", "out", "classes", ".turbo",
-    ".cache", ".tmp", "tmp", "cache", "generated-sources",
-    "generated-test-sources", ".nuxt", ".output",
+    "node_modules",
+    ".git",
+    "target",
+    "build",
+    "__pycache__",
+    ".venv",
+    "dist",
+    ".next",
+    "vendor",
+    ".idea",
+    ".vscode",
+    "coverage",
+    ".nyc_output",
+    "out",
+    "classes",
+    ".turbo",
+    ".cache",
+    ".tmp",
+    "tmp",
+    "cache",
+    "generated-sources",
+    "generated-test-sources",
+    ".nuxt",
+    ".output",
 ];
 
 // ---------------------------------------------------------------------------
@@ -202,10 +220,7 @@ impl FileWatcher {
     ///
     /// Returns `Err` if the watcher is already running or the PID file
     /// cannot be written.
-    pub fn start(
-        &self,
-    ) -> anyhow::Result<mpsc::UnboundedReceiver<FileChangeEvent>>
-    {
+    pub fn start(&self) -> anyhow::Result<mpsc::UnboundedReceiver<FileChangeEvent>> {
         if self.running.swap(true, Ordering::SeqCst) {
             anyhow::bail!("watcher is already running");
         }
@@ -254,9 +269,12 @@ impl FileWatcher {
     /// On Unix the function invokes `kill -TERM <pid>`.  On non-Unix targets
     /// it returns an error.
     pub fn stop(&self) -> anyhow::Result<()> {
-        let pid_str = fs::read_to_string(&self.pid_file)
-            .map_err(|e| anyhow::anyhow!("cannot read PID file {}: {e}", self.pid_file.display()))?;
-        let pid: i32 = pid_str.trim().parse()
+        let pid_str = fs::read_to_string(&self.pid_file).map_err(|e| {
+            anyhow::anyhow!("cannot read PID file {}: {e}", self.pid_file.display())
+        })?;
+        let pid: i32 = pid_str
+            .trim()
+            .parse()
             .map_err(|e| anyhow::anyhow!("invalid PID in {}: {e}", self.pid_file.display()))?;
 
         #[cfg(unix)]
@@ -442,10 +460,7 @@ fn classify_event_kind(kind: &EventKind) -> Option<FileChangeKind> {
 }
 
 /// Find the project that owns `file_path` by longest-prefix match.
-fn resolve_project(
-    file_path: &Path,
-    projects: &[(String, PathBuf)],
-) -> Option<(String, PathBuf)> {
+fn resolve_project(file_path: &Path, projects: &[(String, PathBuf)]) -> Option<(String, PathBuf)> {
     projects
         .iter()
         .filter(|(_, root)| file_path.starts_with(root))
@@ -495,9 +510,7 @@ mod tests {
         assert!(!FileWatcher::is_source_file(Path::new(
             ".git/hooks/pre-commit.ts"
         )));
-        assert!(!FileWatcher::is_source_file(Path::new(
-            "dist/bundle.js"
-        )));
+        assert!(!FileWatcher::is_source_file(Path::new("dist/bundle.js")));
     }
 
     #[test]
@@ -572,13 +585,11 @@ mod tests {
         ];
 
         assert_eq!(
-            resolve_project(Path::new("/data/projects/a/src/main.rs"), &projects)
-                .map(|(n, _)| n),
+            resolve_project(Path::new("/data/projects/a/src/main.rs"), &projects).map(|(n, _)| n),
             Some("a".into())
         );
         assert_eq!(
-            resolve_project(Path::new("/data/projects/b/pkg/main.go"), &projects)
-                .map(|(n, _)| n),
+            resolve_project(Path::new("/data/projects/b/pkg/main.go"), &projects).map(|(n, _)| n),
             Some("b".into())
         );
     }

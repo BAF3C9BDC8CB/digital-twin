@@ -4,13 +4,11 @@
 //! chains in the knowledge graph.
 
 use crate::application::hooks::HookEngine;
-use crate::domain::traits::GraphRepository;
-use crate::proto::dt::core::*;
-use crate::proto::dt::common;
-use crate::application::knowledge::memory::service::{
-    DefaultMemoryService, MemoryService,
-};
 use crate::application::knowledge::memory::entities::{EventType, MemoryEvent};
+use crate::application::knowledge::memory::service::{DefaultMemoryService, MemoryService};
+use crate::domain::traits::GraphRepository;
+use crate::proto::dt::common;
+use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::Status;
 
@@ -20,9 +18,7 @@ pub async fn handle_record_event(
     graph: Option<Arc<dyn GraphRepository>>,
     hook_engine: Option<Arc<HookEngine>>,
 ) -> Result<common::Empty, Status> {
-    let graph = graph.ok_or_else(|| {
-        Status::unavailable("Graph backend not available")
-    })?;
+    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
 
     let project = if req.project.is_empty() {
         "unknown"

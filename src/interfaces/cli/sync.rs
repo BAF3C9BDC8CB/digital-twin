@@ -21,13 +21,11 @@ pub async fn handle_nacos_sync(
 
     if let Some(graph) = graph {
         // Run both config and service sync.
-        let client =
-            crate::application::sync::nacos::client::NacosClient::new(nacos_url);
-        let config_source =
-            crate::application::sync::nacos::config_sync::ConfigSyncSource::new(
-                client.clone(),
-                env.clone(),
-            );
+        let client = crate::application::sync::nacos::client::NacosClient::new(nacos_url);
+        let config_source = crate::application::sync::nacos::config_sync::ConfigSyncSource::new(
+            client.clone(),
+            env.clone(),
+        );
         match config_source.sync(&*graph).await {
             Ok(report) => {
                 let total_configs = report.configs;
@@ -38,7 +36,8 @@ pub async fn handle_nacos_sync(
                 );
                 tracing::info!(
                     "nacos-sync config: {} configs across {} namespaces",
-                    total_configs, total_ns,
+                    total_configs,
+                    total_ns,
                 );
             }
             Err(e) => {
@@ -48,11 +47,10 @@ pub async fn handle_nacos_sync(
         }
 
         // Run service sync.
-        let service_source =
-            crate::application::sync::nacos::service_sync::ServiceSyncSource::new(
-                client,
-                env.clone(),
-            );
+        let service_source = crate::application::sync::nacos::service_sync::ServiceSyncSource::new(
+            client,
+            env.clone(),
+        );
         match service_source.sync(&*graph).await {
             Ok(report) => {
                 println!(
@@ -61,7 +59,8 @@ pub async fn handle_nacos_sync(
                 );
                 tracing::info!(
                     "nacos-sync service: {} services across {} namespaces",
-                    report.services, report.namespaces,
+                    report.services,
+                    report.namespaces,
                 );
             }
             Err(e) => {
@@ -75,7 +74,10 @@ pub async fn handle_nacos_sync(
             WHERE c.namespace IS NULL OR c.namespace = '' \
             OR c.data_id IS NULL OR c.data_id = '' \
             DETACH DELETE c";
-        match graph.write_query(cleanup_cypher, std::collections::HashMap::new()).await {
+        match graph
+            .write_query(cleanup_cypher, std::collections::HashMap::new())
+            .await
+        {
             Ok(_) => tracing::info!("Orphan NacosConfig nodes cleaned"),
             Err(e) => tracing::warn!("Failed to clean orphan NacosConfig nodes: {e}"),
         }
@@ -97,10 +99,7 @@ pub async fn handle_k8s_sync(
     tracing::info!("dt-daemon CLI: k8s-sync --dry-run {dry_run}");
 
     if let Some(k8s) = k8s_cfg {
-        println!(
-            "K8s sync: server={}, dry_run={}",
-            k8s.server, dry_run
-        );
+        println!("K8s sync: server={}, dry_run={}", k8s.server, dry_run);
 
         if dry_run {
             println!(
@@ -126,7 +125,10 @@ pub async fn handle_k8s_sync(
                             }
                         }
                     }
-                    tracing::info!("k8s-sync complete: {:?}", summaries.iter().map(|s| &s.resource).collect::<Vec<_>>());
+                    tracing::info!(
+                        "k8s-sync complete: {:?}",
+                        summaries.iter().map(|s| &s.resource).collect::<Vec<_>>()
+                    );
                 }
                 Err(e) => {
                     tracing::error!("k8s-sync failed: {e}");
@@ -187,8 +189,10 @@ pub async fn handle_kg_sync(
                 let cfg = crate::infrastructure::embedder::ProviderConfig {
                     siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
                     siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
-                    siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
-                    siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(),
+                    siliconflow_model_embed:
+                        crate::infrastructure::siliconflow::embed_model_from_env(),
+                    siliconflow_model_reranker:
+                        crate::infrastructure::siliconflow::reranker_model_from_env(),
                     siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
                     xinference_url: String::new(),
                     xinference_api_key: String::new(),
@@ -203,26 +207,24 @@ pub async fn handle_kg_sync(
                 tracing::info!("Embed provider router created for kg-sync");
                 svc
             };
-            let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
-            let vector: Arc<dyn VectorRepository> = match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {
-                Ok(client) => {
-                    tracing::info!("Qdrant connected for kg-sync");
-                    Arc::new(crate::infrastructure::qdrant::QdrantRepo::new(client))
-                }
-                Err(e) => {
-                    tracing::warn!("Qdrant unavailable for kg-sync: {e}");
-                    Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
-                }
-            };
+            let qdrant_url =
+                std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
+            let vector: Arc<dyn VectorRepository> =
+                match crate::infrastructure::qdrant::QdrantClient::connect(&qdrant_url).await {
+                    Ok(client) => {
+                        tracing::info!("Qdrant connected for kg-sync");
+                        Arc::new(crate::infrastructure::qdrant::QdrantRepo::new(client))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Qdrant unavailable for kg-sync: {e}");
+                        Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
+                    }
+                };
             (embed, vector)
         };
 
         let mut bridge =
-            crate::application::sync::kg_bridge::KgBridge::new(
-                graph.clone(),
-                embed,
-                vector,
-            );
+            crate::application::sync::kg_bridge::KgBridge::new(graph.clone(), embed, vector);
         if let Some(q) = queue {
             bridge = bridge.with_queue(q);
         }

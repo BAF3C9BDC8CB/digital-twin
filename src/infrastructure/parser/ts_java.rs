@@ -98,7 +98,8 @@ impl TsJavaParser {
                         Vec::new()
                     };
                     let body = Self::get_body(source, &child);
-                    let method_id = make_method_id(project, file_path, class_name, &name, start_line);
+                    let method_id =
+                        make_method_id(project, file_path, class_name, &name, start_line);
                     methods.push(MethodBlock {
                         method_id,
                         name,
@@ -211,8 +212,14 @@ impl ParseStrategy for TsJavaParser {
                         .map(|n| tree_sitter_utils::node_text(source, &n).to_string())
                         .unwrap_or_default();
                     if let Some(body) = child.child_by_field_name("body") {
-                        let body_methods =
-                            Self::collect_methods(source, &body, project, &file_path, &pkg, &class_name);
+                        let body_methods = Self::collect_methods(
+                            source,
+                            &body,
+                            project,
+                            &file_path,
+                            &pkg,
+                            &class_name,
+                        );
                         methods.extend(body_methods);
                     }
                 }
@@ -245,7 +252,11 @@ mod tests {
         .expect("read HelloService.java");
         let parser = TsJavaParser;
         let result = parser
-            .parse(&source, &PathBuf::from("HelloService.java"), "test-pipeline")
+            .parse(
+                &source,
+                &PathBuf::from("HelloService.java"),
+                "test-pipeline",
+            )
             .expect("parse");
         // Should have 3 methods: createOrder, saveToDb, sendNotification (no phantoms)
         assert_eq!(
@@ -296,9 +307,17 @@ mod tests {
         assert_eq!(sn.end_line, 23);
 
         // Verify classes
-        let hs = result.classes.iter().find(|c| c.name == "HelloService").unwrap();
+        let hs = result
+            .classes
+            .iter()
+            .find(|c| c.name == "HelloService")
+            .unwrap();
         assert_eq!(hs.start_line, 6);
-        let or = result.classes.iter().find(|c| c.name == "OrderRequest").unwrap();
+        let or = result
+            .classes
+            .iter()
+            .find(|c| c.name == "OrderRequest")
+            .unwrap();
         assert_eq!(or.start_line, 26);
     }
 

@@ -4,12 +4,12 @@
 //! preserving all distinct source references.  Two items are considered
 //! duplicates when their content similarity exceeds a threshold.
 
-use std::collections::HashSet;
-use async_trait::async_trait;
 use crate::domain::error::DtError;
+use async_trait::async_trait;
+use std::collections::HashSet;
 
-use crate::application::context::models::{ContextState, WorldItem};
 use super::ContextStage;
+use crate::application::context::models::{ContextState, WorldItem};
 
 /// Deduplication threshold (Jaccard similarity on word sets).
 /// Items above this threshold in the same world are merged.
@@ -25,13 +25,41 @@ impl ContextStage for DedupStage {
     }
 
     async fn process(&self, mut state: ContextState) -> Result<ContextState, DtError> {
-        let worlds: [(&str, fn(&ContextState) -> &[WorldItem], fn(&mut ContextState) -> &mut Vec<WorldItem>); 6] = [
-            ("reality", |s: &ContextState| s.reality_ranked.as_slice(), |s: &mut ContextState| &mut s.reality_deduped),
-            ("knowledge", |s: &ContextState| s.knowledge_ranked.as_slice(), |s: &mut ContextState| &mut s.knowledge_deduped),
-            ("memory", |s: &ContextState| s.memory_ranked.as_slice(), |s: &mut ContextState| &mut s.memory_deduped),
-            ("semantic", |s: &ContextState| s.semantic_ranked.as_slice(), |s: &mut ContextState| &mut s.semantic_deduped),
-            ("runtime", |s: &ContextState| s.runtime_ranked.as_slice(), |s: &mut ContextState| &mut s.runtime_deduped),
-            ("reasoning", |s: &ContextState| s.reasoning_ranked.as_slice(), |s: &mut ContextState| &mut s.reasoning_deduped),
+        let worlds: [(
+            &str,
+            fn(&ContextState) -> &[WorldItem],
+            fn(&mut ContextState) -> &mut Vec<WorldItem>,
+        ); 6] = [
+            (
+                "reality",
+                |s: &ContextState| s.reality_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.reality_deduped,
+            ),
+            (
+                "knowledge",
+                |s: &ContextState| s.knowledge_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.knowledge_deduped,
+            ),
+            (
+                "memory",
+                |s: &ContextState| s.memory_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.memory_deduped,
+            ),
+            (
+                "semantic",
+                |s: &ContextState| s.semantic_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.semantic_deduped,
+            ),
+            (
+                "runtime",
+                |s: &ContextState| s.runtime_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.runtime_deduped,
+            ),
+            (
+                "reasoning",
+                |s: &ContextState| s.reasoning_ranked.as_slice(),
+                |s: &mut ContextState| &mut s.reasoning_deduped,
+            ),
         ];
 
         for (world, get_ranked, get_deduped) in &worlds {
@@ -128,7 +156,10 @@ fn is_similar(a: &WorldItem, b: &WorldItem) -> bool {
 /// Extract a set of lowercase words from content text.
 fn word_set(text: &str) -> HashSet<String> {
     text.split_whitespace()
-        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
         .filter(|w| w.len() > 1)
         .collect()
 }
@@ -177,9 +208,15 @@ mod tests {
     #[test]
     fn deduplicate_preserves_order_by_score() {
         let items = vec![
-            WorldItem::new("a", "A", "top content").with_score(0.95).with_type("T"),
-            WorldItem::new("b", "B", "mid content").with_score(0.8).with_type("T"),
-            WorldItem::new("c", "C", "low content").with_score(0.6).with_type("T"),
+            WorldItem::new("a", "A", "top content")
+                .with_score(0.95)
+                .with_type("T"),
+            WorldItem::new("b", "B", "mid content")
+                .with_score(0.8)
+                .with_type("T"),
+            WorldItem::new("c", "C", "low content")
+                .with_score(0.6)
+                .with_type("T"),
         ];
         let result = deduplicate(&items);
         assert_eq!(result.len(), 3);
@@ -190,16 +227,17 @@ mod tests {
 
     #[test]
     fn is_similar_identical() {
-        let a = WorldItem::new("x", "X", "the quick brown fox jumps over the lazy dog")
-            .with_type("T");
-        let b = WorldItem::new("y", "Y", "the quick brown fox jumps over the lazy dog")
-            .with_type("T");
+        let a =
+            WorldItem::new("x", "X", "the quick brown fox jumps over the lazy dog").with_type("T");
+        let b =
+            WorldItem::new("y", "Y", "the quick brown fox jumps over the lazy dog").with_type("T");
         assert!(is_similar(&a, &b));
     }
 
     #[test]
     fn is_similar_different() {
-        let a = WorldItem::new("x", "X", "deployment configuration for payment service").with_type("T");
+        let a =
+            WorldItem::new("x", "X", "deployment configuration for payment service").with_type("T");
         let b = WorldItem::new("y", "Y", "database schema for user table").with_type("T");
         assert!(!is_similar(&a, &b));
     }
@@ -229,10 +267,17 @@ mod tests {
 
     #[tokio::test]
     async fn dedup_stage_process() {
-        let mut state = ContextState::new("test", &crate::application::context::models::ContextOptions::default());
+        let mut state = ContextState::new(
+            "test",
+            &crate::application::context::models::ContextOptions::default(),
+        );
         state.reality_ranked = vec![
-            WorldItem::new("a", "A", "payment service").with_score(0.9).with_type("S"),
-            WorldItem::new("b", "B", "payment service").with_score(0.8).with_type("S"),
+            WorldItem::new("a", "A", "payment service")
+                .with_score(0.9)
+                .with_type("S"),
+            WorldItem::new("b", "B", "payment service")
+                .with_score(0.8)
+                .with_type("S"),
         ];
 
         let stage = DedupStage;

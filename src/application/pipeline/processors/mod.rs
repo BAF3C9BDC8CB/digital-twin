@@ -14,14 +14,14 @@
 //! | 60       | `LlmClient`      | LLM analysis                  |
 //! | 10       | `Store`          | Persist to graph + vector DB  |
 
-pub mod tree_sitter;
 pub mod chunk;
 pub mod hanlp_client;
 pub mod llm_client;
 pub mod store;
+pub mod tree_sitter;
 
-pub use tree_sitter::TreeSitterProcessor;
 pub use chunk::ChunkProcessor;
 pub use hanlp_client::HanlpClientProcessor;
 pub use llm_client::LlmClientProcessor;
 pub use store::StoreProcessor;
+pub use tree_sitter::TreeSitterProcessor;

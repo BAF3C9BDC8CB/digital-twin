@@ -27,7 +27,7 @@
 |---------|--------|------|
 | 修改了代码文件（.java/.py/.ts等） | ✅ 插件自动触发，AI 无需操作 | 自动增量索引 |
 | 批量同步 / 首次索引 | `dt build --path <根目录> --name <项目名>` | 手动触发 |
-| 删除了文件 | `dt remove --project <项目名> --file <路径>` | 清理索引 |
+| 删除了文件 | `dt build --full --path <根目录> --name <项目名>` | 全量重建，不再支持单文件删除  |
 | 修改了 Nacos/Apollo 配置 | `dt nacos-sync --env test`（测试）或 `--env prod`（生产） | 同步到 KG |
 | 安装了软件（apt/pip/npm等） | `dt event --type SoftwareInstalled --entity-id <包名> --details "version: X"` | 记录事件 |
 | 做了架构/技术决策 | `dt memorize --type Decision --entity-id <标识> --project <项目> --details "decision: X; reason: Y"` | 记录决策 |
@@ -62,7 +62,7 @@
 
 | 步骤 | 命令 | 说明 |
 |------|------|------|
-| 1 | `dt index --path <项目根> --name <项目名>` | 全量重建索引 |
+| 1 | `dt build --path <项目根> --name <项目名> --full` | 全量重建索引 |
 | 2 | `dt kg-sync` | 同步 KG 节点到向量库 |
 | 3 | `dt health` | 确认全部就绪 |
 

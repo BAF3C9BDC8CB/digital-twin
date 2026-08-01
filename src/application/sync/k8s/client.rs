@@ -16,8 +16,8 @@
 #![allow(private_interfaces)]
 
 use super::types::{
-    ConfigMapItem, DeploymentItem, IngressItem, K8sItemList, KuboardLoginResp,
-    NodeItem, PVCItem, PodItem, ServiceItem,
+    ConfigMapItem, DeploymentItem, IngressItem, K8sItemList, KuboardLoginResp, NodeItem, PVCItem,
+    PodItem, ServiceItem,
 };
 use super::K8sSyncConfig;
 use crate::domain::error::DtError;
@@ -68,10 +68,7 @@ impl KuboardClient {
 
     /// Fetch services for a namespace.
     pub async fn fetch_services(&self, namespace: &str) -> Vec<ServiceItem> {
-        let url = format!(
-            "{}/api/v1/namespaces/{}/services",
-            self.base_url, namespace
-        );
+        let url = format!("{}/api/v1/namespaces/{}/services", self.base_url, namespace);
         fetch_items::<ServiceItem>(&self.http, &url, &self.token).await
     }
 
@@ -110,10 +107,7 @@ impl KuboardClient {
 
     /// Fetch pods for a namespace (CLI display, not persisted in the graph database).
     pub async fn fetch_pods(&self, namespace: &str) -> Vec<PodItem> {
-        let url = format!(
-            "{}/api/v1/namespaces/{}/pods",
-            self.base_url, namespace
-        );
+        let url = format!("{}/api/v1/namespaces/{}/pods", self.base_url, namespace);
         fetch_items::<PodItem>(&self.http, &url, &self.token).await
     }
 

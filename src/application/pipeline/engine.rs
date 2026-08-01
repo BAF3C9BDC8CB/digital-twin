@@ -166,12 +166,18 @@ impl ProcessorEngine {
         let mut errors: Vec<String> = Vec::new();
 
         // Phase 1: CPU-bound stages (priority >= threshold).
-        for &processor in matching.iter().filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD) {
+        for &processor in matching
+            .iter()
+            .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD)
+        {
             Self::run_processor(processor, &mut ctx, &mut errors, &file_path_buf).await;
         }
 
         // Phase 2: GPU-bound stages (priority < threshold).
-        for &processor in matching.iter().filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD) {
+        for &processor in matching
+            .iter()
+            .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD)
+        {
             Self::run_processor(processor, &mut ctx, &mut errors, &file_path_buf).await;
         }
 
@@ -193,16 +199,24 @@ impl ProcessorEngine {
     ///    (bounded by `available_parallelism`).
     /// 2. **GPU stages** run on the resulting contexts with concurrency
     ///    limited to `max_concurrent` via an internal semaphore.
+    ///
+    /// `skip_steps` is an optional per-file set of processor names to skip.
+    /// When a file's step is in the skip set, that processor is not executed
+    /// for that file — even though other processors may still run. This
+    /// enables incremental builds where only missing steps are executed.
     pub async fn analyze_batch(
         &self,
         files: Vec<(PathBuf, String)>,
         project_name: String,
+        skip_steps: Option<Arc<HashMap<PathBuf, HashSet<String>>>>,
     ) -> Vec<FileAnalysis> {
         // Phase 1: CPU-bound processors on all files in parallel.
-        let cpu_results = self.run_cpu_stages(files, project_name).await;
+        let cpu_results = self
+            .run_cpu_stages(files, project_name, skip_steps.clone())
+            .await;
 
         // Phase 2: GPU-bound processors on the resulting analyses.
-        self.run_gpu_stages(cpu_results).await
+        self.run_gpu_stages(cpu_results, skip_steps).await
     }
 
     // ------------------------------------------------------------------
@@ -218,6 +232,7 @@ impl ProcessorEngine {
         &self,
         files: Vec<(PathBuf, String)>,
         project_name: String,
+        skip_steps: Option<Arc<HashMap<PathBuf, HashSet<String>>>>,
     ) -> Vec<FileAnalysis> {
         let concurrency = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -230,6 +245,7 @@ impl ProcessorEngine {
             let registry = Arc::clone(&registry);
             let proj = Arc::clone(&project_name);
             let path_clone = path.clone();
+            let skip = skip_steps.clone();
 
             async move {
                 let mut ctx = PipelineContext::new(path_clone, text, (*proj).clone());
@@ -239,13 +255,19 @@ impl ProcessorEngine {
                 let cpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
-                    .filter(|p| {
-                        p.priority() >= CPU_PRIORITY_THRESHOLD && p.matches(&path)
-                    })
+                    .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD && p.matches(&path))
                     .map(|p| p.as_ref())
                     .collect();
 
                 for processor in &cpu_processors {
+                    // Skip this processor if it's in the per-file skip set
+                    if let Some(ref skip_map) = skip {
+                        if let Some(steps) = skip_map.get(&path) {
+                            if steps.contains(processor.name()) {
+                                continue;
+                            }
+                        }
+                    }
                     match processor.execute(&ctx).await {
                         Ok(output) => {
                             ctx.add_output(processor.name(), output);
@@ -287,6 +309,7 @@ impl ProcessorEngine {
     pub async fn run_gpu_stages(
         &self,
         analyses: Vec<FileAnalysis>,
+        skip_steps: Option<Arc<HashMap<PathBuf, HashSet<String>>>>,
     ) -> Vec<FileAnalysis> {
         let registry = Arc::clone(&self.registry);
         let semaphore = Arc::new(Semaphore::new(self.max_concurrent));
@@ -294,6 +317,7 @@ impl ProcessorEngine {
         stream::iter(analyses.into_iter().map(move |mut analysis| {
             let registry = Arc::clone(&registry);
             let sem = Arc::clone(&semaphore);
+            let skip = skip_steps.clone();
 
             async move {
                 // Acquire a semaphore permit before touching the GPU server.
@@ -312,13 +336,19 @@ impl ProcessorEngine {
                 let gpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
-                    .filter(|p| {
-                        p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&path)
-                    })
+                    .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&path))
                     .map(|p| p.as_ref())
                     .collect();
 
                 for processor in &gpu_processors {
+                    // Skip this processor if it's in the per-file skip set
+                    if let Some(ref skip_map) = skip {
+                        if let Some(steps) = skip_map.get(&path) {
+                            if steps.contains(processor.name()) {
+                                continue;
+                            }
+                        }
+                    }
                     match processor.execute(&analysis.context).await {
                         Ok(output) => {
                             analysis.context.add_output(processor.name(), output);
@@ -477,7 +507,10 @@ impl ProcessorEngine {
             let lower = imp.to_lowercase();
             let (protocol, hint) = if lower.contains("feign") || lower.contains("resttemplate") {
                 ("HTTP", "RestTemplate/Feign")
-            } else if lower.contains("kafkatemplate") || lower.contains("rabbittemplate") || lower.contains("jms") {
+            } else if lower.contains("kafkatemplate")
+                || lower.contains("rabbittemplate")
+                || lower.contains("jms")
+            {
                 ("MQ", "Messaging")
             } else if lower.contains("grpc") || lower.contains("stub") {
                 ("RPC", "gRPC")
@@ -526,14 +559,18 @@ impl ProcessorEngine {
                     tracing::warn!(project = %project_name, error = %e, "LLM project summary failed");
                     format!(
                         "Project {}: {} files, {} services",
-                        project_name, file_count, services.len()
+                        project_name,
+                        file_count,
+                        services.len()
                     )
                 }
             }
         } else {
             format!(
                 "Project {}: {} files, {} services",
-                project_name, file_count, services.len()
+                project_name,
+                file_count,
+                services.len()
             )
         };
 
@@ -818,7 +855,9 @@ async fn summarize_via_llm(
     system_prompt: &str,
     data_json: &str,
 ) -> Result<String, String> {
-    let response = client.chat(system_prompt, data_json, 0.1, 2048).await?;
+    let response = client
+        .chat("default", system_prompt, data_json, 0.1, 2048)
+        .await?;
     Ok(response.choices[0].message.content.clone())
 }
 
@@ -930,7 +969,11 @@ mod tests {
             )
             .await;
 
-        assert!(result.success, "expected success, got errors: {:?}", result.errors);
+        assert!(
+            result.success,
+            "expected success, got errors: {:?}",
+            result.errors
+        );
         assert_eq!(result.file_path.to_string_lossy(), "src/main.rs");
 
         // Both processors should have produced output.
@@ -989,12 +1032,9 @@ mod tests {
         registry.register(Box::new(RsGpuProcessor)); // priority 60 < 85   → GPU
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
-        let files = vec![(
-            PathBuf::from("a.rs"),
-            "fn a() {}".to_string(),
-        )];
+        let files = vec![(PathBuf::from("a.rs"), "fn a() {}".to_string())];
 
-        let results = engine.run_cpu_stages(files, "p".to_string()).await;
+        let results = engine.run_cpu_stages(files, "p".to_string(), None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
@@ -1015,7 +1055,7 @@ mod tests {
             (PathBuf::from("b.rs"), "fn b() {}".to_string()),
         ];
 
-        let results = engine.run_cpu_stages(files, "p".to_string()).await;
+        let results = engine.run_cpu_stages(files, "p".to_string(), None).await;
         assert_eq!(results.len(), 2);
         for r in &results {
             assert!(r.context.get_output("rs_cpu").is_some());
@@ -1052,7 +1092,7 @@ mod tests {
             context: ctx,
         }];
 
-        let results = engine.run_gpu_stages(analyses).await;
+        let results = engine.run_gpu_stages(analyses, None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
@@ -1077,12 +1117,9 @@ mod tests {
         registry.register(Box::new(RsGpuProcessor));
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
-        let files = vec![(
-            PathBuf::from("test.rs"),
-            "fn main() {}".to_string(),
-        )];
+        let files = vec![(PathBuf::from("test.rs"), "fn main() {}".to_string())];
 
-        let results = engine.analyze_batch(files, "p".to_string()).await;
+        let results = engine.analyze_batch(files, "p".to_string(), None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
@@ -1100,12 +1137,9 @@ mod tests {
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
         // Send a .py file — no processor should match.
-        let files = vec![(
-            PathBuf::from("script.py"),
-            "import sys".to_string(),
-        )];
+        let files = vec![(PathBuf::from("script.py"), "import sys".to_string())];
 
-        let results = engine.analyze_batch(files, "p".to_string()).await;
+        let results = engine.analyze_batch(files, "p".to_string(), None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
@@ -1120,7 +1154,7 @@ mod tests {
         registry.register(Box::new(RsCpuProcessor));
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
-        let results = engine.analyze_batch(vec![], "p".to_string()).await;
+        let results = engine.analyze_batch(vec![], "p".to_string(), None).await;
         assert!(results.is_empty());
     }
 
@@ -1174,7 +1208,7 @@ mod tests {
     /// Build a fake FileAnalysis with tree‑sitter output.
     fn make_ts_analysis(
         file_path: &str,
-        classes: Vec<(&str, &str)>,   // (class_name, package)
+        classes: Vec<(&str, &str)>, // (class_name, package)
         methods: Vec<(&str, &str, &str, Vec<&str>)>, // (class_name, method, return_type, calls)
         imports: Vec<&str>,
         success: bool,
@@ -1249,14 +1283,24 @@ mod tests {
             make_ts_analysis(
                 "UserController.java",
                 vec![("UserController", "com.app.controller")],
-                vec![("UserController", "getUser", "User", vec!["userService.findById()", "restTemplate.get()"])],
+                vec![(
+                    "UserController",
+                    "getUser",
+                    "User",
+                    vec!["userService.findById()", "restTemplate.get()"],
+                )],
                 vec!["org.springframework.web.client.RestTemplate"],
                 true,
             ),
             make_ts_analysis(
                 "UserService.java",
                 vec![("UserService", "com.app.service")],
-                vec![("UserService", "findById", "User", vec!["userRepository.findById()"])],
+                vec![(
+                    "UserService",
+                    "findById",
+                    "User",
+                    vec!["userRepository.findById()"],
+                )],
                 vec![],
                 true,
             ),
@@ -1272,7 +1316,7 @@ mod tests {
         // Should have discovered service names
         assert!(result.services.contains(&"user-service".to_string()));
         assert!(result.services.contains(&"User".to_string())); // from UserService/UserController
-        // Should have extracted dependencies
+                                                                // Should have extracted dependencies
         assert!(!result.dependencies.is_empty());
         // Should have a default summary
         assert!(result.summary.contains("user-service"));
@@ -1479,6 +1523,10 @@ mod tests {
             .iter()
             .filter(|r| r.contains("circular") || r.contains("cycle"))
             .collect();
-        assert!(!cycle_risks.is_empty(), "Expected cycle detection, risks: {:?}", result.risks);
+        assert!(
+            !cycle_risks.is_empty(),
+            "Expected cycle detection, risks: {:?}",
+            result.risks
+        );
     }
 }

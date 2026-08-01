@@ -1,7 +1,7 @@
+use crate::application::hooks::types::{EventTypeConfig, HookConfig};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
-use sha2::{Digest, Sha256};
-use crate::application::hooks::types::{EventTypeConfig, HookConfig};
 
 pub struct HookRegistry {
     subscribers: HashMap<String, Vec<EventTypeConfig>>,
@@ -46,7 +46,8 @@ fn compute_schema_hash(cfg: &EventTypeConfig) -> String {
     }
 
     // 关系配置：按 (type, label) 排序确保确定性
-    let mut rel_pairs: Vec<(&str, &str)> = cfg.relationships
+    let mut rel_pairs: Vec<(&str, &str)> = cfg
+        .relationships
         .iter()
         .map(|r| (r.rel_type.as_str(), r.target_label.as_str()))
         .collect();
@@ -75,7 +76,11 @@ impl HookRegistry {
         for mut et in event_types {
             et.schema_hash = compute_schema_hash(&et);
             et.property_names = et.properties.iter().map(|p| p.name.clone()).collect();
-            et.relationship_types = et.relationships.iter().map(|r| r.rel_type.clone()).collect();
+            et.relationship_types = et
+                .relationships
+                .iter()
+                .map(|r| r.rel_type.clone())
+                .collect();
 
             subscribers
                 .entry(et.subscribe.clone())
@@ -87,7 +92,10 @@ impl HookRegistry {
 
         config.event_types = processed;
 
-        Ok(Self { subscribers, config })
+        Ok(Self {
+            subscribers,
+            config,
+        })
     }
 
     pub fn subscribers(&self, hook_name: &str) -> &[EventTypeConfig] {
@@ -168,7 +176,10 @@ event_types:
         let config: HookConfig = serde_yaml::from_str(yaml).expect("parse");
         let mut subscribers: HashMap<String, Vec<EventTypeConfig>> = HashMap::new();
         for et in &config.event_types {
-            subscribers.entry(et.subscribe.clone()).or_default().push(et.clone());
+            subscribers
+                .entry(et.subscribe.clone())
+                .or_default()
+                .push(et.clone());
         }
 
         assert_eq!(subscribers.get("code_modified").unwrap().len(), 1);

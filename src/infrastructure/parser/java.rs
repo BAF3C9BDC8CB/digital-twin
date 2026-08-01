@@ -32,8 +32,16 @@ impl JavaParser {
                 // Skip keywords and common control flow
                 if matches!(
                     name.as_str(),
-                    "if" | "for" | "while" | "switch" | "catch" | "return"
-                        | "throw" | "new" | "try" | "synchronized" | "assert"
+                    "if" | "for"
+                        | "while"
+                        | "switch"
+                        | "catch"
+                        | "return"
+                        | "throw"
+                        | "new"
+                        | "try"
+                        | "synchronized"
+                        | "assert"
                 ) {
                     None
                 } else {
@@ -185,7 +193,13 @@ impl ParseStrategy for JavaParser {
                 current_class = "_top_level_".to_string();
             }
 
-            let method_id = make_method_id(project, &file_path_no_slash, &current_class, &method_name, start_line);
+            let method_id = make_method_id(
+                project,
+                &file_path_no_slash,
+                &current_class,
+                &method_name,
+                start_line,
+            );
 
             // Extract the method body for calls and source text.
             // Interface methods end with `;` — skip body extraction.
@@ -200,15 +214,9 @@ impl ParseStrategy for JavaParser {
             let calls = Self::extract_calls(&body);
             let comment = Self::find_comment(&lines, start_line - 1);
 
-            let signature = format!(
-                "{} {} {}({})",
-                modifiers,
-                return_type,
-                method_name,
-                params
-            )
-            .trim()
-            .to_string();
+            let signature = format!("{} {} {}({})", modifiers, return_type, method_name, params)
+                .trim()
+                .to_string();
 
             let end_line = if body.is_empty() {
                 start_line
@@ -240,7 +248,8 @@ impl ParseStrategy for JavaParser {
 
         // Filter out phantom methods caused by regex matching method body calls.
         // Build ranges for all methods that actually have a body ({ ... }), i.e. end_line > start_line.
-        let concrete_ranges: Vec<(usize, usize)> = methods.iter()
+        let concrete_ranges: Vec<(usize, usize)> = methods
+            .iter()
             .filter(|m| m.end_line > m.start_line)
             .map(|m| (m.start_line, m.end_line))
             .collect();
@@ -335,7 +344,9 @@ public class HelloWorld {
     }
 }
 "#;
-        let result = parser.parse(src, &PathBuf::from("HelloWorld.java"), "test").unwrap();
+        let result = parser
+            .parse(src, &PathBuf::from("HelloWorld.java"), "test")
+            .unwrap();
 
         assert!(result.classes.len() >= 1);
         assert_eq!(result.classes[0].name, "HelloWorld");
@@ -351,7 +362,9 @@ public class HelloWorld {
     fn parses_interface() {
         let parser = JavaParser;
         let src = "public interface PaymentService {\n    void pay(String orderId);\n}";
-        let result = parser.parse(src, &PathBuf::from("PaymentService.java"), "test").unwrap();
+        let result = parser
+            .parse(src, &PathBuf::from("PaymentService.java"), "test")
+            .unwrap();
         assert!(result.classes.len() >= 1);
         assert_eq!(result.classes[0].kind, ClassKind::Interface);
     }
@@ -368,16 +381,24 @@ public interface DaoBase {
     List<E> selectList(E entity);
 }
 "#;
-        let result = parser.parse(src, &PathBuf::from("DaoBase.java"), "test").unwrap();
+        let result = parser
+            .parse(src, &PathBuf::from("DaoBase.java"), "test")
+            .unwrap();
         assert!(result.classes.len() >= 1);
         assert_eq!(result.classes[0].kind, ClassKind::Interface);
         // interface methods should be parsed
-        assert!(result.methods.len() >= 3, "Expected >= 3 methods, got {}", result.methods.len());
+        assert!(
+            result.methods.len() >= 3,
+            "Expected >= 3 methods, got {}",
+            result.methods.len()
+        );
         assert!(result.methods.iter().any(|m| m.name == "insert"));
         assert!(result.methods.iter().any(|m| m.name == "selectList"));
         // class method_ids should be populated
-        assert!(!result.classes[0].method_ids.is_empty(),
-            "Class method_ids should be populated");
+        assert!(
+            !result.classes[0].method_ids.is_empty(),
+            "Class method_ids should be populated"
+        );
     }
 
     #[test]

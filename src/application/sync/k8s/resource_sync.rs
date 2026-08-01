@@ -16,11 +16,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::client::KuboardClient;
-use crate::application::sync::k8s::types::{DeploymentItem, K8sServer, NodeItem, ServiceItem};
 use super::K8sSyncConfig;
-use crate::shared::coordinator::WriteCoordinator;
+use crate::application::sync::k8s::types::{DeploymentItem, K8sServer, NodeItem, ServiceItem};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use crate::shared::coordinator::WriteCoordinator;
 
 // ============================================================================
 // K8sSyncSummary — per-resource-type report
@@ -100,10 +100,7 @@ impl K8sResourceSync {
     /// Run the complete sync: login, fetch, write.
     ///
     /// Returns a vector of per-resource-type summaries.
-    pub async fn run(
-        &self,
-        graph: &dyn GraphRepository,
-    ) -> Result<Vec<K8sSyncSummary>, DtError> {
+    pub async fn run(&self, graph: &dyn GraphRepository) -> Result<Vec<K8sSyncSummary>, DtError> {
         tracing::info!("[k8s] Connecting to Kuboard ({})...", self.config.server);
         let client = KuboardClient::connect(self.config.clone()).await?;
         tracing::info!("[k8s] Authenticated successfully");
@@ -250,7 +247,10 @@ async fn sync_deployments(
             ("available".to_string(), serde_json::json!(available)),
             ("strategy".to_string(), serde_json::Value::String(strategy)),
             ("labels".to_string(), serde_json::Value::String(labels)),
-            ("created_at".to_string(), serde_json::Value::String(created_at)),
+            (
+                "created_at".to_string(),
+                serde_json::Value::String(created_at),
+            ),
         ]
         .into_iter()
         .collect();
@@ -323,14 +323,22 @@ async fn sync_services(
     for svc in items {
         let name = &svc.metadata.name;
         let ns = svc.metadata.namespace.as_deref().unwrap_or("default");
-        let svc_type = svc.spec.svc_type.as_deref().unwrap_or("ClusterIP").to_string();
+        let svc_type = svc
+            .spec
+            .svc_type
+            .as_deref()
+            .unwrap_or("ClusterIP")
+            .to_string();
         let cluster_ip = svc.spec.cluster_ip.as_deref().unwrap_or("").to_string();
 
         let params: HashMap<String, serde_json::Value> = [
             ("name".to_string(), serde_json::Value::String(name.clone())),
             ("ns".to_string(), serde_json::Value::String(ns.to_string())),
             ("svc_type".to_string(), serde_json::Value::String(svc_type)),
-            ("cluster_ip".to_string(), serde_json::Value::String(cluster_ip)),
+            (
+                "cluster_ip".to_string(),
+                serde_json::Value::String(cluster_ip),
+            ),
         ]
         .into_iter()
         .collect();
@@ -395,12 +403,30 @@ async fn sync_servers(
 
     for srv in items {
         let params: HashMap<String, serde_json::Value> = [
-            ("server_id".to_string(), serde_json::Value::String(srv.server_id.clone())),
-            ("name".to_string(), serde_json::Value::String(srv.name.clone())),
-            ("hostname".to_string(), serde_json::Value::String(srv.hostname.clone())),
-            ("service_type".to_string(), serde_json::Value::String(srv.service_type.clone())),
-            ("cpu_cores".to_string(), serde_json::Value::String(srv.cpu_cores.clone())),
-            ("memory_gb".to_string(), serde_json::Value::String(srv.memory_gb.clone())),
+            (
+                "server_id".to_string(),
+                serde_json::Value::String(srv.server_id.clone()),
+            ),
+            (
+                "name".to_string(),
+                serde_json::Value::String(srv.name.clone()),
+            ),
+            (
+                "hostname".to_string(),
+                serde_json::Value::String(srv.hostname.clone()),
+            ),
+            (
+                "service_type".to_string(),
+                serde_json::Value::String(srv.service_type.clone()),
+            ),
+            (
+                "cpu_cores".to_string(),
+                serde_json::Value::String(srv.cpu_cores.clone()),
+            ),
+            (
+                "memory_gb".to_string(),
+                serde_json::Value::String(srv.memory_gb.clone()),
+            ),
         ]
         .into_iter()
         .collect();
@@ -442,9 +468,10 @@ async fn sync_servers(
 // ---------------------------------------------------------------------------
 
 async fn ensure_namespace(graph: &dyn GraphRepository, ns: &str) -> Result<(), DtError> {
-    let params: HashMap<String, serde_json::Value> = [
-        ("name".to_string(), serde_json::Value::String(ns.to_string())),
-    ]
+    let params: HashMap<String, serde_json::Value> = [(
+        "name".to_string(),
+        serde_json::Value::String(ns.to_string()),
+    )]
     .into_iter()
     .collect();
 
@@ -474,9 +501,12 @@ async fn run_cross_linking(
                        AND (svc.name ENDS WITH '-stable' OR svc.name ENDS WITH '-svc'))
                 MERGE (svc)-[:EXPOSES]->(ns)
                 "#,
-                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "k8s_ns".to_string(),
+                    serde_json::Value::String(ns.to_string()),
+                )]
+                .into_iter()
+                .collect(),
             )
             .await;
 
@@ -511,9 +541,12 @@ async fn run_cross_linking(
                        AND (d.name ENDS WITH '-stable' OR d.name ENDS WITH '-svc'))
                 MERGE (d)-[:DEPLOYS]->(ns)
                 "#,
-                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "k8s_ns".to_string(),
+                    serde_json::Value::String(ns.to_string()),
+                )]
+                .into_iter()
+                .collect(),
             )
             .await;
 
@@ -528,11 +561,17 @@ async fn run_cross_linking(
                 MERGE (kns)-[:MAPS_TO]->(nns)
                 "#,
                 [
-                    ("k8s_ns".to_string(), serde_json::Value::String(ns.to_string())),
-                    ("env".to_string(), serde_json::Value::String(env_name.to_string())),
+                    (
+                        "k8s_ns".to_string(),
+                        serde_json::Value::String(ns.to_string()),
+                    ),
+                    (
+                        "env".to_string(),
+                        serde_json::Value::String(env_name.to_string()),
+                    ),
                 ]
-                    .into_iter()
-                    .collect(),
+                .into_iter()
+                .collect(),
             )
             .await;
 
@@ -544,9 +583,12 @@ async fn run_cross_linking(
                 MATCH (ns:Namespace {name: $k8s_ns})
                 MERGE (s)-[:NODE_IN]->(ns)
                 "#,
-                [("k8s_ns".to_string(), serde_json::Value::String(ns.to_string()))]
-                    .into_iter()
-                    .collect(),
+                [(
+                    "k8s_ns".to_string(),
+                    serde_json::Value::String(ns.to_string()),
+                )]
+                .into_iter()
+                .collect(),
             )
             .await;
     }
@@ -561,8 +603,8 @@ async fn run_cross_linking(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::domain::types::HealthStatus;
+    use async_trait::async_trait;
 
     struct MockGraph {
         write_queries: std::sync::Mutex<Vec<String>>,
@@ -742,14 +784,7 @@ mod tests {
 
     #[test]
     fn k8s_sync_summary_with_errors() {
-        let s = K8sSyncSummary::with_errors(
-            "k8s/test",
-            10,
-            8,
-            2,
-            vec!["err1".into()],
-            200,
-        );
+        let s = K8sSyncSummary::with_errors("k8s/test", 10, 8, 2, vec!["err1".into()], 200);
         assert_eq!(s.items_fetched, 10);
         assert_eq!(s.items_written, 8);
         assert_eq!(s.items_failed, 2);

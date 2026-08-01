@@ -121,9 +121,21 @@ impl DomainQueryService {
             for row_val in rows {
                 let row = row_val.get("row").and_then(|r| r.as_array());
                 if let Some(row) = row {
-                    let name = row.first().and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let etype = row.get(1).and_then(|v| v.as_str()).unwrap_or("?").to_string();
-                    let desc = row.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let name = row
+                        .first()
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let etype = row
+                        .get(1)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    let desc = row
+                        .get(2)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
                     if !name.is_empty() && name != "?" {
                         match etype.as_str() {

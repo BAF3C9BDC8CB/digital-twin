@@ -22,7 +22,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .compile_protos(
-            &protos.iter().map(|p| p.to_str().unwrap()).collect::<Vec<_>>(),
+            &protos
+                .iter()
+                .map(|p| p.to_str().unwrap())
+                .collect::<Vec<_>>(),
             &[proto_dir.to_str().unwrap()],
         )?;
 

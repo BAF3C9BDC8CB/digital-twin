@@ -183,10 +183,7 @@ impl DependencyService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("?")
                     .to_string(),
-                distance: row
-                    .get("distance")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(1) as u32,
+                distance: row.get("distance").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
                 source_file: row
                     .get("source_file")
                     .and_then(|v| v.as_str())
@@ -204,12 +201,12 @@ impl DependencyService {
 
         for e in upstream.iter().chain(downstream.iter()) {
             match e.entity_type.as_str() {
-                "Service" | "MicroService" | "Module"
-                    if !services.contains(&e.name) => {
+                "Service" | "MicroService" | "Module" if !services.contains(&e.name) => {
                     services.push(e.name.clone());
                 }
                 "NacosConfig" | "Configuration" | "Config" | "YamlConfig"
-                    if !configs.contains(&e.name) => {
+                    if !configs.contains(&e.name) =>
+                {
                     configs.push(e.name.clone());
                 }
                 _ => {}

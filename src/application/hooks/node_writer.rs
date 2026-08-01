@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde_json::Value;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 通用节点写入器
 ///
@@ -38,10 +38,7 @@ impl NodeWriter {
         event_id: &str,
         props: &HashMap<String, Value>,
     ) -> Result<(), DtError> {
-        let mut cypher = format!(
-            "MERGE (e:{} {{ {}: $event_id }})\n",
-            label, id_field
-        );
+        let mut cypher = format!("MERGE (e:{} {{ {}: $event_id }})\n", label, id_field);
 
         let mut params: HashMap<String, Value> = HashMap::new();
         params.insert("event_id".into(), Value::String(event_id.into()));
@@ -82,7 +79,10 @@ impl NodeWriter {
 
         // 解析返回结果
         if let Some(row) = result.as_array().and_then(|arr| arr.first()) {
-            let hash = row.get("hash").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let hash = row
+                .get("hash")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let props: Vec<String> = row
                 .get("props")
                 .and_then(|v| v.as_str())
@@ -117,7 +117,9 @@ impl NodeWriter {
         let deprecated: Vec<String> = match old_state {
             Some(state) if state.hash.as_deref() != Some(schema_hash) => {
                 // 只在 hash 不一致时才做属性清理
-                state.props.iter()
+                state
+                    .props
+                    .iter()
                     .filter(|n| !n.starts_with('_')) // 保留系统属性
                     .filter(|n| !current_prop_names.contains(n))
                     .cloned()
@@ -129,17 +131,16 @@ impl NodeWriter {
         let has_migration = !deprecated.is_empty();
 
         // 构建 Cypher
-        let mut cypher = format!(
-            "MERGE (e:{} {{ {}: $event_id }})\n",
-            label, id_field,
-        );
+        let mut cypher = format!("MERGE (e:{} {{ {}: $event_id }})\n", label, id_field,);
 
         let mut params: HashMap<String, Value> = HashMap::new();
         params.insert("event_id".into(), Value::String(event_id.into()));
 
         // SET 当前属性
         for (key, value) in props {
-            if value.is_null() { continue; }
+            if value.is_null() {
+                continue;
+            }
             let pn = format!("p_{}", key.replace('.', "_"));
             cypher.push_str(&format!("SET e.{} = ${}\n", key, pn));
             params.insert(pn, value.clone());
@@ -159,9 +160,7 @@ impl NodeWriter {
 
         // REMOVE 废弃属性
         if has_migration {
-            let removes: Vec<String> = deprecated.iter()
-                .map(|p| format!("e.{}", p))
-                .collect();
+            let removes: Vec<String> = deprecated.iter().map(|p| format!("e.{}", p)).collect();
             cypher.push_str(&format!("REMOVE {}\n", removes.join(", ")));
         }
 
@@ -224,13 +223,18 @@ mod tests {
         let mut props = HashMap::new();
         props.insert("job".into(), Value::String("my-app".into()));
 
-        writer.write("Deployment", "deploy_id", "evt-1", &props).await.unwrap();
+        writer
+            .write("Deployment", "deploy_id", "evt-1", &props)
+            .await
+            .unwrap();
 
         let queries = repo.queries.lock().unwrap();
         let q = &queries[0];
-        assert!(q.contains("MERGE (e:Deployment { deploy_id: $event_id })")
-            || q.contains("MERGE (e:Deployment {deploy_id: $event_id})"),
-            "bad cypher: {q}");
+        assert!(
+            q.contains("MERGE (e:Deployment { deploy_id: $event_id })")
+                || q.contains("MERGE (e:Deployment {deploy_id: $event_id})"),
+            "bad cypher: {q}"
+        );
         assert!(q.contains("SET e.job = $p_job"));
     }
 
@@ -241,9 +245,15 @@ mod tests {
 
         let mut props = HashMap::new();
         props.insert("_label".into(), Value::String("test-hook".into()));
-        props.insert("_created_at".into(), Value::String("2026-01-01T00:00:00Z".into()));
+        props.insert(
+            "_created_at".into(),
+            Value::String("2026-01-01T00:00:00Z".into()),
+        );
 
-        writer.write("BugFix", "fix_id", "evt-2", &props).await.unwrap();
+        writer
+            .write("BugFix", "fix_id", "evt-2", &props)
+            .await
+            .unwrap();
 
         let queries = repo.queries.lock().unwrap();
         let q = &queries[0];

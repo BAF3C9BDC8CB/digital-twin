@@ -135,9 +135,7 @@ impl Histogram {
     }
 
     pub fn exponential(start: f64, factor: f64, n: usize) -> Self {
-        let buckets: Vec<f64> = (0..n)
-            .map(|i| start * factor.powi(i as i32 + 1))
-            .collect();
+        let buckets: Vec<f64> = (0..n).map(|i| start * factor.powi(i as i32 + 1)).collect();
         let counts = vec![0u64; n];
         Self {
             inner: Arc::new(HistogramInner {
@@ -282,13 +280,7 @@ impl MetricsCollector {
     }
 
     /// Register or retrieve a histogram with exponential buckets.
-    pub fn histogram_exponential(
-        &self,
-        key: &str,
-        start: f64,
-        factor: f64,
-        n: usize,
-    ) -> Histogram {
+    pub fn histogram_exponential(&self, key: &str, start: f64, factor: f64, n: usize) -> Histogram {
         {
             let map = self.histograms.read();
             if let Some(h) = map.get(key) {

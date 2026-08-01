@@ -313,14 +313,32 @@ mod tests {
 
     #[test]
     fn knowledge_source_parsing() {
-        assert_eq!(KnowledgeSource::parse("ai_session"), KnowledgeSource::AiSession);
+        assert_eq!(
+            KnowledgeSource::parse("ai_session"),
+            KnowledgeSource::AiSession
+        );
         assert_eq!(KnowledgeSource::parse("ai_task"), KnowledgeSource::AiTask);
-        assert_eq!(KnowledgeSource::parse("document"), KnowledgeSource::Document);
-        assert_eq!(KnowledgeSource::parse("code_comment"), KnowledgeSource::CodeComment);
-        assert_eq!(KnowledgeSource::parse("user_dictation"), KnowledgeSource::UserDictation);
-        assert_eq!(KnowledgeSource::parse("execution_result"), KnowledgeSource::ExecutionResult);
+        assert_eq!(
+            KnowledgeSource::parse("document"),
+            KnowledgeSource::Document
+        );
+        assert_eq!(
+            KnowledgeSource::parse("code_comment"),
+            KnowledgeSource::CodeComment
+        );
+        assert_eq!(
+            KnowledgeSource::parse("user_dictation"),
+            KnowledgeSource::UserDictation
+        );
+        assert_eq!(
+            KnowledgeSource::parse("execution_result"),
+            KnowledgeSource::ExecutionResult
+        );
         // Unknown defaults to AiSession.
-        assert_eq!(KnowledgeSource::parse("garbage"), KnowledgeSource::AiSession);
+        assert_eq!(
+            KnowledgeSource::parse("garbage"),
+            KnowledgeSource::AiSession
+        );
     }
 
     #[test]
@@ -331,12 +349,24 @@ mod tests {
 
     #[test]
     fn experience_severity_parsing() {
-        assert_eq!(ExperienceSeverity::parse("critical"), ExperienceSeverity::Critical);
-        assert_eq!(ExperienceSeverity::parse("CRITICAL"), ExperienceSeverity::Critical);
-        assert_eq!(ExperienceSeverity::parse("warning"), ExperienceSeverity::Warning);
+        assert_eq!(
+            ExperienceSeverity::parse("critical"),
+            ExperienceSeverity::Critical
+        );
+        assert_eq!(
+            ExperienceSeverity::parse("CRITICAL"),
+            ExperienceSeverity::Critical
+        );
+        assert_eq!(
+            ExperienceSeverity::parse("warning"),
+            ExperienceSeverity::Warning
+        );
         assert_eq!(ExperienceSeverity::parse("info"), ExperienceSeverity::Info);
         // Unknown defaults to Info.
-        assert_eq!(ExperienceSeverity::parse("unknown"), ExperienceSeverity::Info);
+        assert_eq!(
+            ExperienceSeverity::parse("unknown"),
+            ExperienceSeverity::Info
+        );
     }
 
     #[test]

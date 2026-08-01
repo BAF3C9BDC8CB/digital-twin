@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde_json::Value;
+use super::types::{HookContext, RelationshipConfig};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
-use super::types::{HookContext, RelationshipConfig};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 通用关系写入器
 ///
@@ -39,10 +39,7 @@ impl RelationshipWriter {
                 "MATCH (e {{ {}: $event_id }})
                  MATCH (t:{} {{ {}: $target_id }})
                  MERGE (e)-[:{}]->(t)",
-                rel.source_field,
-                rel.target_label,
-                rel.r#match.target_field,
-                rel.rel_type,
+                rel.source_field, rel.target_label, rel.r#match.target_field, rel.rel_type,
             );
 
             let mut params: HashMap<String, Value> = HashMap::new();
@@ -69,7 +66,10 @@ impl RelationshipWriter {
         // 如果发生了迁移，先删除不在当前配置中的旧关系
         if migrated {
             let current_types: Vec<&str> = rels.iter().map(|r| r.rel_type.as_str()).collect();
-            let event_id_field = rels.first().map(|r| r.source_field.as_str()).unwrap_or("event_id");
+            let event_id_field = rels
+                .first()
+                .map(|r| r.source_field.as_str())
+                .unwrap_or("event_id");
 
             let mut cypher = format!(
                 "MATCH (e {{ {}: $event_id }})
@@ -90,7 +90,8 @@ impl RelationshipWriter {
             let mut params: HashMap<String, Value> = HashMap::new();
             params.insert("event_id".into(), Value::String(event_id.into()));
             if !current_types.is_empty() {
-                let keep: Vec<Value> = current_types.iter()
+                let keep: Vec<Value> = current_types
+                    .iter()
                     .map(|s| Value::String(s.to_string()))
                     .collect();
                 params.insert("keep_types".into(), Value::Array(keep));
@@ -131,18 +132,26 @@ mod tests {
     #[async_trait]
     impl GraphRepository for MockRepo {
         async fn read_query(
-            &self, _query: &str, _params: HashMap<String, Value>,
-        ) -> Result<Value, DtError> { Ok(Value::Null) }
+            &self,
+            _query: &str,
+            _params: HashMap<String, Value>,
+        ) -> Result<Value, DtError> {
+            Ok(Value::Null)
+        }
 
         async fn write_query(
-            &self, query: &str, _params: HashMap<String, Value>,
+            &self,
+            query: &str,
+            _params: HashMap<String, Value>,
         ) -> Result<Value, DtError> {
             self.queries.lock().unwrap().push(query.to_string());
             self.write_count.fetch_add(1, Ordering::SeqCst);
             Ok(Value::Null)
         }
 
-        async fn health_check(&self) -> Result<HealthStatus, DtError> { Ok(HealthStatus::Healthy) }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
     }
 
     #[tokio::test]
@@ -206,6 +215,9 @@ mod tests {
         writer.write(&rels, &ctx, "evt-1").await.unwrap();
 
         let queries = repo.queries.lock().unwrap();
-        assert!(queries.is_empty(), "should not write when target is missing");
+        assert!(
+            queries.is_empty(),
+            "should not write when target is missing"
+        );
     }
 }

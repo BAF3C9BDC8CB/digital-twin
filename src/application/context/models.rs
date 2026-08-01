@@ -128,7 +128,11 @@ pub struct WorldItem {
 }
 
 impl WorldItem {
-    pub fn new(id: impl Into<String>, label: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -271,11 +275,9 @@ fn resolve_world_alias(world: &str) -> &str {
 fn includes_world_inner(filter: &Option<Vec<String>>, world: &str) -> bool {
     let normalized = resolve_world_alias(world);
     match filter {
-        Some(worlds) if !worlds.is_empty() => {
-            worlds.iter().any(|w| {
-                resolve_world_alias(w).eq_ignore_ascii_case(normalized)
-            })
-        }
+        Some(worlds) if !worlds.is_empty() => worlds
+            .iter()
+            .any(|w| resolve_world_alias(w).eq_ignore_ascii_case(normalized)),
         _ => true, // No filter → include all worlds
     }
 }
@@ -555,15 +557,21 @@ mod tests {
     #[test]
     fn context_state_ranked_mut() {
         let mut state = ContextState::new("task", &ContextOptions::default());
-        state.ranked_mut("reality").push(WorldItem::new("a", "b", "c"));
+        state
+            .ranked_mut("reality")
+            .push(WorldItem::new("a", "b", "c"));
         assert_eq!(state.reality_ranked.len(), 1);
     }
 
     #[test]
     fn context_state_into_aggregated() {
         let mut state = ContextState::new("task", &ContextOptions::default());
-        state.reality_deduped.push(WorldItem::new("r1", "Real", "Content"));
-        state.knowledge_deduped.push(WorldItem::new("k1", "Know", "Stuff"));
+        state
+            .reality_deduped
+            .push(WorldItem::new("r1", "Real", "Content"));
+        state
+            .knowledge_deduped
+            .push(WorldItem::new("k1", "Know", "Stuff"));
 
         let agg = state.into_aggregated();
         assert_eq!(agg.reality.items.len(), 1);
@@ -590,7 +598,9 @@ mod tests {
     #[test]
     fn estimate_tokens_with_content() {
         let mut ctx = AggregatedContext::default();
-        ctx.reality.items.push(WorldItem::new("id", "label", "some content"));
+        ctx.reality
+            .items
+            .push(WorldItem::new("id", "label", "some content"));
         // "label"(5) + "some content"(12) + "" (0) = 17 / 4 = 4
         let tokens = ContextState::estimate_tokens_for(&ctx);
         assert_eq!(tokens, 4);

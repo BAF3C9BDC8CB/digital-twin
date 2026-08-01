@@ -40,7 +40,9 @@ impl DocType {
         // 检查内容特征：YAML 缩进（key: value 模式）
         for line in first_lines {
             let trimmed = line.trim();
-            if trimmed.starts_with('#') { continue; }
+            if trimmed.starts_with('#') {
+                continue;
+            }
             if trimmed.contains(':') && !trimmed.contains('=') {
                 return DocType::Yaml;
             }
@@ -232,35 +234,53 @@ fn chunk_yaml_by_top_level_keys(
         key_name: String,
         raw: String,
     }
-    let items: Vec<Item> = text.lines().filter_map(|line| {
-        let trimmed = line.trim();
-        if trimmed.is_empty() { return None; }
-        let indent = line.len() - trimmed.len();
-        let is_key = if let Some(pos) = trimmed.find(':') {
-            let before = trimmed[..pos].trim();
-            !before.is_empty() && !before.contains(' ')
-        } else { false };
-        let key_name = if is_key {
-            trimmed.split(':').next().unwrap_or("").trim().to_string()
-        } else { String::new() };
-        Some(Item { indent, is_key, key_name, raw: line.to_string() })
-    }).collect();
+    let items: Vec<Item> = text
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let indent = line.len() - trimmed.len();
+            let is_key = if let Some(pos) = trimmed.find(':') {
+                let before = trimmed[..pos].trim();
+                !before.is_empty() && !before.contains(' ')
+            } else {
+                false
+            };
+            let key_name = if is_key {
+                trimmed.split(':').next().unwrap_or("").trim().to_string()
+            } else {
+                String::new()
+            };
+            Some(Item {
+                indent,
+                is_key,
+                key_name,
+                raw: line.to_string(),
+            })
+        })
+        .collect();
 
     // -- 构建树 --
     struct Node {
         parent: Option<usize>,
         key_name: String,
         indent: usize,
-        item_idx: usize,     // 本节点在 items 中的索引
+        item_idx: usize,      // 本节点在 items 中的索引
         children: Vec<usize>, // 子节点索引
     }
     let mut nodes: Vec<Node> = Vec::new();
     let mut stack: Vec<usize> = Vec::new(); // 当前路径的 node 索引
-    
+
     for (idx, item) in items.iter().enumerate() {
-        if !item.is_key { continue; }
+        if !item.is_key {
+            continue;
+        }
         while let Some(&top) = stack.last() {
-            if nodes[top].indent < item.indent { break; }
+            if nodes[top].indent < item.indent {
+                break;
+            }
             stack.pop();
         }
         let parent = stack.last().copied();
@@ -287,7 +307,10 @@ fn chunk_yaml_by_top_level_keys(
         let my_indent = node.indent;
         let my_pos = node.item_idx;
         // 找到下一个同层或更浅层 key 的位置（同层 sibling 或祖先的 sibling，用于限定范围）
-        let end = items.iter().enumerate().skip(my_pos + 1)
+        let end = items
+            .iter()
+            .enumerate()
+            .skip(my_pos + 1)
             .find(|(_, it)| it.is_key && it.indent <= my_indent)
             .map(|(i, _)| i)
             .unwrap_or(items.len());
@@ -329,8 +352,7 @@ fn chunk_yaml_by_top_level_keys(
         let mut new_ancestors: Vec<usize> = ancestor_ids.to_vec();
         new_ancestors.push(node_idx);
 
-        let has_complex_child = node.children.iter()
-            .any(|&c| !nodes[c].children.is_empty());
+        let has_complex_child = node.children.iter().any(|&c| !nodes[c].children.is_empty());
 
         if node.children.len() > 1 && has_complex_child {
             // 多分支且至少一个是复杂节点 → 子节点各自独立成 section
@@ -356,7 +378,14 @@ fn chunk_yaml_by_top_level_keys(
             result.push((path, all_idx));
         } else {
             // 单链（唯一子节点）→ 合并到当前路径
-            collect_sections(items, nodes, node.children[0], &path, &new_ancestors, result);
+            collect_sections(
+                items,
+                nodes,
+                node.children[0],
+                &path,
+                &new_ancestors,
+                result,
+            );
         }
     }
 
@@ -373,7 +402,14 @@ fn chunk_yaml_by_top_level_keys(
                     // 多个子分支 → 每个子分支独立
                     // 父节点（根 key）作为祖先上下文传递给子分支
                     for &child_idx in &node.children {
-                        collect_sections(&items, &nodes, child_idx, &node.key_name, &[root_idx], &mut result);
+                        collect_sections(
+                            &items,
+                            &nodes,
+                            child_idx,
+                            &node.key_name,
+                            &[root_idx],
+                            &mut result,
+                        );
                     }
                 } else {
                     // 无分支 → 整篇一个 section
@@ -387,11 +423,12 @@ fn chunk_yaml_by_top_level_keys(
     // -- 转为 DocumentChunk --
     let mut output = Vec::new();
     for (section_name, desc_indices) in result {
-        let content_lines: Vec<String> = desc_indices.iter()
-            .map(|&i| items[i].raw.clone())
-            .collect();
+        let content_lines: Vec<String> =
+            desc_indices.iter().map(|&i| items[i].raw.clone()).collect();
         let text = content_lines.join("\n");
-        if text.trim().is_empty() { continue; }
+        if text.trim().is_empty() {
+            continue;
+        }
         let chunk = DocumentChunk {
             chunk_id: format!("{}#section-{}", doc_id, section_name),
             text,
@@ -459,16 +496,15 @@ fn chunk_by_boundary(
     let min_chars = approx_chars(config.min_chunk_size);
 
     let segments = split_by_boundary(text, boundary);
-    let chunks = build_chunks_from_segments(doc_id, &segments, chunk_chars, overlap_chars, min_chars);
+    let chunks =
+        build_chunks_from_segments(doc_id, &segments, chunk_chars, overlap_chars, min_chars);
 
     // If any single chunk is still too large (because a single segment
     // exceeded chunk_size), fall back to the next coarser boundary.
     let max_allowed = chunk_chars + overlap_chars;
     if chunks.iter().any(|c| c.text.chars().count() > max_allowed) {
         return match boundary {
-            Boundary::Paragraph => {
-                chunk_by_boundary(text, doc_id, config, Boundary::Sentence)
-            }
+            Boundary::Paragraph => chunk_by_boundary(text, doc_id, config, Boundary::Sentence),
             Boundary::Sentence => chunk_fixed(text, doc_id, config),
             Boundary::Fixed => chunk_fixed(text, doc_id, config),
         };
@@ -676,7 +712,13 @@ pub fn chunk_markdown_by_headings(
             found_heading = true;
             // 先 flush 上一个 section
             if !current_section.is_empty() || chunks.is_empty() {
-                flush_section(&mut chunks, doc_id, &current_section, &current_heading, config);
+                flush_section(
+                    &mut chunks,
+                    doc_id,
+                    &current_section,
+                    &current_heading,
+                    config,
+                );
             }
             current_heading = trimmed_line.trim_start_matches('#').trim().to_string();
             current_section = vec![format!("[{}] ", current_heading)];
@@ -688,7 +730,13 @@ pub fn chunk_markdown_by_headings(
     }
 
     // flush 最后一个 section
-    flush_section(&mut chunks, doc_id, &current_section, &current_heading, config);
+    flush_section(
+        &mut chunks,
+        doc_id,
+        &current_section,
+        &current_heading,
+        config,
+    );
 
     // 如果没有找到标题，回退到段落级 chunk
     if !found_heading {
@@ -754,7 +802,7 @@ fn flush_section(
             Some(format!("{}#section-{}", doc_id, chunks.len() - 1))
         },
         next_chunk_id: None,
-        start_char: 0,   // will be set by caller if needed
+        start_char: 0, // will be set by caller if needed
         end_char: 0,
     };
     chunks.push(chunk);
@@ -870,9 +918,7 @@ pub fn chunk_by_type(
                 all_chunks
             }
         }
-        DocType::PlainText | DocType::EmbeddedCode => {
-            chunk_text(text, doc_id, config)
-        }
+        DocType::PlainText | DocType::EmbeddedCode => chunk_text(text, doc_id, config),
     }
 }
 
@@ -918,9 +964,8 @@ pub fn chunk_properties_adaptive(content: &str) -> Vec<AdaptiveSection> {
     }
 
     // Separate dotless keys (single-segment) from dotted keys
-    let (dotted_pairs, flat_pairs): (Vec<_>, Vec<_>) = pairs
-        .into_iter()
-        .partition(|(k, _)| k.contains('.'));
+    let (dotted_pairs, flat_pairs): (Vec<_>, Vec<_>) =
+        pairs.into_iter().partition(|(k, _)| k.contains('.'));
 
     // Build a prefix tree (trie) from dotted keys
     let mut trie = PrefixTrie::new();
@@ -1045,9 +1090,9 @@ fn merge_sibling_sections(
             // Only merge if the grandparent exists as a section — prevents
             // merging top-level siblings like spring.datasource + spring.redis
             // into one massive "spring" section.
-            parent.rfind('.').map_or(false, |gp_pos| {
-                sections.contains_key(&parent[..gp_pos])
-            })
+            parent
+                .rfind('.')
+                .map_or(false, |gp_pos| sections.contains_key(&parent[..gp_pos]))
         })
         .map(|(parent, _)| parent)
         .collect();
@@ -1095,9 +1140,7 @@ fn merge_orphan_sibling_sections(
     let to_merge: Vec<String> = parent_counts
         .into_iter()
         .filter(|(parent, count)| {
-            *count >= 2
-                && !sections.contains_key(parent)
-                && parent.contains('.')
+            *count >= 2 && !sections.contains_key(parent) && parent.contains('.')
         })
         .map(|(parent, _)| parent)
         .collect();
@@ -1146,7 +1189,10 @@ fn promote_to_sub_section(
             .collect();
 
         if to_move.len() >= 2 {
-            sections.get_mut(&parent).unwrap().retain(|(k, _)| !k.starts_with(&prefix));
+            sections
+                .get_mut(&parent)
+                .unwrap()
+                .retain(|(k, _)| !k.starts_with(&prefix));
             sections.get_mut(sub_name).unwrap().extend(to_move);
         }
     }
@@ -1181,13 +1227,10 @@ impl PrefixTrie {
         let mut node = &mut self.root;
         node.leaf_count += 1;
         for part in parts {
-            node = node
-                .children
-                .entry(part.to_string())
-                .or_insert(TrieNode {
-                    children: std::collections::HashMap::new(),
-                    leaf_count: 0,
-                });
+            node = node.children.entry(part.to_string()).or_insert(TrieNode {
+                children: std::collections::HashMap::new(),
+                leaf_count: 0,
+            });
             node.leaf_count += 1;
         }
     }
@@ -1226,11 +1269,8 @@ impl PrefixTrie {
             if i >= 1 && i < parts.len() - 1 {
                 // At intermediate node: count children with leaf_count > 1
                 // (these are multi-key sub-groups that deserve their own section)
-                let multi_key_children = node
-                    .children
-                    .values()
-                    .filter(|c| c.leaf_count > 1)
-                    .count();
+                let multi_key_children =
+                    node.children.values().filter(|c| c.leaf_count > 1).count();
 
                 // Split if ≥ 2 sub-groups have multiple keys each
                 if multi_key_children >= 2 {
@@ -1396,25 +1436,39 @@ mod tests {
     #[test]
     fn chunks_have_prev_and_next_links() {
         let config = ChunkConfig {
-            chunk_size: 10,      // ~30 chars — very small to force multiple chunks
-            overlap: 5,          // ~15 chars overlap
+            chunk_size: 10, // ~30 chars — very small to force multiple chunks
+            overlap: 5,     // ~15 chars overlap
             boundary: Boundary::Fixed,
-            min_chunk_size: 10,  // ~30 chars
+            min_chunk_size: 10, // ~30 chars
         };
-        let text = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let text =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let doc_id = "dt://doc/test/links.md";
         let chunks = chunk_text(text, doc_id, &config);
-        assert!(chunks.len() >= 2, "expected at least 2 chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected at least 2 chunks, got {}",
+            chunks.len()
+        );
 
         // First chunk: no prev, has next
         assert!(chunks[0].prev_chunk_id.is_none());
-        assert_eq!(chunks[0].next_chunk_id.as_deref(), Some(make_id(1).as_str()));
+        assert_eq!(
+            chunks[0].next_chunk_id.as_deref(),
+            Some(make_id(1).as_str())
+        );
 
         // Middle chunks have both
         if chunks.len() > 2 {
             for i in 1..chunks.len() - 1 {
-                assert_eq!(chunks[i].prev_chunk_id.as_deref(), Some(make_id(i - 1).as_str()));
-                assert_eq!(chunks[i].next_chunk_id.as_deref(), Some(make_id(i + 1).as_str()));
+                assert_eq!(
+                    chunks[i].prev_chunk_id.as_deref(),
+                    Some(make_id(i - 1).as_str())
+                );
+                assert_eq!(
+                    chunks[i].next_chunk_id.as_deref(),
+                    Some(make_id(i + 1).as_str())
+                );
             }
         }
 
@@ -1446,8 +1500,8 @@ mod tests {
     #[test]
     fn fixed_boundary_chunks_have_correct_offsets() {
         let config = ChunkConfig {
-            chunk_size: 5,       // ~15 chars
-            overlap: 2,          // ~6 chars
+            chunk_size: 5, // ~15 chars
+            overlap: 2,    // ~6 chars
             boundary: Boundary::Fixed,
             min_chunk_size: 2,
         };
@@ -1467,10 +1521,10 @@ mod tests {
     #[test]
     fn min_chunk_size_merges_small_tail() {
         let config = ChunkConfig {
-            chunk_size: 15,        // ~45 chars
-            overlap: 3,            // ~9 chars
+            chunk_size: 15, // ~45 chars
+            overlap: 3,     // ~9 chars
             boundary: Boundary::Fixed,
-            min_chunk_size: 12,    // ~36 chars
+            min_chunk_size: 12, // ~36 chars
         };
         // Create text that produces multiple fixed chunks with a small tail at the end
         // Each chunk at ~45 chars with ~9 char overlap, and ~36 char step
@@ -1491,7 +1545,7 @@ mod tests {
     #[test]
     fn sentence_boundary_splits_correctly() {
         let config = ChunkConfig {
-            chunk_size: 20,       // ~60 chars
+            chunk_size: 20, // ~60 chars
             overlap: 5,
             boundary: Boundary::Sentence,
             min_chunk_size: 10,
@@ -1501,7 +1555,11 @@ mod tests {
         let chunks = chunk_text(text, doc_id, &config);
         assert!(chunks.len() >= 1);
         // All sentences should be present across chunks
-        let combined: String = chunks.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ");
+        let combined: String = chunks
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(combined.contains("First sentence"));
         assert!(combined.contains("Second sentence"));
         assert!(combined.contains("Third sentence"));
@@ -1519,18 +1577,23 @@ mod tests {
     #[test]
     fn large_text_produces_multiple_chunks() {
         let config = ChunkConfig {
-            chunk_size: 10,        // ~30 chars
-            overlap: 3,            // ~9 chars
+            chunk_size: 10, // ~30 chars
+            overlap: 3,     // ~9 chars
             boundary: Boundary::Fixed,
-            min_chunk_size: 5,     // ~15 chars
+            min_chunk_size: 5, // ~15 chars
         };
         let text = "X".repeat(500);
         let doc_id = "dt://doc/test/large.md";
         let chunks = chunk_text(&text, doc_id, &config);
-        assert!(chunks.len() > 1, "large text should produce multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "large text should produce multiple chunks, got {}",
+            chunks.len()
+        );
 
         // Verify chunk IDs are unique
-        let ids: std::collections::HashSet<String> = chunks.iter().map(|c| c.chunk_id.clone()).collect();
+        let ids: std::collections::HashSet<String> =
+            chunks.iter().map(|c| c.chunk_id.clone()).collect();
         assert_eq!(ids.len(), chunks.len());
     }
 
@@ -1541,7 +1604,10 @@ mod tests {
     #[test]
     fn doc_type_detect_markdown_by_extension() {
         assert_eq!(DocType::detect("readme.md", &[]), DocType::Markdown);
-        assert_eq!(DocType::detect("CHANGELOG.markdown", &[]), DocType::Markdown);
+        assert_eq!(
+            DocType::detect("CHANGELOG.markdown", &[]),
+            DocType::Markdown
+        );
     }
 
     #[test]
@@ -1564,7 +1630,10 @@ mod tests {
     #[test]
     fn doc_type_detect_plain_text_default() {
         assert_eq!(DocType::detect("readme.txt", &[]), DocType::PlainText);
-        assert_eq!(DocType::detect("notes", &["hello world"]), DocType::PlainText);
+        assert_eq!(
+            DocType::detect("notes", &["hello world"]),
+            DocType::PlainText
+        );
     }
 
     #[test]
@@ -1595,14 +1664,24 @@ mod tests {
         let text = "# Main\n\nContent A.\n\n## Section 1\n\nContent B.\n\n### Sub 1\n\nContent C.";
         let doc_id = "dt://doc/test/multi.md";
         let chunks = chunk_markdown_by_headings(text, doc_id, &config);
-        assert!(chunks.len() >= 2, "expected at least 2 chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected at least 2 chunks, got {}",
+            chunks.len()
+        );
         assert!(chunks[0].text.contains("[Main]"));
         assert!(chunks[1].text.contains("[Section 1]"));
         // Check prev/next links
         assert!(chunks[0].prev_chunk_id.is_none());
         if chunks.len() > 1 {
-            assert_eq!(chunks[0].next_chunk_id.as_deref(), Some(chunks[1].chunk_id.as_str()));
-            assert_eq!(chunks[1].prev_chunk_id.as_deref(), Some(chunks[0].chunk_id.as_str()));
+            assert_eq!(
+                chunks[0].next_chunk_id.as_deref(),
+                Some(chunks[1].chunk_id.as_str())
+            );
+            assert_eq!(
+                chunks[1].prev_chunk_id.as_deref(),
+                Some(chunks[0].chunk_id.as_str())
+            );
         }
     }
 
@@ -1682,7 +1761,7 @@ mod tests {
 
         // Use small chunk_size to force multiple chunks
         let config = ChunkConfig {
-            chunk_size: 100,  // small to force merge limits
+            chunk_size: 100, // small to force merge limits
             overlap: 0,
             boundary: Boundary::Paragraph,
             min_chunk_size: 128,
@@ -1692,14 +1771,20 @@ mod tests {
 
         // Multiple chunks merged from paragraphs (each ~50 chars, 10 ≈ 500 chars)
         // With chunk_size=100 (~300 chars), ~2-3 chunks
-        assert!(chunks.len() >= 2 && chunks.len() <= 5,
-            "expected 2-5 chunks from paragraph merging, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2 && chunks.len() <= 5,
+            "expected 2-5 chunks from paragraph merging, got {}",
+            chunks.len()
+        );
 
         // Verify chunks don't cut mid-paragraph
         for chunk in &chunks {
             let text = &chunk.text;
-            assert!(!text.starts_with('第') || text.contains("段。"),
-                "chunk may be cut mid-paragraph: {}", text.chars().take(30).collect::<String>());
+            assert!(
+                !text.starts_with('第') || text.contains("段。"),
+                "chunk may be cut mid-paragraph: {}",
+                text.chars().take(30).collect::<String>()
+            );
         }
     }
 
@@ -1708,10 +1793,13 @@ mod tests {
         // A single very long paragraph (no \n\n) should fall back to sentence splitting
         let mut long_text = String::new();
         for i in 0..20 {
-            long_text.push_str(&format!("这是第{}个句子。它描述了系统架构中的某个重要方面。", i));
+            long_text.push_str(&format!(
+                "这是第{}个句子。它描述了系统架构中的某个重要方面。",
+                i
+            ));
         }
         let config = ChunkConfig {
-            chunk_size: 100,  // small to force splitting
+            chunk_size: 100, // small to force splitting
             overlap: 16,
             boundary: Boundary::Paragraph,
             min_chunk_size: 32,
@@ -1720,15 +1808,22 @@ mod tests {
         let chunks = chunk_text(&long_text, doc_id, &config);
 
         // Should produce multiple chunks (sentences, not fixed-size)
-        assert!(chunks.len() >= 2, "expected at least 2 chunks from sentence splitting, got {}", chunks.len());
+        assert!(
+            chunks.len() >= 2,
+            "expected at least 2 chunks from sentence splitting, got {}",
+            chunks.len()
+        );
         // Verify chunks don't cut mid-sentence
         for chunk in &chunks {
             let text = &chunk.text;
             if let Some(last_char) = text.chars().last() {
                 // Each chunk should end with a sentence boundary
-                assert!(matches!(last_char, '。' | '！' | '？' | '）' | '"' | '\n'),
+                assert!(
+                    matches!(last_char, '。' | '！' | '？' | '）' | '"' | '\n'),
                     "chunk should end with sentence boundary, ended with '{}': {}",
-                    last_char, text.chars().take(30).collect::<String>());
+                    last_char,
+                    text.chars().take(30).collect::<String>()
+                );
             }
         }
     }
@@ -1736,7 +1831,10 @@ mod tests {
     #[test]
     fn parse_kv_line_comment_char_not_at_start() {
         // '#' in the middle is not a comment
-        assert_eq!(parse_kv_line("key=value#comment"), Some(("key", "value#comment")));
+        assert_eq!(
+            parse_kv_line("key=value#comment"),
+            Some(("key", "value#comment"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1749,10 +1847,22 @@ mod tests {
         // "server.port"           → parts ["server","port"] → section "server.port"
         let content = "spring.datasource.url=jdbc:mysql://localhost/db\nspring.datasource.username=admin\nserver.port=8080";
         let sections = extract_properties_sections(content);
-        assert_eq!(sections.len(), 2, "expected 2 sections, got {}: {:?}", sections.len(), sections);
-        let ds = sections.iter().find(|(name, _)| name == "spring.datasource").unwrap();
+        assert_eq!(
+            sections.len(),
+            2,
+            "expected 2 sections, got {}: {:?}",
+            sections.len(),
+            sections
+        );
+        let ds = sections
+            .iter()
+            .find(|(name, _)| name == "spring.datasource")
+            .unwrap();
         assert_eq!(ds.1.len(), 2);
-        let sv = sections.iter().find(|(name, _)| name == "server.port").unwrap();
+        let sv = sections
+            .iter()
+            .find(|(name, _)| name == "server.port")
+            .unwrap();
         assert_eq!(sv.1.len(), 1);
     }
 
@@ -1806,7 +1916,8 @@ mod tests {
     #[test]
     fn chunk_yaml_multiple_top_level_keys() {
         let config = ChunkConfig::default();
-        let text = "server:\n  port: 8080\n  host: localhost\n\nredis:\n  host: 127.0.0.1\n  port: 6379";
+        let text =
+            "server:\n  port: 8080\n  host: localhost\n\nredis:\n  host: 127.0.0.1\n  port: 6379";
         let result = chunk_config_by_sections(text, "doc1", &config, true);
         assert_eq!(result.len(), 2, "expected 2 sections, got {}", result.len());
         let names: Vec<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
@@ -1835,7 +1946,8 @@ mod tests {
     #[test]
     fn chunk_properties_single_section() {
         let config = ChunkConfig::default();
-        let text = "spring.datasource.url=jdbc:mysql://localhost/db\nspring.datasource.username=admin";
+        let text =
+            "spring.datasource.url=jdbc:mysql://localhost/db\nspring.datasource.username=admin";
         let result = chunk_config_by_sections(text, "doc1", &config, false);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, "spring.datasource");
@@ -1850,7 +1962,13 @@ mod tests {
         let config = ChunkConfig::default();
         let text = "spring.datasource.url=jdbc:mysql://localhost/db\nspring.datasource.username=admin\nserver.port=8080";
         let result = chunk_config_by_sections(text, "doc1", &config, false);
-        assert_eq!(result.len(), 2, "expected 2 sections, got {}: {:?}", result.len(), result);
+        assert_eq!(
+            result.len(),
+            2,
+            "expected 2 sections, got {}: {:?}",
+            result.len(),
+            result
+        );
         let names: Vec<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"spring.datasource"));
         assert!(names.contains(&"server.port"));
@@ -1895,8 +2013,14 @@ spring:
         assert!(text.contains("boot:"), "must contain boot: ancestor");
         assert!(text.contains("admin:"), "must contain admin: ancestor");
         assert!(text.contains("client:"), "must contain client: ancestor");
-        assert!(text.contains("instance:"), "must contain instance: ancestor");
-        assert!(text.contains("service-url: http://doctor-center"), "must contain leaf value");
+        assert!(
+            text.contains("instance:"),
+            "must contain instance: ancestor"
+        );
+        assert!(
+            text.contains("service-url: http://doctor-center"),
+            "must contain leaf value"
+        );
     }
 
     #[test]
@@ -1918,19 +2042,38 @@ pay:
         let result = chunk_config_by_sections(yaml, "doc2", &config, true);
         eprintln!("\n=== Multiple top-level keys sections ===");
         for (name, chunks) in &result {
-            eprintln!("[{}] -> {} chars\n{}\n---", name, chunks[0].text.len(), chunks[0].text);
+            eprintln!(
+                "[{}] -> {} chars\n{}\n---",
+                name,
+                chunks[0].text.len(),
+                chunks[0].text
+            );
         }
         // Should have 3 top-level sections
         assert_eq!(result.len(), 3, "expected 3 sections (server, spring, pay)");
-        
+
         // spring section should include full hierarchy
-        let spring = result.iter().find(|(n, _)| n.as_str() == "spring.datasource")
+        let spring = result
+            .iter()
+            .find(|(n, _)| n.as_str() == "spring.datasource")
             .expect("spring.datasource section should exist");
-        assert!(spring.1[0].text.contains("spring:"), "spring section must contain spring:");
-        assert!(spring.1[0].text.contains("datasource:"), "spring section must contain datasource:");
-        assert!(spring.1[0].text.contains("url: jdbc:mysql://localhost"), "spring section must contain url");
+        assert!(
+            spring.1[0].text.contains("spring:"),
+            "spring section must contain spring:"
+        );
+        assert!(
+            spring.1[0].text.contains("datasource:"),
+            "spring section must contain datasource:"
+        );
+        assert!(
+            spring.1[0].text.contains("url: jdbc:mysql://localhost"),
+            "spring section must contain url"
+        );
         // Should NOT contain pay content (scoping fix)
-        assert!(!spring.1[0].text.contains("pay:"), "spring section should NOT contain pay content");
+        assert!(
+            !spring.1[0].text.contains("pay:"),
+            "spring section should NOT contain pay content"
+        );
     }
 
     #[test]
@@ -1960,30 +2103,62 @@ spring:
         let result = chunk_config_by_sections(yaml, "doc3", &config, true);
         eprintln!("\n=== Doctor-Center-style sections ===");
         for (name, chunks) in &result {
-            eprintln!("[{}] -> {} chars\n{}\n---", name, chunks[0].text.len(), chunks[0].text);
+            eprintln!(
+                "[{}] -> {} chars\n{}\n---",
+                name,
+                chunks[0].text.len(),
+                chunks[0].text
+            );
         }
-        
+
         // Should have sections: spring.boot.admin.client.instance, spring.datasource.dynamic,
         // spring.datasource.druid.core, spring.datasource.druid.log
-        assert!(result.len() >= 3, "should have at least 3 sections, got {}", result.len());
-        
+        assert!(
+            result.len() >= 3,
+            "should have at least 3 sections, got {}",
+            result.len()
+        );
+
         // Check core section has full parent chain
         let core = result.iter().find(|(n, _)| n.contains("core"));
         assert!(core.is_some(), "core section should exist");
         let core = core.unwrap();
         eprintln!("Core section name: {}", core.0);
-        assert!(core.1[0].text.contains("spring:"), "core section must contain spring: ancestor");
-        assert!(core.1[0].text.contains("datasource:"), "core section must contain datasource: ancestor");
-        assert!(core.1[0].text.contains("druid:"), "core section must contain druid: ancestor");
-        assert!(core.1[0].text.contains("core:"), "core section must contain core: itself");
-        assert!(core.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db1"), "core section must contain its value");
-        
+        assert!(
+            core.1[0].text.contains("spring:"),
+            "core section must contain spring: ancestor"
+        );
+        assert!(
+            core.1[0].text.contains("datasource:"),
+            "core section must contain datasource: ancestor"
+        );
+        assert!(
+            core.1[0].text.contains("druid:"),
+            "core section must contain druid: ancestor"
+        );
+        assert!(
+            core.1[0].text.contains("core:"),
+            "core section must contain core: itself"
+        );
+        assert!(
+            core.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db1"),
+            "core section must contain its value"
+        );
+
         // Check log section
-        let log = result.iter().find(|(n, _)| n.contains("log") && !n.contains("dynamic") && !n.contains("boot"));
+        let log = result
+            .iter()
+            .find(|(n, _)| n.contains("log") && !n.contains("dynamic") && !n.contains("boot"));
         assert!(log.is_some(), "log section should exist");
         let log = log.unwrap();
-        assert!(log.1[0].text.contains("spring:"), "log section must contain spring: ancestor");
-        assert!(log.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db2"), "log section must contain its value");
+        assert!(
+            log.1[0].text.contains("spring:"),
+            "log section must contain spring: ancestor"
+        );
+        assert!(
+            log.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db2"),
+            "log section must contain its value"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2052,12 +2227,24 @@ spring.cloud.nacos.config.namespace=ns2\n\
 spring.cloud.nacos.username=user";
         let sections = chunk_properties_adaptive(content);
         // With orphan merge, all nacos children merge into spring.cloud.nacos
-        eprintln!("Sections: {:?}", sections.iter().map(|(n,_)| n.as_str()).collect::<Vec<_>>());
+        eprintln!(
+            "Sections: {:?}",
+            sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
         assert!(
             sections.iter().any(|(n, _)| n == "spring.cloud.nacos"),
-            "expected spring.cloud.nacos section, got: {:?}", sections
+            "expected spring.cloud.nacos section, got: {:?}",
+            sections
         );
-        assert_eq!(sections.iter().find(|(n,_)| n=="spring.cloud.nacos").unwrap().1.len(), 5);
+        assert_eq!(
+            sections
+                .iter()
+                .find(|(n, _)| n == "spring.cloud.nacos")
+                .unwrap()
+                .1
+                .len(),
+            5
+        );
     }
 
     #[test]
@@ -2096,7 +2283,10 @@ spring.cloud.nacos.config.import=c\n\
 spring.cloud.sentinel.dashboard=d\n\
 spring.cloud.sentinel.eager=true";
         let sections = chunk_properties_adaptive(content);
-        eprintln!("Mixed depth sections: {:?}", sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>());
+        eprintln!(
+            "Mixed depth sections: {:?}",
+            sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
         // Adaptive + orphan merge: spring.cloud.nacos.* and spring.cloud.sentinel.*
         // may merge into spring.cloud section.
         assert!(
@@ -2147,7 +2337,11 @@ spring:\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n
         let sections = chunk_yaml_adaptive(content);
         eprintln!("Jackson YAML sections: {:?}", sections);
         let jackson_section = sections.iter().find(|(n, _)| n.contains("jackson"));
-        assert!(jackson_section.is_some(), "Expected a jackson section, got: {:?}", sections);
+        assert!(
+            jackson_section.is_some(),
+            "Expected a jackson section, got: {:?}",
+            sections
+        );
     }
 
     #[test]
@@ -2155,17 +2349,32 @@ spring:\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n
         let content = "\
 spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nacos.newoffen.net\n        namespace: af6d04ec\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n    deserialization:\n      READ_DATE_TIMESTAMPS_AS_NANOSECONDS: false\n    serialization:\n      WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS: false\n  boot:\n    admin:\n      client:\n        url: http://172.18.252.175:23333\n        username: admin\n        password: admin";
         let sections = chunk_yaml_adaptive(content);
-        eprintln!("Common YAML sections: {:?}", sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>());
-        assert!(sections.len() >= 3, "Expected at least 3 sections, got {}", sections.len());
+        eprintln!(
+            "Common YAML sections: {:?}",
+            sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            sections.len() >= 3,
+            "Expected at least 3 sections, got {}",
+            sections.len()
+        );
         // Adaptive: spring.cloud.nacos.discovery stays under spring.cloud (only 1 child at that depth)
         // Check content includes nacos, not just section name
         let has_nacos = sections.iter().any(|(n, pairs)| {
-            n.contains("nacos") || n.contains("discovery")
-            || pairs.iter().any(|(k, _)| k.contains("nacos") || k.contains("discovery"))
+            n.contains("nacos")
+                || n.contains("discovery")
+                || pairs
+                    .iter()
+                    .any(|(k, _)| k.contains("nacos") || k.contains("discovery"))
         });
-        assert!(has_nacos, "Expected nacos/discovery in section names or keys");
+        assert!(
+            has_nacos,
+            "Expected nacos/discovery in section names or keys"
+        );
         assert!(sections.iter().any(|(n, _)| n.contains("jackson")));
-        assert!(sections.iter().any(|(n, _)| n.contains("boot") || n.contains("admin")));
+        assert!(sections
+            .iter()
+            .any(|(n, _)| n.contains("boot") || n.contains("admin")));
     }
 
     // -----------------------------------------------------------------------
@@ -2229,8 +2438,12 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
             let sections = chunk_config_adaptive(&content, is_yaml);
 
             eprintln!("\n──────────────────────────────────────────────");
-            eprintln!("File: {} ({} bytes, {} sections)",
-                file_name, content.len(), sections.len());
+            eprintln!(
+                "File: {} ({} bytes, {} sections)",
+                file_name,
+                content.len(),
+                sections.len()
+            );
             eprintln!("──────────────────────────────────────────────");
 
             for (section_name, pairs) in &sections {
@@ -2269,8 +2482,17 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
         eprintln!("Files: {}", entries.len());
         eprintln!("Total sections (chunks): {}", total_sections);
         eprintln!("Total keys: {}", total_keys);
-        eprintln!("Avg sections per file: {:.1}", total_sections as f64 / entries.len() as f64);
-        eprintln!("Avg keys per section: {:.1}",
-            if total_sections > 0 { total_keys as f64 / total_sections as f64 } else { 0.0 });
+        eprintln!(
+            "Avg sections per file: {:.1}",
+            total_sections as f64 / entries.len() as f64
+        );
+        eprintln!(
+            "Avg keys per section: {:.1}",
+            if total_sections > 0 {
+                total_keys as f64 / total_sections as f64
+            } else {
+                0.0
+            }
+        );
     }
 }

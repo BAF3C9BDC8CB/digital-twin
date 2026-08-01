@@ -30,7 +30,9 @@ pub async fn handle_memorize(
     let project_name = project.as_deref().unwrap_or("unknown");
     let etype = entity_type.as_deref().unwrap_or(&knowledge_type);
 
-    let svc = graph.as_ref().map(|g| DefaultKnowledgeService::new(Arc::clone(g)));
+    let svc = graph
+        .as_ref()
+        .map(|g| DefaultKnowledgeService::new(Arc::clone(g)));
 
     // Route based on knowledge_type to the correct entity constructor.
     match knowledge_type.to_lowercase().as_str() {
@@ -95,8 +97,7 @@ pub async fn handle_memorize(
         }
         "concept" => {
             let concept = crate::application::knowledge::knowledge::concept_from_details(
-                &entity_id,
-                &details,
+                &entity_id, &details,
             );
             if let Some(ref svc) = svc {
                 match svc.write_concept(&concept).await {
@@ -115,10 +116,8 @@ pub async fn handle_memorize(
             }
         }
         "domain" => {
-            let domain = crate::application::knowledge::knowledge::domain_from_details(
-                &entity_id,
-                &details,
-            );
+            let domain =
+                crate::application::knowledge::knowledge::domain_from_details(&entity_id, &details);
             if let Some(ref svc) = svc {
                 match svc.write_domain(&domain).await {
                     Ok(()) => println!(
@@ -181,11 +180,7 @@ pub async fn handle_memorize(
 ///
 /// Flushes the queue before returning so the sync completes within the
 /// CLI process lifetime.
-async fn auto_sync_kg(
-    knowledge_type: &str,
-    entity_id: &str,
-    acc: Option<Arc<SyncAccumulator>>,
-) {
+async fn auto_sync_kg(knowledge_type: &str, entity_id: &str, acc: Option<Arc<SyncAccumulator>>) {
     let acc = match acc {
         Some(a) => a,
         None => return,
@@ -198,9 +193,7 @@ async fn auto_sync_kg(
         "experience" => ("Experience", "experience_id"),
         "concept" => ("Concept", "concept_id"),
         "domain" => ("Domain", "domain_id"),
-        "playbook" | "pattern" | "patch" | "orchestrator" => {
-            ("Playbook", "playbook_id")
-        }
+        "playbook" | "pattern" | "patch" | "orchestrator" => ("Playbook", "playbook_id"),
         _ => return,
     };
 

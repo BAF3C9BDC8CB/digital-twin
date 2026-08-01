@@ -13,7 +13,11 @@ pub struct TsJavaScriptParser;
 
 impl TsJavaScriptParser {
     fn collect_classes(
-        source: &str, node: &tree_sitter::Node, project: &str, file_path: &str, module: &str,
+        source: &str,
+        node: &tree_sitter::Node,
+        project: &str,
+        file_path: &str,
+        module: &str,
         classes: &mut Vec<ClassBlock>,
     ) {
         if node.kind() == "class_declaration" {
@@ -22,9 +26,14 @@ impl TsJavaScriptParser {
                 let (sl, el) = tree_sitter_utils::node_range(node);
                 classes.push(ClassBlock {
                     class_id: make_class_id(project, module, &name),
-                    name, kind: ClassKind::Class,
-                    file_path: file_path.to_string(), package_or_module: module.to_string(),
-                    project: project.to_string(), start_line: sl, end_line: el, method_ids: Vec::new(),
+                    name,
+                    kind: ClassKind::Class,
+                    file_path: file_path.to_string(),
+                    package_or_module: module.to_string(),
+                    project: project.to_string(),
+                    start_line: sl,
+                    end_line: el,
+                    method_ids: Vec::new(),
                 });
             }
         }
@@ -39,8 +48,13 @@ impl TsJavaScriptParser {
         let mut c = node.walk();
         for ch in node.children(&mut c) {
             let kind = ch.kind();
-            let is_method = kind == "method_definition" || kind == "function_declaration"
-                || (kind == "arrow_function" && ch.parent().map(|p| p.kind() == "variable_declarator").unwrap_or(false));
+            let is_method = kind == "method_definition"
+                || kind == "function_declaration"
+                || (kind == "arrow_function"
+                    && ch
+                        .parent()
+                        .map(|p| p.kind() == "variable_declarator")
+                        .unwrap_or(false));
             if is_method {
                 if let Some(nn) = ch.child_by_field_name("name").or_else(|| {
                     // Arrow functions assigned to variables: the name is on the parent
@@ -49,17 +63,36 @@ impl TsJavaScriptParser {
                     let name = tree_sitter_utils::node_text(source, &nn).to_string();
                     let (sl, el) = tree_sitter_utils::node_range(&ch);
                     let params = Self::get_params(source, &ch);
-                    let sig = tree_sitter_utils::node_text(source, &ch).lines()
-                        .next().unwrap_or("").trim().to_string();
+                    let sig = tree_sitter_utils::node_text(source, &ch)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     let body = Self::get_body(source, &ch);
                     let calls = tree_sitter_utils::extract_calls_from_body(source, &ch);
                     methods.push(MethodBlock {
-                        method_id: make_method_id(project_dummy(), file_path_dummy(), "_module_", &name, sl),
-                        name, signature: sig, params, return_type: "any".into(),
+                        method_id: make_method_id(
+                            project_dummy(),
+                            file_path_dummy(),
+                            "_module_",
+                            &name,
+                            sl,
+                        ),
+                        name,
+                        signature: sig,
+                        params,
+                        return_type: "any".into(),
                         class_name: "_module_".into(),
-                        file_path: String::new(), package_or_module: String::new(),
-                        language: "javascript".into(), project: String::new(),
-                        start_line: sl, end_line: el, calls, comment: String::new(), source_text: body,
+                        file_path: String::new(),
+                        package_or_module: String::new(),
+                        language: "javascript".into(),
+                        project: String::new(),
+                        start_line: sl,
+                        end_line: el,
+                        calls,
+                        comment: String::new(),
+                        source_text: body,
                     });
                 }
             }
@@ -70,14 +103,22 @@ impl TsJavaScriptParser {
     fn get_params(source: &str, node: &tree_sitter::Node) -> String {
         if let Some(p) = node.child_by_field_name("parameters") {
             let t = tree_sitter_utils::node_text(source, &p);
-            if t.len() >= 2 { t[1..t.len()-1].to_string() } else { String::new() }
-        } else { String::new() }
+            if t.len() >= 2 {
+                t[1..t.len() - 1].to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
     }
 
     fn get_body(source: &str, node: &tree_sitter::Node) -> String {
         if let Some(b) = node.child_by_field_name("body") {
             tree_sitter_utils::node_text(source, &b).to_string()
-        } else { String::new() }
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -87,30 +128,50 @@ static mut CUR_FILE: String = String::new();
 static mut CUR_MODULE: String = String::new();
 static mut CUR_CLASS: String = String::new();
 
-fn project_dummy() -> &'static str { unsafe { &CUR_PROJECT } }
-fn file_path_dummy() -> &'static str { unsafe { &CUR_FILE } }
+fn project_dummy() -> &'static str {
+    unsafe { &CUR_PROJECT }
+}
+fn file_path_dummy() -> &'static str {
+    unsafe { &CUR_FILE }
+}
 
 impl ParseStrategy for TsJavaScriptParser {
-    fn language(&self) -> Language { Language::JavaScript }
+    fn language(&self) -> Language {
+        Language::JavaScript
+    }
     fn can_parse(&self, path: &Path) -> bool {
-        path.extension().and_then(|e| e.to_str())
-            .map(|e| matches!(e, "js" | "jsx" | "mjs" | "cjs")).unwrap_or(false)
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e, "js" | "jsx" | "mjs" | "cjs"))
+            .unwrap_or(false)
     }
     fn parse(&self, source: &str, path: &Path, project: &str) -> Result<ParseResult, DtError> {
         let mut parser = Parser::new();
         let lang: tree_sitter::Language = tree_sitter_javascript::LANGUAGE.into();
-        parser.set_language(&lang)
+        parser
+            .set_language(&lang)
             .map_err(|e| DtError::Repository(format!("ts js init: {e}")))?;
-        let tree = parser.parse(source, None)
+        let tree = parser
+            .parse(source, None)
             .ok_or_else(|| DtError::Repository("ts js parse failed".into()))?;
         let file_path = path.to_string_lossy().to_string().replace('\\', "/");
-        let module = path.parent().and_then(|p| p.to_str()).map(|s| s.replace(['/', '\\'], ".")).unwrap_or_default();
+        let module = path
+            .parent()
+            .and_then(|p| p.to_str())
+            .map(|s| s.replace(['/', '\\'], "."))
+            .unwrap_or_default();
         let root = tree.root_node();
 
         // Set globals
-        unsafe { CUR_PROJECT = project.to_string(); }
-        unsafe { CUR_FILE = file_path.clone(); }
-        unsafe { CUR_MODULE = module.clone(); }
+        unsafe {
+            CUR_PROJECT = project.to_string();
+        }
+        unsafe {
+            CUR_FILE = file_path.clone();
+        }
+        unsafe {
+            CUR_MODULE = module.clone();
+        }
 
         let mut classes = Vec::new();
         {
@@ -123,10 +184,21 @@ impl ParseStrategy for TsJavaScriptParser {
         // Collect class methods
         let mut methods = Vec::new();
         for cls in &classes {
-            unsafe { CUR_CLASS = cls.name.clone(); }
+            unsafe {
+                CUR_CLASS = cls.name.clone();
+            }
             // Walk tree to find class body
             let mut c = root.walk();
-            find_class_methods_js(source, &root, &mut c, project, &file_path, &module, &cls.name, &mut methods);
+            find_class_methods_js(
+                source,
+                &root,
+                &mut c,
+                project,
+                &file_path,
+                &module,
+                &cls.name,
+                &mut methods,
+            );
         }
 
         // Module-level functions
@@ -138,17 +210,30 @@ impl ParseStrategy for TsJavaScriptParser {
                         let name = tree_sitter_utils::node_text(source, &nn).to_string();
                         let (sl, el) = tree_sitter_utils::node_range(&ch);
                         let params = Self::get_params(source, &ch);
-                        let sig = tree_sitter_utils::node_text(source, &ch).lines()
-                            .next().unwrap_or("").trim().to_string();
+                        let sig = tree_sitter_utils::node_text(source, &ch)
+                            .lines()
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
                         let body = Self::get_body(source, &ch);
                         let calls = tree_sitter_utils::extract_calls_from_body(source, &ch);
                         methods.push(MethodBlock {
                             method_id: make_method_id(project, &file_path, "_module_", &name, sl),
-                            name, signature: sig, params, return_type: "any".into(),
+                            name,
+                            signature: sig,
+                            params,
+                            return_type: "any".into(),
                             class_name: "_module_".into(),
-                            file_path: file_path.clone(), package_or_module: module.clone(),
-                            language: "javascript".into(), project: project.to_string(),
-                            start_line: sl, end_line: el, calls, comment: String::new(), source_text: body,
+                            file_path: file_path.clone(),
+                            package_or_module: module.clone(),
+                            language: "javascript".into(),
+                            project: project.to_string(),
+                            start_line: sl,
+                            end_line: el,
+                            calls,
+                            comment: String::new(),
+                            source_text: body,
                         });
                     }
                 }
@@ -160,19 +245,33 @@ impl ParseStrategy for TsJavaScriptParser {
                             if let Some(init) = decl.child_by_field_name("value") {
                                 if init.kind() == "arrow_function" {
                                     if let Some(nn) = decl.child_by_field_name("name") {
-                                        let name = tree_sitter_utils::node_text(source, &nn).to_string();
+                                        let name =
+                                            tree_sitter_utils::node_text(source, &nn).to_string();
                                         let (sl, el) = tree_sitter_utils::node_range(&init);
                                         let params = Self::get_params(source, &init);
                                         let sig = format!("const {} = (...) => {{", name);
                                         let body = Self::get_body(source, &init);
-                                        let calls = tree_sitter_utils::extract_calls_from_body(source, &init);
+                                        let calls = tree_sitter_utils::extract_calls_from_body(
+                                            source, &init,
+                                        );
                                         methods.push(MethodBlock {
-                                            method_id: make_method_id(project, &file_path, "_module_", &name, sl),
-                                            name, signature: sig, params, return_type: "any".into(),
+                                            method_id: make_method_id(
+                                                project, &file_path, "_module_", &name, sl,
+                                            ),
+                                            name,
+                                            signature: sig,
+                                            params,
+                                            return_type: "any".into(),
                                             class_name: "_module_".into(),
-                                            file_path: file_path.clone(), package_or_module: module.clone(),
-                                            language: "javascript".into(), project: project.to_string(),
-                                            start_line: sl, end_line: el, calls, comment: String::new(), source_text: body,
+                                            file_path: file_path.clone(),
+                                            package_or_module: module.clone(),
+                                            language: "javascript".into(),
+                                            project: project.to_string(),
+                                            start_line: sl,
+                                            end_line: el,
+                                            calls,
+                                            comment: String::new(),
+                                            source_text: body,
                                         });
                                     }
                                 }
@@ -186,7 +285,9 @@ impl ParseStrategy for TsJavaScriptParser {
         // Populate class method_ids
         for c in &mut classes {
             for m in &methods {
-                if m.class_name == c.name { c.method_ids.push(m.method_id.clone()); }
+                if m.class_name == c.name {
+                    c.method_ids.push(m.method_id.clone());
+                }
             }
         }
 
@@ -195,8 +296,14 @@ impl ParseStrategy for TsJavaScriptParser {
 }
 
 fn find_class_methods_js(
-    source: &str, _root: &tree_sitter::Node, cursor: &mut tree_sitter::TreeCursor,
-    project: &str, file_path: &str, module: &str, class_name: &str, methods: &mut Vec<MethodBlock>,
+    source: &str,
+    _root: &tree_sitter::Node,
+    cursor: &mut tree_sitter::TreeCursor,
+    project: &str,
+    file_path: &str,
+    module: &str,
+    class_name: &str,
+    methods: &mut Vec<MethodBlock>,
 ) {
     loop {
         let node = cursor.node();
@@ -208,20 +315,37 @@ fn find_class_methods_js(
                         for member in body.children(&mut bc) {
                             if member.kind() == "method_definition" {
                                 if let Some(mn) = member.child_by_field_name("name") {
-                                    let name = tree_sitter_utils::node_text(source, &mn).to_string();
+                                    let name =
+                                        tree_sitter_utils::node_text(source, &mn).to_string();
                                     let (sl, el) = tree_sitter_utils::node_range(&member);
                                     let params = TsJavaScriptParser::get_params(source, &member);
-                                    let sig = tree_sitter_utils::node_text(source, &member).lines()
-                                        .next().unwrap_or("").trim().to_string();
+                                    let sig = tree_sitter_utils::node_text(source, &member)
+                                        .lines()
+                                        .next()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .to_string();
                                     let body_text = TsJavaScriptParser::get_body(source, &member);
-                                    let calls = tree_sitter_utils::extract_calls_from_body(source, &member);
+                                    let calls =
+                                        tree_sitter_utils::extract_calls_from_body(source, &member);
                                     methods.push(MethodBlock {
-                                        method_id: make_method_id(project, file_path, class_name, &name, sl),
-                                        name, signature: sig, params, return_type: "any".into(),
+                                        method_id: make_method_id(
+                                            project, file_path, class_name, &name, sl,
+                                        ),
+                                        name,
+                                        signature: sig,
+                                        params,
+                                        return_type: "any".into(),
                                         class_name: class_name.to_string(),
-                                        file_path: file_path.to_string(), package_or_module: module.to_string(),
-                                        language: "javascript".into(), project: project.to_string(),
-                                        start_line: sl, end_line: el, calls, comment: String::new(), source_text: body_text,
+                                        file_path: file_path.to_string(),
+                                        package_or_module: module.to_string(),
+                                        language: "javascript".into(),
+                                        project: project.to_string(),
+                                        start_line: sl,
+                                        end_line: el,
+                                        calls,
+                                        comment: String::new(),
+                                        source_text: body_text,
                                     });
                                 }
                             }
@@ -231,11 +355,19 @@ fn find_class_methods_js(
                 }
             }
         }
-        if cursor.goto_first_child() { continue; }
-        if cursor.goto_next_sibling() { continue; }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        if cursor.goto_next_sibling() {
+            continue;
+        }
         loop {
-            if !cursor.goto_parent() { return; }
-            if cursor.goto_next_sibling() { break; }
+            if !cursor.goto_parent() {
+                return;
+            }
+            if cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }

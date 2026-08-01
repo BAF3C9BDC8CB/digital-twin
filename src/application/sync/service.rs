@@ -9,9 +9,9 @@
 //! [`WriteCoordinator::has_active_writes`]. If `true`, the sync is skipped
 //! and each source returns [`SyncReport::skipped`].
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
+use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -133,9 +133,7 @@ impl SyncService for NacosSyncService {
         let base_url = self.resolve_url(env)?;
         let env_label = format!("nacos/{env}");
 
-        tracing::info!(
-            "[nacos-sync] starting sync for {env_label} ({base_url})"
-        );
+        tracing::info!("[nacos-sync] starting sync for {env_label} ({base_url})");
 
         let client = NacosClient::new(base_url);
         let mut reports: Vec<SyncReport> = Vec::with_capacity(2);
@@ -187,9 +185,9 @@ impl SyncService for NacosSyncService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::domain::traits::GraphRepository;
     use crate::domain::types::HealthStatus;
+    use async_trait::async_trait;
     use std::collections::HashMap;
 
     /// Minimal mock GraphRepository.

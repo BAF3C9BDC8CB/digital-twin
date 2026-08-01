@@ -5,19 +5,19 @@
 
 use std::sync::Arc;
 
-use crate::application::context::models::{AlertSeverity, ContextOptions};
-use crate::application::context::pipeline::ContextPipeline;
-use crate::application::context::plan::{PlanRequest, PlanService, PlanServiceTrait};
-use crate::application::context::history::{HistoryRequest, HistoryService, HistoryTrait};
-use crate::application::context::domain_query::{
-    DomainQueryService, DomainQueryTrait, DomainRequest,
-};
 use crate::application::context::dependency::{
     DependencyRequest, DependencyService, DependencyTrait,
 };
+use crate::application::context::domain_query::{
+    DomainQueryService, DomainQueryTrait, DomainRequest,
+};
+use crate::application::context::history::{HistoryRequest, HistoryService, HistoryTrait};
+use crate::application::context::models::{AlertSeverity, ContextOptions};
+use crate::application::context::pipeline::ContextPipeline;
+use crate::application::context::plan::{PlanRequest, PlanService, PlanServiceTrait};
+use crate::application::context::stages::RetrieverStage;
 use crate::application::context::verify::{VerifyRequest, VerifyService, VerifyTrait};
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
-use crate::application::context::stages::RetrieverStage;
 
 // ---------------------------------------------------------------------------
 // dt context
@@ -62,7 +62,13 @@ pub async fn handle_context(
     match pipeline.execute(&task, &options).await {
         Ok(ctx) => {
             println!("Context for: \"{task}\"");
-            println!("  Thread:     {}", ctx.thread.as_ref().map(|t| t.title.as_str()).unwrap_or("(none)"));
+            println!(
+                "  Thread:     {}",
+                ctx.thread
+                    .as_ref()
+                    .map(|t| t.title.as_str())
+                    .unwrap_or("(none)")
+            );
             println!("  Reality:    {} items", ctx.reality.count);
             println!("  Knowledge:  {} items", ctx.knowledge.count);
             println!("  Memory:     {} items", ctx.memory.count);
@@ -85,8 +91,12 @@ pub async fn handle_context(
             if !ctx.reality.items.is_empty() {
                 println!("\nReality:");
                 for item in &ctx.reality.items {
-                    println!("  [{:.2}] {} → {}",
-                        item.score, item.label, item.content.chars().take(80).collect::<String>());
+                    println!(
+                        "  [{:.2}] {} → {}",
+                        item.score,
+                        item.label,
+                        item.content.chars().take(80).collect::<String>()
+                    );
                 }
             }
         }
@@ -193,7 +203,8 @@ pub async fn handle_domain(
             let domain_svc = DomainQueryService::new(graph);
             match domain_svc.query(&request).await {
                 Ok(model) => {
-                    println!("Domain: \"{}\" ({} concepts, {} services, {} playbooks)",
+                    println!(
+                        "Domain: \"{}\" ({} concepts, {} services, {} playbooks)",
                         model.domain,
                         model.concepts.len(),
                         model.services.len(),
@@ -204,7 +215,9 @@ pub async fn handle_domain(
                         for c in &model.concepts {
                             println!(
                                 "    [{}] {} → {}",
-                                c.entity_type, c.name, c.description.chars().take(60).collect::<String>(),
+                                c.entity_type,
+                                c.name,
+                                c.description.chars().take(60).collect::<String>(),
                             );
                         }
                     }
@@ -260,8 +273,10 @@ pub async fn handle_history(
             let history_svc = HistoryService::new(graph);
             match history_svc.search(&request).await {
                 Ok(result) => {
-                    println!("History for: \"{}\" ({} similar tasks found)",
-                        result.query, result.total_found);
+                    println!(
+                        "History for: \"{}\" ({} similar tasks found)",
+                        result.query, result.total_found
+                    );
                     for t in &result.similar_tasks {
                         let success = match t.success {
                             Some(true) => "✓",
@@ -320,20 +335,14 @@ pub async fn handle_dependency(
             match dep_svc.analyse(&request).await {
                 Ok(dep_graph) => {
                     println!("Dependency analysis for: \"{}\"", dep_graph.target);
-                    println!(
-                        "  Upstream:   {} entities",
-                        dep_graph.upstream.count
-                    );
+                    println!("  Upstream:   {} entities", dep_graph.upstream.count);
                     for e in &dep_graph.upstream.entities {
                         println!("    [{}/d{}] {}", e.entity_type, e.distance, e.name);
                         if let Some(ref f) = e.source_file {
                             println!("              → {f}");
                         }
                     }
-                    println!(
-                        "  Downstream: {} entities",
-                        dep_graph.downstream.count
-                    );
+                    println!("  Downstream: {} entities", dep_graph.downstream.count);
                     for e in &dep_graph.downstream.entities {
                         println!("    [{}/d{}] {}", e.entity_type, e.distance, e.name);
                     }
@@ -398,7 +407,10 @@ pub async fn handle_verify(
                     };
                     println!(
                         "Verify: {} files — {} passed, {} warned, {} failed — overall: {status}",
-                        files.len(), report.passed, report.warned, report.failed,
+                        files.len(),
+                        report.passed,
+                        report.warned,
+                        report.failed,
                     );
                     for check in &report.checks {
                         let s = match check.status {

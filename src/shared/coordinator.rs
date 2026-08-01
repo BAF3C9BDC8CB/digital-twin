@@ -273,10 +273,10 @@ impl Drop for GlobalGuard {
 // CoordinatedBuildService — Wrap pattern
 // ---------------------------------------------------------------------------
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::BuildService;
 use crate::domain::types::BuildReport;
+use async_trait::async_trait;
 
 /// A `BuildService` decorator that acquires [`WriteCoordinator`] locks
 /// before delegating to the inner service.
@@ -296,10 +296,7 @@ pub struct CoordinatedBuildService {
 impl CoordinatedBuildService {
     /// Wrap an existing `BuildService` with write coordination.
     pub fn new(inner: Arc<dyn BuildService>, coordinator: Arc<WriteCoordinator>) -> Self {
-        Self {
-            inner,
-            coordinator,
-        }
+        Self { inner, coordinator }
     }
 }
 

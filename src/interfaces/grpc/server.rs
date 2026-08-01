@@ -6,10 +6,10 @@
 //! unreachable the server falls back to no-op implementations and logs
 //! a warning — the daemon starts regardless.
 
-use crate::interfaces::grpc::wiring;
-use crate::interfaces::grpc::auth::auth_interceptor;
-use crate::domain::types::{AppConfig, PluginContext, PluginLogger};
 use crate::application::plugins::registry::PluginRegistry;
+use crate::domain::types::{AppConfig, PluginContext, PluginLogger};
+use crate::interfaces::grpc::auth::auth_interceptor;
+use crate::interfaces::grpc::wiring;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -96,22 +96,21 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     // event/memorize/sync to the same application-layer services used
     // by the CLI.  Passes real backend Arc handles so the service can
     // access Memgraph and Qdrant directly.
-    let dt_core_impl =
-        crate::interfaces::grpc::services::dt_core_service::DtCoreServiceImpl::new(
-            Some(graph.clone()),
-            Some(vector.clone()),
-            components.embed.clone(),
-            components.hook_engine.clone(),
-        );
-    server.add_service(
-        crate::proto::dt::core::dt_core_server::DtCoreServer::new(dt_core_impl),
+    let dt_core_impl = crate::interfaces::grpc::services::dt_core_service::DtCoreServiceImpl::new(
+        Some(graph.clone()),
+        Some(vector.clone()),
+        components.embed.clone(),
+        components.hook_engine.clone(),
     );
+    server.add_service(crate::proto::dt::core::dt_core_server::DtCoreServer::new(
+        dt_core_impl,
+    ));
 
     // Apply the auth interceptor layer so every request gets a Role injected
     // into its extensions. tower::ServiceBuilder chains multiple layers
     // together — currently just auth, but ready for rate-limiting etc.
-    let auth_layer = tower::ServiceBuilder::new()
-        .layer(tonic::service::interceptor(auth_interceptor));
+    let auth_layer =
+        tower::ServiceBuilder::new().layer(tonic::service::interceptor(auth_interceptor));
     let mut router = server.layer(auth_layer);
 
     // Bootstrap: add tonic's built-in health service.

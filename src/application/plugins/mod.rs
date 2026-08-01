@@ -5,13 +5,13 @@
 //! - `PluginRegistry` — registration, lifecycle management, and gRPC wiring
 //! - Builtin plugins: `k8s`, `svc`, `jenkins`
 
-pub mod k8s;
-pub mod svc;
 pub mod jenkins;
+pub mod k8s;
 pub mod registry;
+pub mod svc;
 
-use async_trait::async_trait;
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
+use async_trait::async_trait;
 
 /// Core plugin trait.
 ///

@@ -228,10 +228,7 @@ mod tests {
     fn add_and_get_output() {
         let ctx = sample_context();
         let out = ctx.get_output("lang_detector").unwrap();
-        assert_eq!(
-            out.get("language").and_then(|v| v.as_str()),
-            Some("Rust")
-        );
+        assert_eq!(out.get("language").and_then(|v| v.as_str()), Some("Rust"));
     }
 
     #[test]
@@ -278,7 +275,8 @@ mod tests {
     #[test]
     fn resolve_multiple_variables() {
         let ctx = sample_context();
-        let result = ctx.resolve("${lang_detector.language} project: ${tree_sitter.entities.classes[0]}");
+        let result =
+            ctx.resolve("${lang_detector.language} project: ${tree_sitter.entities.classes[0]}");
         assert_eq!(result, "Rust project: Compiler");
     }
 

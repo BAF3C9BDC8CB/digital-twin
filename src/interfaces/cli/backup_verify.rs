@@ -81,7 +81,7 @@ pub async fn verify_backup(backup_dir: &Path) -> anyhow::Result<VerifyReport> {
             match compute_sha256(&file_path).await {
                 Ok(hash) => (hash == *expected_hash, hash),
                 Err(e) => {
-                    tracing::error!("failed to compute hash for {}: {}", file_name, e);
+                    tracing::error!("计算 {} 的哈希值失败: {}", file_name, e);
                     (false, format!("error: {e}"))
                 }
             }
@@ -104,10 +104,7 @@ pub async fn verify_backup(backup_dir: &Path) -> anyhow::Result<VerifyReport> {
     // Also verify files that exist but aren't in checksums (warn only)
     for file_name in BACKUP_FILES {
         if !expected.contains_key(*file_name) && backup_dir.join(file_name).exists() {
-            tracing::warn!(
-                "file {} exists but is not in checksums.sha256",
-                file_name
-            );
+            tracing::warn!("文件 {} 存在但不在 checksums.sha256 中", file_name);
         }
     }
 

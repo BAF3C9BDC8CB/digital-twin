@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{GraphRepository, VectorRepository, EmbedService};
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
 use super::models::{AggregatedContext, ContextOptions};
 use super::pipeline::ContextPipeline;
@@ -47,7 +47,8 @@ impl ContextService {
     ///
     /// Equivalent to calling `pipeline.execute(task, &ContextOptions::default())`.
     pub async fn build(&self, task: &str) -> Result<AggregatedContext, DtError> {
-        self.build_with_options(task, &ContextOptions::default()).await
+        self.build_with_options(task, &ContextOptions::default())
+            .await
     }
 
     /// Build context with custom options.

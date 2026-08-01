@@ -20,17 +20,17 @@
 //! 6. Rebuild CALLS relationships for affected methods
 //! 7. Release lock → return `UpdateReport`
 
-use clap::Parser;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::BatchConfig;
+use clap::Parser;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::shared::coordinator::WriteCoordinator;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
+use crate::shared::coordinator::WriteCoordinator;
 
 // ---------------------------------------------------------------------------
 // UpdateCommand — CLI struct
@@ -43,7 +43,10 @@ use crate::infrastructure::scanner;
 /// dt update --file /path/to/PayService.java --type delete
 /// ```
 #[derive(Parser, Debug, Clone)]
-#[command(name = "update", about = "Single-file incremental update into the knowledge graph")]
+#[command(
+    name = "update",
+    about = "Single-file incremental update into the knowledge graph"
+)]
 pub struct UpdateCommand {
     /// Absolute path to the file to update.
     #[arg(long = "file")]
@@ -158,8 +161,7 @@ impl UpdateRunner {
 
         // ---- Step 4: Update snapshot (if available) ----
         if let Some(snapshot_repo) = &deps.snapshot {
-            let (file_hash, file_mtime) =
-                scanner::compute_file_hash(file_path).unwrap_or_default();
+            let (file_hash, file_mtime) = scanner::compute_file_hash(file_path).unwrap_or_default();
             let fs_snapshot = crate::domain::types::FileSnapshot {
                 file_path: rel_path.clone(),
                 project: project.to_string(),
@@ -168,9 +170,7 @@ impl UpdateRunner {
                 method_count: parse_result.methods.len() as u32,
                 updated_at: chrono::Utc::now().to_rfc3339(),
             };
-            let _ = snapshot_repo
-                .save_snapshots(project, &[fs_snapshot])
-                .await;
+            let _ = snapshot_repo.save_snapshots(project, &[fs_snapshot]).await;
         }
 
         let methods_count = parse_result.methods.len();
@@ -188,8 +188,14 @@ impl UpdateRunner {
             write_contains_relationships(graph, &parse_result.classes).await;
 
             // 5d. Write module nodes
-            write_modules_for_file(graph, project, &parse_result.methods, &parse_result.classes, batch)
-                .await;
+            write_modules_for_file(
+                graph,
+                project,
+                &parse_result.methods,
+                &parse_result.classes,
+                batch,
+            )
+            .await;
         }
 
         // ---- Step 6: Rebuild CALLS relationships ----
@@ -231,11 +237,7 @@ fn is_delete_type(op_type: &str) -> bool {
 ///
 /// We use `DETACH DELETE` so that incoming/outgoing relationships (CALLS,
 /// CONTAINS) are automatically removed without leaving orphans.
-async fn delete_by_file_path(
-    graph: &Arc<dyn GraphRepository>,
-    project: &str,
-    rel_path: &str,
-) {
+async fn delete_by_file_path(graph: &Arc<dyn GraphRepository>, project: &str, rel_path: &str) {
     use std::collections::HashMap;
 
     // Delete Method nodes
@@ -282,7 +284,11 @@ async fn delete_by_file_path(
 // ---------------------------------------------------------------------------
 
 /// Write (MERGE) method nodes in batches of 200.
-async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domain::types::MethodBlock], batch: &BatchConfig) {
+async fn write_methods(
+    graph: &Arc<dyn GraphRepository>,
+    methods: &[crate::domain::types::MethodBlock],
+    batch: &BatchConfig,
+) {
     use std::collections::HashMap;
 
     for chunk in methods.chunks(batch.unwind) {
@@ -309,7 +315,10 @@ async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domai
             .collect();
 
         let mut params = HashMap::new();
-        params.insert("methods".to_string(), serde_json::Value::Array(methods_json));
+        params.insert(
+            "methods".to_string(),
+            serde_json::Value::Array(methods_json),
+        );
 
         let _ = graph
             .write_query(
@@ -338,7 +347,11 @@ async fn write_methods(graph: &Arc<dyn GraphRepository>, methods: &[crate::domai
 }
 
 /// Write (MERGE) class nodes in batches of 100.
-async fn write_classes(graph: &Arc<dyn GraphRepository>, classes: &[crate::domain::types::ClassBlock], batch: &BatchConfig) {
+async fn write_classes(
+    graph: &Arc<dyn GraphRepository>,
+    classes: &[crate::domain::types::ClassBlock],
+    batch: &BatchConfig,
+) {
     use std::collections::HashMap;
 
     for chunk in classes.chunks(batch.unwind) {
@@ -359,7 +372,10 @@ async fn write_classes(graph: &Arc<dyn GraphRepository>, classes: &[crate::domai
             .collect();
 
         let mut params = HashMap::new();
-        params.insert("classes".to_string(), serde_json::Value::Array(classes_json));
+        params.insert(
+            "classes".to_string(),
+            serde_json::Value::Array(classes_json),
+        );
 
         let _ = graph
             .write_query(
@@ -455,7 +471,10 @@ async fn write_modules_for_file(
             .collect();
 
         let mut params = HashMap::new();
-        params.insert("modules".to_string(), serde_json::Value::Array(modules_json));
+        params.insert(
+            "modules".to_string(),
+            serde_json::Value::Array(modules_json),
+        );
 
         let _ = graph
             .write_query(
@@ -584,13 +603,8 @@ mod tests {
 
     #[test]
     fn update_command_default_type_is_modify() {
-        let cmd = UpdateCommand::try_parse_from([
-            "update",
-            "--file",
-            "/tmp/bar.py",
-            "--project",
-            "p2",
-        ]);
+        let cmd =
+            UpdateCommand::try_parse_from(["update", "--file", "/tmp/bar.py", "--project", "p2"]);
         assert!(cmd.is_ok());
         assert_eq!(cmd.unwrap().op_type, "modify");
     }
@@ -639,7 +653,8 @@ mod tests {
         let file = dir.path().join("main.rs");
         std::fs::write(&file, "fn main() {}").unwrap();
 
-        let graph: Arc<dyn GraphRepository> = Arc::new(crate::infrastructure::memgraph::NoopGraphRepo);
+        let graph: Arc<dyn GraphRepository> =
+            Arc::new(crate::infrastructure::memgraph::NoopGraphRepo);
         let deps = UpdateDependencies {
             graph: Some(graph),
             vector: None,

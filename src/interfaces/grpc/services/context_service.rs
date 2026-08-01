@@ -2,11 +2,11 @@
 //!
 //! Delegates to [`ContextPipeline`] to perform six-world context aggregation.
 
-use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
-use crate::proto::dt::core::*;
+use crate::application::context::models::ContextOptions;
 use crate::application::context::pipeline::ContextPipeline;
 use crate::application::context::stages::RetrieverStage;
-use crate::application::context::models::ContextOptions;
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
+use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::Status;
 
@@ -32,9 +32,7 @@ pub async fn handle_get_context(
     };
 
     let retriever = match (graph, vector) {
-        (Some(g), v) => {
-            RetrieverStage::new(g, v, embed)
-        }
+        (Some(g), v) => RetrieverStage::new(g, v, embed),
         (None, _) => RetrieverStage::empty(),
     };
 

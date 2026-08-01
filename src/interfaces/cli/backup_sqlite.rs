@@ -34,22 +34,22 @@ pub async fn copy_database(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let start = Instant::now();
     let copy_path = backup_dir.join("sqlite.copy");
 
-    tracing::info!("copying SQLite database to {}", copy_path.display());
+    tracing::info!("正在复制 SQLite 数据库到 {}", copy_path.display());
 
     if let Some(source) = find_database() {
-        tracing::info!("found SQLite database at {}", source.display());
+        tracing::info!("在 {} 找到 SQLite 数据库", source.display());
 
         match tokio::fs::copy(&source, &copy_path).await {
             Ok(size) => {
                 tracing::info!(
-                    "SQLite copy complete: {} bytes ({:.0}ms)",
+                    "SQLite 复制完成: {} 字节 ({:.0}ms)",
                     size,
                     start.elapsed().as_secs_f64() * 1000.0
                 );
                 return Ok((true, size));
             }
             Err(e) => {
-                tracing::warn!("failed to copy SQLite database {}: {e}", source.display());
+                tracing::warn!("复制 SQLite 数据库失败 {}: {e}", source.display());
             }
         }
     }
@@ -68,7 +68,7 @@ pub async fn copy_database(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let size = tokio::fs::metadata(&copy_path).await?.len();
 
     tracing::info!(
-        "SQLite copy (placeholder): {} bytes ({:.0}ms)",
+        "SQLite 复制 (占位符): {} 字节 ({:.0}ms)",
         size,
         start.elapsed().as_secs_f64() * 1000.0
     );
@@ -83,21 +83,20 @@ pub async fn restore_database(backup_dir: &Path) -> anyhow::Result<()> {
     let copy_path = backup_dir.join("sqlite.copy");
 
     if !copy_path.exists() {
-        tracing::warn!("SQLite backup not found at {} — skipping", copy_path.display());
+        tracing::warn!("未找到 SQLite 备份文件 {} — 跳过", copy_path.display());
         return Ok(());
     }
 
     // Check for placeholder (starts with "--")
-    let peek = tokio::fs::read_to_string(&copy_path).await.unwrap_or_default();
+    let peek = tokio::fs::read_to_string(&copy_path)
+        .await
+        .unwrap_or_default();
     if peek.starts_with("--") {
-        tracing::info!(
-            "SQLite backup is a placeholder, skipping restore: {}",
-            copy_path.display()
-        );
+        tracing::info!("SQLite 备份是占位符, 跳过恢复: {}", copy_path.display());
         return Ok(());
     }
 
-    tracing::info!("restoring SQLite database from {}", copy_path.display());
+    tracing::info!("正在从 {} 恢复 SQLite 数据库", copy_path.display());
 
     // Restore to the first candidate path
     let target = SQLITE_CANDIDATES
@@ -113,15 +112,11 @@ pub async fn restore_database(backup_dir: &Path) -> anyhow::Result<()> {
 
     match tokio::fs::copy(&copy_path, &target).await {
         Ok(size) => {
-            tracing::info!(
-                "SQLite restore complete: {} bytes → {}",
-                size,
-                target.display()
-            );
+            tracing::info!("SQLite 恢复完成: {} 字节 → {}", size, target.display());
         }
         Err(e) => {
             tracing::error!(
-                "SQLite restore failed: {} → {}: {e}",
+                "SQLite 恢复失败: {} -> {}: {e}",
                 copy_path.display(),
                 target.display()
             );

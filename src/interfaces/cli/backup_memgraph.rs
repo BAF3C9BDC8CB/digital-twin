@@ -94,7 +94,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let start = Instant::now();
     let dump_path = backup_dir.join("memgraph.dump");
 
-    tracing::info!("dumping Memgraph to {}", dump_path.display());
+    tracing::info!("正在导出 Memgraph 到 {}", dump_path.display());
 
     let method = detect_method();
 
@@ -108,7 +108,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             if output.status.success() {
                 let size = tokio::fs::metadata(&dump_path).await?.len();
                 tracing::info!(
-                    "Memgraph dump complete (mg_backup): {} bytes ({:.0}ms)",
+                    "Memgraph 导出完成 (mg_backup): {} 字节 ({:.0}ms)",
                     size,
                     start.elapsed().as_secs_f64() * 1000.0
                 );
@@ -116,7 +116,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             }
 
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("mg_backup dump failed: {stderr}");
+            tracing::warn!("mg_backup 导出失败: {stderr}");
         }
         Some(MemgraphMethod::Mgconsole) => {
             // mgconsole can output Cypher queries for later replay
@@ -129,7 +129,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
                 tokio::fs::write(&dump_path, &output.stdout).await?;
                 let size = tokio::fs::metadata(&dump_path).await?.len();
                 tracing::info!(
-                    "Memgraph dump complete (mgconsole): {} bytes ({:.0}ms)",
+                    "Memgraph 导出完成 (mgconsole): {} 字节 ({:.0}ms)",
                     size,
                     start.elapsed().as_secs_f64() * 1000.0
                 );
@@ -137,7 +137,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             }
 
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("mgconsole dump failed: {stderr}");
+            tracing::warn!("mgconsole 导出失败: {stderr}");
         }
         Some(MemgraphMethod::Docker) => {
             let container = resolve_container_name();
@@ -168,7 +168,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
                 if copy.status.success() {
                     let size = tokio::fs::metadata(&dump_path).await?.len();
                     tracing::info!(
-                        "Memgraph dump complete (docker mg_backup): {} bytes ({:.0}ms)",
+                        "Memgraph 导出完成 (docker mg_backup): {} 字节 ({:.0}ms)",
                         size,
                         start.elapsed().as_secs_f64() * 1000.0
                     );
@@ -177,7 +177,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             }
 
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("docker mg_backup dump failed: {stderr}");
+            tracing::warn!("docker mg_backup 导出失败: {stderr}");
 
             // Fallback: try docker mgconsole
             let console_output = tokio::process::Command::new("docker")
@@ -195,7 +195,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
                 tokio::fs::write(&dump_path, &console_output.stdout).await?;
                 let size = tokio::fs::metadata(&dump_path).await?.len();
                 tracing::info!(
-                    "Memgraph dump complete (docker mgconsole): {} bytes ({:.0}ms)",
+                    "Memgraph 导出完成 (docker mgconsole): {} 字节 ({:.0}ms)",
                     size,
                     start.elapsed().as_secs_f64() * 1000.0
                 );
@@ -203,12 +203,12 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             }
 
             let stderr = String::from_utf8_lossy(&console_output.stderr);
-            tracing::warn!("docker mgconsole dump failed: {stderr}");
+            tracing::warn!("docker mgconsole 导出失败: {stderr}");
         }
         None => {
             tracing::warn!(
-                "memgraph backup tools not found: install mg_backup or mgconsole, \
-                 or run a Memgraph Docker container"
+                "未找到 Memgraph 备份工具: 请安装 mg_backup 或 mgconsole, \
+                 或运行 Memgraph Docker 容器"
             );
         }
     }
@@ -225,7 +225,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let size = tokio::fs::metadata(&dump_path).await?.len();
 
     tracing::info!(
-        "Memgraph dump (placeholder): {} bytes ({:.0}ms)",
+        "Memgraph 导出 (占位符): {} 字节 ({:.0}ms)",
         size,
         start.elapsed().as_secs_f64() * 1000.0
     );
@@ -261,7 +261,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    tracing::info!("restoring Memgraph from {}", dump_path.display());
+    tracing::info!("正在从 {} 恢复 Memgraph", dump_path.display());
 
     let method = detect_method();
     let dump_str = dump_path.to_str().unwrap();
@@ -274,10 +274,10 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
                 .await?;
 
             if output.status.success() {
-                tracing::info!("Memgraph restore complete (mg_backup)");
+                tracing::info!("Memgraph 恢复完成 (mg_backup)");
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::error!("mg_backup restore failed: {stderr}");
+                tracing::error!("mg_backup 恢复失败: {stderr}");
             }
         }
         Some(MemgraphMethod::Mgconsole) => {
@@ -300,10 +300,10 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
             let output = child.wait_with_output().await?;
 
             if output.status.success() {
-                tracing::info!("Memgraph restore complete (mgconsole)");
+                tracing::info!("Memgraph 恢复完成 (mgconsole)");
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                tracing::error!("mgconsole restore failed: {stderr}");
+                tracing::error!("mgconsole 恢复失败: {stderr}");
             }
         }
         Some(MemgraphMethod::Docker) => {
@@ -328,12 +328,12 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
                 .await?;
 
             if output.status.success() {
-                tracing::info!("Memgraph restore complete (docker mg_backup)");
+                tracing::info!("Memgraph 恢复完成 (docker mg_backup)");
                 return Ok(());
             }
 
             let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::warn!("docker mg_backup restore failed: {stderr}");
+            tracing::warn!("docker mg_backup 恢复失败: {stderr}");
 
             // Fallback: try mgconsole restore inside container
             let dump_data = tokio::fs::read(&dump_path).await?;
@@ -355,17 +355,17 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
                 }
                 let result = child.wait_with_output().await?;
                 if result.status.success() {
-                    tracing::info!("Memgraph restore complete (docker mgconsole)");
+                    tracing::info!("Memgraph 恢复完成 (docker mgconsole)");
                 } else {
                     let stderr = String::from_utf8_lossy(&result.stderr);
-                    tracing::error!("docker mgconsole restore failed: {stderr}");
+                    tracing::error!("docker mgconsole 恢复失败: {stderr}");
                 }
             }
         }
         None => {
             tracing::warn!(
-                "cannot restore Memgraph: no backup method available. \
-                 Try: docker exec memgraph-mage mg_backup --restore <path>"
+                "无法恢复 Memgraph: 没有可用的备份方法. \
+                 请尝试: docker exec memgraph-mage mg_backup --restore <path>"
             );
         }
     }

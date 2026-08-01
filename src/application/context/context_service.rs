@@ -79,7 +79,10 @@ impl ContextServiceImpl {
     ///
     /// Times the pipeline execution and returns both the aggregated context
     /// and some metadata (raw count, retained count, elapsed time).
-    pub async fn build_context(&self, request: &ContextRequest) -> Result<ContextResponse, DtError> {
+    pub async fn build_context(
+        &self,
+        request: &ContextRequest,
+    ) -> Result<ContextResponse, DtError> {
         let start = std::time::Instant::now();
 
         let options = ContextOptions {
@@ -112,7 +115,7 @@ impl ContextServiceImpl {
 
         Ok(ContextResponse {
             context,
-            raw_count: retained,      // raw ≈ retained after empty pipeline
+            raw_count: retained, // raw ≈ retained after empty pipeline
             retained_count: retained,
             elapsed_ms: elapsed.as_millis() as u64,
         })

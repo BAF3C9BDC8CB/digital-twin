@@ -13,10 +13,10 @@
 //! `BoltRequest::begin` in the driver source — they check `!db.is_empty()`
 //! before emitting the field).
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 use crate::domain::types::HealthStatus;
+use async_trait::async_trait;
 use std::collections::HashMap;
 
 /// Real Memgraph Bolt client.
@@ -46,7 +46,7 @@ impl MemgraphClient {
             .uri(uri)
             .user(user)
             .password(password)
-            .db("")  // empty → driver skips the db field (Memgraph-compatible)
+            .db("") // empty → driver skips the db field (Memgraph-compatible)
             .build()
             .map_err(|e| DtError::Repository(format!("Memgraph config build: {}", e)))?;
 
@@ -99,7 +99,8 @@ impl GraphRepository for MemgraphClient {
         params: HashMap<String, serde_json::Value>,
     ) -> Result<serde_json::Value, DtError> {
         let q = build_query(query, &params);
-        let mut result = self.graph
+        let mut result = self
+            .graph
             .execute(q)
             .await
             .map_err(|e| DtError::Repository(format!("Memgraph write: {}", e)))?;
@@ -136,10 +137,7 @@ impl GraphRepository for MemgraphClient {
 ///
 /// Uses the driver's `json` feature which provides `TryFrom<serde_json::Value>
 /// for BoltType`, so parameters are converted cleanly.
-fn build_query(
-    query_str: &str,
-    params: &HashMap<String, serde_json::Value>,
-) -> bolt_driver::Query {
+fn build_query(query_str: &str, params: &HashMap<String, serde_json::Value>) -> bolt_driver::Query {
     let mut q = bolt_driver::query(query_str);
     for (key, val) in params {
         let bolt_val = json_to_bolt(val.clone());
@@ -160,22 +158,28 @@ fn json_to_bolt(val: serde_json::Value) -> bolt_driver::BoltType {
             bolt_driver::BoltType::List(bolt_driver::BoltList { value: items })
         }
         serde_json::Value::Object(obj) => {
-            let map: std::collections::HashMap<bolt_driver::BoltString, bolt_driver::BoltType> = obj
-                .into_iter()
-                .map(|(k, v)| (bolt_driver::BoltString { value: k }, json_to_bolt(v)))
-                .collect();
+            let map: std::collections::HashMap<bolt_driver::BoltString, bolt_driver::BoltType> =
+                obj.into_iter()
+                    .map(|(k, v)| (bolt_driver::BoltString { value: k }, json_to_bolt(v)))
+                    .collect();
             bolt_driver::BoltType::Map(bolt_driver::BoltMap { value: map })
         }
         // Should not reach here, but provide explicit conversions.
-        serde_json::Value::String(s) => bolt_driver::BoltType::String(bolt_driver::BoltString { value: s }),
+        serde_json::Value::String(s) => {
+            bolt_driver::BoltType::String(bolt_driver::BoltString { value: s })
+        }
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 bolt_driver::BoltType::Integer(bolt_driver::BoltInteger { value: i })
             } else {
-                bolt_driver::BoltType::Float(bolt_driver::BoltFloat { value: n.as_f64().unwrap_or(0.0) })
+                bolt_driver::BoltType::Float(bolt_driver::BoltFloat {
+                    value: n.as_f64().unwrap_or(0.0),
+                })
             }
         }
-        serde_json::Value::Bool(b) => bolt_driver::BoltType::Boolean(bolt_driver::BoltBoolean { value: b }),
+        serde_json::Value::Bool(b) => {
+            bolt_driver::BoltType::Boolean(bolt_driver::BoltBoolean { value: b })
+        }
         serde_json::Value::Null => bolt_driver::BoltType::Null(bolt_driver::BoltNull),
     }
 }
@@ -231,7 +235,9 @@ mod tests {
     fn noop_read_returns_null() {
         let repo = NoopGraphRepo;
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(repo.read_query("RETURN 1", HashMap::new())).unwrap();
+        let result = rt
+            .block_on(repo.read_query("RETURN 1", HashMap::new()))
+            .unwrap();
         assert_eq!(result, serde_json::Value::Null);
     }
 
@@ -239,7 +245,9 @@ mod tests {
     fn noop_write_returns_null() {
         let repo = NoopGraphRepo;
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(repo.write_query("CREATE (n)", HashMap::new())).unwrap();
+        let result = rt
+            .block_on(repo.write_query("CREATE (n)", HashMap::new()))
+            .unwrap();
         assert_eq!(result, serde_json::Value::Null);
     }
 }

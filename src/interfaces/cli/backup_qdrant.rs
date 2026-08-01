@@ -22,7 +22,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
     let start = Instant::now();
     let snapshot_path = backup_dir.join("qdrant.snapshot");
 
-    tracing::info!("snapshotting Qdrant collections to {}", snapshot_path.display());
+    tracing::info!("正在为 Qdrant 集合创建快照 {}", snapshot_path.display());
 
     // Fetch collection list from Qdrant REST API
     let client = reqwest::Client::new();
@@ -40,7 +40,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
                 .unwrap_or_default()
         }
         Err(e) => {
-            tracing::warn!("Qdrant HTTP API unavailable ({e}) — writing placeholder snapshot");
+            tracing::warn!("Qdrant HTTP API 不可用 ({e}) — 写入占位符快照");
             vec![]
         }
     };
@@ -103,7 +103,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
     let success = !collection_details.is_empty();
 
     tracing::info!(
-        "Qdrant snapshot complete: {} collections, {} points, {} bytes ({:.0}ms)",
+        "Qdrant 快照完成: {} 个集合, {} 个点, {} 字节 ({:.0}ms)",
         collection_details.len(),
         total_points,
         size,
@@ -129,7 +129,7 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    tracing::info!("restoring Qdrant collections from {}", snapshot_path.display());
+    tracing::info!("正在从 {} 恢复 Qdrant 集合", snapshot_path.display());
 
     let content = tokio::fs::read_to_string(&snapshot_path).await?;
     let metadata: serde_json::Value = serde_json::from_str(&content)?;
@@ -167,7 +167,7 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
         {
             if resp.status().is_success() {
                 tracing::info!(
-                    "Qdrant restore: collection '{name}' already exists ({} points), skipping",
+                    "Qdrant 恢复: 集合 '{name}' 已存在 ({} 个点), 跳过",
                     points_count
                 );
                 restored += 1;
@@ -179,16 +179,13 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
         // Note: For full restore, the actual Qdrant snapshot files would need to be
         // created during backup via POST /collections/{name}/snapshots and stored.
         tracing::info!(
-            "Qdrant restore: collection '{name}' ({points_count} points) — \
-             full snapshot restore requires Qdrant snapshot API files. \
-             Re-run `dt build` to re-index."
+            "Qdrant 恢复: 集合 '{name}' ({points_count} 个点) — \
+             完整快照恢复需要 Qdrant 快照 API 文件. \
+             请重新运行 `dt build` 重新索引."
         );
     }
 
-    tracing::info!(
-        "Qdrant restore complete: {restored}/{} collections",
-        collections.len()
-    );
+    tracing::info!("Qdrant 恢复完成: {restored}/{} 个集合", collections.len());
 
     Ok(())
 }
