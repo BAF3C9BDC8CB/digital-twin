@@ -199,7 +199,7 @@ enum Commands {
     /// `dt build --path <path>` — build a project by root path.
     /// `dt build --name <name>` — build a project by name in config.yaml.
     /// `dt build --file <file>` — single file incremental update.
-    /// `dt build --full` — full rebuild (can combine with --path/--name/--file).
+    /// `dt build --full` — full rebuild (can combine with --path/--name/--file/--test).
     /// `dt build --test` — run self-contained pipeline integration test.
     Build {
         /// Project root path.
@@ -226,7 +226,8 @@ enum Commands {
         ///
         /// Creates test- prefixed nodes and collections, verifies
         /// every entity type, then cleans up automatically.
-        /// Use `dt clean --test` to manually clean test data.
+        /// Combine with --full to force a full rebuild when incremental
+        /// progress is stale; use `dt clean --test` to manually clean test data.
         #[arg(long = "test")]
         test: bool,
 
@@ -1412,16 +1413,18 @@ async fn main() -> anyhow::Result<()> {
 
                 // e. Run build (incremental by default — first run detects no snapshots
                 //    and processes all files; subsequent runs skip unchanged files).
-                //    full=false: use incremental strategy — relies on SQLite snapshots for mtime comparison.
+                //    full: user-passable via `dt build --test --full` — forces a full
+                //    rebuild and bypasses incremental snapshots (use when SQLite progress
+                //    is stale, e.g. after the KG was wiped outside `dt clean --test`).
                 //    pipeline=true: post-build pipeline ENABLED — same code path as production build,
                 //    including LLM background analysis (Phase 2). This ensures --test exercises the
                 //    exact same pipeline as real builds. LLM runs in background (non-blocking).
-                //    Use `dt clean --test` to force a full rebuild from scratch.
+                //    `dt clean --test` remains available to wipe test data manually.
                 dt_daemon::interfaces::cli::build::handle_build(
                     PathBuf::from("/data/myProject/digital-twin-v2/test"),
                     Some("test-pipeline".to_string()),
-                    None,  // file
-                    false, // full: use incremental strategy (SQLite snapshots → mtime comparison)
+                    None, // file
+                    full, // full: ②a fix — pass through user flag (was hardcoded false)
                     true, // pipeline: ENABLED — same code path as production build (Phase 4 change)
                     Some(graph.clone()),
                     Some(vector.clone()),
