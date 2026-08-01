@@ -74,6 +74,25 @@ pub enum EntityType {
     Other,
 }
 
+impl EntityType {
+    /// Enum variant name as used in `dt://entity/{project}/{type}/{canonical}`
+    /// entity IDs and the `type` property of graph `Entity` nodes (§6.1/§7.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Service => "Service",
+            Self::Channel => "Channel",
+            Self::Config => "Config",
+            Self::Table => "Table",
+            Self::Api => "Api",
+            Self::Concept => "Concept",
+            Self::Person => "Person",
+            Self::Org => "Org",
+            Self::Product => "Product",
+            Self::Other => "Other",
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for EntityType {
     /// Closed-vocabulary deserialization. Out-of-vocabulary values are
     /// normalised to [`EntityType::Other`] with a warn log recording the

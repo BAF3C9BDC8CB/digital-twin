@@ -1,33 +1,28 @@
-//! Store processor — persists pipeline results to Memgraph (graph database)
-//! and Qdrant (vector database).
+//! Store processor — the Consolidate 整合层 entry point in the pipeline
+//! (方案 §6, Task 2/R8).
 //!
-//! This is the final stage in the processing chain and always runs (its
-//! `matches()` returns `true` for every path).  It collects entities from
-//! upstream processors (tree_sitter, hanlp, llm), writes structured data
-//! to Memgraph via Cypher queries, generates embeddings, and upserts
-//! vectors into Qdrant.
+//! Thin shell: consumes `outputs["llm"]["graphs"]` (`Vec<ExtractedGraph>`,
+//! Task 1) and `outputs["chunk"]` (block texts), then delegates to
+//! [`Consolidator`] for normalisation, two-level disambiguation, graph
+//! writes and dual vector writes. Files without a `graphs` output (code
+//! files, raw-text path) are skipped untouched.
 //!
-//! All three backing stores are optional — the processor degrades
-//! gracefully when a store is not configured.
-//!
-//! Produces a [`ProcessorOutput`] with:
-//! - `"graph_nodes"`   — number of nodes written to Memgraph
-//! - `"vector_points"` — number of points upserted into Qdrant
-//! - `"errors"`        — list of non-fatal error messages encountered
-//!   during storage
+//! All three backing stores are optional — without them the processor is a
+//! no-op so the pipeline still runs in degraded environments.
 
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::application::knowledge::extract::{Consolidator, ExtractedGraph};
 use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
-/// Final pipeline stage that persists processed data.
+/// Final pipeline stage that persists extracted knowledge.
 ///
 /// # Dependency injection
 ///
@@ -88,308 +83,81 @@ impl Processor for StoreProcessor {
     }
 
     fn matches(&self, _file_path: &Path) -> bool {
-        // Always runs — last in the chain.
+        // Always runs — last in the chain; skips files without graphs.
         true
     }
 
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
-        let mut errors: Vec<String> = Vec::new();
 
-        // ── Step 1: Collect entities from upstream processors ──────────
-        let entities = collect_entities(ctx);
+        // ── R8: files without a graphs output are skipped untouched. ──
+        let Some(llm_out) = ctx.outputs.get("llm") else {
+            return Ok(output);
+        };
+        let Some(graphs_val) = llm_out.get("graphs") else {
+            return Ok(output);
+        };
+        let graphs: Vec<ExtractedGraph> =
+            serde_json::from_value(graphs_val.clone()).map_err(|e| {
+                DtError::General(format!("store: llm graphs output contract broken: {e}"))
+            })?;
 
-        // ── Step 2: Write to Memgraph ──────────────────────────────────
-        let graph_nodes = if let Some(ref graph) = self.graph {
-            match write_to_graph(graph, &entities, ctx).await {
-                Ok(count) => count,
-                Err(e) => {
-                    errors.push(format!("graph write failed: {e}"));
-                    0
+        // All three backends are required for consolidation.
+        let (Some(graph), Some(vector), Some(embed)) = (&self.graph, &self.vector, &self.embed)
+        else {
+            tracing::warn!("store: 后端未齐备（graph/vector/embed），跳过 consolidate");
+            return Ok(output);
+        };
+
+        // ── Block texts + doc identity from the chunk processor output. ──
+        let chunk_out = ctx.outputs.get("chunk").ok_or_else(|| {
+            DtError::General("store: graphs present without chunk output".to_string())
+        })?;
+        let doc_id = chunk_out
+            .get("doc_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DtError::General("store: chunk output missing doc_id".to_string()))?
+            .to_string();
+        let doc_type = chunk_out
+            .get("doc_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mut block_texts: HashMap<u32, String> = HashMap::new();
+        if let Some(chunks) = chunk_out.get("chunks").and_then(|v| v.as_array()) {
+            for chunk in chunks {
+                let index = chunk.get("chunk_index").and_then(|v| v.as_u64());
+                let text = chunk.get("text").and_then(|v| v.as_str());
+                if let (Some(index), Some(text)) = (index, text) {
+                    block_texts.insert(index as u32, text.to_string());
                 }
             }
-        } else {
-            0
-        };
-        output.set("graph_nodes", graph_nodes);
+        }
 
-        // ── Step 3: Generate embeddings and write to Qdrant ───────────
-        let vector_points = if let (Some(ref embed), Some(ref vector)) = (&self.embed, &self.vector)
-        {
-            match write_to_vector(embed, vector, &entities, ctx).await {
-                Ok(count) => count,
-                Err(e) => {
-                    errors.push(format!("vector write failed: {e}"));
-                    0
-                }
-            }
-        } else {
-            0
-        };
-        output.set("vector_points", vector_points);
+        let consolidator = Consolidator::new(graph.clone(), vector.clone(), embed.clone());
+        let stats = consolidator
+            .consolidate_document(
+                &ctx.project_name,
+                &doc_id,
+                &ctx.file_path.to_string_lossy(),
+                &doc_type,
+                &graphs,
+                &block_texts,
+            )
+            .await?;
 
-        output.set("errors", errors);
-        output.set("entity_count", entities.len());
+        // ── R9: counters for the engine's build report. ──
+        output.set("entities_merged", stats.entities_merged);
+        output.set("entities_created", stats.entities_created);
+        output.set("relations_written", stats.relations_written);
+        output.set("relations_orphaned", stats.relations_orphaned);
+        output.set("degraded_blocks", stats.degraded_blocks);
+        output.set("blocks_processed", stats.blocks_processed);
+        output.set("empty_blocks", stats.empty_blocks);
+        output.set("errors", stats.errors);
 
         Ok(output)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: entity collection
-// ---------------------------------------------------------------------------
-
-/// A unified entity descriptor collected from upstream processors.
-#[derive(Debug, Clone, serde::Serialize)]
-struct CollectedEntity {
-    /// Source processor name (e.g. "tree_sitter", "hanlp", "llm").
-    source: String,
-    /// Entity type label (e.g. "class", "method", "keyword", "ner").
-    entity_type: String,
-    /// Entity name or identifier.
-    name: String,
-    /// Optional human-readable description.
-    description: String,
-    /// Optional file path the entity was extracted from.
-    file_path: String,
-    /// Full text representation for embedding.
-    text_for_embedding: String,
-}
-
-/// Walk the context's processor outputs and collect all entities into a
-/// flat list for storage.
-fn collect_entities(ctx: &PipelineContext) -> Vec<CollectedEntity> {
-    let mut entities: Vec<CollectedEntity> = Vec::new();
-
-    // Entities from tree_sitter
-    if let Some(ts_out) = ctx.outputs.get("tree_sitter") {
-        if let Some(entities_val) = ts_out.get("entities") {
-            // Methods
-            if let Some(methods) = entities_val.get("methods").and_then(|v| v.as_array()) {
-                for m in methods {
-                    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let sig = m.get("signature").and_then(|v| v.as_str()).unwrap_or("");
-                    entities.push(CollectedEntity {
-                        source: "tree_sitter".into(),
-                        entity_type: "method".into(),
-                        name: name.to_string(),
-                        description: sig.to_string(),
-                        file_path: m
-                            .get("file_path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        text_for_embedding: format!("{}: {}", name, sig),
-                    });
-                }
-            }
-            // Classes
-            if let Some(classes) = entities_val.get("classes").and_then(|v| v.as_array()) {
-                for c in classes {
-                    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    entities.push(CollectedEntity {
-                        source: "tree_sitter".into(),
-                        entity_type: "class".into(),
-                        name: name.to_string(),
-                        description: c
-                            .get("kind")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("class")
-                            .to_string(),
-                        file_path: c
-                            .get("file_path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        text_for_embedding: format!(
-                            "{}: {}",
-                            c.get("kind")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("class"),
-                            name
-                        ),
-                    });
-                }
-            }
-        }
-    }
-
-    // Entities from hanlp / NLP
-    if let Some(hanlp_out) = ctx.outputs.get("hanlp") {
-        if let Some(entities_val) = hanlp_out.get("entities").and_then(|v| v.as_array()) {
-            for e in entities_val {
-                let text = e.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                let tag = e.get("tag").and_then(|v| v.as_str()).unwrap_or("");
-                entities.push(CollectedEntity {
-                    source: "hanlp".into(),
-                    entity_type: "ner".into(),
-                    name: text.to_string(),
-                    description: tag.to_string(),
-                    file_path: ctx.file_path.to_string_lossy().to_string(),
-                    text_for_embedding: format!("NER[{}]: {}", tag, text),
-                });
-            }
-        }
-        if let Some(keywords) = hanlp_out.get("keywords").and_then(|v| v.as_array()) {
-            for kw in keywords {
-                if let Some(text) = kw.as_str() {
-                    entities.push(CollectedEntity {
-                        source: "hanlp".into(),
-                        entity_type: "keyword".into(),
-                        name: text.to_string(),
-                        description: String::new(),
-                        file_path: ctx.file_path.to_string_lossy().to_string(),
-                        text_for_embedding: format!("keyword: {}", text),
-                    });
-                }
-            }
-        }
-    }
-
-    // Entities from LLM — treat the full response as a single entity
-    if let Some(llm_out) = ctx.outputs.get("llm") {
-        if let Some(response) = llm_out.get("response").and_then(|v| v.as_str()) {
-            if !response.is_empty() {
-                entities.push(CollectedEntity {
-                    source: "llm".into(),
-                    entity_type: "analysis".into(),
-                    name: format!("llm_analysis_{}", ctx.file_path.to_string_lossy()),
-                    description: String::new(),
-                    file_path: ctx.file_path.to_string_lossy().to_string(),
-                    text_for_embedding: response.to_string(),
-                });
-            }
-        }
-    }
-
-    entities
-}
-
-// ---------------------------------------------------------------------------
-// Helper: write to Memgraph
-// ---------------------------------------------------------------------------
-
-/// Write collected entities to Memgraph via Cypher queries.
-///
-/// Returns the number of nodes created.
-async fn write_to_graph(
-    graph: &Arc<dyn GraphRepository>,
-    entities: &[CollectedEntity],
-    ctx: &PipelineContext,
-) -> Result<usize, DtError> {
-    if entities.is_empty() {
-        return Ok(0);
-    }
-
-    let mut count = 0usize;
-
-    for entity in entities {
-        let query = concat!(
-            "MERGE (n:Entity {name: $name, file_path: $file_path, project: $project}) ",
-            "SET n.source = $source, n.entity_type = $entity_type, ",
-            "n.description = $description, n.text_for_embedding = $text_for_embedding, ",
-            "n.pipeline_run = timestamp() ",
-            "RETURN n.name"
-        );
-
-        let mut params: HashMap<String, serde_json::Value> = HashMap::new();
-        params.insert("name".into(), serde_json::Value::String(entity.name.clone()));
-        params.insert("file_path".into(), serde_json::Value::String(entity.file_path.clone()));
-        params.insert(
-            "project".into(),
-            serde_json::Value::String(ctx.project_name.clone()),
-        );
-        params.insert(
-            "source".into(),
-            serde_json::Value::String(entity.source.clone()),
-        );
-        params.insert(
-            "entity_type".into(),
-            serde_json::Value::String(entity.entity_type.clone()),
-        );
-        params.insert(
-            "description".into(),
-            serde_json::Value::String(entity.description.clone()),
-        );
-        params.insert(
-            "text_for_embedding".into(),
-            serde_json::Value::String(entity.text_for_embedding.clone()),
-        );
-
-        graph.as_ref().write_query(query, params).await?;
-        count += 1;
-    }
-
-    Ok(count)
-}
-
-// ---------------------------------------------------------------------------
-// Helper: write to Qdrant via embedding
-// ---------------------------------------------------------------------------
-
-/// Generate embeddings for each entity and upsert them into Qdrant.
-///
-/// Returns the number of points upserted.
-async fn write_to_vector(
-    embed: &Arc<dyn EmbedService>,
-    vector: &Arc<dyn VectorRepository>,
-    entities: &[CollectedEntity],
-    ctx: &PipelineContext,
-) -> Result<usize, DtError> {
-    if entities.is_empty() {
-        return Ok(0);
-    }
-
-    let collection = format!("{}_entities", ctx.project_name);
-    let dim = 1024; // BGE-M3 default dimension — may change in future.
-
-    // Ensure the collection exists.
-    vector.as_ref().ensure_collection(&collection, dim).await?;
-
-    // Collect texts to embed.
-    let texts: Vec<String> = entities.iter().map(|e| e.text_for_embedding.clone()).collect();
-
-    // Generate embeddings.
-    let embeddings = embed.as_ref().embed_batch(&texts).await?;
-
-    // Build points.
-    let points: Vec<serde_json::Value> = entities
-        .iter()
-        .zip(embeddings.iter())
-        .enumerate()
-        .map(|(idx, (entity, emb))| {
-            serde_json::json!({
-                "id": idx as u64,
-                "vector": emb,
-                "payload": {
-                    // ---- identity ----
-                    "name": entity.name,
-                    "entity_type": entity.entity_type,
-                    // ---- source ----
-                    "file_path": entity.file_path,
-                    "project": ctx.project_name,
-                    "source": entity.source,
-                    // ---- content ----
-                    "text": entity.text_for_embedding,
-                }
-            })
-        })
-        .collect();
-
-    // Upsert in batches.
-    const BATCH_SIZE: usize = 100;
-    let mut upserted = 0usize;
-
-    for batch in points.chunks(BATCH_SIZE) {
-        vector
-            .as_ref()
-            .upsert(&collection, batch.to_vec())
-            .await
-            .map_err(|e| DtError::General(format!("vector upsert batch failed: {e}")))?;
-        upserted += batch.len();
-    }
-
-    Ok(upserted)
 }
 
 // ---------------------------------------------------------------------------
@@ -400,9 +168,15 @@ async fn write_to_vector(
 mod tests {
     use super::*;
     use crate::application::pipeline::output::ProcessorOutput;
+    use crate::domain::types::{CollectionInfo, HealthStatus};
     use std::path::PathBuf;
+    use std::sync::Mutex;
 
-    fn make_context(file_name: &str, text: &str, outputs: Vec<(&str, ProcessorOutput)>) -> PipelineContext {
+    fn make_context(
+        file_name: &str,
+        text: &str,
+        outputs: Vec<(&str, ProcessorOutput)>,
+    ) -> PipelineContext {
         let mut ctx = PipelineContext::new(
             PathBuf::from(file_name),
             text.to_string(),
@@ -414,6 +188,124 @@ mod tests {
         ctx
     }
 
+    fn llm_output_with_graphs(graphs: serde_json::Value) -> ProcessorOutput {
+        let mut out = ProcessorOutput::new();
+        out.set("graphs", graphs);
+        out
+    }
+
+    fn chunk_output() -> ProcessorOutput {
+        let mut out = ProcessorOutput::new();
+        out.set(
+            "doc_id",
+            serde_json::Value::String("dt://doc/test/a.md".to_string()),
+        );
+        out.set(
+            "doc_type",
+            serde_json::Value::String("markdown".to_string()),
+        );
+        out.set(
+            "chunks",
+            serde_json::json!([{"chunk_index": 0, "text": "原文块文本"}]),
+        );
+        out
+    }
+
+    // ── Minimal backend mocks for the happy path ─────────────────────
+
+    struct MockGraph {
+        writes: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl GraphRepository for MockGraph {
+        async fn read_query(
+            &self,
+            _q: &str,
+            _p: HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
+            Ok(serde_json::json!([]))
+        }
+
+        async fn write_query(
+            &self,
+            q: &str,
+            _p: HashMap<String, serde_json::Value>,
+        ) -> Result<serde_json::Value, DtError> {
+            self.writes.lock().unwrap().push(q.to_string());
+            if q.contains("RETURN elementId(e)") {
+                return Ok(serde_json::json!([{"eid": "4:0:1"}]));
+            }
+            Ok(serde_json::json!([]))
+        }
+
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    struct MockVector;
+
+    #[async_trait]
+    impl VectorRepository for MockVector {
+        async fn ensure_collection(&self, _c: &str, _d: u32) -> Result<(), DtError> {
+            Ok(())
+        }
+
+        async fn search(
+            &self,
+            _c: &str,
+            _v: Vec<f32>,
+            _l: u64,
+        ) -> Result<Vec<serde_json::Value>, DtError> {
+            Ok(vec![])
+        }
+
+        async fn upsert(&self, _c: &str, _p: Vec<serde_json::Value>) -> Result<(), DtError> {
+            Ok(())
+        }
+
+        async fn delete_by_filter(&self, _c: &str, _f: serde_json::Value) -> Result<(), DtError> {
+            Ok(())
+        }
+
+        async fn list_collections(&self) -> Result<Vec<String>, DtError> {
+            Ok(vec![])
+        }
+
+        async fn collection_info(&self, n: &str) -> Result<CollectionInfo, DtError> {
+            Ok(CollectionInfo {
+                name: n.to_string(),
+                points_count: 0,
+                vector_dim: 1024,
+                model_version: "bge-m3".into(),
+            })
+        }
+
+        async fn delete_collection(&self, _n: &str) -> Result<(), DtError> {
+            Ok(())
+        }
+
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    struct MockEmbed;
+
+    #[async_trait]
+    impl EmbedService for MockEmbed {
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2]).collect())
+        }
+
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    // ── Tests ────────────────────────────────────────────────────────
+
     #[tokio::test]
     async fn always_matches() {
         let processor = StoreProcessor::new(None, None, None);
@@ -423,68 +315,107 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_when_no_repos() {
-        let processor = StoreProcessor::new(None, None, None);
-        let ctx = make_context("main.rs", "fn main() {}", vec![]);
-        let result = processor.execute(&ctx).await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert_eq!(output.get("graph_nodes").and_then(|v| v.as_u64()), Some(0));
-        assert_eq!(
-            output.get("vector_points").and_then(|v| v.as_u64()),
-            Some(0)
-        );
-        assert_eq!(output.get("entity_count").and_then(|v| v.as_u64()), Some(0));
-    }
-
-    #[tokio::test]
-    async fn collects_entities_from_tree_sitter_output() {
-        let processor = StoreProcessor::new(None, None, None);
-        let mut ts_out = ProcessorOutput::new();
-        ts_out.set(
-            "entities",
-            serde_json::json!({
-                "classes": [{"name": "Foo", "kind": "Class", "file_path": "/test/Foo.java"}],
-                "methods": [{"name": "bar", "signature": "fn bar()", "file_path": "/test/Foo.java"}],
-            }),
-        );
-        let ctx = make_context("Foo.java", "class Foo {}", vec![("tree_sitter", ts_out)]);
-        let entities = collect_entities(&ctx);
-        assert_eq!(entities.len(), 2);
-        assert_eq!(entities[0].source, "tree_sitter");
-        assert_eq!(entities[0].entity_type, "method");
-        assert_eq!(entities[0].name, "bar");
-        assert_eq!(entities[1].entity_type, "class");
-        assert_eq!(entities[1].name, "Foo");
-    }
-
-    #[tokio::test]
-    async fn handles_no_upstream_outputs() {
-        let processor = StoreProcessor::new(None, None, None);
-        let ctx = make_context("main.rs", "fn main() {}", vec![]);
-        let entities = collect_entities(&ctx);
-        assert!(entities.is_empty());
-    }
-
-    #[tokio::test]
     async fn name_and_priority() {
         let processor = StoreProcessor::new(None, None, None);
         assert_eq!(processor.name(), "store");
         assert_eq!(processor.priority(), 10);
     }
 
-    #[test]
-    fn collected_entity_is_serializable() {
-        let e = CollectedEntity {
-            source: "test".into(),
-            entity_type: "method".into(),
-            name: "foo".into(),
-            description: "does stuff".into(),
-            file_path: "/tmp/test.rs".into(),
-            text_for_embedding: "foo: does stuff".into(),
-        };
-        let json = serde_json::to_value(&e).unwrap();
-        assert_eq!(json["name"], "foo");
-        assert_eq!(json["source"], "test");
+    #[tokio::test]
+    async fn skips_code_file_without_graphs_output() {
+        let processor = StoreProcessor::new(None, None, None);
+        let ctx = make_context("main.rs", "fn main() {}", vec![]);
+        let output = processor.execute(&ctx).await.unwrap();
+        assert!(output.get("entities_created").is_none());
+    }
+
+    #[tokio::test]
+    async fn skips_llm_output_without_graphs_key() {
+        // Code-file llm output ({response,prompt_name,model}) → skip.
+        let processor = StoreProcessor::new(None, None, None);
+        let mut llm_out = ProcessorOutput::new();
+        llm_out.set(
+            "response",
+            serde_json::Value::String("analysis".to_string()),
+        );
+        let ctx = make_context("main.rs", "fn main() {}", vec![("llm", llm_out)]);
+        let output = processor.execute(&ctx).await.unwrap();
+        assert!(output.get("entities_created").is_none());
+    }
+
+    #[tokio::test]
+    async fn no_backends_is_a_noop() {
+        let processor = StoreProcessor::new(None, None, None);
+        let graphs = serde_json::json!([{
+            "doc_id": "dt://doc/test/a.md", "block_index": 0,
+            "block_summary": "s", "entities": [], "relations": [], "degraded": false
+        }]);
+        let ctx = make_context(
+            "a.md",
+            "原文块文本",
+            vec![
+                ("llm", llm_output_with_graphs(graphs)),
+                ("chunk", chunk_output()),
+            ],
+        );
+        let output = processor.execute(&ctx).await.unwrap();
+        assert!(output.get("entities_created").is_none());
+    }
+
+    #[tokio::test]
+    async fn happy_path_consolidates_and_reports_counters() {
+        let graph = Arc::new(MockGraph {
+            writes: Mutex::new(vec![]),
+        });
+        let processor =
+            StoreProcessor::with_all(graph.clone(), Arc::new(MockVector), Arc::new(MockEmbed));
+        let graphs = serde_json::json!([{
+            "doc_id": "dt://doc/test/a.md", "block_index": 0,
+            "block_summary": "块摘要",
+            "entities": [{
+                "mention": "支付网关(提及)", "canonical_name": "支付网关",
+                "type": "Service", "summary": "路由支付请求",
+                "keywords": ["支付"]
+            }],
+            "relations": [], "degraded": false
+        }]);
+        let ctx = make_context(
+            "a.md",
+            "原文块文本",
+            vec![
+                ("llm", llm_output_with_graphs(graphs)),
+                ("chunk", chunk_output()),
+            ],
+        );
+        let output = processor.execute(&ctx).await.unwrap();
+        assert_eq!(
+            output.get("entities_created").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            output.get("blocks_processed").and_then(|v| v.as_u64()),
+            Some(1)
+        );
+        // Entity MERGE went to the graph backend.
+        assert!(graph
+            .writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| q.contains("MERGE (e:Entity {entity_id: $entity_id})")));
+    }
+
+    #[tokio::test]
+    async fn broken_graphs_contract_is_an_error() {
+        let processor = StoreProcessor::new(None, None, None);
+        let ctx = make_context(
+            "a.md",
+            "text",
+            vec![(
+                "llm",
+                llm_output_with_graphs(serde_json::json!({"not": "a list"})),
+            )],
+        );
+        assert!(processor.execute(&ctx).await.is_err());
     }
 }

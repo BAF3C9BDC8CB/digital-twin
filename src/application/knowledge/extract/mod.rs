@@ -6,8 +6,12 @@
 //! touches the vector store — Task 2's Consolidate layer consumes the
 //! produced `Vec<ExtractedGraph>`.
 
+pub mod consolidate;
 pub mod model;
 
+pub use consolidate::{
+    entity_embed_text, entity_id_for, link_same_as, normalize, ConsolidateStats, Consolidator,
+};
 pub use model::{EntityType, ExtractedEntity, ExtractedGraph, ExtractedRelation};
 
 /// Parse one LLM block response into an [`ExtractedGraph`] (§5.5).

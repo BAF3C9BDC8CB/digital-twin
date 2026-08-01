@@ -5,17 +5,16 @@
 
 use std::hash::{Hash, Hasher};
 
-use async_trait::async_trait;
 use crate::domain::error::DtError;
 use crate::domain::traits::VectorRepository;
 use crate::domain::types::{CollectionInfo, HealthStatus};
+use async_trait::async_trait;
 
 use crate::infrastructure::qdrant::client::QdrantClient;
 
 use qdrant_client::qdrant::{
-    CreateCollectionBuilder, DeletePointsBuilder,
-    Distance, PointStruct, SearchPointsBuilder, UpsertPointsBuilder,
-    VectorParamsBuilder,
+    CreateCollectionBuilder, DeletePointsBuilder, Distance, PointStruct, SearchPointsBuilder,
+    UpsertPointsBuilder, VectorParamsBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,11 +27,7 @@ pub struct NoopVectorRepo;
 
 #[async_trait]
 impl VectorRepository for NoopVectorRepo {
-    async fn ensure_collection(
-        &self,
-        _collection: &str,
-        _vector_dim: u32,
-    ) -> Result<(), DtError> {
+    async fn ensure_collection(&self, _collection: &str, _vector_dim: u32) -> Result<(), DtError> {
         Ok(())
     }
 
@@ -65,10 +60,7 @@ impl VectorRepository for NoopVectorRepo {
         Ok(vec![])
     }
 
-    async fn collection_info(
-        &self,
-        name: &str,
-    ) -> Result<CollectionInfo, DtError> {
+    async fn collection_info(&self, name: &str) -> Result<CollectionInfo, DtError> {
         Ok(CollectionInfo {
             name: name.to_string(),
             points_count: 0,
@@ -106,11 +98,7 @@ impl QdrantRepo {
 
 #[async_trait]
 impl VectorRepository for QdrantRepo {
-    async fn ensure_collection(
-        &self,
-        collection: &str,
-        vector_dim: u32,
-    ) -> Result<(), DtError> {
+    async fn ensure_collection(&self, collection: &str, vector_dim: u32) -> Result<(), DtError> {
         let qdrant = self.client.inner();
 
         // Check if collection already exists
@@ -123,11 +111,9 @@ impl VectorRepository for QdrantRepo {
             // Create the collection with Cosine distance and HNSW index
             qdrant
                 .create_collection(
-                    CreateCollectionBuilder::new(collection.to_string())
-                        .vectors_config(
-                            VectorParamsBuilder::new(vector_dim as u64, Distance::Cosine)
-                                .on_disk(true),
-                        ),
+                    CreateCollectionBuilder::new(collection.to_string()).vectors_config(
+                        VectorParamsBuilder::new(vector_dim as u64, Distance::Cosine).on_disk(true),
+                    ),
                 )
                 .await
                 .map_err(|e| DtError::Repository(format!("Qdrant create_collection: {}", e)))?;
@@ -146,38 +132,35 @@ impl VectorRepository for QdrantRepo {
 
         let response = qdrant
             .search_points(
-                SearchPointsBuilder::new(collection.to_string(), vector, limit)
-                    .with_payload(true),
+                SearchPointsBuilder::new(collection.to_string(), vector, limit).with_payload(true),
             )
             .await
             .map_err(|e| DtError::Repository(format!("Qdrant search: {}", e)))?;
 
-        // Convert results to JSON
-        let results: Vec<serde_json::Value> = response
-            .result
-            .iter()
-            .map(|point| {
-                serde_json::json!({
-                    "id": if let Some(ref id) = point.id {
-                        match &id.point_id_options {
-                            Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
-                                serde_json::json!(*n)
-                            }
-                            Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(u)) => {
-                                serde_json::json!(u)
-                            }
-                            None => serde_json::Value::Null,
-                        }
-                    } else {
-                        serde_json::Value::Null
-                    },
-                    "score": point.score,
-                    "payload": point.payload,
-                })
-            })
-            .collect();
+        scored_points_to_json(response.result)
+    }
 
-        Ok(results)
+    /// Native filtered search (R7 override): translates the JSON filter into
+    /// a server-side Qdrant `Filter` instead of post-filtering client-side.
+    async fn search_with_filter(
+        &self,
+        collection: &str,
+        vector: Vec<f32>,
+        limit: u64,
+        filter: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, DtError> {
+        let qdrant = self.client.inner();
+
+        let response = qdrant
+            .search_points(
+                SearchPointsBuilder::new(collection.to_string(), vector, limit)
+                    .with_payload(true)
+                    .filter(json_to_qdrant_filter(&filter)?),
+            )
+            .await
+            .map_err(|e| DtError::Repository(format!("Qdrant search_with_filter: {}", e)))?;
+
+        scored_points_to_json(response.result)
     }
 
     async fn upsert(
@@ -209,9 +192,9 @@ impl VectorRepository for QdrantRepo {
                         hasher.finish()
                     });
                 let id = qdrant_client::qdrant::PointId {
-                    point_id_options: Some(
-                        qdrant_client::qdrant::point_id::PointIdOptions::Num(id_num),
-                    ),
+                    point_id_options: Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(
+                        id_num,
+                    )),
                 };
 
                 let vector: Vec<f32> = p
@@ -235,8 +218,7 @@ impl VectorRepository for QdrantRepo {
 
         qdrant
             .upsert_points(
-                UpsertPointsBuilder::new(collection.to_string(), qdrant_points)
-                    .wait(true),
+                UpsertPointsBuilder::new(collection.to_string(), qdrant_points).wait(true),
             )
             .await
             .map_err(|e| DtError::Repository(format!("Qdrant upsert: {}", e)))?;
@@ -247,17 +229,18 @@ impl VectorRepository for QdrantRepo {
     async fn delete_by_filter(
         &self,
         collection: &str,
-        _filter: serde_json::Value,
+        filter: serde_json::Value,
     ) -> Result<(), DtError> {
         let qdrant = self.client.inner();
 
-        // Delete all points in the collection using an empty filter
+        // Translate the JSON filter into a native Qdrant filter. An empty
+        // filter matches all points (Qdrant semantics) — callers that need
+        // selective deletion must pass a non-empty `must` clause.
         qdrant
             .delete_points(
                 DeletePointsBuilder::new(collection.to_string())
-                    .points(qdrant_client::qdrant::Filter {
-                        ..Default::default()
-                    }),
+                    .points(json_to_qdrant_filter(&filter)?)
+                    .wait(true),
             )
             .await
             .map_err(|e| DtError::Repository(format!("Qdrant delete_points: {}", e)))?;
@@ -282,10 +265,7 @@ impl VectorRepository for QdrantRepo {
         Ok(names)
     }
 
-    async fn collection_info(
-        &self,
-        name: &str,
-    ) -> Result<CollectionInfo, DtError> {
+    async fn collection_info(&self, name: &str) -> Result<CollectionInfo, DtError> {
         let qdrant = self.client.inner();
 
         let response = qdrant
@@ -303,7 +283,9 @@ impl VectorRepository for QdrantRepo {
                 .and_then(|c| c.params.as_ref())
                 .and_then(|p| p.vectors_config.as_ref())
                 .and_then(|vc| {
-                    if let Some(qdrant_client::qdrant::vectors_config::Config::Params(vp)) = &vc.config {
+                    if let Some(qdrant_client::qdrant::vectors_config::Config::Params(vp)) =
+                        &vc.config
+                    {
                         Some(vp.size as u32)
                     } else {
                         None
@@ -331,16 +313,196 @@ impl VectorRepository for QdrantRepo {
         match qdrant.health_check().await {
             Ok(reply) => {
                 tracing::info!(
-                    "Qdrant healthy: version={}, title={}",
+                    "Qdrant 健康状态正常: version={}, title={}",
                     reply.version,
                     reply.title
                 );
                 Ok(HealthStatus::Healthy)
             }
             Err(e) => {
-                tracing::error!("Qdrant health check failed: {}", e);
-                Ok(HealthStatus::Unhealthy(format!("Qdrant health check: {}", e)))
+                tracing::error!("Qdrant 健康检查失败: {}", e);
+                Ok(HealthStatus::Unhealthy(format!(
+                    "Qdrant health check: {}",
+                    e
+                )))
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert scored points into the repo's JSON hit shape
+/// (`[{"id": ..., "score": ..., "payload": {...}}]`).
+fn scored_points_to_json(
+    points: Vec<qdrant_client::qdrant::ScoredPoint>,
+) -> Result<Vec<serde_json::Value>, DtError> {
+    let results: Vec<serde_json::Value> = points
+        .iter()
+        .map(|point| {
+            serde_json::json!({
+                "id": if let Some(ref id) = point.id {
+                    match &id.point_id_options {
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Num(n)) => {
+                            serde_json::json!(*n)
+                        }
+                        Some(qdrant_client::qdrant::point_id::PointIdOptions::Uuid(u)) => {
+                            serde_json::json!(u)
+                        }
+                        None => serde_json::Value::Null,
+                    }
+                } else {
+                    serde_json::Value::Null
+                },
+                "score": point.score,
+                "payload": point.payload,
+            })
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Translate a Qdrant-style filter JSON
+/// (`{"must": [...], "should": [...], "must_not": [...]}` of
+/// `{"key": ..., "match": {"value": ...}}` conditions) into a native
+/// [`qdrant_client::qdrant::Filter`]. Supported match values: string
+/// (keyword), bool, integer. Anything else is rejected with an error so a
+/// malformed filter never silently degrades into "match everything".
+fn json_to_qdrant_filter(
+    filter: &serde_json::Value,
+) -> Result<qdrant_client::qdrant::Filter, DtError> {
+    let parse_conditions =
+        |clause: &str| -> Result<Vec<qdrant_client::qdrant::Condition>, DtError> {
+            let Some(conds) = filter.get(clause).and_then(|c| c.as_array()) else {
+                return Ok(vec![]);
+            };
+            conds.iter().map(json_to_condition).collect()
+        };
+
+    Ok(qdrant_client::qdrant::Filter {
+        should: parse_conditions("should")?,
+        must: parse_conditions("must")?,
+        must_not: parse_conditions("must_not")?,
+        ..Default::default()
+    })
+}
+
+/// Translate one `{"key": ..., "match": {"value": ...}}` condition.
+fn json_to_condition(
+    cond: &serde_json::Value,
+) -> Result<qdrant_client::qdrant::Condition, DtError> {
+    let key = cond
+        .get("key")
+        .and_then(|k| k.as_str())
+        .ok_or_else(|| DtError::General(format!("filter condition missing 'key': {cond}")))?;
+    let value = cond
+        .get("match")
+        .and_then(|m| m.get("value"))
+        .ok_or_else(|| {
+            DtError::General(format!("filter condition missing 'match.value': {cond}"))
+        })?;
+
+    match value {
+        serde_json::Value::String(s) => {
+            Ok(qdrant_client::qdrant::Condition::matches(key, s.clone()))
+        }
+        serde_json::Value::Bool(b) => Ok(qdrant_client::qdrant::Condition::matches(key, *b)),
+        serde_json::Value::Number(n) => {
+            let i = n.as_i64().ok_or_else(|| {
+                DtError::General(format!("filter match value not an integer: {n}"))
+            })?;
+            Ok(qdrant_client::qdrant::Condition::matches(key, i))
+        }
+        other => Err(DtError::General(format!(
+            "unsupported filter match value (string/bool/integer only): {other}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_translates_must_clauses() {
+        let filter = serde_json::json!({
+            "must": [
+                {"key": "project", "match": {"value": "offen-pay"}},
+                {"key": "degraded", "match": {"value": false}},
+                {"key": "block_index", "match": {"value": 3}},
+            ]
+        });
+        let f = json_to_qdrant_filter(&filter).unwrap();
+        assert_eq!(f.must.len(), 3);
+        assert!(f.should.is_empty());
+        assert!(f.must_not.is_empty());
+
+        // Spot-check the first condition: Field(project matches keyword).
+        let qdrant_client::qdrant::condition::ConditionOneOf::Field(field) =
+            f.must[0].condition_one_of.clone().unwrap()
+        else {
+            panic!("expected field condition");
+        };
+        assert_eq!(field.key, "project");
+        let m = field.r#match.unwrap().match_value.unwrap();
+        assert!(matches!(
+            m,
+            qdrant_client::qdrant::r#match::MatchValue::Keyword(ref k) if k == "offen-pay"
+        ));
+    }
+
+    #[test]
+    fn filter_translates_all_clause_kinds() {
+        let filter = serde_json::json!({
+            "must": [{"key": "a", "match": {"value": "x"}}],
+            "should": [{"key": "b", "match": {"value": "y"}}],
+            "must_not": [{"key": "c", "match": {"value": "z"}}],
+        });
+        let f = json_to_qdrant_filter(&filter).unwrap();
+        assert_eq!(f.must.len(), 1);
+        assert_eq!(f.should.len(), 1);
+        assert_eq!(f.must_not.len(), 1);
+    }
+
+    #[test]
+    fn filter_empty_json_yields_empty_filter() {
+        let f = json_to_qdrant_filter(&serde_json::json!({})).unwrap();
+        assert!(f.must.is_empty() && f.should.is_empty() && f.must_not.is_empty());
+    }
+
+    #[test]
+    fn filter_rejects_missing_key() {
+        let filter = serde_json::json!({"must": [{"match": {"value": "x"}}]});
+        assert!(json_to_qdrant_filter(&filter).is_err());
+    }
+
+    #[test]
+    fn filter_rejects_unsupported_match_value() {
+        let filter = serde_json::json!({"must": [{"key": "k", "match": {"value": [1, 2]}}]});
+        assert!(json_to_qdrant_filter(&filter).is_err());
+    }
+
+    #[test]
+    fn noop_uses_default_search_with_filter() {
+        // NoopVectorRepo does not override `search_with_filter` — the trait
+        // default (search + post-filter) applies and returns empty.
+        let repo = NoopVectorRepo;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let hits = rt
+            .block_on(repo.search_with_filter(
+                "kg_nodes",
+                vec![0.0],
+                5,
+                serde_json::json!({"must": [{"key": "project", "match": {"value": "a"}}]}),
+            ))
+            .unwrap();
+        assert!(hits.is_empty());
     }
 }
