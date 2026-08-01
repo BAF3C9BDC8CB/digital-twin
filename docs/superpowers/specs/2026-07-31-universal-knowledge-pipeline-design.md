@@ -711,3 +711,57 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
    - **采用**的缓解：① prompt 引导尽量归入具体词表类型、把 `Other` 当最后手段（压低
      `Other` 占比即压低碰撞面）；② 出错后走 §6.4 人工 Cypher 纠正（拆点、重建边）。
      该风险频率低、后果可逆，接受。
+
+---
+
+## 13. 实施进度（执行跟踪，2026-08-01 更新）
+
+> 执行方式：superpowers subagent-driven-development；账本与简报/报告/评审包在
+> `.superpowers/sdd/2026-07-31-universal-knowledge-pipeline-design/`。
+> 基线：分支 `feat/v2-architecture`，工作树含用户 v2 重构未提交基线（实现叠加其上，
+> 各任务只 `git add` 自己的文件）。测试基线：701+2 预存失败（`ts_java::parses_hello_service`、
+> `backup_sqlite::copy_database_writes_file`，与本方案无关）。
+
+### 13.1 任务总表
+
+| 任务 | 内容 | 状态 | 提交 | 评审 |
+|------|------|------|------|------|
+| **S1** | Extract 抽取层：`ExtractedGraph` 模型 + `document_with_nlp.yaml` 重写 + llm/hanlp 处理器块级化 + R4 build.rs SF URL 修正 | ✅ 完成 | `0ebc13d` | Spec ✅ / 质量 Approved（无 Critical/Important，4 Minor 延后） |
+| **S2a** | Consolidate 核心：consolidate.rs（两级消歧/写图/双写/purge/SAME_AS/I7 迁移）+ store.rs 薄壳重写（R8）+ R7 `search_with_filter` | ✅ 完成 | `98044df` + 修复轮 `6936cc0` | 修复轮 1 后 ALL ADDRESSED（1C+2I+5M 全部修复） |
+| **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | 🔵 **进行中** | — | — |
+| **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ⬜ 待做 | — | — |
+| **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ⬜ 待做 | — | — |
+| **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ⬜ 待做 | — | — |
+| 终审 | 全分支 code review（最 capable 模型）+ finishing-a-development-branch | ⬜ 待做 | — | — |
+| **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ⏸️ 方案本身延后，不在本轮 | — | — |
+
+### 13.2 S1 验收数字（独立复验通过）
+
+- ① JSON 解析成功率 **100%**（7 文档 68 块 0 降级，门槛 ≥90%）
+- ② relation head/tail 覆盖率 **100%**（76/76，门槛 ≥95%）
+- ③ 20 实体抽样人工核对 **≥80%** 达标
+- 复现：`cargo test --test extract_real_docs -- --ignored`（本地 xinference qwen3.5）
+
+### 13.3 执行期决策（用户批准 + 控制者裁决，后续任务必须遵守）
+
+- **环境**：LLM=本地 xinference `qwen3.5`（已运行）；embed=SiliconFlow（key 取 `config/config.yaml.bak`，跑测试前 `export SILICONFLOW_API_KEY=...`，**不得写入被提交文件**）；Memgraph `bolt://localhost:7688`、Qdrant `:6334`；HanLP DOWN（链路须优雅降级）；bge-reranker-v2-m3 待 S5 再启动。
+- **R1**：llm 文档路径输出同时含 `graphs` + `response`（旧 store 兼容），S2 后旧消费已移除。
+- **R2**：hanlp 逐块对齐（block_index=chunk_index），matches 扩展 `yaml|yml|properties`，无 chunk 回退全文单块。
+- **R4**：build.rs siliconflow 分支 base_url 改读 `providers.siliconflow.url`（修现存 bug，用户批准）。**旁注**：`build.rs:2147` handle_build 的 SF deps client 有同类 bug 未修，终审时上报用户。
+- **R7**：`VectorRepository::search_with_filter` 默认后过滤 + QdrantRepo 原生覆写（向后兼容）。
+- **R8**：store.rs 薄壳化，旧 tree_sitter/hanlp/llm-analysis 分支全移除（`{project}_entities` legacy 无消费方）。
+- **R9**：store 输出计数 entities_merged/created、relations_written/orphaned、degraded_blocks/blocks_processed/empty_blocks。
+- **R10**：S2 期间旧 `process_documents` 仍写 doc_chunks（chunk_id 为 point id）与新 Consolidate 并存——已知临时状态，S3 摘除。
+- **R11**：expected.json 断言风格=下界（>=）+ 关键实体抽样存在性（LLM 非确定性，不做精确相等）。
+- **doc_chunks payload 增补 `text` 字段**（§7.1 证据段落检索需要，方案 §7.3 未列，控制者裁决补充）。
+- **关系端点历史回退**：`STARTS WITH dt://entity/{project}/` + `ENDS WITH /{normalized}`（评审后收窄；端点 type 未知无法精确派生）。
+- **auto SAME_AS 当前不可达**（§6.1 二级合并不产生双节点），仅实现 manual 入口 Cypher，代码注释已声明。
+
+### 13.4 已锁定的实现要点（S2a 落地版，与 §6 的偏差记录）
+
+- `ensure_schema`（I7 迁移 + KG_NODES/DOC_CHUNKS ensure_collection）per-process OnceLock，**仅成功时闩锁**（瞬时故障下轮重试）。
+- `SnapshotRepository` step 进度三方法（mark_step_done/is_step_done/clear_step_progress）在 traits.rs 带**默认实现**（no-op/false 安全回退）——基线工作树 SqliteRepo 有真实现。
+- `block_map` 双键登记（原始+规范化 canonical），MENTIONED_IN/doc_chunks 收集处 HashSet 去重。
+- confidence 存储前 f64 域内 6 位舍入（f32→f64 精度修正）。
+- 降级/空摘要块 embed 文本=纯原文块。
+- 测试：S1 后 727 → S2a 后 **765 passed / 2 failed（预存，未扩大）**；clippy 0 error。
