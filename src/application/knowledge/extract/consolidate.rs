@@ -538,31 +538,47 @@ impl Consolidator {
     /// edges, the `Document` node itself, and every `doc_chunks` vector point
     /// of the document. Entity nodes survive while referenced elsewhere.
     ///
-    /// Wiring into the build orchestration layer is Task 3's job; this
-    /// function is the public entry point.
+    /// Delegates to the free [`purge_document`] so the build orchestration
+    /// layer (Task 3) can purge without constructing a full `Consolidator`.
     pub async fn purge_document(&self, doc_id: &str) -> Result<(), DtError> {
-        let mut params = HashMap::new();
-        params.insert("doc_id".to_string(), serde_json::json!(doc_id));
-        self.graph
-            .write_query(
-                "MATCH ()-[r:RELATES {doc_id: $doc_id}]->() DELETE r",
-                params.clone(),
-            )
-            .await?;
-        self.graph
-            .write_query(
-                "MATCH ()-[m:MENTIONED_IN]->(:Document {doc_id: $doc_id}) DELETE m",
-                params.clone(),
-            )
-            .await?;
-        self.graph
-            .write_query("MATCH (d:Document {doc_id: $doc_id}) DELETE d", params)
-            .await?;
-        self.vector
-            .delete_by_filter(DOC_CHUNKS, doc_id_filter(doc_id))
-            .await?;
-        Ok(())
+        purge_document(self.graph.as_ref(), self.vector.as_ref(), doc_id).await
     }
+}
+
+/// §6.5.2 — purge every artifact of one document: its `RELATES` edges, its
+/// `MENTIONED_IN` provenance edges, the `Document` node, and all its
+/// `doc_chunks` vector points. Entity nodes survive while referenced
+/// elsewhere; orphaned entities are handled by §6.5.4 periodic cleanup.
+///
+/// Free function: the build orchestration layer consumes `deleted_paths`
+/// through this entry point without needing an embed service (purging never
+/// embeds). Idempotent — safe to re-run for the same `doc_id`.
+pub async fn purge_document(
+    graph: &dyn GraphRepository,
+    vector: &dyn VectorRepository,
+    doc_id: &str,
+) -> Result<(), DtError> {
+    let mut params = HashMap::new();
+    params.insert("doc_id".to_string(), serde_json::json!(doc_id));
+    graph
+        .write_query(
+            "MATCH ()-[r:RELATES {doc_id: $doc_id}]->() DELETE r",
+            params.clone(),
+        )
+        .await?;
+    graph
+        .write_query(
+            "MATCH ()-[m:MENTIONED_IN]->(:Document {doc_id: $doc_id}) DELETE m",
+            params.clone(),
+        )
+        .await?;
+    graph
+        .write_query("MATCH (d:Document {doc_id: $doc_id}) DELETE d", params)
+        .await?;
+    vector
+        .delete_by_filter(DOC_CHUNKS, doc_id_filter(doc_id))
+        .await?;
+    Ok(())
 }
 
 /// Qdrant filter selecting every `doc_chunks` point of one document.

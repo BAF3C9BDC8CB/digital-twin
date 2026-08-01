@@ -14,14 +14,16 @@
 //! [`BuildStrategy`] trait.
 
 use crate::domain::error::DtError;
+use crate::domain::id::make_document_id;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BatchConfig, BuildReport, FileSnapshot, ScanConfig};
 use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use super::strategy::BuildStrategy;
+use crate::application::knowledge::extract::purge_document;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
 use crate::infrastructure::siliconflow::SiliconFlowClient;
@@ -62,22 +64,6 @@ pub struct ExtractionResult {
     /// @knowledge annotations extracted from code comments.
     pub knowledge_annotations:
         Vec<crate::application::knowledge::knowledge::annotation::KnowledgeAnnotation>,
-}
-
-/// A document item ready for storage.
-#[derive(Debug, Clone)]
-pub struct DocumentItem {
-    pub doc_id: String,
-    pub name: String,
-    pub title: String,
-    pub file_path: String,
-    pub content: String,
-    pub summary: String,
-    pub project: String,
-    pub doc_type: String,
-    pub tags: Vec<String>,
-    pub size: u64,
-    pub modified: String,
 }
 
 /// The pipeline template that orchestrates the build flow.
@@ -146,6 +132,45 @@ impl PipelineTemplate {
             }
         }
 
+        // Step 3b (§6.5, Task 3): document lifecycle — purge deleted
+        // documents, keep snapshot baselines for change/deletion detection.
+        // Document extraction/consolidation itself runs in the pipeline
+        // engine (tree_sitter → chunk → hanlp → llm → store), not here.
+        //
+        // The snapshots table mixes code and document rows per project, so
+        // diffing only the document file set reports every code path as
+        // "deleted" — keep only real document deletions by extension.
+        let (changed_docs, deleted_docs) = strategy
+            .select_files(root, &doc_files, snapshot_repo.as_deref(), project)
+            .await?;
+        let deleted_docs: Vec<String> = deleted_docs
+            .into_iter()
+            .filter(|p| is_document_path(p, &scan_config.document_extensions))
+            .collect();
+
+        // §6.5.2: purge deleted documents — RELATES/MENTIONED_IN edges,
+        // Document node, and doc_chunks vector points. Per-file state is
+        // cleared only for successfully purged documents: a failed purge (or
+        // missing backends) keeps the baseline, so the deletion is reported
+        // again on the next build instead of leaking artifacts.
+        if !deleted_docs.is_empty() {
+            if let (Some(graph), Some(vector)) = (graph, vector.as_deref()) {
+                let mut purged: Vec<String> = Vec::with_capacity(deleted_docs.len());
+                for rel in &deleted_docs {
+                    let doc_id = make_document_id(project, rel);
+                    match purge_document(graph, vector, &doc_id).await {
+                        Ok(()) => purged.push(rel.clone()),
+                        Err(e) => tracing::warn!("purge deleted document {doc_id} failed: {e}"),
+                    }
+                }
+                if !purged.is_empty() {
+                    if let Some(repo) = snapshot_repo.as_deref() {
+                        let _ = repo.delete_file_progress(project, &purged).await;
+                    }
+                }
+            }
+        }
+
         // Step 4: Prepare storage (strategy-specific)
         strategy.prepare(graph, vector.as_deref(), project).await?;
 
@@ -165,60 +190,10 @@ impl PipelineTemplate {
         let methods_new = methods_total;
         let classes_total = extraction.classes.len();
 
-        // Step 5b: Process document files (incremental — skip unchanged docs)
-        if !doc_files.is_empty() {
-            // Filter to only changed/new document files, same mtime logic as source files.
-            // For full rebuild, skip mtime check and re-process all documents.
-            let mut doc_to_process: Vec<PathBuf> = Vec::new();
-            if strategy.force_rebuild() {
-                doc_to_process = doc_files.to_vec();
-            } else if let Some(repo) = snapshot_repo.as_deref() {
-                // Load stored snapshots to check mtime
-                if let Ok(stored) = repo.list_snapshots(project).await {
-                    let mut stored_map: std::collections::HashMap<String, (String, f64)> =
-                        std::collections::HashMap::new();
-                    for s in &stored {
-                        stored_map.insert(s.file_path.clone(), (s.file_sha1.clone(), s.file_mtime));
-                    }
-                    for p in &doc_files {
-                        let rel = scanner::rel_path(root, p);
-                        let current_mtime = p
-                            .metadata()
-                            .ok()
-                            .and_then(|m| m.modified().ok())
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs_f64())
-                            .unwrap_or(0.0);
-                        if let Some((_, stored_mtime)) = stored_map.get(&rel) {
-                            if (current_mtime - stored_mtime).abs() < 1.0 {
-                                continue; // mtime unchanged → skip
-                            }
-                        }
-                        doc_to_process.push(p.clone());
-                    }
-                } else {
-                    doc_to_process = doc_files.to_vec();
-                }
-            } else {
-                doc_to_process = doc_files.to_vec();
-            }
-
-            if !doc_to_process.is_empty() {
-                if let Some(graph) = graph {
-                    let _documents_written = self
-                        .process_documents(
-                            project,
-                            root,
-                            &doc_to_process,
-                            Some(graph),
-                            embed.clone(),
-                            vector.clone(),
-                            snapshot_repo.as_deref(),
-                        )
-                        .await?;
-                }
-            }
-        }
+        // (Task 3) Document files are no longer chunk+embedded here — they
+        // flow through the pipeline engine's extract chain. Only their
+        // lifecycle (purge + snapshot baseline) is handled in this template
+        // (Step 3b / Step 9b).
 
         // Step 6: Write graph (methods, classes, modules, relationships)
         // NOTE: Must be done BEFORE write_knowledge_annotations so that
@@ -368,6 +343,31 @@ impl PipelineTemplate {
                 .update_snapshots(repo, project, &extraction.snapshots)
                 .await?;
             tracing::info!("snapshot update complete");
+        }
+
+        // Step 9b (Task 3): save document snapshots AFTER the strategy's
+        // snapshot update (FullRebuildStrategy wipes all project rows first).
+        // These baselines let the next incremental build detect document
+        // changes and deletions (§6.5). Only changed docs need fresh rows —
+        // unchanged docs keep accurate baselines from previous builds.
+        if let Some(repo) = snapshot_repo.as_deref() {
+            let doc_snapshots: Vec<FileSnapshot> = changed_docs
+                .iter()
+                .filter_map(|path| {
+                    let (hash, mtime) = scanner::compute_file_hash(path).ok()?;
+                    Some(FileSnapshot {
+                        file_path: scanner::rel_path(root, path),
+                        project: project.to_string(),
+                        file_sha1: hash,
+                        file_mtime: mtime,
+                        method_count: 0,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    })
+                })
+                .collect();
+            if !doc_snapshots.is_empty() {
+                let _ = repo.save_snapshots(project, &doc_snapshots).await;
+            }
         }
 
         // ── Phase 2: Per-method LLM analysis (background, non-blocking) ──
@@ -1206,289 +1206,26 @@ async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, fil
 }
 
 // ---------------------------------------------------------------------------
-// Document processing
+// Document lifecycle helpers
 // ---------------------------------------------------------------------------
 
+/// Whether a project-relative path is a document per `ScanConfig::document_extensions`.
+///
+/// Guards the strategy's `deleted` output against code-path contamination:
+/// the snapshots table mixes code and document rows per project, so every
+/// code path shows up as "deleted" when diffing only the document file set.
+fn is_document_path(
+    rel_path: &str,
+    document_extensions: &std::collections::HashSet<String>,
+) -> bool {
+    Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| document_extensions.contains(e))
+        .unwrap_or(false)
+}
+
 impl PipelineTemplate {
-    /// Process document files: parse, chunk, embed, and write to the graph database.
-    ///
-    /// Returns the number of documents successfully written.
-    async fn process_documents(
-        &self,
-        project: &str,
-        root: &Path,
-        doc_files: &[PathBuf],
-        graph: Option<&dyn GraphRepository>,
-        embed: Option<Arc<dyn EmbedService>>,
-        vector: Option<Arc<dyn VectorRepository>>,
-        snapshot_repo: Option<&dyn SnapshotRepository>,
-    ) -> Result<usize, DtError> {
-        let mut written = 0usize;
-        let config = crate::shared::chunker::ChunkConfig::default();
-        let mut doc_snapshots: Vec<FileSnapshot> = Vec::new();
-
-        for file_path in doc_files {
-            // Parse the document
-            let parsed = match crate::infrastructure::parser::document::parse_document(
-                file_path, project, root,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    tracing::warn!("Failed to parse document {}: {}", file_path.display(), e);
-                    continue;
-                }
-            };
-
-            // Skip empty content for text/markdown
-            if parsed.content.is_empty() && parsed.doc_type != "pdf" {
-                continue;
-            }
-
-            let doc_id = parsed.doc_id.clone();
-
-            // Chunk the text (use type-aware chunker for YAML/properties, paragraph for others)
-            let doc_type = crate::shared::chunker::DocType::detect(
-                &file_path.to_string_lossy(),
-                &parsed.content.lines().collect::<Vec<_>>(),
-            );
-            let chunks = if parsed.content.is_empty() {
-                // PDF stub: just the metadata, no content chunks
-                vec![]
-            } else {
-                crate::shared::chunker::chunk_by_type(&parsed.content, &doc_id, doc_type, &config)
-            };
-
-            // Determine target collection: knowledge files go to {project}_knowledge
-            let rel_path = scanner::rel_path(root, file_path);
-            let is_knowledge_file =
-                rel_path.contains("/knowledge/") || rel_path.starts_with("knowledge/");
-            let collection = if is_knowledge_file {
-                crate::shared::collections::KG_NODES.to_string()
-            } else {
-                crate::shared::collections::DOC_CHUNKS.to_string()
-            };
-
-            // Embed chunks in batches if embed service is available and not skipped.
-            if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
-                if !chunks.is_empty() && !self.skip_embed {
-                    let doc_embed_batch = self.batch_config.embed;
-                    let doc_concurrent = self.batch_config.embed_concurrency;
-                    vector_repo.ensure_collection(&collection, 1024).await?;
-
-                    let chunk_batches: Vec<Vec<crate::shared::chunker::DocumentChunk>> =
-                        chunks.chunks(doc_embed_batch).map(|c| c.to_vec()).collect();
-
-                    let svc = embed_svc.clone();
-                    let embed_results: Vec<Result<Vec<serde_json::Value>, DtError>> =
-                        stream::iter(chunk_batches)
-                            .map(|chunk_batch| {
-                                let svc = svc.clone();
-                                async move {
-                                    let texts: Vec<String> =
-                                        chunk_batch.iter().map(|c| c.text.clone()).collect();
-                                    let embeddings =
-                                        svc.embed_batch(&texts).await.map_err(|e| {
-                                            DtError::Repository(format!("embed: {}", e))
-                                        })?;
-                                    let points: Vec<serde_json::Value> = chunk_batch
-                                        .iter()
-                                        .zip(embeddings.iter())
-                                        .map(|(chunk, vec)| {
-                                            serde_json::json!({
-                                                "id": chunk.chunk_id,
-                                                "vector": vec,
-                                                "payload": {
-                                                    "text": &chunk.text,
-                                                    "doc_id": chunk.chunk_id,
-                                                    "project": project,
-                                                },
-                                            })
-                                        })
-                                        .collect();
-                                    Ok(points)
-                                }
-                            })
-                            .buffer_unordered(doc_concurrent)
-                            .collect()
-                            .await;
-
-                    // Collect all points and upsert once
-                    let mut all_points = Vec::new();
-                    for result in embed_results {
-                        all_points.extend(result?);
-                    }
-                    if !all_points.is_empty() {
-                        let doc_upsert_batch = self.batch_config.upsert;
-                        for chunk in all_points.chunks(doc_upsert_batch) {
-                            vector_repo
-                                .upsert(&collection, chunk.to_vec())
-                                .await
-                                .map_err(|e| DtError::Repository(format!("upsert: {}", e)))?;
-                        }
-                    }
-                }
-            }
-
-            // Extract @knowledge annotations BEFORE consuming parsed fields
-            let knowledge_anns = crate::infrastructure::parser::extract_knowledge_annotations(
-                &parsed.content,
-                &parsed.rel_path,
-                project,
-            );
-            tracing::info!(
-                "KNOWLEDGE_ANNOTATIONS: file={}, count={}",
-                parsed.rel_path,
-                knowledge_anns.len()
-            );
-
-            // Build DocumentItem (consumes parsed.content, parsed.rel_path, etc.)
-            let doc_item = DocumentItem {
-                doc_id: parsed.doc_id,
-                name: parsed.name,
-                title: parsed.title,
-                file_path: parsed.rel_path,
-                content: parsed.content,
-                summary: parsed.summary,
-                project: parsed.project,
-                doc_type: parsed.doc_type,
-                tags: vec![],
-                size: parsed.size,
-                modified: parsed.modified,
-            };
-
-            // Write to Memgraph
-            if let Some(graph) = graph {
-                self.write_document_to_graph(graph, &doc_item).await;
-                for chunk in &chunks {
-                    self.write_chunk_to_graph(graph, &doc_id, chunk).await;
-                }
-                if !knowledge_anns.is_empty() {
-                    self.write_knowledge_annotations(
-                        graph,
-                        project,
-                        &knowledge_anns,
-                        embed.as_deref(),
-                        vector.as_deref(),
-                    )
-                    .await;
-                }
-            }
-
-            written += 1;
-
-            // Collect document snapshot for incremental skip on next build
-            if let Ok((hash, mtime)) = scanner::compute_file_hash(file_path) {
-                doc_snapshots.push(FileSnapshot {
-                    file_path: doc_item.file_path.clone(),
-                    project: project.to_string(),
-                    file_sha1: hash,
-                    file_mtime: mtime,
-                    method_count: 0,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                });
-            }
-        }
-
-        // Save all document snapshots in one batch
-        if let Some(repo) = snapshot_repo {
-            if !doc_snapshots.is_empty() {
-                let _ = repo.save_snapshots(project, &doc_snapshots).await;
-            }
-        }
-
-        Ok(written)
-    }
-
-    /// Write a single Document node to the graph database.
-    async fn write_document_to_graph(&self, graph: &dyn GraphRepository, doc: &DocumentItem) {
-        let mut params = std::collections::HashMap::new();
-        params.insert("doc_id".into(), serde_json::json!(&doc.doc_id));
-        params.insert("name".into(), serde_json::json!(&doc.name));
-        params.insert("title".into(), serde_json::json!(&doc.title));
-        params.insert("file_path".into(), serde_json::json!(&doc.file_path));
-        params.insert("summary".into(), serde_json::json!(&doc.summary));
-        params.insert("project".into(), serde_json::json!(&doc.project));
-        params.insert("doc_type".into(), serde_json::json!(&doc.doc_type));
-        params.insert("tags".into(), serde_json::json!(&doc.tags));
-        params.insert("size".into(), serde_json::json!(doc.size));
-        params.insert("modified".into(), serde_json::json!(&doc.modified));
-        params.insert("content".into(), serde_json::json!(&doc.content));
-
-        let _ = graph
-            .write_query(
-                r#"MERGE (d:Document {doc_id: $doc_id})
-                ON CREATE SET
-                    d.name = $name,
-                    d.title = $title,
-                    d.file_path = $file_path,
-                    d.content = $content,
-                    d.summary = $summary,
-                    d.project = $project,
-                    d.doc_type = $doc_type,
-                    d.tags = $tags,
-                    d.size = $size,
-                    d.modified = $modified
-                ON MATCH SET
-                    d.name = $name,
-                    d.title = $title,
-                    d.content = $content,
-                    d.summary = $summary,
-                    d.doc_type = $doc_type,
-                    d.tags = $tags,
-                    d.size = $size,
-                    d.modified = $modified"#,
-                params,
-            )
-            .await;
-    }
-
-    /// Write a single chunk node to the graph database, linked to its parent Document.
-    async fn write_chunk_to_graph(
-        &self,
-        graph: &dyn GraphRepository,
-        doc_id: &str,
-        chunk: &crate::shared::chunker::DocumentChunk,
-    ) {
-        let mut params = std::collections::HashMap::new();
-        params.insert("chunk_id".into(), serde_json::json!(&chunk.chunk_id));
-        params.insert("doc_id".into(), serde_json::json!(doc_id));
-        params.insert("chunk_index".into(), serde_json::json!(chunk.chunk_index));
-        params.insert("text".into(), serde_json::json!(&chunk.text));
-        params.insert(
-            "prev_chunk_id".into(),
-            serde_json::json!(&chunk.prev_chunk_id),
-        );
-        params.insert(
-            "next_chunk_id".into(),
-            serde_json::json!(&chunk.next_chunk_id),
-        );
-        params.insert("start_char".into(), serde_json::json!(chunk.start_char));
-        params.insert("end_char".into(), serde_json::json!(chunk.end_char));
-
-        let _ = graph
-            .write_query(
-                r#"MERGE (c:DocumentChunk {chunk_id: $chunk_id})
-                ON CREATE SET
-                    c.chunk_index = $chunk_index,
-                    c.text = $text,
-                    c.prev_chunk_id = $prev_chunk_id,
-                    c.next_chunk_id = $next_chunk_id,
-                    c.start_char = $start_char,
-                    c.end_char = $end_char
-                ON MATCH SET
-                    c.text = $text,
-                    c.prev_chunk_id = $prev_chunk_id,
-                    c.next_chunk_id = $next_chunk_id,
-                    c.start_char = $start_char,
-                    c.end_char = $end_char
-                WITH c
-                MATCH (d:Document {doc_id: $doc_id})
-                MERGE (d)-[:CONTAINS]->(c)"#,
-                params,
-            )
-            .await;
-    }
-
     /// Link a knowledge entity (Knowledge/Concept/Experience) to its source Document.
     /// Uses `file_path` to find the Document — safe no-op if no matching Document exists.
     async fn link_to_document(
@@ -1627,5 +1364,19 @@ mod tests {
     fn pipeline_can_be_created() {
         let registry = Arc::new(ParserRegistry::new());
         let _pipeline = PipelineTemplate::new(registry, BatchConfig::default(), None);
+    }
+
+    #[test]
+    fn is_document_path_matches_scan_config_extensions() {
+        let exts = ScanConfig::default().document_extensions;
+        assert!(is_document_path("docs/guide.md", &exts));
+        assert!(is_document_path("config.yaml", &exts));
+        assert!(is_document_path("a/b/c.properties", &exts));
+        // Code paths reported as "deleted" by the mixed snapshots table are
+        // filtered out — they never had Document nodes to purge.
+        assert!(!is_document_path("src/main.rs", &exts));
+        assert!(!is_document_path("Service.java", &exts));
+        assert!(!is_document_path("script.py", &exts));
+        assert!(!is_document_path("no_extension", &exts));
     }
 }

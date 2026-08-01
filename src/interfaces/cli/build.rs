@@ -570,9 +570,11 @@ async fn run_pipeline_analysis(
                 if all_done {
                     skipped += 1;
                 } else {
-                    // Only record non-empty skip sets in the map
+                    // Only record non-empty skip sets in the map. Keys are
+                    // project-relative paths — the engine is fed relative
+                    // paths (see engine_input below).
                     if !steps_to_skip.is_empty() {
-                        skip.insert(path.clone(), steps_to_skip.clone());
+                        skip.insert(PathBuf::from(&rel_path), steps_to_skip.clone());
                     }
                     pending.push((path, text, rel_path, file_hash, steps_to_skip));
                 }
@@ -612,10 +614,14 @@ async fn run_pipeline_analysis(
         return Ok(());
     }
 
-    // Extract just the (path, text) pairs for the engine
+    // Feed the engine (relative path, text) pairs. Relative paths are the
+    // canonical file identity in the pipeline: the chunk processor derives
+    // doc_id as `dt://doc/{project}/{rel_path}` (domain::id::make_document_id),
+    // matching the Document nodes written by earlier builds and the
+    // deleted_paths consumed by the build orchestration layer (§6.5).
     let engine_input: Vec<(PathBuf, String)> = files_to_process
         .iter()
-        .map(|(p, t, _, _, _)| (p.clone(), t.clone()))
+        .map(|(_, t, rel, _, _)| (PathBuf::from(rel), t.clone()))
         .collect();
 
     // Build skip map for the engine: only pass non-empty skip sets
@@ -635,9 +641,12 @@ async fn run_pipeline_analysis(
     // We only mark steps that were NOT in the per-file skip set (i.e. were
     // actually executed by the engine), so that previously-skipped steps
     // remain correctly recorded.
+    // Note: analyses carry relative paths (engine input contract above).
     if let Some(ref snap) = snapshot {
-        for (path, _text, rel_path, file_hash, steps_to_skip) in &files_to_process {
-            let was_success = analyses.iter().any(|a| a.file_path == *path && a.success);
+        for (_path, _text, rel_path, file_hash, steps_to_skip) in &files_to_process {
+            let was_success = analyses
+                .iter()
+                .any(|a| a.file_path == Path::new(rel_path) && a.success);
             if was_success {
                 for step in &active_steps {
                     if steps_to_skip.contains(*step) {

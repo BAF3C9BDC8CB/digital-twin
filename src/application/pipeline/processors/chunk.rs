@@ -75,18 +75,15 @@ impl Processor for ChunkProcessor {
 
         // Detect document type from extension and first few lines.
         let first_lines: Vec<&str> = ctx.file_text.lines().take(5).collect();
-        let doc_type = DocType::detect(
-            &ctx.file_path.to_string_lossy(),
-            &first_lines,
-        );
+        let doc_type = DocType::detect(&ctx.file_path.to_string_lossy(), &first_lines);
 
-        // Generate the document ID from the project and relative path.
-        // If file_path is absolute we use the full path as the doc_id
-        // component — the chunker only needs a unique identifier.
-        let doc_id = format!(
-            "dt://doc/{}/{}",
-            ctx.project_name,
-            ctx.file_path.to_string_lossy()
+        // Generate the document ID from the project and relative path via
+        // the shared constructor (single source with the build orchestration
+        // layer's deleted-path purge, §6.5). The engine feeds project-relative
+        // paths, so doc_id is `dt://doc/{project}/{rel_path}`.
+        let doc_id = crate::domain::id::make_document_id(
+            &ctx.project_name,
+            &ctx.file_path.to_string_lossy(),
         );
 
         // Split the text into chunks using the type-aware strategy.
@@ -140,7 +137,11 @@ mod tests {
     use std::path::PathBuf;
 
     fn make_context(file_name: &str, text: &str) -> PipelineContext {
-        PipelineContext::new(PathBuf::from(file_name), text.to_string(), "test".to_string())
+        PipelineContext::new(
+            PathBuf::from(file_name),
+            text.to_string(),
+            "test".to_string(),
+        )
     }
 
     #[tokio::test]
@@ -167,7 +168,10 @@ mod tests {
             output.get("doc_type").and_then(|v| v.as_str()),
             Some("markdown")
         );
-        let chunk_count = output.get("chunk_count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let chunk_count = output
+            .get("chunk_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         assert!(chunk_count > 0);
         assert!(output.get("chunks").is_some());
     }

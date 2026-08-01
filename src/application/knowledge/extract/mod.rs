@@ -10,7 +10,8 @@ pub mod consolidate;
 pub mod model;
 
 pub use consolidate::{
-    entity_embed_text, entity_id_for, link_same_as, normalize, ConsolidateStats, Consolidator,
+    entity_embed_text, entity_id_for, link_same_as, normalize, purge_document, ConsolidateStats,
+    Consolidator,
 };
 pub use model::{EntityType, ExtractedEntity, ExtractedGraph, ExtractedRelation};
 

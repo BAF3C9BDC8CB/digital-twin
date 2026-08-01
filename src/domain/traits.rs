@@ -221,6 +221,24 @@ pub trait SnapshotRepository: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Delete all per-file state (file snapshot + pipeline step progress) for
+    /// the given project-relative paths. Used when files were deleted from
+    /// disk: clears the change-detection baseline so the deletion is not
+    /// re-reported on every subsequent build, and lets a later re-created
+    /// file be processed fresh instead of being skipped as "already done".
+    ///
+    /// Returns the number of removed rows (informational).
+    ///
+    /// Default is a no-op returning `0`: repositories without per-file state
+    /// simply keep the previous (harmless) re-report behaviour.
+    async fn delete_file_progress(
+        &self,
+        _project: &str,
+        _paths: &[String],
+    ) -> Result<u64, DtError> {
+        Ok(0)
+    }
+
     /// Check storage health.
     async fn health_check(&self) -> Result<HealthStatus, DtError>;
 }
