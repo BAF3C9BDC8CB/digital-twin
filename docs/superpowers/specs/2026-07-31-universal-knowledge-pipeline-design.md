@@ -728,7 +728,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 |------|------|------|------|------|
 | **S1** | Extract 抽取层：`ExtractedGraph` 模型 + `document_with_nlp.yaml` 重写 + llm/hanlp 处理器块级化 + R4 build.rs SF URL 修正 | ✅ 完成 | `0ebc13d` | Spec ✅ / 质量 Approved（无 Critical/Important，4 Minor 延后） |
 | **S2a** | Consolidate 核心：consolidate.rs（两级消歧/写图/双写/purge/SAME_AS/I7 迁移）+ store.rs 薄壳重写（R8）+ R7 `search_with_filter` | ✅ 完成 | `98044df` + 修复轮 `6936cc0` | 修复轮 1 后 ALL ADDRESSED（1C+2I+5M 全部修复） |
-| **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | 🔵 **进行中** | — | — |
+| **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | ✅ 完成（自审，待确认） | `ccb53e6` | 自审通过（无 subagent 评审，见 §13.5） |
 | **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ⬜ 待做 | — | — |
 | **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ⬜ 待做 | — | — |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ⬜ 待做 | — | — |
@@ -764,4 +764,22 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 - `block_map` 双键登记（原始+规范化 canonical），MENTIONED_IN/doc_chunks 收集处 HashSet 去重。
 - confidence 存储前 f64 域内 6 位舍入（f32→f64 精度修正）。
 - 降级/空摘要块 embed 文本=纯原文块。
-- 测试：S1 后 727 → S2a 后 **765 passed / 2 failed（预存，未扩大）**；clippy 0 error。
+- 测试：S1 后 727 → S2a 后 765 → S2b 后 **772 passed / 2 failed（预存，未扩大）**；clippy 0 error。
+
+### 13.5 S2b 落地要点与偏差记录（2026-08-01，会话内直接实现）
+
+- **I1**：`business_id(node)` 派生序 = 21 个显式 id 属性（entity_id/knowledge_id/concept_id/…）
+  → `name@namespace|db`（K8sDeployment/Table/ConfigKey 复合键）→ element_id 兜底。
+  图重建后同业务节点回写同一向量点，幂等。
+- **I2**：payload 统一核心 schema 与 §7.2 一致；两处有意偏差：① `description` 保留为
+  `summary` 的完整文本**别名**（retriever.rs/search_mcp.rs 现读它，兼容期双写，S5 后可摘）；
+  ② `origin` 缺省 `"learned"`（业务节点主入口为 learn/memorize 流）。
+- **I5**：`delete_kg_vector(vector, business_id)` 经 `delete_by_filter(business_id payload)`
+  实现——trait 本无 `delete_points(ids)` 方法，避免新增 trait 方法引发 8 处 mock 连锁改动；
+  I2 前的 legacy 点无 `business_id` key 删不掉，按 §12.6 一次性清 `kg_nodes` 处理。
+- **full_rebuild**：`prepare()` 先 `delete_by_filter(project=...)` 清 `KG_NODES`+`DOC_CHUNKS`
+  （失败 warn 不致命）；pipeline.rs 调用点从 `None` 接通 `vector.as_deref()`。
+  `code_methods` 全局集合**不在**清理范围（基线行为：确定性 id 覆写）。
+- **自审说明**：应用户要求本任务未派 subagent 评审；控制者自审覆盖：filter 形状一致性、
+  BUSINESS_LABELS 过滤前提、双写兼容、删除幂等。遗留噪音：提交含基线未提交内容 + 全量
+  fmt 重排（同 2a deferred minor，因改动依赖同文件基线内容无法拆分）。
