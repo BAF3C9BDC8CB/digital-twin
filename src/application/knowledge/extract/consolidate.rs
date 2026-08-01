@@ -60,8 +60,6 @@ pub struct ConsolidateStats {
     pub blocks_processed: usize,
     /// Non-degraded blocks with empty entities/relations/summary (observed only).
     pub empty_blocks: usize,
-    /// Non-fatal per-item error messages.
-    pub errors: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +171,7 @@ impl Consolidator {
         graphs: &[ExtractedGraph],
         block_texts: &HashMap<u32, String>,
     ) -> Result<ConsolidateStats, DtError> {
-        ensure_schema(&self.graph).await;
+        ensure_schema(&self.graph, &self.vector).await;
 
         let mut stats = ConsolidateStats::default();
 
@@ -380,11 +378,22 @@ impl Consolidator {
                         )
                         .await?;
 
-                    block_map.insert(entity.canonical_name.clone(), final_id);
+                    // Register both the raw and the normalised canonical as
+                    // lookup keys — LLM case/whitespace variance in relation
+                    // endpoints must not fall through to the fallback.
+                    block_map.insert(entity.canonical_name.clone(), final_id.clone());
+                    block_map
+                        .entry(normalize(&entity.canonical_name))
+                        .or_insert(final_id);
                 }
 
                 // ── §6.2.3 MENTIONED_IN provenance (batched per block).
-                let ids: Vec<String> = block_map.values().cloned().collect();
+                let ids: Vec<String> = block_map
+                    .values()
+                    .cloned()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
                 let mut mp = HashMap::new();
                 mp.insert("doc_id".to_string(), serde_json::json!(doc_id));
                 mp.insert("ids".to_string(), serde_json::json!(ids));
@@ -402,8 +411,12 @@ impl Consolidator {
             // ── §6.2.2 Relations: endpoints via block map, then historical
             //    fallback, else orphan (log + count, no placeholder nodes).
             for relation in &block.relations {
-                let head_id = self.resolve_endpoint(&block_map, &relation.head).await?;
-                let tail_id = self.resolve_endpoint(&block_map, &relation.tail).await?;
+                let head_id = self
+                    .resolve_endpoint(project, &block_map, &relation.head)
+                    .await?;
+                let tail_id = self
+                    .resolve_endpoint(project, &block_map, &relation.tail)
+                    .await?;
                 let (Some(head_id), Some(tail_id)) = (head_id, tail_id) else {
                     stats.relations_orphaned += 1;
                     tracing::warn!(
@@ -447,12 +460,17 @@ impl Consolidator {
                 .cloned()
                 .unwrap_or_default();
             let block_embed_text = if block.block_summary.is_empty() {
-                raw_text.clone() // degraded blocks: raw chunk only (§5.5)
+                raw_text.clone() // no summary to prefix (degraded blocks always have an empty summary per §5.5)
             } else {
                 format!("{}\n{}", block.block_summary, raw_text)
             };
             let block_vector = self.embed.embed_batch(&[block_embed_text]).await?;
-            let entity_ids: Vec<String> = block_map.values().cloned().collect();
+            let entity_ids: Vec<String> = block_map
+                .values()
+                .cloned()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
             let point = serde_json::json!({
                 "id": crate::application::sync::kg_bridge::make_point_id(
                     &format!("{doc_id}:{}", block.block_index)
@@ -474,26 +492,38 @@ impl Consolidator {
         Ok(stats)
     }
 
-    /// Resolve a relation endpoint: the per-block disambiguation map first,
-    /// then a historical-node suffix lookup (the endpoint may be a node from
-    /// an older build), else `None` (caller counts an orphan relation).
+    /// Resolve a relation endpoint: the per-block disambiguation map first
+    /// (raw key, then normalised key), then a project-scoped historical-node
+    /// suffix lookup (the endpoint may be a node from an older build), else
+    /// `None` (caller counts an orphan relation).
     async fn resolve_endpoint(
         &self,
+        project: &str,
         block_map: &HashMap<String, String>,
         canonical: &str,
     ) -> Result<Option<String>, DtError> {
-        if let Some(id) = block_map.get(canonical) {
+        if let Some(id) = block_map
+            .get(canonical)
+            .or_else(|| block_map.get(normalize(canonical).as_str()))
+        {
             return Ok(Some(id.clone()));
         }
+        // `/`-anchored suffix: canonical "网关" must not match "支付网关";
+        // project-scoped: never resolve into another project's same-named node.
         let mut params = HashMap::new();
         params.insert(
+            "prefix".to_string(),
+            serde_json::json!(format!("dt://entity/{project}/")),
+        );
+        params.insert(
             "suffix".to_string(),
-            serde_json::json!(normalize(canonical)),
+            serde_json::json!(format!("/{}", normalize(canonical))),
         );
         let rows = self
             .graph
             .read_query(
-                "MATCH (e:Entity) WHERE e.entity_id ENDS WITH $suffix \
+                "MATCH (e:Entity) \
+                 WHERE e.entity_id STARTS WITH $prefix AND e.entity_id ENDS WITH $suffix \
                  RETURN e.entity_id AS entity_id LIMIT 1",
                 params,
             )
@@ -540,23 +570,35 @@ fn doc_id_filter(doc_id: &str) -> serde_json::Value {
     serde_json::json!({"must": [{"key": "doc_id", "match": {"value": doc_id}}]})
 }
 
-/// §6.2/I7 one-off migration, run once per process on first consolidation.
-/// Memgraph errors on re-creating an existing index/constraint — tolerated
-/// (debug-logged) so this is safe to call on every process start.
-async fn ensure_schema(graph: &Arc<dyn GraphRepository>) {
+/// §6.2/I7 one-off migration + collection provisioning, run once per process
+/// on first consolidation. Memgraph errors on re-creating an existing
+/// index/constraint — tolerated (debug-logged). The latch is set only when at
+/// least one statement succeeded, so a transient backend outage is retried on
+/// the next call instead of being silently skipped for the process lifetime.
+async fn ensure_schema(graph: &Arc<dyn GraphRepository>, vector: &Arc<dyn VectorRepository>) {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if ONCE.get().is_some() {
         return;
     }
+    let mut any_ok = false;
     for stmt in [
         "CREATE INDEX ON :Entity(entity_id)",
         "CREATE CONSTRAINT ON (e:Entity) ASSERT e.entity_id IS UNIQUE",
     ] {
-        if let Err(e) = graph.write_query(stmt, HashMap::new()).await {
-            tracing::debug!("consolidate schema migration skipped ({e})");
+        match graph.write_query(stmt, HashMap::new()).await {
+            Ok(_) => any_ok = true,
+            Err(e) => tracing::debug!("consolidate schema migration skipped ({e})"),
         }
     }
-    let _ = ONCE.set(());
+    for collection in [KG_NODES, DOC_CHUNKS] {
+        match vector.ensure_collection(collection, VECTOR_DIM).await {
+            Ok(_) => any_ok = true,
+            Err(e) => tracing::debug!("consolidate ensure_collection {collection} skipped ({e})"),
+        }
+    }
+    if any_ok {
+        let _ = ONCE.set(());
+    }
 }
 
 /// §6.4 `SAME_AS` manual entry point. Auto-triggering is unreachable in the
@@ -684,6 +726,7 @@ mod tests {
     /// statements; scripted read responses keyed by substring match.
     struct MockGraph {
         writes: Mutex<Vec<(String, HashMap<String, serde_json::Value>)>>,
+        reads: Mutex<Vec<(String, HashMap<String, serde_json::Value>)>>,
         read_handlers: Vec<(String, serde_json::Value)>,
     }
 
@@ -691,12 +734,17 @@ mod tests {
         fn new(read_handlers: Vec<(String, serde_json::Value)>) -> Self {
             Self {
                 writes: Mutex::new(vec![]),
+                reads: Mutex::new(vec![]),
                 read_handlers,
             }
         }
 
         fn writes(&self) -> Vec<(String, HashMap<String, serde_json::Value>)> {
             self.writes.lock().unwrap().clone()
+        }
+
+        fn reads(&self) -> Vec<(String, HashMap<String, serde_json::Value>)> {
+            self.reads.lock().unwrap().clone()
         }
     }
 
@@ -705,8 +753,9 @@ mod tests {
         async fn read_query(
             &self,
             query: &str,
-            _params: HashMap<String, serde_json::Value>,
+            params: HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
+            self.reads.lock().unwrap().push((query.to_string(), params));
             for (needle, response) in &self.read_handlers {
                 if query.contains(needle.as_str()) {
                     return Ok(response.clone());
@@ -1217,6 +1266,22 @@ mod tests {
         assert_eq!(
             rel.1.get("tail_id").and_then(|v| v.as_str()),
             Some(historical)
+        );
+
+        // Fallback lookup must be project-scoped and `/`-anchored.
+        let reads = graph.reads();
+        let fallback = reads
+            .iter()
+            .find(|(q, _)| q.contains("ENDS WITH"))
+            .expect("fallback read must run");
+        assert!(fallback.0.contains("STARTS WITH $prefix"));
+        assert_eq!(
+            fallback.1.get("prefix").and_then(|v| v.as_str()),
+            Some("dt://entity/proj/")
+        );
+        assert_eq!(
+            fallback.1.get("suffix").and_then(|v| v.as_str()),
+            Some("/老节点")
         );
     }
 

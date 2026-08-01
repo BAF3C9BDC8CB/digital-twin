@@ -154,7 +154,6 @@ impl Processor for StoreProcessor {
         output.set("degraded_blocks", stats.degraded_blocks);
         output.set("blocks_processed", stats.blocks_processed);
         output.set("empty_blocks", stats.empty_blocks);
-        output.set("errors", stats.errors);
 
         Ok(output)
     }

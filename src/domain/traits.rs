@@ -186,27 +186,40 @@ pub trait SnapshotRepository: Send + Sync + 'static {
 
     /// Mark a pipeline step as completed for a file, keyed by file content hash.
     /// Steps: "tree_sitter", "chunk", "hanlp", "llm", "embed", "store".
+    ///
+    /// Default is a no-op: repositories without step-progress tracking simply
+    /// never skip a step (safe fallback — full reprocessing).
     async fn mark_step_done(
         &self,
-        project: &str,
-        file_path: &str,
-        step: &str,
-        file_hash: &str,
-    ) -> Result<(), DtError>;
+        _project: &str,
+        _file_path: &str,
+        _step: &str,
+        _file_hash: &str,
+    ) -> Result<(), DtError> {
+        Ok(())
+    }
 
     /// Check whether a pipeline step has already been completed for a file
     /// with the same content hash.  Returns `true` only if the exact step+file+hash
     /// combination exists in the progress table.
+    ///
+    /// Default `false`: without tracking, nothing is ever considered done.
     async fn is_step_done(
         &self,
-        project: &str,
-        file_path: &str,
-        step: &str,
-        file_hash: &str,
-    ) -> Result<bool, DtError>;
+        _project: &str,
+        _file_path: &str,
+        _step: &str,
+        _file_hash: &str,
+    ) -> Result<bool, DtError> {
+        Ok(false)
+    }
 
     /// Clear all pipeline step progress for a project (used on full rebuild).
-    async fn clear_step_progress(&self, project: &str) -> Result<(), DtError>;
+    ///
+    /// Default is a no-op (nothing tracked, nothing to clear).
+    async fn clear_step_progress(&self, _project: &str) -> Result<(), DtError> {
+        Ok(())
+    }
 
     /// Check storage health.
     async fn health_check(&self) -> Result<HealthStatus, DtError>;
