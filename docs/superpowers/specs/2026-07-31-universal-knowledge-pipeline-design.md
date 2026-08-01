@@ -729,7 +729,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | **S1** | Extract 抽取层：`ExtractedGraph` 模型 + `document_with_nlp.yaml` 重写 + llm/hanlp 处理器块级化 + R4 build.rs SF URL 修正 | ✅ 完成 | `0ebc13d` | Spec ✅ / 质量 Approved（无 Critical/Important，4 Minor 延后） |
 | **S2a** | Consolidate 核心：consolidate.rs（两级消歧/写图/双写/purge/SAME_AS/I7 迁移）+ store.rs 薄壳重写（R8）+ R7 `search_with_filter` | ✅ 完成 | `98044df` + 修复轮 `6936cc0` | 修复轮 1 后 ALL ADDRESSED（1C+2I+5M 全部修复） |
 | **S2b** | kg_bridge I1-I5（point_id 改 business_id 派生、payload 统一 schema、concat_props 数组、summary 不截断、删除接口）+ full_rebuild 清项目向量接线 | ✅ 完成（自审，待确认） | `ccb53e6` | 自审通过（无 subagent 评审，见 §13.5） |
-| **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ⬜ 待做 | — | — |
+| **S2c** | runner.rs 断言更新（R11：删 hanlp keyword 断言，Entity/RELATES/MENTIONED_IN 下界+抽样断言）+ expected.json + `dt build --test` 集成验证 | ✅ 完成 | `72798e3` | 控制者自审（同 S2b 模式） |
 | **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ⬜ 待做 | — | — |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ⬜ 待做 | — | — |
 | 终审 | 全分支 code review（最 capable 模型）+ finishing-a-development-branch | ⬜ 待做 | — | — |
@@ -783,3 +783,25 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 - **自审说明**：应用户要求本任务未派 subagent 评审；控制者自审覆盖：filter 形状一致性、
   BUSINESS_LABELS 过滤前提、双写兼容、删除幂等。遗留噪音：提交含基线未提交内容 + 全量
   fmt 重排（同 2a deferred minor，因改动依赖同文件基线内容无法拆分）。
+
+### 13.6 S2c 完成记录（2026-08-01，R11 断言落地）
+
+- **断言重写**：runner.rs Step 8 由 HanLP keyword 精确相等断言（§10.1 已摘 HanLP 链路）
+  整体替换为 `verify_knowledge_graph`：① Entity/RELATES/MENTIONED_IN 下界计数（`>=`）；
+  ② Entity（§7.2：entity_id/name/type/summary/keywords/aliases）与 RELATES 边
+  （type/doc_id/evidence/confidence）字段形状抽样；③ `sample_entities` 抽样存在性
+  （name/entity_id 大小写不敏感 CONTAINS，presence-only 不断言 type，容忍 LLM 类型漂移）；
+  ④ `kg_nodes`（§7.2）/ `doc_chunks`（§7.3）向量 payload 字段检查。
+- **关键缺陷修复（断言采样偏差）**：`point_payload` 原实现从零向量全集合采样 `kg_nodes`，
+  会非确定性命中旧 kg-sync 点（`elementId`/`description`/`source` 格式，3945 点中仅 281
+  点属 test-pipeline 新格式）→ §7.2 字段断言假失败（首次运行 failed=1 即此因）。
+  修复：采样加 `project=test-pipeline` 过滤（走 R7 `search_with_filter` Qdrant 原生过滤）。
+  Consolidate 写入侧本身正确，新格式点字段齐全（business_id/origin=extracted/summary/labels）。
+- **expected.json 校准**：首轮实测 Entity 265 / RELATES 74 / MENTIONED_IN 274，下界取
+  ~55-60%（150/40/150）——回归检测导向（抽取链路整体崩坏 vs 正常工作），容忍 LLM 抽取
+  数量漂移；抽样实体 3 个：aria2c / channelextra / paychannelservice.createpay。
+- **集成验证（全量干净重建）**：`dt clean --test && dt build --test`（xinference qwen3.5，
+  HanLP DOWN 优雅降级，28 文件全成功）→ **118 total / 117 passed / 0 failed / 1 skipped**
+  （skip=llm_analysis 内容检查，expected 标记 `has_llm_analysis_on_methods=false`，有意）。
+  独立二轮复跑实测 263/58/270——RELATES 漂移最大（74→58，-22%），下界仍成立，
+  抽样实体全部复现，校准余量设计有效。
