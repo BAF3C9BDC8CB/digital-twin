@@ -385,7 +385,184 @@ impl Retriever {
             .await?;
         Ok(parse_entity_rows(parse_graph_rows(&raw), &original))
     }
+
+    /// 非 Entity 种子图扩展（elementId 定位，§5.2.2）。
+    pub(crate) async fn expand_business(&self, seeds: &[Seed]) -> Result<ExpansionResult, DtError> {
+        let Some(ref graph) = self.graph else {
+            return Ok(ExpansionResult::default());
+        };
+        // 无 elementId 的种子无法定位，静默跳过（payload 恒应携带；缺失记 warn）
+        let located: Vec<&Seed> = seeds
+            .iter()
+            .filter(|s| {
+                if s.element_id.is_none() {
+                    tracing::warn!(
+                        "seed {} has no elementId, skip graph expansion",
+                        s.business_id
+                    );
+                }
+                s.element_id.is_some()
+            })
+            .collect();
+        if located.is_empty() {
+            return Ok(ExpansionResult::default());
+        }
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "seed_eids".to_string(),
+            serde_json::json!(located
+                .iter()
+                .map(|s| s.element_id.clone().unwrap())
+                .collect::<Vec<_>>()),
+        );
+        let raw = graph.read_query(BIZ_EXPANSION_CYPHER, params).await?;
+        let rows = parse_graph_rows(&raw);
+
+        // seed_eid → seed（from_seed / 边端点 business_id 映射用）
+        let by_eid: std::collections::HashMap<&str, &Seed> = located
+            .iter()
+            .filter_map(|s| s.element_id.as_deref().map(|e| (e, *s)))
+            .collect();
+
+        // 按种子分组 → 白名单过滤 → confidence 降序 → ≤PER_SEED_NEIGHBOR_CAP
+        let mut per_seed: std::collections::HashMap<String, Vec<&serde_json::Value>> =
+            std::collections::HashMap::new();
+        for row in &rows {
+            let Some(nb) = row.get("neighbor").filter(|n| !n.is_null()) else {
+                continue;
+            };
+            let labels: Vec<String> = nb
+                .get("labels")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|l| l.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !neighbor_allowed(&labels) {
+                continue;
+            }
+            let seed_eid = row
+                .get("seed_eid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            per_seed.entry(seed_eid).or_default().push(row);
+        }
+
+        let mut result = ExpansionResult::default();
+        for (seed_eid, mut group) in per_seed {
+            group.sort_by(|a, b| {
+                let ca = a.get("rel_confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                let cb = b.get("rel_confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            group.truncate(PER_SEED_NEIGHBOR_CAP);
+            let from_seed = by_eid
+                .get(seed_eid.as_str())
+                .map(|s| s.business_id.clone())
+                .unwrap_or_default();
+            for row in group {
+                let nb = &row["neighbor"];
+                let nb_eid = row
+                    .get("neighbor_element_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let nb_bid = crate::application::sync::kg_bridge::business_id_from_props(nb, nb_eid);
+                let labels: Vec<String> = nb
+                    .get("labels")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|l| l.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let entity_type = nb
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .or_else(|| labels.first().cloned())
+                    .unwrap_or_else(|| "?".to_string());
+                let conf = row
+                    .get("rel_confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
+                result.nodes.push(ExpandedNode {
+                    business_id: nb_bid.clone(),
+                    element_id: row
+                        .get("neighbor_element_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    name: nb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    summary: nb
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    entity_type,
+                    from_seed: from_seed.clone(),
+                    hop: 1,
+                    via_same_as: false,
+                    path_min_confidence: conf,
+                });
+                // 边端点 elementId → business_id（端点非种子即邻居）
+                let rel_type = row.get("rel_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if !rel_type.is_empty() {
+                    let head_eid = row.get("rel_head").and_then(|v| v.as_str()).unwrap_or("");
+                    let tail_eid = row.get("rel_tail").and_then(|v| v.as_str()).unwrap_or("");
+                    let resolve = |eid: &str| -> String {
+                        if eid == seed_eid {
+                            from_seed.clone()
+                        } else if eid == nb_eid {
+                            nb_bid.clone()
+                        } else {
+                            eid.to_string()
+                        }
+                    };
+                    result.edges.push(RawEdge {
+                        head: resolve(head_eid),
+                        tail: resolve(tail_eid),
+                        rel_type,
+                        confidence: conf,
+                        evidence: None,
+                        doc_id: None,
+                    });
+                }
+            }
+        }
+        Ok(result)
+    }
 }
+
+/// S5-D11 邻居白名单：Entity 恒允许；BUSINESS_LABELS 内且非 Events 组/Document 允许。
+/// 与 `kg_bridge::BUSINESS_LABELS` 同源引用，禁止复制 label 列表（Global Constraints）。
+pub(crate) fn neighbor_allowed(labels: &[String]) -> bool {
+    const DENY: &[&str] = &["ConfigChange", "BugFix", "Decision", "PodEvent", "Document"];
+    labels.iter().any(|l| l == "Entity")
+        || (labels
+            .iter()
+            .any(|l| crate::application::sync::kg_bridge::BUSINESS_LABELS.contains(&l.as_str()))
+            && !labels.iter().any(|l| DENY.contains(&l.as_str())))
+}
+
+/// §5.2.2：非 Entity 种子 — payload elementId 定位（无映射表），1 跳任意关系邻居。
+const BIZ_EXPANSION_CYPHER: &str = r#"
+UNWIND $seed_eids AS eid
+MATCH (n) WHERE elementId(n) = eid
+OPTIONAL MATCH (n)-[r]-(nb)
+RETURN eid AS seed_eid,
+       nb { .* , labels: labels(nb) } AS neighbor,
+       elementId(nb) AS neighbor_element_id,
+       type(r) AS rel_type,
+       r.confidence AS rel_confidence,
+       elementId(startNode(r)) AS rel_head,
+       elementId(endNode(r)) AS rel_tail
+"#;
+
+/// 每种子邻居上限（§5.2.2；配合 §5.2.3 邻居桶承担扇出防护）。
+const PER_SEED_NEIGHBOR_CAP: usize = 10;
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -661,5 +838,68 @@ mod tests {
         assert!(result.nodes.iter().all(|n| n.business_id != "A"));
         // 两条原始边都保留（聚合在 Task 6 attach_relations）
         assert_eq!(result.edges.len(), 2);
+    }
+
+    #[test]
+    fn neighbor_whitelist() {
+        assert!(neighbor_allowed(&["Entity".into()]));
+        assert!(neighbor_allowed(&["Knowledge".into()]));
+        assert!(neighbor_allowed(&["Table".into()]));
+        assert!(!neighbor_allowed(&["Document".into()]));
+        assert!(!neighbor_allowed(&["ConfigChange".into()]));
+        assert!(!neighbor_allowed(&["PodEvent".into()]));
+        assert!(!neighbor_allowed(&["Method".into()])); // 代码节点不在 BUSINESS_LABELS
+    }
+
+    #[tokio::test]
+    async fn expand_business_filters_whitelist_and_caps_per_seed() {
+        // 构造 12 个邻居：11 个 Knowledge（confidence 0.05*i）+ 1 个 Document（应被白名单滤掉）
+        let mut rows = vec![];
+        for i in 0..11 {
+            rows.push(json!({
+                "seed_eid": "eid-seed",
+                "neighbor": {"knowledge_id": format!("k-{i}"), "name": format!("n{i}"),
+                              "summary": "s", "labels": ["Knowledge"]},
+                "neighbor_element_id": format!("eid-n{i}"),
+                "rel_type": "RELATES_TO",
+                "rel_confidence": 0.05 * i as f64,
+            }));
+        }
+        rows.push(json!({
+            "seed_eid": "eid-seed",
+            "neighbor": {"doc_id": "d-1", "name": "doc", "labels": ["Document"]},
+            "neighbor_element_id": "eid-doc",
+            "rel_type": "MENTIONED_IN",
+            "rel_confidence": 0.99,
+        }));
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![json!(rows)])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let seeds = vec![Seed {
+            business_id: "k-seed".into(),
+            element_id: Some("eid-seed".into()),
+            labels: vec!["Knowledge".into()],
+            name: "s".into(),
+            summary: "s".into(),
+            entity_type: "Knowledge".into(),
+            semantic: 0.8,
+        }];
+        let result = r.expand_business(&seeds).await.unwrap();
+        // 白名单过滤 Document；逐种子截断 ≤10（11 个 Knowledge 取 confidence 前 10）
+        assert_eq!(result.nodes.len(), 10);
+        assert!(result.nodes.iter().all(|n| n.entity_type != "Document"));
+        assert!(result.nodes.iter().any(|n| n.business_id == "k-10")); // 最高分保留
+        assert!(!result.nodes.iter().any(|n| n.business_id == "k-0")); // 最低分被截
+        // Cypher 用 elementId 定位，参数为 payload elementId 列表
+        let (cypher, params) = graph.captured.lock().unwrap()[0].clone();
+        assert!(cypher.contains("elementId(n) = eid"));
+        assert_eq!(params["seed_eids"], json!(["eid-seed"]));
     }
 }
