@@ -195,3 +195,107 @@ async fn s5a_canonical_query_attribution() {
         pos.map(|i| i + 1)
     );
 }
+
+// ---------------------------------------------------------------------------
+// S5b：rerank 完整融合（真 bge-reranker-v2-m3 @ xinference）
+// ---------------------------------------------------------------------------
+
+fn rerank_router(url: &str) -> Arc<dyn dt_daemon::domain::traits::RerankService> {
+    dt_daemon::infrastructure::embedder::create_rerank_router(
+        dt_daemon::infrastructure::embedder::ProviderConfig {
+            siliconflow_url: String::new(),
+            siliconflow_api_key: String::new(),
+            siliconflow_model_embed: String::new(),
+            siliconflow_model_reranker: String::new(),
+            siliconflow_model_llm: String::new(),
+            xinference_url: url.to_string(),
+            xinference_api_key: String::new(),
+            xinference_model_embed: "bge-m3".to_string(),
+            xinference_model_reranker: "bge-reranker-v2-m3".to_string(),
+            xinference_model_llm: "qwen3.5".to_string(),
+            embed_provider: "xinference".to_string(),
+            rerank_provider: "xinference".to_string(),
+            llm_provider: "xinference".to_string(),
+        },
+    )
+}
+
+fn same_query() -> SearchRequest {
+    SearchRequest {
+        query: "新增渠道的唯一代码标识".into(),
+        world: Some("knowledge".into()),
+        limit: Some(40),
+        project: Some("test-pipeline".into()),
+        max_hops: Some(1),
+        with_evidence: None,
+        origin: None,
+        doc_id: None,
+    }
+}
+
+/// S5b 联调：rerank 接入后降级标记消失、rerank 分非零、邻居被 rerank 提升。
+#[tokio::test]
+#[ignore]
+async fn s5b_rerank_full_fusion_live() {
+    let Some((graph, vector, embed)) = live_backends().await else {
+        eprintln!("SKIP: live backends unavailable");
+        return;
+    };
+    let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), Some(rerank_router(XINFERENCE)));
+    let result = cws.search(&same_query()).await.expect("search must succeed");
+    print_hits(&result);
+
+    assert!(!result.hits.is_empty());
+    // rerank 正常 → 无降级标记（条级 + 世界级）
+    assert!(
+        !result.degraded.contains(&"rerank_unavailable".to_string()),
+        "rerank 正常时不得打 rerank_unavailable: {:?}",
+        result.degraded
+    );
+    assert!(result.hits.iter().all(|h| h.rerank_degraded.is_none()));
+    // rerank 分必须非零且 [0,1]
+    assert!(result
+        .hits
+        .iter()
+        .all(|h| h.score_breakdown.as_ref().map(|b| b.rerank > 0.0 && b.rerank <= 1.0) == Some(true)));
+    // 融合分公式抽查：final = 0.6·rerank + 0.3·semantic + 0.1·boost
+    let h0 = &result.hits[0];
+    let b = h0.score_breakdown.as_ref().unwrap();
+    let expect = 0.6 * b.rerank + 0.3 * b.semantic + 0.1 * b.graph_boost;
+    assert!((b.final_score - expect).abs() < 1e-9);
+    assert!((h0.score - expect).abs() < 1e-9);
+    // alipay 仍在结果中（rerank 是邻居的主排序信号，其位次打印供 S5a/S5b 对比）
+    let alipay = result
+        .hits
+        .iter()
+        .position(|h| h.id.to_lowercase().contains("/org/alipay"))
+        .map(|i| i + 1);
+    println!("S5b: alipay position = {:?} (S5a degraded 时为 #31)", alipay);
+    assert!(alipay.is_some(), "alipay 应保留在 rerank 后的结果中");
+}
+
+/// §9.4：rerank 关停 → 检索仍返回结果且打 rerank_degraded / rerank_unavailable。
+#[tokio::test]
+#[ignore]
+async fn s5b_rerank_outage_falls_back_live() {
+    let Some((graph, vector, embed)) = live_backends().await else {
+        eprintln!("SKIP: live backends unavailable");
+        return;
+    };
+    // 指向不可达地址模拟 rerank 服务关停
+    let dead = rerank_router("http://localhost:1/v1");
+    let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), Some(dead));
+    let result = cws.search(&same_query()).await.expect("search must succeed");
+    print_hits(&result);
+
+    assert!(!result.hits.is_empty(), "rerank 关停不得阻塞返回");
+    assert!(result.degraded.contains(&"rerank_unavailable".to_string()));
+    assert!(result.hits.iter().all(|h| h.rerank_degraded == Some(true)));
+    // 降级权重：final = 0.75·semantic + 0.25·boost(一阶)
+    let h0 = &result.hits[0];
+    let b = h0.score_breakdown.as_ref().unwrap();
+    assert_eq!(b.rerank, 0.0);
+    let expect = 0.75 * b.semantic + 0.25 * b.graph_boost;
+    assert!((b.final_score - expect).abs() < 1e-9);
+    println!("ACCEPT: rerank outage → degraded fallback works");
+}

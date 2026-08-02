@@ -4,7 +4,7 @@
 //! repository respectively, converting gRPC messages to/from domain types.
 
 use crate::application::context::search_mcp::CrossWorldSearchTrait;
-use crate::domain::traits::{BuildService, EmbedService, GraphRepository, VectorRepository};
+use crate::domain::traits::{BuildService, EmbedService, GraphRepository, RerankService, VectorRepository};
 use crate::domain::types::BatchConfig;
 use crate::proto::dt::core::*;
 use std::sync::Arc;
@@ -112,8 +112,28 @@ pub async fn handle_search(
     );
     let embed: Option<Arc<dyn EmbedService>> = Some(embed_svc);
 
-    // Build CrossWorldSearch and delegate
-    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed);
+    // Build CrossWorldSearch and delegate（rerank 经 provider 路由，S5 首个业务调用点）
+    let rerank: Option<Arc<dyn RerankService>> = Some(
+        crate::infrastructure::embedder::create_rerank_router(
+            crate::infrastructure::embedder::ProviderConfig {
+                siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
+                siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
+                siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
+                siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(
+                ),
+                siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
+                xinference_url: String::new(),
+                xinference_api_key: String::new(),
+                xinference_model_embed: String::new(),
+                xinference_model_reranker: String::new(),
+                xinference_model_llm: String::new(),
+                embed_provider: "siliconflow".into(),
+                rerank_provider: "siliconflow".into(),
+                llm_provider: "siliconflow".into(),
+            },
+        ),
+    );
+    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed, rerank);
     let cws_req = crate::application::context::search_mcp::SearchRequest {
         query: req.query,
         world: Some("code".into()),

@@ -72,9 +72,12 @@ pub fn clamp_max_hops(h: u32) -> u32 {
     h.clamp(1, 2)
 }
 
-/// bge-reranker-v2-m3 返回 logit，sigmoid 归一到 [0,1]（S5-D6）。
-pub fn sigmoid(x: f32) -> f64 {
-    1.0 / (1.0 + (-(x as f64)).exp())
+/// rerank 分数归一到 [0,1]（S5-D6 实测修正：xinference/SiliconFlow 的
+/// `relevance_score` 已是 sigmoid 归一值——强相关对实测 0.9993、无关对 0.0——
+/// 二次 sigmoid 会把分布压向 0.5、架空 0.6 权重。故只做防御性 clamp；
+/// 若未来接入返回裸 logit 的 provider，需重新评估归一方式）。
+pub fn clamp_unit(x: f32) -> f64 {
+    (x as f64).clamp(0.0, 1.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -805,10 +808,32 @@ fn fuse(c: &Candidate, rerank_available: bool) -> ScoreBreakdown {
 }
 
 impl Retriever {
-    /// Task 9 替换为真实现；本任务为桩：恒 false（恒走降级权重）。
+    /// ③ 重排（§5.3）：name+summary 送 reranker，分数 clamp 到 [0,1]。
+    /// 返回 false = 未配置或调用失败（调用方走 S5-D7 降级权重并打标）。
     #[allow(clippy::wrong_self_convention)]
-    pub(crate) async fn apply_rerank(&self, _query: &str, _candidates: &mut [Candidate]) -> bool {
-        false
+    pub(crate) async fn apply_rerank(&self, query: &str, candidates: &mut [Candidate]) -> bool {
+        let Some(ref rerank) = self.rerank else {
+            return false;
+        };
+        if candidates.is_empty() {
+            return true;
+        }
+        let docs: Vec<String> = candidates
+            .iter()
+            .map(|c| format!("{}。{}", c.name, c.summary))
+            .collect();
+        match rerank.rerank(query, &docs).await {
+            Ok(scores) => {
+                for (c, x) in candidates.iter_mut().zip(scores) {
+                    c.rerank_score = Some(clamp_unit(x));
+                }
+                true
+            }
+            Err(e) => {
+                tracing::warn!("rerank failed, falling back to degraded weights: {e}");
+                false
+            }
+        }
     }
 
     /// source_ref 回退：无边 Entity 候选查 MENTIONED_IN（§5.7.2；best-effort 静默失败）。
@@ -1073,6 +1098,24 @@ mod tests {
     impl EmbedService for MockEmbed {
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
             Ok(texts.iter().map(|_| vec![0.1_f32; 4]).collect())
+        }
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            Ok(HealthStatus::Healthy)
+        }
+    }
+
+    pub(crate) struct MockRerank {
+        pub scores: Vec<f32>,
+        pub fail: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl RerankService for MockRerank {
+        async fn rerank(&self, _q: &str, docs: &[String]) -> Result<Vec<f32>, DtError> {
+            if self.fail {
+                return Err(DtError::Repository("rerank down".into()));
+            }
+            Ok(self.scores.iter().take(docs.len()).cloned().collect())
         }
         async fn health_check(&self) -> Result<HealthStatus, DtError> {
             Ok(HealthStatus::Healthy)
@@ -1445,8 +1488,7 @@ mod tests {
     }
 
     #[test]
-    fn fuse_degraded_uses_one_hop_boost() {
-        // 降级：0.75·semantic + 0.25·boost(一阶)
+    fn fuse_degraded_uses_one_hop_boost() {        // 降级：0.75·semantic + 0.25·boost(一阶)
         let c = merge_candidates(&[mk_seed("A", 0.8)], vec![mk_node("N", "A", 2, 0.9)]);
         let n = c.iter().find(|x| x.business_id == "N").unwrap();
         let b = fuse(n, false);
@@ -1599,5 +1641,68 @@ mod tests {
         assert_eq!(out.hits.len(), 1); // 种子仍在
         assert!(out.degraded.contains(&"graph_expansion_failed".to_string()));
         assert!(out.degraded.contains(&"rerank_unavailable".to_string()));
+    }
+
+    #[test]
+    fn rerank_score_clamped_to_unit_interval() {
+        assert!((clamp_unit(0.9993) - 0.9993).abs() < 1e-4);
+        assert_eq!(clamp_unit(0.0), 0.0);
+        assert_eq!(clamp_unit(1.2), 1.0);
+        assert_eq!(clamp_unit(-0.3), 0.0);
+    }
+
+    #[test]
+    fn fuse_full_weights_with_rerank() {
+        // 正常：0.6·rerank + 0.3·semantic + 0.1·boost
+        let mut c = merge_candidates(&[mk_seed("A", 0.8)], vec![]);
+        c[0].rerank_score = Some(0.5);
+        let b = fuse(&c[0], true);
+        assert!((b.final_score - (0.6 * 0.5 + 0.3 * 0.8 + 0.1 * 1.0)).abs() < 1e-9); // = 0.64
+        assert!((b.rerank - 0.5).abs() < 1e-9);
+        // 邻居：graph_boost 仍按 0.5^hop（非降级一阶）
+        let mut c2 = merge_candidates(&[mk_seed("A", 0.8)], vec![mk_node("N", "A", 2, 0.9)]);
+        let n = c2.iter_mut().find(|x| x.business_id == "N").unwrap();
+        n.rerank_score = Some(1.0);
+        let b2 = fuse(n, true);
+        assert!((b2.graph_boost - 0.25).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn apply_rerank_writes_clamped_scores_and_fails_open() {
+        // 正常路径：provider 已归一的分数原样保留；越界值被 clamp
+        let mut c = merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], vec![]);
+        let r = Retriever::new(
+            None,
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            Some(Arc::new(MockRerank {
+                scores: vec![0.9993, 1.5],
+                fail: false,
+            })),
+        );
+        assert!(r.apply_rerank("q", &mut c).await);
+        assert!(c.iter().all(|x| x.rerank_score.is_some()));
+        // merge_candidates 出自 HashMap，候选顺序不定——断言分数集合而非逐位对应
+        let mut got: Vec<f64> = c.iter().filter_map(|x| x.rerank_score).collect();
+        got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(got.len(), 2);
+        assert!((got[0] - 0.9993).abs() < 1e-4);
+        assert_eq!(got[1], 1.0); // 1.5 → clamp 到 1.0
+        // 失败路径：fails-open → false，候选无分数
+        let mut c2 = merge_candidates(&[mk_seed("A", 0.9)], vec![]);
+        let r2 = Retriever::new(
+            None,
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            Some(Arc::new(MockRerank {
+                scores: vec![],
+                fail: true,
+            })),
+        );
+        assert!(!r2.apply_rerank("q", &mut c2).await);
+        assert!(c2[0].rerank_score.is_none());
+        // 未配置：false
+        let r3 = Retriever::new(None, Arc::new(empty_vector()), Arc::new(MockEmbed), None);
+        assert!(!r3.apply_rerank("q", &mut c2).await);
     }
 }

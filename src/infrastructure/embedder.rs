@@ -5,7 +5,7 @@
 //! configuration (SiliconFlow + XInference).
 
 use crate::domain::error::DtError;
-use crate::domain::traits::EmbedService;
+use crate::domain::traits::{EmbedService, RerankService};
 use crate::domain::types::HealthStatus;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -97,11 +97,10 @@ impl ProviderConfig {
     }
 }
 
-/// Build an [`EmbedProviderRouter`] from provider configuration.
-///
-/// Creates `SiliconFlowClient` and `XInferenceClient` as configured,
-/// then wraps them in a router with the specified routing rules.
-pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
+/// Build the router with configured clients (shared by embed/rerank constructors).
+fn build_provider_router(
+    cfg: ProviderConfig,
+) -> crate::infrastructure::provider_router::EmbedProviderRouter {
     use crate::infrastructure::provider_router::{EmbedProviderRouter, ProviderRouterConfig};
 
     let siliconflow = if !cfg.siliconflow_url.is_empty() {
@@ -138,8 +137,20 @@ pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
         llm_provider: cfg.llm_provider,
     };
 
-    let router = EmbedProviderRouter::new(siliconflow, xinference, router_config);
-    Arc::new(router)
+    EmbedProviderRouter::new(siliconflow, xinference, router_config)
+}
+
+/// Build an [`EmbedProviderRouter`] from provider configuration.
+///
+/// Creates `SiliconFlowClient` and `XInferenceClient` as configured,
+/// then wraps them in a router with the specified routing rules.
+pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
+    Arc::new(build_provider_router(cfg))
+}
+
+/// Build an [`EmbedProviderRouter`] as a [`RerankService`] (S5 首个业务调用点)。
+pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService> {
+    Arc::new(build_provider_router(cfg))
 }
 
 // ---------------------------------------------------------------------------
@@ -165,5 +176,13 @@ mod tests {
         let texts = vec!["x".to_string()];
         let result = svc.embed_batch(&texts).await.unwrap();
         assert_eq!(result[0].len(), 768);
+    }
+
+    #[test]
+    fn create_rerank_router_returns_configured_service() {
+        let svc = create_rerank_router(ProviderConfig::default_siliconflow());
+        // 对象安全 + 构造成功即可（路由正确性由 provider_router 既有测试保证）
+        fn _accept(_: Arc<dyn crate::domain::traits::RerankService>) {}
+        _accept(svc);
     }
 }
