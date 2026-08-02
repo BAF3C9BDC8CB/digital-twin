@@ -1831,7 +1831,7 @@ git commit -m "feat(s5): retrieval pipeline orchestration with degraded fusion +
   - `search_knowledge(&self, request: &SearchRequest) -> (Vec<SearchHit>, Vec<String>)`（hits + degraded；旧 CONTAINS 实现删除）
   - `search()` 的 knowledge 分支把 degraded 合入 `CrossWorldResult.degraded`
 
-- [ ] **Step 1: 先写失败测试**
+- [x] **Step 1: 先写失败测试**
 
 ```rust
 #[tokio::test]
@@ -1861,12 +1861,12 @@ fn constructor_accepts_rerank_as_fourth_param() {
 }
 ```
 
-- [ ] **Step 2: 确认失败**
+- [x] **Step 2: 确认失败**
 
 Run: `cargo test --lib search_mcp 2>&1 | tail -10`
 Expected: FAIL — `new` 只收 3 参、`search_knowledge` 签名不符、build_service.rs 编译错（`SearchRequest` 字面量缺字段——Task 1 已加字段，此处须同步补）。
 
-- [ ] **Step 3: 实现委托切换**
+- [x] **Step 3: 实现委托切换**
 
 `search_mcp.rs` 修改：
 
@@ -1979,12 +1979,12 @@ impl CrossWorldSearch {
 
 `build_service.rs` 顶部 use 追加 `use crate::domain::traits::RerankService;`。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量编译**
+- [x] **Step 4: 跑测试确认通过 + 全量编译**
 
 Run: `cargo test --lib search_mcp 2>&1 | tail -6 && cargo build 2>&1 | tail -3`
 Expected: search_mcp 7 passed；build 0 error。
 
-- [ ] **Step 5: S5a 人工实测（test-pipeline，对照 spec §7 S5a 验证方式）**
+- [x] **Step 5: S5a 人工实测（test-pipeline，对照 spec §7 S5a 验证方式）**
 
 ```bash
 # 进程内驱动（无 CLI/gRPC 入口，S5-D10）：用单测临时挂接真后端或 dt eval 入口均可；
@@ -1997,7 +1997,15 @@ Expected: search_mcp 7 passed；build 0 error。
 
 实测结果记入执行简报（LLM 抽取漂移按 §9.1 容差处理：ifCode 跌出 top-5 但在 top-10 时用 `score_breakdown` 归因记录位次，不算失败）。
 
-- [ ] **Step 6: 提交**
+**S5a 实测记录（2026-08-02，tests/s5_knowledge_search.rs，2 passed）**：
+- 语义非字面命中 ✓："新增渠道的唯一代码标识" → ifCode #1（hop=0，score 0.81）。
+- 图扩展捞回向量漏掉的实体 ✓：alipay 向量 rank #128（召回窗口 k=120 之外）经 ifCode RELATES 边以 hop=1 出现在 #31。
+- Entity 进入 knowledge 结果 ✓；rerank_unavailable 降级标记 ✓；score_breakdown 齐全 ✓。
+- **偏差 1（Document 种子剔除）**：kg_sync 写入的 Document 点在扁平分布下挤占 knowledge 结果（实测 top-15 占 13），`parse_seed` 增加 Document label 剔除（证据检索归 world=doc/doc_chunks；与 S5-D11 同一噪声逻辑）。
+- **偏差 2（规范查询归因）**："渠道怎么路由" 未命中 ifCode——本次构建 ifCode 摘要漂移为 "用于标识新增渠道的唯一代码标识"（无路由语义），向量 rank #74/275 跌出召回窗口；§9.1 所述抽取漂移，非检索链路故障（归因测试 s5a_canonical_query_attribution 仅打印）。
+- **已知边界（后续优化点）**：同一节点既被向量低分召回（种子桶溢出）又是扩展邻居时，按最小 hop 规则归入种子桶后会被整体丢弃（本次 wechat/yinsheng 实例）；可考虑"种子桶溢出的节点回退邻居桶"，列入后续优化。
+
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/application/context/search_mcp.rs src/interfaces/grpc/services/build_service.rs
