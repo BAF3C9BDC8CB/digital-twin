@@ -8,6 +8,7 @@
 
 pub mod consolidate;
 pub mod model;
+pub mod retrieve;
 
 pub use consolidate::{
     entity_embed_text, entity_id_for, link_same_as, normalize, purge_document, ConsolidateStats,

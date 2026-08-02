@@ -123,6 +123,10 @@ pub async fn handle_search(
         } else {
             Some(req.project)
         },
+        max_hops: None,
+        with_evidence: None,
+        origin: None,
+        doc_id: None,
     };
 
     let cws_result = cws

@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use crate::application::knowledge::extract::retrieve::{RelationSnippet, ScoreBreakdown};
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
@@ -30,6 +31,14 @@ pub struct SearchRequest {
     pub limit: Option<usize>,
     /// Filter by project.
     pub project: Option<String>,
+    /// 图扩展跳数（knowledge 世界），白名单 {1,2}，默认 1。
+    pub max_hops: Option<u32>,
+    /// knowledge top-5 实体从 doc_chunks 回填证据段落（仅 knowledge 世界生效）。
+    pub with_evidence: Option<bool>,
+    /// 按 kg_nodes payload origin 过滤召回种子（extracted/learned/manual）。
+    pub origin: Option<String>,
+    /// 仅 world=doc：限定单文档内检索证据块。
+    pub doc_id: Option<String>,
 }
 
 /// A single search hit from any world.
@@ -61,6 +70,24 @@ pub struct SearchHit {
     pub calls: Vec<String>,
     /// Element ID from the knowledge graph.
     pub element_id: Option<String>,
+    /// 排序分解（knowledge 世界新链路填充）。
+    #[serde(default)]
+    pub score_breakdown: Option<ScoreBreakdown>,
+    /// 图距离：0=直接命中（含 SAME_AS 别名），1/2=扩展邻居。
+    #[serde(default)]
+    pub hop: Option<u32>,
+    /// 是否经 SAME_AS 别名归并命中。
+    #[serde(default)]
+    pub via_same_as: Option<bool>,
+    /// 命中实体的关系摘要（去重聚合后，上限 5 条）。
+    #[serde(default)]
+    pub relations: Option<Vec<RelationSnippet>>,
+    /// 证据段落（world=doc 或 with_evidence 回填）。
+    #[serde(default)]
+    pub evidence: Option<Vec<String>>,
+    /// rerank 降级标记。
+    #[serde(default)]
+    pub rerank_degraded: Option<bool>,
 }
 
 /// Output of cross-world search.
@@ -76,6 +103,9 @@ pub struct CrossWorldResult {
     pub total: usize,
     /// Per-world hit counts for transparency.
     pub per_world_counts: std::collections::HashMap<String, usize>,
+    /// 降级标记（"rerank_unavailable" / "graph_expansion_failed" / "embed_unavailable"）。
+    #[serde(default)]
+    pub degraded: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -238,6 +268,12 @@ impl CrossWorldSearch {
                                 .get("method_id")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
+                            score_breakdown: None,
+                            hop: None,
+                            via_same_as: None,
+                            relations: None,
+                            evidence: None,
+                            rerank_degraded: None,
                         });
                     }
                 }
@@ -321,6 +357,12 @@ impl CrossWorldSearch {
                 signature: None,
                 calls: vec![],
                 element_id: None,
+                score_breakdown: None,
+                hop: None,
+                via_same_as: None,
+                relations: None,
+                evidence: None,
+                rerank_degraded: None,
             })
             .collect();
         Ok(hits)
@@ -357,6 +399,12 @@ impl CrossWorldSearch {
                     signature: None,
                     calls: vec![],
                     element_id: None,
+                    score_breakdown: None,
+                    hop: None,
+                    via_same_as: None,
+                    relations: None,
+                    evidence: None,
+                    rerank_degraded: None,
                 }
             })
             .collect();
@@ -416,6 +464,7 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
             hits: all_hits,
             total,
             per_world_counts: per_world,
+            degraded: vec![],
         })
     }
 }
@@ -444,11 +493,46 @@ mod tests {
             signature: Some("pub fn process()".into()),
             calls: vec!["validate".into(), "save".into()],
             element_id: Some("4:xyz".into()),
+            score_breakdown: Some(ScoreBreakdown {
+                semantic: 0.71,
+                rerank: 0.92,
+                graph_boost: 1.0,
+                final_score: 0.83,
+            }),
+            hop: Some(0),
+            via_same_as: None,
+            relations: Some(vec![RelationSnippet {
+                rel_type: "routes_to".into(),
+                other_end_id: "dt://entity/p/Service/s".into(),
+                other_end_name: "PayChannelService".into(),
+                direction: "out".into(),
+                confidence: 0.9,
+                evidence: Some("ifCode 决定路由".into()),
+                supplementary_count: 2,
+            }]),
+            evidence: None,
+            rerank_degraded: None,
         };
         assert_eq!(hit.source_world, "code");
         assert!(hit.score > 0.9);
         assert_eq!(hit.start_line, Some(10));
         assert_eq!(hit.calls.len(), 2);
+        assert_eq!(hit.relations.as_ref().unwrap()[0].supplementary_count, 2);
+    }
+
+    #[test]
+    fn search_hit_deserializes_legacy_json_without_new_fields() {
+        let legacy = r#"{
+            "id":"1","title":"t","snippet":"s","source_world":"knowledge",
+            "entity_type":"Knowledge","score":0.5,"source_ref":null,
+            "file_path":null,"start_line":null,"end_line":null,
+            "signature":null,"calls":[],"element_id":null
+        }"#;
+        let hit: SearchHit = serde_json::from_str(legacy).unwrap();
+        assert!(hit.score_breakdown.is_none());
+        assert!(hit.hop.is_none());
+        assert!(hit.relations.is_none());
+        assert!(hit.rerank_degraded.is_none());
     }
 
     #[test]
@@ -459,6 +543,7 @@ mod tests {
             hits: vec![],
             total: 0,
             per_world_counts: std::collections::HashMap::new(),
+            degraded: vec![],
         };
         assert_eq!(result.total, 0);
     }
@@ -486,9 +571,16 @@ mod tests {
                 signature: None,
                 calls: vec![],
                 element_id: None,
+                score_breakdown: None,
+                hop: None,
+                via_same_as: None,
+                relations: None,
+                evidence: None,
+                rerank_degraded: None,
             }],
             total: 8,
             per_world_counts: counts,
+            degraded: vec![],
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("AuthService"));
@@ -502,6 +594,10 @@ mod tests {
             world: None,
             limit: None,
             project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
         };
         assert_eq!(req.query, "payment");
         assert_eq!(req.world, None);
