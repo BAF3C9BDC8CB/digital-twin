@@ -173,6 +173,12 @@ fn parse_seed(hit: &serde_json::Value, min_score: f64) -> Option<Seed> {
                 .collect()
         })
         .unwrap_or_default();
+    // Document 种子剔除（S5a 实测修正）：文档证据归 world=doc/doc_chunks 负责，
+    // kg_nodes 中的 Document 点与同文档块语义重复，会在扁平分布下挤占 knowledge
+    // 结果位（实测 top-15 中 13 条为 Document）。与 S5-D11 邻居白名单同一噪声逻辑。
+    if labels.iter().any(|l| l == "Document") {
+        return None;
+    }
     let name = p
         .get("name")
         .and_then(|v| v.as_str())
@@ -1139,6 +1145,21 @@ mod tests {
             .iter()
             .any(|c| c["key"] == "origin" && c["match"]["value"] == "manual"));
         assert_eq!(*vector.captured_limit.lock().unwrap(), Some(60));
+    }
+
+    #[tokio::test]
+    async fn recall_drops_document_labeled_seeds() {
+        let mut doc_hit = seed_hit(0.95, "dt://doc/p/a.md", &["Document"]);
+        doc_hit["payload"]["type"] = json!("document");
+        let vector = MockVector {
+            hits: vec![doc_hit, seed_hit(0.9, "dt://entity/p/Channel/ifcode", &["Entity"])],
+            captured_filter: Mutex::new(None),
+            captured_limit: Mutex::new(None),
+        };
+        let r = Retriever::new(None, Arc::new(vector), Arc::new(MockEmbed), None);
+        let seeds = r.recall("q", None, None, 60).await.unwrap();
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0].business_id, "dt://entity/p/Channel/ifcode");
     }
 
     pub(crate) fn entity_row(
