@@ -1115,31 +1115,39 @@ pub(crate) fn make_point_id(business_id: &str) -> String {
 ///    nodes like K8sDeployment/Table/ConfigKey).
 /// 3. `element_id` as a last-resort fallback (legacy behaviour).
 pub(crate) fn business_id(node: &KgNode) -> String {
-    let props = &node.properties;
+    business_id_from_props(&node.properties, &node.element_id)
+}
 
-    const ID_KEYS: &[&str] = &[
-        "entity_id",
-        "knowledge_id",
-        "concept_id",
-        "experience_id",
-        "playbook_id",
-        "domain_id",
-        "server_id",
-        "database_id",
-        "service_id",
-        "instance_id",
-        "endpoint_id",
-        "doc_id",
-        "config_id",
-        "thread_id",
-        "requirement_id",
-        "decision_id",
-        "event_id",
-        "session_id",
-        "version_id",
-        "observation_id",
-        "analysis_id",
-    ];
+/// Explicit unique-ID property keys in priority order (I1).
+const ID_KEYS: &[&str] = &[
+    "entity_id",
+    "knowledge_id",
+    "concept_id",
+    "experience_id",
+    "playbook_id",
+    "domain_id",
+    "server_id",
+    "database_id",
+    "service_id",
+    "instance_id",
+    "endpoint_id",
+    "doc_id",
+    "config_id",
+    "thread_id",
+    "requirement_id",
+    "decision_id",
+    "event_id",
+    "session_id",
+    "version_id",
+    "observation_id",
+    "analysis_id",
+];
+
+/// Derive the stable business ID from a property map (S5 共享入口).
+///
+/// Same 21-key priority order as [`business_id`]; used by retrieve.rs for
+/// graph-expansion neighbours that never materialise as `KgNode`.
+pub(crate) fn business_id_from_props(props: &serde_json::Value, element_id_fallback: &str) -> String {
     for key in ID_KEYS {
         if let Some(s) = props.get(key).and_then(|v| v.as_str()) {
             if !s.is_empty() {
@@ -1165,7 +1173,7 @@ pub(crate) fn business_id(node: &KgNode) -> String {
         };
     }
 
-    node.element_id.clone()
+    element_id_fallback.to_string()
 }
 
 /// Delete the `kg_nodes` vector point belonging to a business node (I5).
@@ -1325,6 +1333,29 @@ mod tests {
     use super::*;
     use crate::domain::types::{CollectionInfo, HealthStatus};
     use async_trait::async_trait;
+
+    // ------------------------------------------------------------------
+    // business_id_from_props
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn business_id_from_props_matches_node_variant() {
+        // 21 项显式 id 优先
+        let props = serde_json::json!({"knowledge_id": "k-1", "name": "n"});
+        assert_eq!(super::business_id_from_props(&props, "4:1:1"), "k-1");
+        // entity_id 优先级高于 knowledge_id
+        let props = serde_json::json!({"entity_id": "e-1", "knowledge_id": "k-1"});
+        assert_eq!(super::business_id_from_props(&props, "4:1:1"), "e-1");
+        // 复合键：name@namespace（Table/ConfigKey/K8sDeployment 形态）
+        let props = serde_json::json!({"name": "cfg", "namespace": "public"});
+        assert_eq!(super::business_id_from_props(&props, "4:1:1"), "cfg@public");
+        // 无 id 无限定词：裸 name
+        let props = serde_json::json!({"name": "plain"});
+        assert_eq!(super::business_id_from_props(&props, "4:1:1"), "plain");
+        // 全缺：element_id 兜底
+        let props = serde_json::json!({});
+        assert_eq!(super::business_id_from_props(&props, "4:1:1"), "4:1:1");
+    }
 
     // ------------------------------------------------------------------
     // make_point_id
