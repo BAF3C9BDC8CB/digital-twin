@@ -1033,11 +1033,37 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
         .filter(|s| !s.is_empty())
         .unwrap_or("learned");
 
+    // Display title: name → title → file_path basename → business_id last segment.
+    // Document nodes carry no `name` property (consolidate only sets
+    // doc_id/project/file_path/doc_type) — without this fallback their payload
+    // name is null, breaking the §7.2 shape assertion and knowledge retrieval.
+    let name = props
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            props
+                .get("title")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .or_else(|| {
+            props
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .and_then(|p| p.rsplit(['/', '\\']).next())
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| bid.rsplit('/').next().unwrap_or(&bid).to_string());
+
     let mut payload = serde_json::json!({
         // ---- identity ----
         "elementId": node.element_id,
         "business_id": bid,
-        "name": props.get("name").cloned().unwrap_or(serde_json::Value::Null),
+        "name": name,
         "type": primary_label,
         "labels": node.labels,
         // ---- content (I4: full, untruncated) ----
