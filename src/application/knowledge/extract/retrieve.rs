@@ -565,6 +565,197 @@ RETURN eid AS seed_eid,
 const PER_SEED_NEIGHBOR_CAP: usize = 10;
 
 // ---------------------------------------------------------------------------
+// ③ 候选合并与分桶截断（§5.2.3）
+// ---------------------------------------------------------------------------
+
+/// rerank 候选。`pre_rank` 仅用于候选选拔（分桶排序键），不参与最终融合。
+#[derive(Debug, Clone)]
+pub(crate) struct Candidate {
+    pub business_id: String,
+    pub element_id: Option<String>,
+    pub name: String,
+    pub summary: String,
+    pub entity_type: String,
+    /// 种子=自身召回分；邻居=种子分 × 0.5^hop（§5.4 近似）。
+    pub semantic: f64,
+    pub hop: u32,
+    pub via_same_as: bool,
+    /// 1.0 / 0.5 / 0.25（0.5^hop）。
+    pub graph_boost: f64,
+    /// 桶内预排分：种子=semantic；邻居=种子 semantic × path_min_confidence。
+    pub pre_rank: f64,
+    pub relations: Vec<RelationSnippet>,
+    pub source_ref: Option<String>,
+    pub rerank_score: Option<f64>,
+}
+
+fn boost_of(hop: u32) -> f64 {
+    0.5_f64.powi(hop as i32)
+}
+
+/// 合并种子与扩展产物：按 business_id 去重，同节点取最小 hop（最大 boost）。
+pub(crate) fn merge_candidates(seeds: &[Seed], expansion: ExpansionResult) -> Vec<Candidate> {
+    let seed_score = |bid: &str| {
+        seeds
+            .iter()
+            .find(|s| s.business_id == bid)
+            .map(|s| s.semantic)
+            .unwrap_or(0.0)
+    };
+    let mut map: std::collections::HashMap<String, Candidate> = std::collections::HashMap::new();
+    for s in seeds {
+        map.insert(
+            s.business_id.clone(),
+            Candidate {
+                business_id: s.business_id.clone(),
+                element_id: s.element_id.clone(),
+                name: s.name.clone(),
+                summary: s.summary.clone(),
+                entity_type: s.entity_type.clone(),
+                semantic: s.semantic,
+                hop: 0,
+                via_same_as: false,
+                graph_boost: 1.0,
+                pre_rank: s.semantic,
+                relations: vec![],
+                source_ref: None,
+                rerank_score: None,
+            },
+        );
+    }
+    for n in expansion.nodes {
+        let base = seed_score(&n.from_seed);
+        let (hop, boost, semantic, pre_rank) = if n.via_same_as {
+            (0, 1.0, base, base) // 别名视为同一实体
+        } else {
+            (
+                n.hop,
+                boost_of(n.hop),
+                base * boost_of(n.hop),
+                base * n.path_min_confidence,
+            )
+        };
+        map.entry(n.business_id.clone())
+            .and_modify(|c| {
+                if hop < c.hop {
+                    c.hop = hop;
+                    c.graph_boost = boost;
+                    c.semantic = semantic;
+                    c.pre_rank = pre_rank;
+                    c.via_same_as = n.via_same_as;
+                }
+            })
+            .or_insert(Candidate {
+                business_id: n.business_id.clone(),
+                element_id: n.element_id.clone(),
+                name: n.name.clone(),
+                summary: n.summary.clone(),
+                entity_type: n.entity_type.clone(),
+                semantic,
+                hop,
+                via_same_as: n.via_same_as,
+                graph_boost: boost,
+                pre_rank,
+                relations: vec![],
+                source_ref: None,
+                rerank_score: None,
+            });
+    }
+    // 无 summary 候选：name 兜底进 rerank 文本；仍为空则丢弃（§5.2.3）
+    map.into_values()
+        .filter(|c| !c.summary.is_empty() || !c.name.is_empty())
+        .collect()
+}
+
+/// 边去重聚合 + 挂接到候选：同一 (head, rel_type, tail) 保最高 confidence，
+/// 其余计 supplementary_count；source_ref = 最高 confidence 边 doc_id（§5.2.1/§5.7.2）。
+pub(crate) fn attach_relations(candidates: &mut [Candidate], edges: &[RawEdge]) {
+    use std::collections::HashMap;
+    // 三元组去重（保最高 confidence，计补充证据数）
+    let mut dedup: HashMap<(&str, &str, &str), (&RawEdge, u32)> = HashMap::new();
+    for e in edges {
+        dedup
+            .entry((e.head.as_str(), e.rel_type.as_str(), e.tail.as_str()))
+            .and_modify(|(best, cnt)| {
+                if e.confidence > best.confidence {
+                    *best = e;
+                }
+                *cnt += 1;
+            })
+            .or_insert((e, 0));
+    }
+    // 先建 business_id → name 快照（避免 iter_mut 与不可变借用冲突）
+    let names: HashMap<String, String> = candidates
+        .iter()
+        .map(|c| (c.business_id.clone(), c.name.clone()))
+        .collect();
+    let mut best_doc: HashMap<String, (f64, Option<String>)> = HashMap::new();
+    for c in candidates.iter_mut() {
+        let mut rels: Vec<RelationSnippet> = dedup
+            .values()
+            .filter(|(e, _)| e.head == c.business_id || e.tail == c.business_id)
+            .map(|(e, cnt)| {
+                let outgoing = e.head == c.business_id;
+                let other = if outgoing { &e.tail } else { &e.head };
+                RelationSnippet {
+                    rel_type: e.rel_type.clone(),
+                    other_end_id: other.clone(),
+                    other_end_name: names.get(other).cloned().unwrap_or_default(),
+                    direction: if outgoing { "out".into() } else { "in".into() },
+                    confidence: e.confidence,
+                    evidence: e.evidence.clone(),
+                    supplementary_count: *cnt,
+                }
+            })
+            .collect();
+        rels.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rels.truncate(5);
+        c.relations = rels;
+    }
+    // source_ref：候选为端点的边中 confidence 最高者的 doc_id
+    for e in edges {
+        for bid in [&e.head, &e.tail] {
+            let entry = best_doc.entry(bid.clone()).or_insert((f64::MIN, None));
+            if e.confidence > entry.0 && e.doc_id.is_some() {
+                *entry = (e.confidence, e.doc_id.clone());
+            }
+        }
+    }
+    for c in candidates.iter_mut() {
+        if let Some((_, doc)) = best_doc.get(&c.business_id) {
+            c.source_ref = doc.clone();
+        }
+    }
+}
+
+/// 分桶截断（§5.2.3）：种子桶 ⌈top_n×0.6⌉，邻居桶 top_n−种子实际数（保底 40% 可上浮）。
+pub(crate) fn bucket_truncate(candidates: &mut Vec<Candidate>, top_n: usize) {
+    let seed_cap = ((top_n as f64) * 0.6).ceil() as usize;
+    let mut seeds: Vec<Candidate> = candidates.iter().filter(|c| c.hop == 0).cloned().collect();
+    seeds.sort_by(|a, b| {
+        b.semantic
+            .partial_cmp(&a.semantic)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    seeds.truncate(seed_cap);
+    let neighbor_cap = top_n.saturating_sub(seeds.len());
+    let mut neighbors: Vec<Candidate> =
+        candidates.iter().filter(|c| c.hop >= 1).cloned().collect();
+    neighbors.sort_by(|a, b| {
+        b.pre_rank
+            .partial_cmp(&a.pre_rank)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    neighbors.truncate(neighbor_cap);
+    seeds.extend(neighbors);
+    *candidates = seeds;
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -901,5 +1092,133 @@ mod tests {
         let (cypher, params) = graph.captured.lock().unwrap()[0].clone();
         assert!(cypher.contains("elementId(n) = eid"));
         assert_eq!(params["seed_eids"], json!(["eid-seed"]));
+    }
+
+    pub(crate) fn mk_seed(bid: &str, score: f64) -> Seed {
+        Seed {
+            business_id: bid.into(),
+            element_id: Some(format!("eid-{bid}")),
+            labels: vec!["Entity".into()],
+            name: format!("n{bid}"),
+            summary: "s".into(),
+            entity_type: "Channel".into(),
+            semantic: score,
+        }
+    }
+
+    pub(crate) fn mk_node(bid: &str, from: &str, hop: u32, conf: f64) -> ExpandedNode {
+        ExpandedNode {
+            business_id: bid.into(),
+            element_id: Some(format!("eid-{bid}")),
+            name: format!("n{bid}"),
+            summary: "s".into(),
+            entity_type: "Service".into(),
+            from_seed: from.into(),
+            hop,
+            via_same_as: false,
+            path_min_confidence: conf,
+        }
+    }
+
+    #[test]
+    fn merge_dedups_by_min_hop_and_decays_neighbor_semantic() {
+        let seeds = vec![mk_seed("A", 0.9), mk_seed("B", 0.8)];
+        let expansion = ExpansionResult {
+            nodes: vec![
+                mk_node("B", "A", 1, 0.9),
+                mk_node("C", "A", 1, 0.9),
+                mk_node("D", "A", 2, 0.6),
+            ],
+            edges: vec![],
+        };
+        let candidates = merge_candidates(&seeds, expansion);
+        // B 既是种子又是邻居 → 保留 hop=0（种子形态，semantic=0.8 自身分）
+        let b = candidates.iter().find(|c| c.business_id == "B").unwrap();
+        assert_eq!(b.hop, 0);
+        assert!((b.semantic - 0.8).abs() < 1e-9);
+        // C：1 跳邻居，semantic = 0.9 × 0.5 = 0.45；pre_rank = 0.9 × 0.9
+        let c = candidates.iter().find(|c| c.business_id == "C").unwrap();
+        assert!((c.semantic - 0.45).abs() < 1e-9);
+        assert!((c.pre_rank - 0.81).abs() < 1e-9);
+        assert!((c.graph_boost - 0.5).abs() < 1e-9);
+        // D：2 跳，boost 0.25
+        let d = candidates.iter().find(|c| c.business_id == "D").unwrap();
+        assert!((d.graph_boost - 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn attach_relations_dedups_triple_and_fills_source_ref() {
+        let mut candidates =
+            merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], ExpansionResult::default());
+        let edges = vec![
+            RawEdge {
+                head: "A".into(),
+                tail: "B".into(),
+                rel_type: "routes_to".into(),
+                confidence: 0.9,
+                evidence: Some("e1".into()),
+                doc_id: Some("d1".into()),
+            },
+            RawEdge {
+                head: "A".into(),
+                tail: "B".into(),
+                rel_type: "routes_to".into(),
+                confidence: 0.7,
+                evidence: Some("e2".into()),
+                doc_id: Some("d2".into()),
+            },
+        ];
+        attach_relations(&mut candidates, &edges);
+        let a = candidates.iter().find(|c| c.business_id == "A").unwrap();
+        let rel = &a.relations[0];
+        assert_eq!(rel.rel_type, "routes_to");
+        assert_eq!(rel.direction, "out");
+        assert_eq!(rel.other_end_id, "B");
+        assert_eq!(rel.other_end_name, "nB");
+        assert!((rel.confidence - 0.9).abs() < 1e-9);
+        assert_eq!(rel.supplementary_count, 1); // 第二文档证据聚合
+        assert_eq!(a.source_ref.as_deref(), Some("d1")); // 最高 confidence 边的 doc_id
+        let b = candidates.iter().find(|c| c.business_id == "B").unwrap();
+        assert_eq!(b.relations[0].direction, "in");
+    }
+
+    #[test]
+    fn bucket_truncate_reserves_neighbor_quota() {
+        // 60/40 分桶：top_n=4 → 种子桶 3，邻居桶 1
+        let mut candidates = vec![];
+        for (i, s) in [0.95, 0.9, 0.85, 0.8].iter().enumerate() {
+            let mut c = merge_candidates(&[mk_seed(&format!("S{i}"), *s)], ExpansionResult::default());
+            candidates.append(&mut c);
+        }
+        let mut nodes = vec![];
+        for (i, pr) in [0.7, 0.6, 0.5].iter().enumerate() {
+            let mut c = merge_candidates(
+                &[],
+                ExpansionResult {
+                    nodes: vec![ExpandedNode {
+                        business_id: format!("N{i}"),
+                        element_id: None,
+                        name: "n".into(),
+                        summary: "s".into(),
+                        entity_type: "Service".into(),
+                        from_seed: "S0".into(),
+                        hop: 1,
+                        via_same_as: false,
+                        path_min_confidence: *pr,
+                    }],
+                    edges: vec![],
+                },
+            );
+            // 手动设 pre_rank 便于断言（merge 会算成 seed.semantic×conf，此处无种子 → 用构造值）
+            c[0].pre_rank = *pr;
+            nodes.push(c.remove(0));
+        }
+        candidates.extend(nodes);
+        bucket_truncate(&mut candidates, 4);
+        assert_eq!(candidates.len(), 4);
+        assert_eq!(candidates.iter().filter(|c| c.hop == 0).count(), 3); // 种子桶 ⌈4×0.6⌉=3
+        assert_eq!(candidates.iter().filter(|c| c.hop >= 1).count(), 1); // 邻居桶 4-3=1
+        assert!(candidates.iter().any(|c| c.business_id == "N0")); // 邻居取 pre_rank 最高
+        assert!(!candidates.iter().any(|c| c.business_id == "S3")); // 种子按语义分截断
     }
 }
