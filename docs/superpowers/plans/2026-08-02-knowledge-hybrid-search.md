@@ -2029,7 +2029,7 @@ git commit -m "feat(s5): switch search_knowledge to retrieve.rs delegation; Cros
   - `pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService>`（embedder.rs）
   - `fn build_provider_router(cfg: ProviderConfig) -> EmbedProviderRouter`（embedder.rs 私有共享）
 
-- [ ] **Step 1: 先写失败测试**
+- [x] **Step 1: 先写失败测试**
 
 retrieve.rs tests mod 新增 MockRerank 与测试：
 
@@ -2108,12 +2108,12 @@ fn create_rerank_router_returns_configured_service() {
 }
 ```
 
-- [ ] **Step 2: 确认失败**
+- [x] **Step 2: 确认失败**
 
 Run: `cargo test --lib retrieve sigmoid 2>&1 | tail -5 && cargo test --lib embedder 2>&1 | tail -5`
 Expected: FAIL — `sigmoid` 测试已存在可过（Task 1 已定义函数，若此前未测则补）；`create_rerank_router` 不存在。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 retrieve.rs 中把 `apply_rerank` 桩**替换**为：
 
@@ -2217,18 +2217,24 @@ pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService> {
     );
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cargo test --lib retrieve 2>&1 | tail -6 && cargo test --lib embedder 2>&1 | tail -4 && cargo build 2>&1 | tail -3`
 Expected: retrieve 15 passed；embedder 全绿；build 0 error。
 
-- [ ] **Step 5: S5b 联调（本地 xinference bge-reranker-v2-m3 启动后）**
+- [x] **Step 5: S5b 联调（本地 xinference bge-reranker-v2-m3 启动后）**
 
 - 确认 `config/pipeline.yaml` 的 rerank 路由实际生效 provider（§8.11：yaml 当前全路由 xinference，与 build_service 内嵌的 siliconflow 配置是两条链路，分别验证各自路径）。
 - 对 test-pipeline 同查询对比 S5a（降级权重）与 S5b（完整融合）的排序变化，确认 `rerank_degraded` 不再出现、`score_breakdown.rerank > 0`。
 - 关停 rerank 服务复测：`rerank_degraded=true` + `degraded:["rerank_unavailable"]` 重新出现（spec §9.4）。
 
-- [ ] **Step 6: 提交**
+**S5b 联调记录（2026-08-02，tests/s5_knowledge_search.rs 4 passed）**：
+- **偏差（clamp 替代二次 sigmoid）**：实测 xinference/SiliconFlow 的 `relevance_score` 已归一（强相关对 0.9993、无关对 0.0），S5-D6 的"provider 返回 logit"前提不成立；二次 sigmoid 会把分布压向 0.5 架空 0.6 权重。实现改为防御性 `clamp_unit`（retrieve.rs），spec §5.3 待 Task 12 回写。
+- **rerank 排序效果**（同查询对比 S5a 降级）：Config/ifcode rerank=0.998（#1, 0.941）、wayCode 0.992（#2, 0.922），其后断崖（#3 0.56 → #5 0.04）——rerank 把降级模式下的扁平排序（0.72-0.85）拉开为清晰梯度，主排序信号作用验证。
+- **降级回退** ✓：指向不可达地址模拟 rerank 关停 → `rerank_degraded=true` + `degraded:["rerank_unavailable"]`，结果仍返回，降级公式 final=0.75·semantic+0.25·boost 抽查一致。
+- **环境注意**：GPU 7.65GiB 满载（qwen3.5 4.84G + bge-m3 + reranker），50 候选 rerank CUDA OOM；已将 bge-reranker-v2-m3 改以 `device=cpu` 运行（xinference REST launch），50 候选单次 ~秒级可接受。生产部署需按 §8.1 评估 GPU 配额或沿用 CPU。
+
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/application/knowledge/extract/retrieve.rs src/infrastructure/embedder.rs src/interfaces/grpc/services/build_service.rs
