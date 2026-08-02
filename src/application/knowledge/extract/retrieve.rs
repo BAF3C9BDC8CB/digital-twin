@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use crate::application::context::graph_parse::parse_graph_rows;
+use crate::application::context::search_mcp::SearchHit;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, RerankService, VectorRepository};
 use crate::shared::collections::KG_NODES;
@@ -594,7 +595,7 @@ fn boost_of(hop: u32) -> f64 {
 }
 
 /// 合并种子与扩展产物：按 business_id 去重，同节点取最小 hop（最大 boost）。
-pub(crate) fn merge_candidates(seeds: &[Seed], expansion: ExpansionResult) -> Vec<Candidate> {
+pub(crate) fn merge_candidates(seeds: &[Seed], nodes: Vec<ExpandedNode>) -> Vec<Candidate> {
     let seed_score = |bid: &str| {
         seeds
             .iter()
@@ -623,7 +624,7 @@ pub(crate) fn merge_candidates(seeds: &[Seed], expansion: ExpansionResult) -> Ve
             },
         );
     }
-    for n in expansion.nodes {
+    for n in nodes {
         let base = seed_score(&n.from_seed);
         let (hop, boost, semantic, pre_rank) = if n.via_same_as {
             (0, 1.0, base, base) // 别名视为同一实体
@@ -753,6 +754,209 @@ pub(crate) fn bucket_truncate(candidates: &mut Vec<Candidate>, top_n: usize) {
     neighbors.truncate(neighbor_cap);
     seeds.extend(neighbors);
     *candidates = seeds;
+}
+
+// ---------------------------------------------------------------------------
+// 编排管线（§3：召回 → 扩展 → 截断 → rerank → 融合 → 证据）
+// ---------------------------------------------------------------------------
+
+/// knowledge 世界检索请求。
+pub struct RetrieveRequest<'a> {
+    pub query: &'a str,
+    pub project: Option<&'a str>,
+    pub limit: usize,
+    pub max_hops: u32,
+    pub origin: Option<&'a str>,
+}
+
+/// 检索产出：命中 + 世界级降级标记（§5.7.4）。
+pub struct RetrieveOutcome {
+    pub hits: Vec<SearchHit>,
+    pub degraded: Vec<String>,
+}
+
+/// 融合排序（§5.4）。降级模式 graph_boost 一阶衰减（种子 1.0、邻居统一 0.5）。
+fn fuse(c: &Candidate, rerank_available: bool) -> ScoreBreakdown {
+    let (wr, ws, wb) = if rerank_available {
+        (0.6, 0.3, 0.1)
+    } else {
+        (0.0, 0.75, 0.25)
+    };
+    let boost = if rerank_available {
+        c.graph_boost
+    } else if c.hop == 0 {
+        1.0
+    } else {
+        0.5
+    };
+    let rerank = c.rerank_score.unwrap_or(0.0);
+    ScoreBreakdown {
+        semantic: c.semantic,
+        rerank,
+        graph_boost: boost,
+        final_score: wr * rerank + ws * c.semantic + wb * boost,
+    }
+}
+
+impl Retriever {
+    /// Task 9 替换为真实现；本任务为桩：恒 false（恒走降级权重）。
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) async fn apply_rerank(&self, _query: &str, _candidates: &mut [Candidate]) -> bool {
+        false
+    }
+
+    /// source_ref 回退：无边 Entity 候选查 MENTIONED_IN（§5.7.2；best-effort 静默失败）。
+    async fn fill_source_refs(&self, candidates: &mut [Candidate]) {
+        let Some(ref graph) = self.graph else {
+            return;
+        };
+        let need: Vec<String> = candidates
+            .iter()
+            .filter(|c| c.source_ref.is_none() && c.business_id.starts_with("dt://entity/"))
+            .map(|c| c.business_id.clone())
+            .collect();
+        if need.is_empty() {
+            return;
+        }
+        let cypher = r#"
+UNWIND $ids AS eid
+MATCH (e:Entity {entity_id: eid})-[:MENTIONED_IN]->(d:Document)
+RETURN eid AS eid, d.doc_id AS doc_id
+ORDER BY eid, d.doc_id
+"#;
+        let mut params = std::collections::HashMap::new();
+        params.insert("ids".to_string(), serde_json::json!(need));
+        let Ok(raw) = graph.read_query(cypher, params).await else {
+            return;
+        };
+        let mut first: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for row in parse_graph_rows(&raw) {
+            let (Some(eid), Some(doc)) = (
+                row.get("eid").and_then(|v| v.as_str()),
+                row.get("doc_id").and_then(|v| v.as_str()),
+            ) else {
+                continue;
+            };
+            first.entry(eid.to_string()).or_insert_with(|| doc.to_string());
+        }
+        for c in candidates.iter_mut() {
+            if c.source_ref.is_none() {
+                c.source_ref = first.get(&c.business_id).cloned();
+            }
+        }
+    }
+
+    /// knowledge 世界混合检索全流程（§3）。
+    pub async fn search_knowledge(&self, req: &RetrieveRequest<'_>) -> Result<RetrieveOutcome, DtError> {
+        let mut degraded: Vec<String> = Vec::new();
+        let limit = req.limit.max(1);
+
+        // ① 召回（embed/vector 失败 → 空结果 + embed_unavailable）
+        let seeds = match self
+            .recall(req.query, req.project, req.origin, (limit * 3) as u64)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("knowledge recall failed: {e}");
+                return Ok(RetrieveOutcome {
+                    hits: vec![],
+                    degraded: vec!["embed_unavailable".into()],
+                });
+            }
+        };
+
+        // ② 图扩展（失败 → 仅向量召回 + graph_expansion_failed）
+        let mut expansion = ExpansionResult::default();
+        if self.graph.is_some() && !seeds.is_empty() {
+            let (entity_seeds, biz_seeds): (Vec<Seed>, Vec<Seed>) = seeds
+                .iter()
+                .cloned()
+                .partition(|s| s.labels.iter().any(|l| l == "Entity"));
+            let mut failed = false;
+            match self.expand_entity(&entity_seeds, req.max_hops).await {
+                Ok(r) => {
+                    expansion.nodes.extend(r.nodes);
+                    expansion.edges.extend(r.edges);
+                }
+                Err(e) => {
+                    tracing::warn!("entity expansion failed: {e}");
+                    failed = true;
+                }
+            }
+            match self.expand_business(&biz_seeds).await {
+                Ok(r) => {
+                    expansion.nodes.extend(r.nodes);
+                    expansion.edges.extend(r.edges);
+                }
+                Err(e) => {
+                    tracing::warn!("business expansion failed: {e}");
+                    failed = true;
+                }
+            }
+            if failed {
+                degraded.push("graph_expansion_failed".into());
+            }
+        }
+
+        // ③ 合并 → 边挂接 → 分桶截断
+        let mut candidates = merge_candidates(&seeds, expansion.nodes);
+        attach_relations(&mut candidates, &expansion.edges);
+        bucket_truncate(&mut candidates, rerank_top_n());
+
+        // ④ rerank（Task 9；桩恒 false → 降级）
+        let reranked = self.apply_rerank(req.query, &mut candidates).await;
+        if !reranked {
+            degraded.push("rerank_unavailable".into());
+        }
+
+        // ⑤ source_ref 回退 + 融合 + 截断 limit，同分 hop 升序
+        self.fill_source_refs(&mut candidates).await;
+        let mut scored: Vec<(Candidate, ScoreBreakdown)> = candidates
+            .into_iter()
+            .map(|c| {
+                let b = fuse(&c, reranked);
+                (c, b)
+            })
+            .collect();
+        scored.sort_by(|(ca, ba), (cb, bb)| {
+            bb.final_score
+                .partial_cmp(&ba.final_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(ca.hop.cmp(&cb.hop))
+        });
+        scored.truncate(limit);
+
+        let hits = scored
+            .into_iter()
+            .map(|(c, b)| SearchHit {
+                id: c.business_id,
+                title: c.name,
+                snippet: c.summary,
+                source_world: "knowledge".into(),
+                entity_type: c.entity_type,
+                score: b.final_score,
+                source_ref: c.source_ref,
+                file_path: None,
+                start_line: None,
+                end_line: None,
+                signature: None,
+                calls: vec![],
+                element_id: c.element_id,
+                score_breakdown: Some(b),
+                hop: Some(c.hop),
+                via_same_as: if c.via_same_as { Some(true) } else { None },
+                relations: if c.relations.is_empty() {
+                    None
+                } else {
+                    Some(c.relations)
+                },
+                evidence: None,
+                rerank_degraded: if reranked { None } else { Some(true) },
+            })
+            .collect();
+        Ok(RetrieveOutcome { hits, degraded })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,7 +1335,7 @@ mod tests {
             ],
             edges: vec![],
         };
-        let candidates = merge_candidates(&seeds, expansion);
+        let candidates = merge_candidates(&seeds, expansion.nodes);
         // B 既是种子又是邻居 → 保留 hop=0（种子形态，semantic=0.8 自身分）
         let b = candidates.iter().find(|c| c.business_id == "B").unwrap();
         assert_eq!(b.hop, 0);
@@ -1149,7 +1353,7 @@ mod tests {
     #[test]
     fn attach_relations_dedups_triple_and_fills_source_ref() {
         let mut candidates =
-            merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], ExpansionResult::default());
+            merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], vec![]);
         let edges = vec![
             RawEdge {
                 head: "A".into(),
@@ -1187,15 +1391,14 @@ mod tests {
         // 60/40 分桶：top_n=4 → 种子桶 3，邻居桶 1
         let mut candidates = vec![];
         for (i, s) in [0.95, 0.9, 0.85, 0.8].iter().enumerate() {
-            let mut c = merge_candidates(&[mk_seed(&format!("S{i}"), *s)], ExpansionResult::default());
+            let mut c = merge_candidates(&[mk_seed(&format!("S{i}"), *s)], vec![]);
             candidates.append(&mut c);
         }
         let mut nodes = vec![];
         for (i, pr) in [0.7, 0.6, 0.5].iter().enumerate() {
             let mut c = merge_candidates(
                 &[],
-                ExpansionResult {
-                    nodes: vec![ExpandedNode {
+                vec![ExpandedNode {
                         business_id: format!("N{i}"),
                         element_id: None,
                         name: "n".into(),
@@ -1206,8 +1409,6 @@ mod tests {
                         via_same_as: false,
                         path_min_confidence: *pr,
                     }],
-                    edges: vec![],
-                },
             );
             // 手动设 pre_rank 便于断言（merge 会算成 seed.semantic×conf，此处无种子 → 用构造值）
             c[0].pre_rank = *pr;
@@ -1220,5 +1421,162 @@ mod tests {
         assert_eq!(candidates.iter().filter(|c| c.hop >= 1).count(), 1); // 邻居桶 4-3=1
         assert!(candidates.iter().any(|c| c.business_id == "N0")); // 邻居取 pre_rank 最高
         assert!(!candidates.iter().any(|c| c.business_id == "S3")); // 种子按语义分截断
+    }
+
+    #[test]
+    fn fuse_degraded_uses_one_hop_boost() {
+        // 降级：0.75·semantic + 0.25·boost(一阶)
+        let c = merge_candidates(&[mk_seed("A", 0.8)], vec![mk_node("N", "A", 2, 0.9)]);
+        let n = c.iter().find(|x| x.business_id == "N").unwrap();
+        let b = fuse(n, false);
+        // semantic = 0.8×0.25=0.2；boost 一阶 = 0.5（非 0.25）
+        assert!((b.graph_boost - 0.5).abs() < 1e-9);
+        assert!((b.final_score - (0.75 * 0.2 + 0.25 * 0.5)).abs() < 1e-9);
+        assert_eq!(b.rerank, 0.0);
+        let a = c.iter().find(|x| x.business_id == "A").unwrap();
+        assert!((fuse(a, false).final_score - (0.75 * 0.8 + 0.25 * 1.0)).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn pipeline_degraded_full_path() {
+        // 向量召回 3 种子：Entity A(0.9) + Entity C(0.7, 无边孤儿) + Knowledge K(0.8, 带 elementId)
+        let vector = MockVector {
+            hits: vec![
+                seed_hit(0.9, "dt://entity/p/Channel/A", &["Entity"]),
+                seed_hit(0.7, "dt://entity/p/Concept/C", &["Entity"]),
+                {
+                    let mut h = seed_hit(0.8, "k-1", &["Knowledge"]);
+                    h["payload"]["elementId"] = json!("eid-k1");
+                    h["payload"]["type"] = json!("Knowledge");
+                    h
+                },
+            ],
+            captured_filter: Mutex::new(None),
+            captured_limit: Mutex::new(None),
+        };
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![
+                // ① Entity 扩展：A → B(1 跳, routes_to 0.9, doc d1)；C 无边
+                json!([entity_row(
+                    "dt://entity/p/Channel/A",
+                    json!({"entity_id":"dt://entity/p/Service/B","name":"B","type":"Service","summary":"sb"}),
+                    json!(1),
+                    json!([{"type":"routes_to","confidence":0.9,"evidence":"e","doc_id":"d1",
+                            "head":"dt://entity/p/Channel/A","tail":"dt://entity/p/Service/B"}]),
+                )]),
+                // ② 非 Entity 扩展：空
+                json!([]),
+                // ③ MENTIONED_IN 回退：仅 C 需要（A/B 已从边拿到 d1；K 非 dt://entity/ 前缀不回退）
+                json!([{"eid": "dt://entity/p/Concept/C", "doc_id": "d-c"}]),
+            ])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(Some(graph), Arc::new(vector), Arc::new(MockEmbed), None);
+        let req = RetrieveRequest {
+            query: "q",
+            project: Some("p"),
+            limit: 10,
+            max_hops: 1,
+            origin: None,
+        };
+        let out = r.search_knowledge(&req).await.unwrap();
+        // rerank 桩 → 降级标记（条级 + 世界级）
+        assert_eq!(out.degraded, vec!["rerank_unavailable"]);
+        assert!(out.hits.iter().all(|h| h.rerank_degraded == Some(true)));
+        assert!(out.hits.iter().all(|h| h.score_breakdown.is_some()));
+        // B 经图扩展进入结果且 hop=1、source_ref 来自最高 confidence 边
+        let b = out
+            .hits
+            .iter()
+            .find(|h| h.id == "dt://entity/p/Service/B")
+            .unwrap();
+        assert_eq!(b.hop, Some(1));
+        assert_eq!(b.source_ref.as_deref(), Some("d1"));
+        assert_eq!(b.relations.as_ref().unwrap()[0].rel_type, "routes_to");
+        // C 无边 → MENTIONED_IN 回退 source_ref
+        let c = out
+            .hits
+            .iter()
+            .find(|h| h.id == "dt://entity/p/Concept/C")
+            .unwrap();
+        assert_eq!(c.source_ref.as_deref(), Some("d-c"));
+        assert!(c.relations.is_none());
+        // K（非 Entity）不做 MENTIONED_IN 回退
+        let k = out.hits.iter().find(|h| h.id == "k-1").unwrap();
+        assert!(k.source_ref.is_none());
+        // 排序：A(0.75×0.9+0.25×1.0=0.925) > K(0.85) > C(0.775) > B(0.4625)
+        assert_eq!(out.hits[0].id, "dt://entity/p/Channel/A");
+    }
+
+    #[tokio::test]
+    async fn pipeline_embed_failure_returns_empty_with_marker() {
+        struct FailEmbed;
+        #[async_trait::async_trait]
+        impl EmbedService for FailEmbed {
+            async fn embed_batch(&self, _t: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+                Err(DtError::Repository("embed down".into()))
+            }
+            async fn health_check(&self) -> Result<HealthStatus, DtError> {
+                Ok(HealthStatus::Healthy)
+            }
+        }
+        let r = Retriever::new(None, Arc::new(empty_vector()), Arc::new(FailEmbed), None);
+        let req = RetrieveRequest {
+            query: "q",
+            project: None,
+            limit: 10,
+            max_hops: 1,
+            origin: None,
+        };
+        let out = r.search_knowledge(&req).await.unwrap();
+        assert!(out.hits.is_empty());
+        assert_eq!(out.degraded, vec!["embed_unavailable"]);
+    }
+
+    #[tokio::test]
+    async fn pipeline_graph_failure_falls_back_to_vector_only() {
+        struct FailGraph;
+        #[async_trait::async_trait]
+        impl GraphRepository for FailGraph {
+            async fn read_query(
+                &self,
+                _q: &str,
+                _p: HashMap<String, serde_json::Value>,
+            ) -> Result<serde_json::Value, DtError> {
+                Err(DtError::Repository("graph down".into()))
+            }
+            async fn write_query(
+                &self,
+                _q: &str,
+                _p: HashMap<String, serde_json::Value>,
+            ) -> Result<serde_json::Value, DtError> {
+                Ok(json!([]))
+            }
+            async fn health_check(&self) -> Result<HealthStatus, DtError> {
+                Ok(HealthStatus::Healthy)
+            }
+        }
+        let vector = MockVector {
+            hits: vec![seed_hit(0.9, "dt://entity/p/Channel/A", &["Entity"])],
+            captured_filter: Mutex::new(None),
+            captured_limit: Mutex::new(None),
+        };
+        let r = Retriever::new(
+            Some(Arc::new(FailGraph)),
+            Arc::new(vector),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let req = RetrieveRequest {
+            query: "q",
+            project: None,
+            limit: 10,
+            max_hops: 1,
+            origin: None,
+        };
+        let out = r.search_knowledge(&req).await.unwrap();
+        assert_eq!(out.hits.len(), 1); // 种子仍在
+        assert!(out.degraded.contains(&"graph_expansion_failed".to_string()));
+        assert!(out.degraded.contains(&"rerank_unavailable".to_string()));
     }
 }
