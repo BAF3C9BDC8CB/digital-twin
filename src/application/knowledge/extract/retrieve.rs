@@ -5,9 +5,11 @@
 
 use std::sync::Arc;
 
+use crate::application::context::graph_parse::parse_graph_rows;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, RerankService, VectorRepository};
 use crate::shared::collections::KG_NODES;
+use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // 输出契约子结构（spec §5.7.3）
@@ -202,6 +204,190 @@ fn parse_seed(hit: &serde_json::Value, min_score: f64) -> Option<Seed> {
 }
 
 // ---------------------------------------------------------------------------
+// ② 图扩展（§5.2）
+// ---------------------------------------------------------------------------
+
+/// 归一化后的关系边（head/tail 为 business_id）。
+#[derive(Debug, Clone)]
+pub(crate) struct RawEdge {
+    pub head: String,
+    pub tail: String,
+    pub rel_type: String,
+    pub confidence: f64,
+    pub evidence: Option<String>,
+    pub doc_id: Option<String>,
+}
+
+/// 图扩展产物节点（SAME_AS 别名或 RELATES/任意关系邻居；不含原始种子）。
+#[derive(Debug, Clone)]
+pub(crate) struct ExpandedNode {
+    pub business_id: String,
+    pub element_id: Option<String>,
+    pub name: String,
+    pub summary: String,
+    pub entity_type: String,
+    /// 扩展出该节点的种子 business_id（邻居语义分衰减用）。
+    pub from_seed: String,
+    pub hop: u32,
+    pub via_same_as: bool,
+    /// 路径各边 confidence 最小值（缺失按 0.5）；分桶预排分用（§5.2.3）。
+    pub path_min_confidence: f64,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ExpansionResult {
+    pub nodes: Vec<ExpandedNode>,
+    pub edges: Vec<RawEdge>,
+}
+
+fn edge_confidence(e: &serde_json::Value) -> f64 {
+    e.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5)
+}
+
+/// §5.2.1：Entity 种子 — SAME_AS 无向归并 + RELATES*1..max_hops（白名单插值）。
+fn entity_expansion_cypher(max_hops: u32) -> String {
+    let hops = clamp_max_hops(max_hops);
+    format!(
+        r#"
+UNWIND $seeds AS seed
+MATCH (e:Entity {{entity_id: seed}})
+OPTIONAL MATCH (e)-[:SAME_AS]-(alias:Entity)
+WITH collect(DISTINCT e) + collect(DISTINCT alias) AS seed_nodes
+UNWIND seed_nodes AS s
+OPTIONAL MATCH path = (s)-[:RELATES*1..{hops}]-(nb:Entity)
+WITH s, nb, relationships(path) AS rels, length(path) AS hop
+RETURN s.entity_id AS seed_id,
+       elementId(s) AS seed_element_id,
+       s.name AS seed_name,
+       s.summary AS seed_summary,
+       s.type AS seed_type,
+       nb {{ .entity_id, .name, .type, .summary, .keywords }} AS neighbor,
+       elementId(nb) AS neighbor_element_id,
+       hop,
+       [r IN rels | {{type: r.type, confidence: r.confidence,
+                     evidence: r.evidence, doc_id: r.doc_id,
+                     head: startNode(r).entity_id, tail: endNode(r).entity_id}}] AS edges
+LIMIT 500
+"#
+    )
+}
+
+/// 解析 Entity 扩展行。`original` = 原始种子的 entity_id 集合（判定 via_same_as）。
+fn parse_entity_rows(rows: Vec<serde_json::Value>, original: &HashSet<&str>) -> ExpansionResult {
+    let mut result = ExpansionResult::default();
+    let mut seen_alias: HashSet<String> = HashSet::new();
+    for row in rows {
+        let seed_id = row.get("seed_id").and_then(|v| v.as_str()).unwrap_or("");
+        if seed_id.is_empty() {
+            continue;
+        }
+        // SAME_AS 别名（命中节点不在原始种子集）→ hop=0 候选；原始种子自身跳过
+        if !original.contains(seed_id) && seen_alias.insert(seed_id.to_string()) {
+            result.nodes.push(ExpandedNode {
+                business_id: seed_id.to_string(),
+                element_id: row
+                    .get("seed_element_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                name: row
+                    .get("seed_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                summary: row
+                    .get("seed_summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                entity_type: row
+                    .get("seed_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Entity")
+                    .to_string(),
+                from_seed: seed_id.to_string(),
+                hop: 0,
+                via_same_as: true,
+                path_min_confidence: 1.0,
+            });
+        }
+        // 边（无论邻居是否存在都收集——hop 为 null 时 edges 为空数组）
+        let edges = row
+            .get("edges")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let path_min = edges.iter().map(edge_confidence).fold(1.0_f64, f64::min);
+        for e in &edges {
+            result.edges.push(RawEdge {
+                head: e.get("head").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                tail: e.get("tail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                rel_type: e.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                confidence: edge_confidence(e),
+                evidence: e.get("evidence").and_then(|v| v.as_str()).map(String::from),
+                doc_id: e.get("doc_id").and_then(|v| v.as_str()).map(String::from),
+            });
+        }
+        // 邻居节点
+        let Some(nb) = row.get("neighbor").filter(|n| !n.is_null()) else {
+            continue;
+        };
+        let Some(nb_id) = nb.get("entity_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let hop = row.get("hop").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+        result.nodes.push(ExpandedNode {
+            business_id: nb_id.to_string(),
+            element_id: row
+                .get("neighbor_element_id")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            name: nb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            summary: nb
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            entity_type: nb
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Entity")
+                .to_string(),
+            from_seed: seed_id.to_string(),
+            hop,
+            via_same_as: false,
+            path_min_confidence: if edges.is_empty() { 0.5 } else { path_min },
+        });
+    }
+    result
+}
+
+impl Retriever {
+    /// Entity 种子图扩展（SAME_AS 归并 + RELATES 邻居，§5.2.1）。
+    pub(crate) async fn expand_entity(
+        &self,
+        seeds: &[Seed],
+        max_hops: u32,
+    ) -> Result<ExpansionResult, DtError> {
+        let Some(ref graph) = self.graph else {
+            return Ok(ExpansionResult::default());
+        };
+        if seeds.is_empty() {
+            return Ok(ExpansionResult::default());
+        }
+        let original: HashSet<&str> = seeds.iter().map(|s| s.business_id.as_str()).collect();
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "seeds".to_string(),
+            serde_json::json!(seeds.iter().map(|s| &s.business_id).collect::<Vec<_>>()),
+        );
+        let raw = graph
+            .read_query(&entity_expansion_cypher(max_hops), params)
+            .await?;
+        Ok(parse_entity_rows(parse_graph_rows(&raw), &original))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -381,5 +567,99 @@ mod tests {
             .iter()
             .any(|c| c["key"] == "origin" && c["match"]["value"] == "manual"));
         assert_eq!(*vector.captured_limit.lock().unwrap(), Some(60));
+    }
+
+    pub(crate) fn entity_row(
+        seed_id: &str,
+        neighbor: serde_json::Value,
+        hop: serde_json::Value,
+        edges: serde_json::Value,
+    ) -> serde_json::Value {
+        json!({
+            "seed_id": seed_id,
+            "seed_element_id": format!("eid-{seed_id}"),
+            "seed_name": format!("name-{seed_id}"),
+            "seed_summary": format!("summary-{seed_id}"),
+            "seed_type": "Channel",
+            "neighbor": neighbor,
+            "neighbor_element_id": neighbor.get("entity_id").map(|_| "eid-nb"),
+            "hop": hop,
+            "edges": edges,
+        })
+    }
+
+    #[tokio::test]
+    async fn expand_entity_builds_whitelisted_cypher() {
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![json!([])])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let seeds = vec![Seed {
+            business_id: "A".into(),
+            element_id: Some("eid-A".into()),
+            labels: vec!["Entity".into()],
+            name: "a".into(),
+            summary: "s".into(),
+            entity_type: "Channel".into(),
+            semantic: 0.9,
+        }];
+        let _ = r.expand_entity(&seeds, 2).await.unwrap();
+        let (cypher, params) = graph.captured.lock().unwrap()[0].clone();
+        assert!(cypher.contains("SAME_AS"));
+        assert!(cypher.contains("RELATES*1..2"));
+        assert!(cypher.contains("LIMIT 500"));
+        assert_eq!(params["seeds"], json!(["A"]));
+        // max_hops=1 时拼 *1..1（白名单插值）
+        let graph2 = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![json!([])])),
+            captured: Mutex::new(vec![]),
+        });
+        let r2 = Retriever::new(
+            Some(graph2.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let _ = r2.expand_entity(&seeds, 1).await.unwrap();
+        assert!(graph2.captured.lock().unwrap()[0]
+            .0
+            .contains("RELATES*1..1"));
+    }
+
+    #[test]
+    fn parse_entity_rows_alias_and_neighbor_and_edges() {
+        let original: HashSet<&str> = ["A"].into_iter().collect();
+        let rows = vec![
+            // 原始种子 A → 1 跳邻居 B，两条同三元组边（不同 doc_id，待 Task 6 聚合）
+            entity_row(
+                "A",
+                json!({"entity_id":"B","name":"nb","type":"Service","summary":"sb"}),
+                json!(1),
+                json!([{"type":"routes_to","confidence":0.9,"evidence":"e1","doc_id":"d1","head":"A","tail":"B"},
+                       {"type":"routes_to","confidence":0.7,"evidence":"e2","doc_id":"d2","head":"A","tail":"B"}]),
+            ),
+            // SAME_AS 别名 C（不在原始种子集）→ 无邻居
+            entity_row("C", serde_json::Value::Null, serde_json::Value::Null, json!([])),
+        ];
+        let result = parse_entity_rows(rows, &original);
+        // 别名节点：hop=0、via_same_as=true
+        let alias = result.nodes.iter().find(|n| n.business_id == "C").unwrap();
+        assert!(alias.via_same_as);
+        assert_eq!(alias.hop, 0);
+        // 邻居节点：hop=1、via_same_as=false、path_min_confidence 取路径最小值
+        let nb = result.nodes.iter().find(|n| n.business_id == "B").unwrap();
+        assert_eq!(nb.hop, 1);
+        assert!(!nb.via_same_as);
+        assert!((nb.path_min_confidence - 0.7).abs() < 1e-9);
+        // 原始种子不产生 ExpandedNode（自身在召回侧已是候选）
+        assert!(result.nodes.iter().all(|n| n.business_id != "A"));
+        // 两条原始边都保留（聚合在 Task 6 attach_relations）
+        assert_eq!(result.edges.len(), 2);
     }
 }
