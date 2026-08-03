@@ -1,7 +1,7 @@
-//! Svc Plugin — native local service management (no external binary).
+//! Svc 插件——原生本地服务管理（不依赖外部二进制）。
 //!
-//! Reads project configuration from config.yaml, checks process status
-//! via /proc and port scanning, manages services with native Rust code.
+//! 从 config.yaml 读取项目配置，通过 /proc 和端口扫描检查进程状态，
+//! 使用原生 Rust 代码管理服务。
 
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use std::process::Command;
 use crate::application::plugins::Plugin;
 use crate::domain::error::DtError;
 
-/// Information about a discovered/configured project.
+/// 已发现/已配置项目的信息。
 #[derive(Debug, Clone)]
 pub struct ProjectInfo {
     pub name: String,
@@ -19,14 +19,14 @@ pub struct ProjectInfo {
     pub port: Option<u16>,
 }
 
-/// Local service management plugin.
+/// 本地服务管理插件。
 #[derive(Default)]
 pub struct SvcPluginService {
     projects: Vec<ProjectInfo>,
 }
 
 impl SvcPluginService {
-    /// Create from a list of (name, path) pairs (typically from config.yaml projects).
+    /// 从 (name, path) 对列表创建（通常来自 config.yaml 的 projects 段）。
     pub fn from_projects(items: Vec<(String, PathBuf)>) -> Self {
         let projects = items
             .into_iter()
@@ -39,23 +39,23 @@ impl SvcPluginService {
         Self { projects }
     }
 
-    /// Create from full ProjectInfo list.
+    /// 从完整的 ProjectInfo 列表创建。
     pub fn new(projects: Vec<ProjectInfo>) -> Self {
         Self { projects }
     }
 
-    // ── CLI-facing methods ──────────────────────────────────────────────────
+    // ── 面向 CLI 的方法 ──────────────────────────────────────────────────
 
-    /// List all known local microservices with status.
+    /// 列出所有已知的本地微服务及其状态。
     pub fn list_services(&self) -> Result<String, DtError> {
         if self.projects.is_empty() {
-            return Ok("(no services configured)".into());
+            return Ok("(未配置服务)".into());
         }
 
         let mut out = String::new();
         out.push_str(&format!(
             "{:<30} {:<12} {:<10} {:<50}\n",
-            "NAME", "STATUS", "PID", "PATH"
+            "名称", "状态", "PID", "路径"
         ));
 
         for proj in &self.projects {
@@ -72,42 +72,42 @@ impl SvcPluginService {
         Ok(out)
     }
 
-    /// Get status of a single service.
+    /// 获取单个服务的状态。
     pub fn get_status(&self, name: &str) -> Result<String, DtError> {
         let proj = self.projects.iter().find(|p| p.name == name);
         match proj {
             Some(p) => {
                 let (status, pid) = check_process(name);
-                let pid_str = pid.map_or("none".to_string(), |p| p.to_string());
+                let pid_str = pid.map_or("无".to_string(), |p| p.to_string());
                 Ok(format!(
-                    "Service: {}\n  Status: {}\n  PID: {}\n  Path: {}\n",
+                    "服务: {}\n  状态: {}\n  PID: {}\n  路径: {}\n",
                     name,
                     status,
                     pid_str,
                     p.path.display()
                 ))
             }
-            None => Err(DtError::NotFound(format!("service not found: {name}"))),
+            None => Err(DtError::NotFound(format!("未找到服务: {name}"))),
         }
     }
 
-    /// Get recent logs for a service by tailing its log file.
+    /// 通过尾随其日志文件获取服务的最近日志。
     pub fn get_logs(&self, name: &str, lines: Option<u32>) -> Result<String, DtError> {
         let proj = self
             .projects
             .iter()
             .find(|p| p.name == name)
-            .ok_or_else(|| DtError::NotFound(format!("service not found: {name}")))?;
+            .ok_or_else(|| DtError::NotFound(format!("未找到服务: {name}")))?;
 
         let log_file = proj.path.join("logs").join(format!("{}.log", name));
         if !log_file.exists() {
-            // Try alternative: /tmp/dt-svc-{name}.log
+            // 尝试备选路径：/tmp/dt-svc-{name}.log
             let alt = PathBuf::from(format!("/tmp/dt-svc-{name}.log"));
             if alt.exists() {
                 return tail_file(&alt, lines.unwrap_or(50));
             }
             return Ok(format!(
-                "No log file found at {} or {}",
+                "在 {} 或 {} 未找到日志文件",
                 log_file.display(),
                 alt.display()
             ));
@@ -116,20 +116,20 @@ impl SvcPluginService {
         tail_file(&log_file, lines.unwrap_or(50))
     }
 
-    /// Start a service (builds with mvn, then runs java -jar).
+    /// 启动服务（先用 mvn 构建，再运行 java -jar）。
     pub fn start_service(&self, name: &str) -> Result<String, DtError> {
         let proj = self
             .projects
             .iter()
             .find(|p| p.name == name)
-            .ok_or_else(|| DtError::NotFound(format!("service not found: {name}")))?;
+            .ok_or_else(|| DtError::NotFound(format!("未找到服务: {name}")))?;
 
         let (_status, pid) = check_process(name);
         if pid.is_some() {
-            return Ok(format!("Service {name} is already running"));
+            return Ok(format!("服务 {name} 已在运行"));
         }
 
-        // Check for pom.xml (Java/Maven project)
+        // 检查 pom.xml（Java/Maven 项目）
         let pom = proj.path.join("pom.xml");
         if pom.exists() {
             let child = Command::new("nohup")
@@ -141,22 +141,22 @@ impl SvcPluginService {
                 ])
                 .current_dir(&proj.path)
                 .spawn()
-                .map_err(|e| DtError::General(format!("failed to start mvn: {e}")))?;
+                .map_err(|e| DtError::General(format!("启动 mvn 失败: {e}")))?;
 
             Ok(format!(
-                "Started {} (pid={}) via mvn spring-boot:run",
+                "已通过 mvn spring-boot:run 启动 {} (pid={})",
                 name,
                 child.id()
             ))
         } else {
             Err(DtError::General(format!(
-                "Cannot start {name}: no pom.xml found at {} (only Maven projects supported currently)",
+                "无法启动 {name}: 在 {} 未找到 pom.xml（当前仅支持 Maven 项目）",
                 proj.path.display()
             )))
         }
     }
 
-    /// Stop a service by sending SIGTERM.
+    /// 通过发送 SIGTERM 停止服务。
     pub fn stop_service(&self, name: &str) -> Result<String, DtError> {
         let (_status, pid) = check_process(name);
         match pid {
@@ -164,73 +164,73 @@ impl SvcPluginService {
                 Command::new("kill")
                     .args(["-15", &pid.to_string()])
                     .output()
-                    .map_err(|e| DtError::General(format!("failed to kill {pid}: {e}")))?;
-                Ok(format!("Stopped {name} (pid={pid})"))
+                    .map_err(|e| DtError::General(format!("终止进程 {pid} 失败: {e}")))?;
+                Ok(format!("已停止 {name} (pid={pid})"))
             }
-            None => Ok(format!("Service {name} is not running")),
+            None => Ok(format!("服务 {name} 未在运行")),
         }
     }
 
-    /// Restart a service (stop + start).
+    /// 重启服务（先停止再启动）。
     pub fn restart_service(&self, name: &str) -> Result<String, DtError> {
         let stop_result = self.stop_service(name)?;
-        // Small delay to let the process exit
+        // 稍等片刻让进程退出
         std::thread::sleep(std::time::Duration::from_secs(2));
         let start_result = self.start_service(name)?;
         Ok(format!("{stop_result}\n{start_result}"))
     }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── 辅助函数 ─────────────────────────────────────────────────────────────────
 
-/// Check if a service is running by scanning /proc for a matching process name.
+/// 通过扫描 /proc 中匹配的进程名来检查服务是否在运行。
 fn check_process(name: &str) -> (&'static str, Option<u32>) {
-    // Scan /proc for processes with matching comm names
+    // 扫描 /proc 中具有匹配 comm 名称的进程
     if let Ok(entries) = std::fs::read_dir("/proc") {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(pid_str) = path.file_name().and_then(|n| n.to_str()) {
                 if let Ok(pid) = pid_str.parse::<u32>() {
-                    // Read /proc/{pid}/comm
+                    // 读取 /proc/{pid}/comm
                     let comm_path = path.join("comm");
                     if let Ok(comm) = std::fs::read_to_string(&comm_path) {
                         let comm = comm.trim();
                         if comm == "java" {
-                            // Check cmdline for the service name
+                            // 在 cmdline 中检查服务名
                             let cmdline_path = path.join("cmdline");
                             if let Ok(cmdline) = std::fs::read_to_string(&cmdline_path) {
                                 if cmdline.contains(name) {
-                                    // Also check if it's a Java app (not just any java process)
+                                    // 同时确认是 Java 应用（而非任意 java 进程）
                                     if cmdline.contains("-jar")
                                         || cmdline.contains("spring")
                                         || cmdline.contains(name)
                                     {
-                                        return ("RUNNING", Some(pid));
+                                        return ("运行中", Some(pid));
                                     }
                                 }
                             }
                         } else if comm.contains(name) {
-                            return ("RUNNING", Some(pid));
+                            return ("运行中", Some(pid));
                         }
                     }
                 }
             }
         }
     }
-    ("STOPPED", None)
+    ("已停止", None)
 }
 
-/// Tail the last N lines of a file.
+/// 尾随文件的最后 N 行。
 fn tail_file(path: &std::path::Path, lines: u32) -> Result<String, DtError> {
     let output = Command::new("tail")
         .args(["-n", &lines.to_string()])
         .arg(path)
         .output()
-        .map_err(|e| DtError::General(format!("tail failed: {e}")))?;
+        .map_err(|e| DtError::General(format!("tail 命令失败: {e}")))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DtError::General(format!("tail error: {stderr}")));
+        return Err(DtError::General(format!("tail 命令错误: {stderr}")));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -262,13 +262,13 @@ impl Plugin for SvcPluginService {
         &self,
         _server: &mut tonic::transport::server::Server,
     ) -> Result<(), PluginError> {
-        // TODO: wire generated SvcPluginServer when proto is compiled
+        // TODO: proto 编译完成后装配生成的 SvcPluginServer
         Ok(())
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
         ctx.log.info(&format!(
-            "[svc] plugin initialized with {} projects (native)",
+            "[svc] 插件已初始化，共 {} 个项目（原生实现）",
             self.projects.len()
         ));
         Ok(())

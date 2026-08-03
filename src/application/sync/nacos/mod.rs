@@ -1,10 +1,9 @@
-//! Nacos synchronisation module.
+//! Nacos 同步模块。
 //!
-//! Provides an HTTP client for the Nacos REST API and two [`SyncSource`]
-//! implementations:
+//! 提供 Nacos REST API 的 HTTP 客户端，以及两个 [`SyncSource`] 实现：
 //!
-//! - [`ConfigSyncSource`] — syncs configuration data → NacosConfig / ConfigKey / Database nodes.
-//! - [`ServiceSyncSource`] — syncs service registry data → NacosService / Service nodes.
+//! - [`ConfigSyncSource`]——同步配置数据 → NacosConfig / ConfigKey / Database 节点。
+//! - [`ServiceSyncSource`]——同步服务注册数据 → NacosService / Service 节点。
 
 pub mod client;
 pub mod config_sync;

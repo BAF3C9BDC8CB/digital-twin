@@ -1,9 +1,9 @@
-//! K8s status operations (stub).
+//! K8s 状态操作（占位实现）。
 //!
-//! Future: implements `GetPods`, `GetDeployments`, `GetServices`,
-//! and `GetStatus` RPCs.
+//! 后续将实现 `GetPods`、`GetDeployments`、`GetServices`
+//! 和 `GetStatus` RPC。
 
-/// Placeholder for K8s status queries.
+/// K8s 状态查询的占位实现。
 pub struct K8sStatus;
 
 impl K8sStatus {

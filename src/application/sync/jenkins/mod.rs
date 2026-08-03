@@ -1,19 +1,19 @@
-//! Jenkins synchronisation module.
+//! Jenkins 同步模块。
 //!
-//! Provides [`JobSyncSource`] — syncs Jenkins Views, Jobs, and build history
-//! into the knowledge graph.
+//! 提供 [`JobSyncSource`]——将 Jenkins 的 Views、Jobs 和构建历史
+//! 同步到知识图谱。
 //!
-//! # Node types created
+//! # 创建的节点类型
 //!
-//! - `JenkinsView` — a Jenkins view (namespace group)
-//! - `JenkinsJob` — a Jenkins job
-//! - `JenkinsBuild` — a single build of a job
+//! - `JenkinsView` — Jenkins 视图（命名空间分组）
+//! - `JenkinsJob` — Jenkins 作业
+//! - `JenkinsBuild` — 作业的单个构建
 //!
-//! # Relationships
+//! # 关系
 //!
 //! - `(:JenkinsView)-[:CONTAINS]->(:JenkinsJob)`
 //! - `(:JenkinsJob)-[:HAS_BUILD]->(:JenkinsBuild)`
-//! - `(:JenkinsBuild)-[:NEXT_BUILD]->(:JenkinsBuild)` (ordered chain)
+//! - `(:JenkinsBuild)-[:NEXT_BUILD]->(:JenkinsBuild)`（有序链）
 
 pub mod job_sync;
 

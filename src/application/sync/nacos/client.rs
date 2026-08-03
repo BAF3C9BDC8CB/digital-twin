@@ -1,26 +1,26 @@
-//! Nacos HTTP API client.
+//! Nacos HTTP API 客户端。
 //!
-//! Thin wrapper around the Nacos Open API v1, providing typed request/response
-//! methods for configuration and service discovery endpoints.
+//! 对 Nacos Open API v1 的轻量封装，为配置与服务发现端点
+//! 提供类型化的请求/响应方法。
 //!
-//! # Endpoints used
+//! # 使用的端点
 //!
-//! | Method | Endpoint | Purpose |
+//! | 方法 | 端点 | 用途 |
 //! |--------|----------|---------|
-//! | GET    | `/v1/console/namespaces` | List all namespaces |
-//! | GET    | `/v1/cs/configs?pageNo=...&pageSize=...&tenant=...` | Paginated config list |
-//! | GET    | `/v1/cs/configs?dataId=...&group=...&tenant=...&show=all` | Config content |
-//! | GET    | `/v1/ns/catalog/services?namespaceId=...` | Service list |
+//! | GET    | `/v1/console/namespaces` | 列出所有命名空间 |
+//! | GET    | `/v1/cs/configs?pageNo=...&pageSize=...&tenant=...` | 分页配置列表 |
+//! | GET    | `/v1/cs/configs?dataId=...&group=...&tenant=...&show=all` | 配置内容 |
+//! | GET    | `/v1/ns/catalog/services?namespaceId=...` | 服务列表 |
 
 use crate::domain::error::DtError;
 use reqwest::Client as HttpClient;
 use serde::Deserialize;
 
 // ---------------------------------------------------------------------------
-// Response types
+// 响应类型
 // ---------------------------------------------------------------------------
 
-/// Wrapper returned by `/v1/console/namespaces`.
+/// `/v1/console/namespaces` 返回的包装结构。
 #[derive(Debug, Clone, Deserialize)]
 pub struct NamespaceListResponse {
     pub data: Vec<NamespaceItem>,
@@ -36,7 +36,7 @@ pub struct NamespaceItem {
     pub config_count: i64,
 }
 
-/// Wrapper returned by `/v1/cs/configs` (list mode).
+/// `/v1/cs/configs`（列表模式）返回的包装结构。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigListResponse {
     #[serde(rename = "totalCount")]
@@ -52,7 +52,7 @@ pub struct ConfigListItem {
     pub group: String,
 }
 
-/// Wrapper returned by `/v1/cs/configs?show=all` (detail mode).
+/// `/v1/cs/configs?show=all`（详情模式）返回的包装结构。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigDetailResponse {
     #[serde(default, rename = "dataId")]
@@ -65,7 +65,7 @@ pub struct ConfigDetailResponse {
     pub config_type: Option<String>,
 }
 
-/// Wrapper returned by `/v1/ns/catalog/services`.
+/// `/v1/ns/catalog/services` 返回的包装结构。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServiceListResponse {
     pub count: i64,
@@ -86,7 +86,7 @@ pub struct ServiceItem {
     pub healthy_instance_count: i64,
 }
 
-/// Wrapper returned by `/v1/ns/catalog/instances`.
+/// `/v1/ns/catalog/instances` 返回的包装结构。
 #[derive(Debug, Clone, Deserialize)]
 pub struct InstanceListResponse {
     pub count: Option<i64>,
@@ -117,11 +117,11 @@ pub struct InstanceItem {
 // NacosClient
 // ---------------------------------------------------------------------------
 
-/// HTTP client for Nacos Open API v1.
+/// Nacos Open API v1 的 HTTP 客户端。
 ///
-/// # Cloning
+/// # 克隆
 ///
-/// Cheap clone — underlying `reqwest::Client` uses `Arc` internally.
+/// 廉价克隆——底层 `reqwest::Client` 内部使用 `Arc`。
 #[derive(Debug, Clone)]
 pub struct NacosClient {
     base_url: String,
@@ -129,10 +129,10 @@ pub struct NacosClient {
 }
 
 impl NacosClient {
-    /// Create a new client targeting the given Nacos server.
+    /// 创建指向指定 Nacos 服务器的新客户端。
     ///
-    /// `base_url` should be the full URL prefix, e.g.
-    /// `https://nacos.newoffen.net/nacos`.
+    /// `base_url` 应为完整的 URL 前缀，例如
+    /// `https://nacos.newoffen.net/nacos`。
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
@@ -140,7 +140,7 @@ impl NacosClient {
         }
     }
 
-    /// List all namespaces.
+    /// 列出所有命名空间。
     pub async fn list_namespaces(&self) -> Result<NamespaceListResponse, DtError> {
         let url = format!("{}/v1/console/namespaces", self.base_url);
         let resp = self
@@ -151,12 +151,12 @@ impl NacosClient {
             .map_err(|e| DtError::Network(e.to_string()))?;
         resp.json()
             .await
-            .map_err(|e| DtError::Network(format!("parse namespaces: {e}")))
+            .map_err(|e| DtError::Network(format!("解析命名空间失败: {e}")))
     }
 
-    /// Fetch a single page of configuration metadata.
+    /// 获取一页配置元数据。
     ///
-    /// Returns `None` when `pageItems` is empty.
+    /// 当 `pageItems` 为空时返回 `None`。
     pub async fn list_configs(
         &self,
         tenant: &str,
@@ -176,7 +176,7 @@ impl NacosClient {
         let body: ConfigListResponse = resp
             .json()
             .await
-            .map_err(|e| DtError::Network(format!("parse config list: {e}")))?;
+            .map_err(|e| DtError::Network(format!("解析配置列表失败: {e}")))?;
 
         if body.page_items.is_empty() {
             Ok(None)
@@ -185,7 +185,7 @@ impl NacosClient {
         }
     }
 
-    /// Fetch the full content of a single configuration entry.
+    /// 获取单个配置条目的完整内容。
     pub async fn get_config_detail(
         &self,
         data_id: &str,
@@ -207,10 +207,10 @@ impl NacosClient {
             .map_err(|e| DtError::Network(e.to_string()))?;
         resp.json()
             .await
-            .map_err(|e| DtError::Network(format!("parse config detail: {e}")))
+            .map_err(|e| DtError::Network(format!("解析配置详情失败: {e}")))
     }
 
-    /// List all registered services in a namespace.
+    /// 列出命名空间中所有已注册的服务。
     pub async fn list_services(
         &self,
         tenant: &str,
@@ -228,7 +228,7 @@ impl NacosClient {
         let body: ServiceListResponse = resp
             .json()
             .await
-            .map_err(|e| DtError::Network(format!("parse service list: {e}")))?;
+            .map_err(|e| DtError::Network(format!("解析服务列表失败: {e}")))?;
 
         if body.service_list.is_empty() {
             Ok(None)
@@ -237,7 +237,7 @@ impl NacosClient {
         }
     }
 
-    /// List instances of a specific service in a namespace.
+    /// 列出命名空间中某个服务的实例。
     pub async fn list_instances(
         &self,
         service_name: &str,
@@ -258,7 +258,7 @@ impl NacosClient {
         let body: InstanceListResponse = resp
             .json()
             .await
-            .map_err(|e| DtError::Network(format!("parse instance list: {e}")))?;
+            .map_err(|e| DtError::Network(format!("解析实例列表失败: {e}")))?;
 
         match &body.list {
             Some(list) if !list.is_empty() => Ok(Some(body)),
@@ -268,11 +268,10 @@ impl NacosClient {
 }
 
 // ---------------------------------------------------------------------------
-// URL encoding helper
+// URL 编码辅助函数
 // ---------------------------------------------------------------------------
 
-/// Simple percent-encoding for Nacos dataId/group values that may contain
-/// special characters.
+/// 对可能包含特殊字符的 Nacos dataId/group 值进行简单百分号编码。
 fn urlencode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -289,7 +288,7 @@ fn urlencode(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

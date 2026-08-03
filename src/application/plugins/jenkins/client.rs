@@ -1,15 +1,15 @@
-//! Jenkins HTTP API client — direct REST calls (no external binary).
+//! Jenkins HTTP API 客户端——直接 REST 调用（不依赖外部二进制）。
 //!
-//! Communicates with Jenkins via standard REST API:
-//! - `GET /api/json` → job list
-//! - `GET /job/{name}/api/json` → job details
-//! - `GET /job/{name}/{build}/api/json` → build info
-//! - `POST /job/{name}/buildWithParameters` → trigger build
-//! - `GET /job/{name}/{build}/consoleText` → build log
+//! 通过标准 REST API 与 Jenkins 通信：
+//! - `GET /api/json` → 作业列表
+//! - `GET /job/{name}/api/json` → 作业详情
+//! - `GET /job/{name}/{build}/api/json` → 构建信息
+//! - `POST /job/{name}/buildWithParameters` → 触发构建
+//! - `GET /job/{name}/{build}/consoleText` → 构建日志
 
 use crate::domain::error::DtError;
 
-/// Async Jenkins API client using reqwest.
+/// 基于 reqwest 的异步 Jenkins API 客户端。
 pub struct JenkinsApiClient {
     base_url: String,
     user: String,
@@ -18,9 +18,9 @@ pub struct JenkinsApiClient {
 }
 
 impl JenkinsApiClient {
-    /// Create a new client.
+    /// 创建新客户端。
     ///
-    /// `base_url` should be the Jenkins root URL, e.g. `http://jenkins.example.com:8080`.
+    /// `base_url` 应为 Jenkins 根 URL，例如 `http://jenkins.example.com:8080`。
     pub fn new(base_url: &str, user: &str, token: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -30,7 +30,7 @@ impl JenkinsApiClient {
         }
     }
 
-    /// GET a JSON endpoint.
+    /// GET 请求一个 JSON 端点。
     async fn get_json(&self, path: &str) -> Result<serde_json::Value, DtError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
@@ -39,21 +39,21 @@ impl JenkinsApiClient {
             .basic_auth(&self.user, Some(&self.token))
             .send()
             .await
-            .map_err(|e| DtError::Network(format!("Jenkins request {url}: {e}")))?;
+            .map_err(|e| DtError::Network(format!("Jenkins 请求失败 {url}: {e}")))?;
 
         if !resp.status().is_success() {
             return Err(DtError::Network(format!(
-                "Jenkins HTTP {} for {url}",
+                "Jenkins HTTP {} (url={url})",
                 resp.status()
             )));
         }
 
         resp.json()
             .await
-            .map_err(|e| DtError::Network(format!("Jenkins JSON parse {url}: {e}")))
+            .map_err(|e| DtError::Network(format!("Jenkins JSON 解析失败 {url}: {e}")))
     }
 
-    /// GET raw text endpoint.
+    /// GET 请求原始文本端点。
     async fn get_text(&self, path: &str) -> Result<String, DtError> {
         let url = format!("{}{}", self.base_url, path);
         let resp = self
@@ -62,21 +62,21 @@ impl JenkinsApiClient {
             .basic_auth(&self.user, Some(&self.token))
             .send()
             .await
-            .map_err(|e| DtError::Network(format!("Jenkins request {url}: {e}")))?;
+            .map_err(|e| DtError::Network(format!("Jenkins 请求失败 {url}: {e}")))?;
 
         if !resp.status().is_success() {
             return Err(DtError::Network(format!(
-                "Jenkins HTTP {} for {url}",
+                "Jenkins HTTP {} (url={url})",
                 resp.status()
             )));
         }
 
         resp.text()
             .await
-            .map_err(|e| DtError::Network(format!("Jenkins read {url}: {e}")))
+            .map_err(|e| DtError::Network(format!("Jenkins 读取失败 {url}: {e}")))
     }
 
-    /// POST with optional form parameters.
+    /// POST 请求，支持可选表单参数。
     async fn post_with_params(
         &self,
         path: &str,
@@ -97,42 +97,42 @@ impl JenkinsApiClient {
             .body(body)
             .send()
             .await
-            .map_err(|e| DtError::Network(format!("Jenkins POST {url}: {e}")))?;
+            .map_err(|e| DtError::Network(format!("Jenkins POST 失败 {url}: {e}")))?;
 
         if !resp.status().is_success() && resp.status().as_u16() != 201 {
             return Err(DtError::Network(format!(
-                "Jenkins HTTP {} for {url}",
+                "Jenkins HTTP {} (url={url})",
                 resp.status()
             )));
         }
 
         Ok(format!(
-            "Build triggered: {}/queue/item/{}/",
+            "已触发构建: {}/queue/item/{}/",
             self.base_url,
             resp.status()
         ))
     }
 
-    /// List all Jenkins jobs.
+    /// 列出所有 Jenkins 作业。
     pub async fn list_jobs(&self) -> Result<String, DtError> {
         let json = self.get_json("/api/json?tree=jobs[name,color]").await?;
 
         let mut out = String::new();
-        out.push_str(&format!("{:<50} {:<10}\n", "JOB", "STATUS"));
+        out.push_str(&format!("{:<50} {:<10}\n", "作业", "状态"));
         if let Some(jobs) = json["jobs"].as_array() {
             if jobs.is_empty() {
-                return Ok("(no jobs)".into());
+                return Ok("(无作业)".into());
             }
             for job in jobs {
                 let name = job["name"].as_str().unwrap_or("?");
                 let color = job["color"].as_str().unwrap_or("?");
                 let status = match color {
-                    "blue" | "blue_anime" => "OK",
-                    "red" | "red_anime" => "FAIL",
-                    "yellow" | "yellow_anime" => "UNSTABLE",
-                    "aborted" | "aborted_anime" => "ABORTED",
-                    "notbuilt" | "notbuilt_anime" => "NOT BUILT",
-                    "disabled" | "disabled_anime" => "DISABLED",
+                    "blue" | "blue_anime" => "正常",
+                    "red" | "red_anime" => "失败",
+                    "yellow" | "yellow_anime" => "不稳定",
+                    "aborted" | "aborted_anime" => "已中止",
+                    "notbuilt" | "notbuilt_anime" => "未构建",
+                    "disabled" | "disabled_anime" => "已禁用",
                     _ => color,
                 };
                 out.push_str(&format!("{:<50} {:<10}\n", name, status));
@@ -141,7 +141,7 @@ impl JenkinsApiClient {
         Ok(out)
     }
 
-    /// Show build parameters for a job.
+    /// 显示某个作业的构建参数。
     pub async fn get_params(&self, job: &str) -> Result<String, DtError> {
         let encoded = urlencoding(job);
         let json = self
@@ -152,10 +152,10 @@ impl JenkinsApiClient {
             .await?;
 
         let mut out = String::new();
-        out.push_str(&format!("Parameters for job: {job}\n"));
+        out.push_str(&format!("作业 {job} 的参数:\n"));
         out.push_str(&format!(
             "{:<25} {:<15} {:<15} {:<30}\n",
-            "NAME", "TYPE", "DEFAULT", "DESCRIPTION"
+            "名称", "类型", "默认值", "描述"
         ));
 
         if let Some(props) = json["property"].as_array() {
@@ -178,12 +178,12 @@ impl JenkinsApiClient {
         }
 
         if out.lines().count() <= 2 {
-            out.push_str("(no parameters)\n");
+            out.push_str("(无参数)\n");
         }
         Ok(out)
     }
 
-    /// Show build history for a job.
+    /// 显示某个作业的构建历史。
     pub async fn get_history(&self, job: &str, limit: Option<u32>) -> Result<String, DtError> {
         let limit = limit.unwrap_or(10);
         let encoded = urlencoding(job);
@@ -195,21 +195,21 @@ impl JenkinsApiClient {
             .await?;
 
         let mut out = String::new();
-        out.push_str(&format!("Build history for: {job}\n"));
+        out.push_str(&format!("作业 {job} 的构建历史:\n"));
         out.push_str(&format!(
             "{:<8} {:<10} {:<12} {:<20}\n",
-            "BUILD", "RESULT", "DURATION", "TIMESTAMP"
+            "构建", "结果", "耗时", "时间戳"
         ));
 
         if let Some(builds) = json["builds"].as_array() {
             if builds.is_empty() {
-                return Ok(format!("{out}(no builds)\n"));
+                return Ok(format!("{out}(无构建)\n"));
             }
             for build in builds {
                 let num = build["number"]
                     .as_i64()
                     .map_or("?".to_string(), |n| n.to_string());
-                let result = build["result"].as_str().unwrap_or("RUNNING");
+                let result = build["result"].as_str().unwrap_or("运行中");
                 let duration_ms = build["duration"].as_i64().unwrap_or(0);
                 let duration = format_duration(duration_ms);
                 let ts = build["timestamp"]
@@ -221,12 +221,12 @@ impl JenkinsApiClient {
                 ));
             }
         } else {
-            out.push_str("(no builds)\n");
+            out.push_str("(无构建)\n");
         }
         Ok(out)
     }
 
-    /// Get console output for a specific build.
+    /// 获取指定构建的控制台输出。
     pub async fn get_build_log(&self, job: &str, build: Option<&str>) -> Result<String, DtError> {
         let encoded_job = urlencoding(job);
         let build_id = build.unwrap_or("lastBuild");
@@ -236,7 +236,7 @@ impl JenkinsApiClient {
         Ok(text)
     }
 
-    /// Trigger a build for a job.
+    /// 触发某个作业的构建。
     pub async fn trigger_build(
         &self,
         job: &str,
@@ -248,9 +248,9 @@ impl JenkinsApiClient {
     }
 }
 
-// ── Structured response types for jc-sync ───────────────────────────────
+// ── 用于 jc-sync 的结构化响应类型 ───────────────────────────────
 
-/// Structured Jenkins view info for sync (includes nested jobs).
+/// 用于同步的结构化 Jenkins 视图信息（包含嵌套作业）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JenkinsViewInfo {
     pub name: String,
@@ -262,7 +262,7 @@ pub struct JenkinsViewInfo {
     pub jobs: Vec<JenkinsJobInfo>,
 }
 
-/// Structured Jenkins job info for sync.
+/// 用于同步的结构化 Jenkins 作业信息。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JenkinsJobInfo {
     pub name: String,
@@ -275,7 +275,7 @@ pub struct JenkinsJobInfo {
     pub full_name: String,
 }
 
-/// Structured Jenkins build info for sync.
+/// 用于同步的结构化 Jenkins 构建信息。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct JenkinsBuildInfo {
     pub number: i64,
@@ -286,11 +286,11 @@ pub struct JenkinsBuildInfo {
 }
 
 impl JenkinsApiClient {
-    /// Fetch the flat list of all jobs (for jc-sync fallback).
+    /// 获取所有作业的扁平列表（供 jc-sync 兜底使用）。
     ///
-    /// Some Jenkins view types (Dashboard, Nested View) omit the `jobs`
-    /// array in their response. This endpoint returns ALL jobs regardless,
-    /// ensuring comprehensive coverage.
+    /// 某些 Jenkins 视图类型（Dashboard、Nested View）会在响应中省略
+    /// `jobs` 数组。该端点无论如何都会返回全部作业，
+    /// 确保覆盖完整。
     pub async fn list_all_jobs(&self) -> Result<Vec<JenkinsJobInfo>, DtError> {
         let json = self
             .get_json("/api/json?tree=jobs[name,url,color,description,fullName]")
@@ -314,14 +314,13 @@ impl JenkinsApiClient {
         Ok(jobs)
     }
 
-    /// Fetch all views with their nested jobs (for jc-sync).
+    /// 获取所有视图及其嵌套作业（供 jc-sync 使用）。
     ///
-    /// Views provide the CONTAINS mapping: each view's `jobs` array tells us
-    /// which jobs belong to that view. Use [`list_all_jobs`] for the complete
-    /// flat list.
+    /// 视图提供 CONTAINS 映射：每个视图的 `jobs` 数组告诉我们
+    /// 哪些作业属于该视图。完整的扁平列表请使用 [`list_all_jobs`]。
     ///
-    /// Calls `/api/json?tree=views[name,description,jobs[...]]` which returns
-    /// real Jenkins views (e.g. `JAVA`, `JAVA-TEST`, `VUE`)  with their jobs.
+    /// 调用 `/api/json?tree=views[name,description,jobs[...]]`，
+    /// 返回真实的 Jenkins 视图（如 `JAVA`、`JAVA-TEST`、`VUE`）及其作业。
     pub async fn list_views(&self) -> Result<Vec<JenkinsViewInfo>, DtError> {
         let json = self
             .get_json(
@@ -378,10 +377,10 @@ impl JenkinsApiClient {
         Ok(views)
     }
 
-    /// Fetch all builds for a job (for jc-sync).
+    /// 获取某个作业的全部构建（供 jc-sync 使用）。
     ///
-    /// Uses `full_name` for folder-qualified path. Falls back to `job_name`
-    /// if `full_name` is empty (some Jenkins job types omit fullName).
+    /// 使用 `full_name` 构造文件夹限定的路径。若 `full_name` 为空
+    /// 则回退到 `job_name`（某些 Jenkins 作业类型省略 fullName）。
     pub async fn get_all_builds(
         &self,
         job_name: &str,
@@ -428,7 +427,7 @@ impl Default for JenkinsApiClient {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn urlencoding(s: &str) -> String {
-    // Simple URL encoding — avoids pulling in the `urlencoding` crate
+    // 简易 URL 编码——避免引入 `urlencoding` crate
     s.replace('%', "%25")
         .replace(' ', "%20")
         .replace('#', "%23")

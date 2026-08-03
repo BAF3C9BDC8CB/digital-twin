@@ -1,9 +1,9 @@
-//! Service log tailing (stub).
+//! 本地服务日志尾随（占位实现）。
 //!
-//! Future: implements `GetLogs` server-side streaming RPC, tails local
-//! service log files.
+//! 后续将实现 `GetLogs` 服务端流式 RPC，尾随读取本地
+//! 服务日志文件。
 
-/// Placeholder for log streaming.
+/// 日志流式输出的占位实现。
 pub struct ServiceLogs;
 
 impl ServiceLogs {

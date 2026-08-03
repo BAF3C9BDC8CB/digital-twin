@@ -1,45 +1,43 @@
-//! K8s Event Timeline sync (skeleton).
+//! K8s 事件时间线同步（骨架）。
 //!
-//! K8s Events are ephemeral — they exist in the Runtime world and are NOT
-//! persisted to Memgraph. This module provides a skeleton for streaming K8s
-//! events into the timeline for real-time monitoring and alerting.
+//! K8s 事件是瞬态的——它们存在于 Runtime 世界，不持久化到 Memgraph。
+//! 本模块为将 K8s 事件流式写入时间线提供骨架，用于实时监控与告警。
 //!
-//! ## Future direction
+//! ## 未来方向
 //!
-//! - Stream K8s events via the K8s Watch API (long-lived HTTP connection).
-//! - Correlate with existing Memgraph entities (K8sDeployment, K8sService).
-//! - Emit structured log/tracing events for alerting pipelines.
-//! - Optionally persist high-severity events as `PodEvent` nodes via
-//!   `(:PodEvent)-[:TRIGGERED_BY]->(:K8sDeployment)`.
+//! - 通过 K8s Watch API（长连接 HTTP）流式接收 K8s 事件。
+//! - 与现有 Memgraph 实体（K8sDeployment、K8sService）关联。
+//! - 为告警流水线发出结构化日志/tracing 事件。
+//! - 可选地通过 `(:PodEvent)-[:TRIGGERED_BY]->(:K8sDeployment)`
+//!   将高严重级别的事件持久化为 `PodEvent` 节点。
 //!
-//! For now, this is an explicit no-op skeleton.
+//! 目前这是一个显式的 no-op 骨架。
 
 use crate::domain::error::DtError;
 
-/// Streaming K8s event watcher (placeholder).
+/// 流式 K8s 事件监听器（占位实现）。
 ///
-/// In the future this will establish a K8s Watch connection and stream
-/// events into the tracing/logging pipeline. For now it returns `Ok(())`
-/// immediately.
+/// 将来会建立 K8s Watch 连接，并将事件流式写入 tracing/日志流水线。
+/// 目前立即返回 `Ok(())`。
 pub struct K8sEventTimelineSync;
 
 impl K8sEventTimelineSync {
-    /// Placeholder: start watching K8s events.
+    /// 占位实现：开始监听 K8s 事件。
     ///
-    /// # Arguments
-    /// * `_namespace` — namespace to watch (empty string = all namespaces).
-    /// * `_resource_version` — starting resource version for the watch.
+    /// # 参数
+    /// * `_namespace` — 要监听的命名空间（空字符串 = 所有命名空间）。
+    /// * `_resource_version` — 监听的起始 resource version。
     ///
-    /// # Returns
-    /// Always `Ok(())` in this skeleton implementation.
+    /// # 返回
+    /// 在此骨架实现中始终返回 `Ok(())`。
     pub async fn watch(&self, _namespace: &str, _resource_version: &str) -> Result<(), DtError> {
-        tracing::debug!("[k8s/timeline] watch() called — skeleton, no-op");
+        tracing::debug!("[k8s/timeline] watch() 已调用——骨架实现，无操作");
         Ok(())
     }
 
-    /// Placeholder: stop watching K8s events.
+    /// 占位实现：停止监听 K8s 事件。
     pub async fn stop(&self) -> Result<(), DtError> {
-        tracing::debug!("[k8s/timeline] stop() called — skeleton, no-op");
+        tracing::debug!("[k8s/timeline] stop() 已调用——骨架实现，无操作");
         Ok(())
     }
 }
@@ -51,7 +49,7 @@ impl Default for K8sEventTimelineSync {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

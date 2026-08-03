@@ -1,13 +1,13 @@
-//! Sync service — orchestration layer for external system synchronisation.
+//! 同步服务——外部系统同步的编排层。
 //!
-//! Provides the [`SyncService`] trait and a concrete [`NacosSyncService`]
-//! that coordinates config and service sync from Nacos into Memgraph.
+//! 提供 [`SyncService`] trait 以及具体的 [`NacosSyncService`]，
+//! 协调 Nacos 的配置与服务同步写入 Memgraph。
 //!
-//! # WriteCoordinator integration
+//! # WriteCoordinator 集成
 //!
-//! Before starting, the service checks whether a build is in progress via
-//! [`WriteCoordinator::has_active_writes`]. If `true`, the sync is skipped
-//! and each source returns [`SyncReport::skipped`].
+//! 开始前，服务会通过 [`WriteCoordinator::has_active_writes`] 检查
+//! 是否有构建正在进行。若为 `true`，则跳过同步，各来源返回
+//! [`SyncReport::skipped`]。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
@@ -21,19 +21,19 @@ use super::nacos::service_sync::ServiceSyncSource;
 use super::traits::{SyncReport, SyncSource};
 
 // ---------------------------------------------------------------------------
-// NacosConfig — parsed from config.yaml
+// NacosConfig——从 config.yaml 解析
 // ---------------------------------------------------------------------------
 
-/// Nacos connection configuration, parsed from config.yaml's `services.nacos` section.
+/// Nacos 连接配置，从 config.yaml 的 `services.nacos` 段解析。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct NacosConfig {
-    /// Test environment URL.
+    /// 测试环境 URL。
     pub test: String,
-    /// Production environment URL.
+    /// 生产环境 URL。
     pub prod: String,
 }
 
-/// The subset of config.yaml needed by the sync subsystem.
+/// 同步子系统所需的 config.yaml 子集。
 #[derive(Debug, Clone, serde::Deserialize)]
 struct SyncAppConfig {
     services: ServicesSection,
@@ -48,26 +48,24 @@ struct ServicesSection {
 // SyncService trait
 // ---------------------------------------------------------------------------
 
-/// Orchestrates sync operations for one or more external systems.
+/// 为一个或多个外部系统编排同步操作。
 ///
-/// Implementations manage the lifecycle: check for conflicts, run sources,
-/// aggregate reports, and emit tracing spans.
+/// 实现方管理生命周期：检查冲突、运行来源、汇总报告并发出 tracing 跨度。
 #[async_trait]
 pub trait SyncService: Send + Sync {
-    /// Run all registered sync sources for the given environment.
+    /// 为给定环境运行所有已注册的同步来源。
     ///
-    /// Returns a vector of per-source reports.
+    /// 返回每个来源的报告向量。
     async fn sync(&self, env: &str) -> Result<Vec<SyncReport>, DtError>;
 
-    /// Sync knowledge-graph business-label nodes to the Qdrant vector store.
+    /// 将知识图谱业务标签节点同步到 Qdrant 向量库。
     ///
-    /// When `incremental` is `true`, only nodes whose `_kg_synced_at` property
-    /// is `NULL` are processed.  Default implementation returns an error —
-    /// override this for sync services that have access to an embedder and
-    /// vector repository.
+    /// 当 `incremental` 为 `true` 时，仅处理 `_kg_synced_at` 属性
+    /// 为 `NULL` 的节点。默认实现返回错误——请为可访问向量化器和
+    /// 向量仓库的同步服务覆写该方法。
     async fn kg_sync(&self, _incremental: bool) -> Result<SyncReport, DtError> {
         Err(DtError::Config(
-            "kg_sync is not implemented for this sync service".into(),
+            "该同步服务未实现 kg_sync".into(),
         ))
     }
 }
@@ -76,17 +74,17 @@ pub trait SyncService: Send + Sync {
 // NacosSyncService
 // ---------------------------------------------------------------------------
 
-/// Concrete [`SyncService`] that syncs Nacos configuration and service registry
-/// data into the Memgraph knowledge graph.
+/// 将 Nacos 配置与服务注册数据同步到 Memgraph 知识图谱的
+/// 具体 [`SyncService`] 实现。
 pub struct NacosSyncService {
-    /// Graph repository for writing V2 nodes.
+    /// 用于写入 V2 节点的图仓库。
     graph: Arc<dyn GraphRepository>,
-    /// HTTP client for Nacos REST API.
+    /// Nacos REST API 的 HTTP 客户端。
     nacos_config: NacosConfig,
 }
 
 impl NacosSyncService {
-    /// Create a new service from a graph repository and Nacos config.
+    /// 从图仓库和 Nacos 配置创建新服务。
     pub fn new(graph: Arc<dyn GraphRepository>, nacos_config: NacosConfig) -> Self {
         Self {
             graph,
@@ -94,34 +92,34 @@ impl NacosSyncService {
         }
     }
 
-    /// Load Nacos config from a YAML config file path.
+    /// 从 YAML 配置文件路径加载 Nacos 配置。
     ///
-    /// Reads the `services.nacos` section from `config.yaml`.
+    /// 读取 `config.yaml` 中的 `services.nacos` 段。
     pub fn from_config_file(
         graph: Arc<dyn GraphRepository>,
         config_path: &str,
     ) -> Result<Self, DtError> {
         let content = std::fs::read_to_string(config_path)
-            .map_err(|e| DtError::Config(format!("cannot read config file {config_path}: {e}")))?;
+            .map_err(|e| DtError::Config(format!("无法读取配置文件 {config_path}: {e}")))?;
 
         let cfg: SyncAppConfig = serde_yaml::from_str(&content)
-            .map_err(|e| DtError::Config(format!("invalid config.yaml: {e}")))?;
+            .map_err(|e| DtError::Config(format!("config.yaml 无效: {e}")))?;
 
         let nacos_config = cfg
             .services
             .nacos
-            .ok_or_else(|| DtError::Config("config.yaml missing services.nacos section".into()))?;
+            .ok_or_else(|| DtError::Config("config.yaml 缺少 services.nacos 段".into()))?;
 
         Ok(Self::new(graph, nacos_config))
     }
 
-    /// Resolve the Nacos base URL for the given environment.
+    /// 解析给定环境的 Nacos 基础 URL。
     fn resolve_url(&self, env: &str) -> Result<&str, DtError> {
         match env {
             "test" => Ok(&self.nacos_config.test),
             "prod" => Ok(&self.nacos_config.prod),
             _ => Err(DtError::Config(format!(
-                "unknown Nacos env '{env}': expected 'test' or 'prod'"
+                "未知的 Nacos 环境 '{env}'：应为 'test' 或 'prod'"
             ))),
         }
     }
@@ -133,12 +131,12 @@ impl SyncService for NacosSyncService {
         let base_url = self.resolve_url(env)?;
         let env_label = format!("nacos/{env}");
 
-        tracing::info!("[nacos-sync] starting sync for {env_label} ({base_url})");
+        tracing::info!("[nacos-sync] 开始为 {env_label} 同步（{base_url}）");
 
         let client = NacosClient::new(base_url);
         let mut reports: Vec<SyncReport> = Vec::with_capacity(2);
 
-        // ── Config sync ───────────────────────────────────────────
+        // ── 配置同步 ───────────────────────────────────────────
         let config_source = ConfigSyncSource::new(client.clone(), env.to_string());
         let start = Instant::now();
         let report = config_source.sync(self.graph.as_ref()).await?;
@@ -149,14 +147,14 @@ impl SyncService for NacosSyncService {
             ..report
         };
         tracing::info!(
-            "[nacos-sync] config sync complete: {} configs across {} namespaces ({}ms)",
+            "[nacos-sync] 配置同步完成: {} 个配置分布在 {} 个命名空间（{}ms）",
             final_report.configs,
             final_report.namespaces,
             final_report.elapsed_ms,
         );
         reports.push(final_report);
 
-        // ── Service sync ──────────────────────────────────────────
+        // ── 服务同步 ──────────────────────────────────────────
         let service_source = ServiceSyncSource::new(client, env.to_string());
         let start = Instant::now();
         let report = service_source.sync(self.graph.as_ref()).await?;
@@ -167,7 +165,7 @@ impl SyncService for NacosSyncService {
             ..report
         };
         tracing::info!(
-            "[nacos-sync] service sync complete: {} services across {} namespaces ({}ms)",
+            "[nacos-sync] 服务同步完成: {} 个服务分布在 {} 个命名空间（{}ms）",
             final_report.services,
             final_report.namespaces,
             final_report.elapsed_ms,
@@ -179,7 +177,7 @@ impl SyncService for NacosSyncService {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -190,7 +188,7 @@ mod tests {
     use async_trait::async_trait;
     use std::collections::HashMap;
 
-    /// Minimal mock GraphRepository.
+    /// 最小化模拟 GraphRepository。
     struct MockRepo;
 
     #[async_trait]
@@ -224,8 +222,8 @@ services:
     test: https://nacos-test.example.com/nacos
     prod: https://nacos-prod.example.com/nacos
 "#;
-        let cfg: SyncAppConfig = serde_yaml::from_str(yaml).expect("parse");
-        let n = cfg.services.nacos.expect("nacos section");
+        let cfg: SyncAppConfig = serde_yaml::from_str(yaml).expect("解析");
+        let n = cfg.services.nacos.expect("nacos 段");
         assert_eq!(n.test, "https://nacos-test.example.com/nacos");
         assert_eq!(n.prod, "https://nacos-prod.example.com/nacos");
     }

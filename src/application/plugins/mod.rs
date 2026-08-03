@@ -1,9 +1,9 @@
-//! Built-in plugin system for the Digital Twin system.
+//! Digital Twin 系统的内置插件系统。
 //!
-//! Provides:
-//! - `Plugin` trait — unified lifecycle for all plugins
-//! - `PluginRegistry` — registration, lifecycle management, and gRPC wiring
-//! - Builtin plugins: `k8s`, `svc`, `jenkins`
+//! 提供：
+//! - `Plugin` trait——所有插件的统一生命周期
+//! - `PluginRegistry`——注册、生命周期管理以及 gRPC 装配
+//! - 内置插件：`k8s`、`svc`、`jenkins`
 
 pub mod jenkins;
 pub mod k8s;
@@ -13,61 +13,59 @@ pub mod svc;
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 use async_trait::async_trait;
 
-/// Core plugin trait.
+/// 核心插件 trait。
 ///
-/// Every plugin must implement this trait. All methods are async and must not
-/// block the runtime. Plugins register their gRPC services via
-/// `register_grpc()` and participate in a unified lifecycle (init → health →
-/// shutdown).
+/// 每个插件都必须实现该 trait。所有方法均为异步且不得阻塞运行时。
+/// 插件通过 `register_grpc()` 注册其 gRPC 服务，并参与统一的生命周期
+/// （init → health → shutdown）。
 ///
-/// # Constraints (non-negotiable)
+/// # 约束（不可协商）
 ///
-/// 1. **No direct filesystem access** — all path operations go through `PluginContext`.
-/// 2. **No subprocess calls** — all external interaction goes through gRPC client traits.
-/// 3. **No blocking I/O** — all I/O must be async.
-/// 4. **Must implement `health()`** — return value determines availability.
-/// 5. **Errors must map to gRPC Status** — use `PluginError`, never `panic!`.
-/// 6. **Proto files are independent per plugin** — each plugin's service lives in its own `.proto`.
+/// 1. **禁止直接访问文件系统**——所有路径操作都通过 `PluginContext`。
+/// 2. **禁止调用子进程**——所有外部交互都通过 gRPC 客户端 trait。
+/// 3. **禁止阻塞 I/O**——所有 I/O 必须为异步。
+/// 4. **必须实现 `health()`**——返回值决定可用性。
+/// 5. **错误必须映射到 gRPC Status**——使用 `PluginError`，绝不 `panic!`。
+/// 6. **每个插件的 proto 文件相互独立**——各插件服务位于各自的 `.proto` 中。
 #[async_trait]
 pub trait Plugin: Send + Sync + 'static {
-    /// Unique identifier for this plugin (e.g. "k8s", "svc", "jenkins").
+    /// 该插件的唯一标识符（例如 "k8s"、"svc"、"jenkins"）。
     fn id(&self) -> &'static str;
 
-    /// Human-readable display name.
+    /// 人类可读的显示名称。
     fn name(&self) -> &'static str;
 
-    /// Semantic version string.
+    /// 语义化版本号字符串。
     fn version(&self) -> &'static str;
 
-    /// Register this plugin's gRPC service(s) onto the tonic Server.
+    /// 将该插件的 gRPC 服务注册到 tonic Server 上。
     ///
-    /// The plugin calls `server.add_service(...)` for each of its gRPC
-    /// services. Tonic internally accumulates routes across calls; the
-    /// daemon will extract the final `Router` after all plugins are wired.
+    /// 插件为其每个 gRPC 服务调用 `server.add_service(...)`。
+    /// tonic 内部会跨调用累积路由；守护进程在所有插件装配完成后
+    /// 提取最终的 `Router`。
     fn register_grpc(
         &self,
         server: &mut tonic::transport::server::Server,
     ) -> Result<(), PluginError>;
 
-    /// One-time initialization. Called once after construction, before the
-    /// gRPC server starts. Use this to open connections, load config, etc.
+    /// 一次性初始化。构造完成后、gRPC 服务器启动前调用一次。
+    /// 用于打开连接、加载配置等。
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError>;
 
-    /// Runtime health check. Called periodically by the daemon to determine
-    /// plugin availability.
+    /// 运行时健康检查。守护进程定期调用以判断插件可用性。
     async fn health(&self) -> Result<HealthStatus, PluginError>;
 
-    /// Graceful shutdown. Called when the daemon is stopping.
+    /// 优雅停机。守护进程停止时调用。
     async fn shutdown(&self) -> Result<(), PluginError>;
 }
 
 // ---------------------------------------------------------------------------
-// PluginError → tonic::Status conversion
+// PluginError → tonic::Status 转换
 // ---------------------------------------------------------------------------
-// Cannot impl From<PluginError> for tonic::Status due to orphan rules
-// (neither type is defined in this crate). Instead we use a free function.
+// 由于孤儿规则（两种类型均非本 crate 定义），无法为
+// tonic::Status 实现 From<PluginError>，改用自由函数。
 
-/// Convert a `PluginError` into a `tonic::Status`.
+/// 将 `PluginError` 转换为 `tonic::Status`。
 pub fn plugin_error_to_status(e: &PluginError) -> tonic::Status {
     match e {
         PluginError::NotFound(_) => tonic::Status::not_found(e.to_string()),

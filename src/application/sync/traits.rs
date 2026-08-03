@@ -1,4 +1,4 @@
-//! Synchronisation traits and types for the Digital Twin system.
+//! Digital Twin 系统的同步 trait 与类型。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
@@ -8,44 +8,44 @@ use async_trait::async_trait;
 // SyncReport
 // ---------------------------------------------------------------------------
 
-/// Result of a single sync operation against one resource type.
+/// 针对一种资源类型的单次同步操作的结果。
 #[derive(Debug, Clone, Default)]
 pub struct SyncReport {
-    /// Human-readable source name (e.g. "nacos/test").
+    /// 人类可读的来源名（例如 "nacos/test"）。
     pub source: String,
 
-    // -- Nacos-specific --
-    /// Number of namespaces processed.
+    // -- Nacos 专用 --
+    /// 已处理的命名空间数。
     pub namespaces: usize,
-    /// Number of configs upserted.
+    /// 已 upsert 的配置数。
     pub configs: usize,
-    /// Number of services synced.
+    /// 已同步的服务数。
     pub services: usize,
-    /// Number of relationships created/updated.
+    /// 已创建/更新的关系数。
     pub links_created: usize,
 
-    // -- K8s-specific --
-    /// Items fetched from the external API.
+    // -- K8s 专用 --
+    /// 从外部 API 获取的条目数。
     pub items_fetched: usize,
-    /// Items newly created in the graph database.
+    /// 在图数据库中新建的条目数。
     pub items_created: usize,
-    /// Items that already existed and were updated.
+    /// 已存在并被更新的条目数。
     pub items_updated: usize,
-    /// Items skipped due to conflict or dedup.
+    /// 因冲突或去重而跳过的条目数。
     pub items_skipped: usize,
-    /// Items that failed to write.
+    /// 写入失败的条目数。
     pub items_failed: usize,
-    /// Error messages collected during the sync (non-fatal).
+    /// 同步过程中收集的错误消息（非致命）。
     pub errors: Vec<String>,
 
-    /// Wall-clock elapsed in milliseconds.
+    /// 墙钟耗时（毫秒）。
     pub elapsed_ms: u64,
-    /// `true` when sync was skipped (WriteCoordinator conflict).
+    /// 同步被跳过时为 `true`（WriteCoordinator 冲突）。
     pub skipped: bool,
 }
 
 impl SyncReport {
-    /// Create a "skipped" report.
+    /// 创建 "skipped" 报告。
     pub fn skipped(source: impl Into<String>) -> Self {
         Self {
             source: source.into(),
@@ -64,7 +64,7 @@ impl SyncReport {
         }
     }
 
-    /// Create a successful completion report with nacos-friendly fields.
+    /// 创建带 nacos 友好字段的成功完成报告。
     pub fn completed(
         source: impl Into<String>,
         namespaces: usize,
@@ -90,22 +90,22 @@ impl SyncReport {
         }
     }
 
-    /// Returns `true` if no write errors occurred.
+    /// 若未发生写入错误则返回 `true`。
     pub fn is_success(&self) -> bool {
         self.items_failed == 0 && self.errors.is_empty()
     }
 
-    /// Total items written (created + updated).
+    /// 已写入的条目总数（新建 + 更新）。
     pub fn items_written(&self) -> usize {
         self.items_created + self.items_updated
     }
 
-    /// Total operations (for summary display).
+    /// 总操作数（用于汇总展示）。
     pub fn total_ops(&self) -> usize {
         self.configs + self.services + self.links_created
     }
 
-    /// Append an error message to the report.
+    /// 向报告追加一条错误消息。
     pub fn add_error(&mut self, msg: impl Into<String>) {
         self.items_failed += 1;
         self.errors.push(msg.into());
@@ -116,19 +116,18 @@ impl SyncReport {
 // SyncSource trait
 // ---------------------------------------------------------------------------
 
-/// A source of external system data that can be synchronised into the
-/// knowledge graph.
+/// 可同步到知识图谱的外部系统数据来源。
 #[async_trait]
 pub trait SyncSource: Send + Sync {
-    /// Human-readable name of this source (e.g. "nacos/config").
+    /// 该来源的人类可读名称（例如 "nacos/config"）。
     fn name(&self) -> &str;
 
-    /// Execute the synchronisation.
+    /// 执行同步。
     async fn sync(&self, graph: &dyn GraphRepository) -> Result<SyncReport, DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

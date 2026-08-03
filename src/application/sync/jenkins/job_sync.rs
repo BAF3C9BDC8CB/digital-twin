@@ -1,25 +1,24 @@
-//! Synchronise Jenkins Views / Jobs / Builds into the knowledge graph.
+//! 将 Jenkins 的 Views / Jobs / Builds 同步到知识图谱。
 //!
-//! # Flow
+//! # 流程
 //!
-//! 1. Fetch all views with nested jobs via [`JenkinsApiClient::list_views`]
-//! 2. Create `JenkinsView` nodes from real Jenkins view names (JAVA, VUE, ...)
-//! 3. Fetch all jobs via the flat `/api/json?tree=jobs[...]` endpoint for
-//!    comprehensive coverage (some view types don't expand their job list)
-//! 4. For each job, fetch all builds via [`JenkinsApiClient::get_all_builds`]
-//! 5. Create `JenkinsJob` + `JenkinsBuild` nodes
-//! 6. Create `[:CONTAINS]` relationships from view→job for jobs found in views
-//! 7. Chain builds with `[:NEXT_BUILD]` relationships
+//! 1. 通过 [`JenkinsApiClient::list_views`] 获取所有视图及其嵌套作业
+//! 2. 根据真实的 Jenkins 视图名（JAVA、VUE、...）创建 `JenkinsView` 节点
+//! 3. 通过扁平的 `/api/json?tree=jobs[...]` 端点获取全部作业，以保证
+//!    覆盖完整（某些视图类型不会展开其作业列表）
+//! 4. 对每个作业，通过 [`JenkinsApiClient::get_all_builds`] 获取所有构建
+//! 5. 创建 `JenkinsJob` + `JenkinsBuild` 节点
+//! 6. 为视图中包含的作业创建 view→job 的 `[:CONTAINS]` 关系
+//! 7. 用 `[:NEXT_BUILD]` 关系将构建串联成链
 //!
-//! # Design
+//! # 设计
 //!
-//! - View names come from Jenkins API, not synthesized from job full_name
-//! - A job can belong to multiple views (as returned by Jenkins API)
-//! - All jobs are synced regardless of view membership — view→job mapping is
-//!   purely for the `[:CONTAINS]` relationship (a job without a view still exists)
-//! - No `env` field — environment (test/prod) is determined by view name, not
-//!   stored as a property on the node
-//! - entity_id URIs follow `dt://jenkins/{type}/...` pattern
+//! - 视图名来自 Jenkins API，而非从作业 full_name 合成
+//! - 一个作业可以属于多个视图（Jenkins API 原样返回）
+//! - 无论是否属于某个视图，所有作业都会同步——view→job 映射仅用于
+//!   `[:CONTAINS]` 关系（没有视图的作业依然存在）
+//! - 无 `env` 字段——环境（test/prod）由视图名决定，不作为节点属性存储
+//! - entity_id URI 遵循 `dt://jenkins/{type}/...` 模式
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,29 +30,29 @@ use crate::application::sync::traits::{SyncReport, SyncSource};
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
-/// Synchronise Jenkins Views, Jobs, and Builds into Memgraph.
+/// 将 Jenkins 的 Views、Jobs 和 Builds 同步到 Memgraph。
 pub struct JobSyncSource {
     client: Arc<JenkinsApiClient>,
     job_filter: Option<String>,
 }
 
 impl JobSyncSource {
-    /// Create a new Jenkins sync source.
+    /// 创建新的 Jenkins 同步源。
     ///
-    /// * `client` — authenticated Jenkins API client
-    /// * `job_filter` — optional: only sync this specific job
+    /// * `client` — 已认证的 Jenkins API 客户端
+    /// * `job_filter` — 可选：仅同步该特定作业
     pub fn new(client: Arc<JenkinsApiClient>, job_filter: Option<String>) -> Self {
         Self { client, job_filter }
     }
 
-    /// Build a unique node ID for a view.
+    /// 为视图构建唯一节点 ID。
     fn view_id(view_name: &str) -> String {
         format!("dt://jenkins/view/{view_name}")
     }
 
-    /// Build a unique node ID for a job.
+    /// 为作业构建唯一节点 ID。
     ///
-    /// Falls back to `name` when `full_name` is empty (top-level jobs).
+    /// 当 `full_name` 为空（顶层作业）时回退到 `name`。
     fn job_id(full_name: &str, name: &str) -> String {
         let id = if full_name.is_empty() {
             name
@@ -63,9 +62,9 @@ impl JobSyncSource {
         format!("dt://jenkins/job/{id}")
     }
 
-    /// Build a unique node ID for a build.
+    /// 为构建构建唯一节点 ID。
     ///
-    /// Falls back to `name` when `full_name` is empty.
+    /// 当 `full_name` 为空时回退到 `name`。
     fn build_id(full_name: &str, name: &str, build_number: i64) -> String {
         let id = if full_name.is_empty() {
             name
@@ -77,7 +76,7 @@ impl JobSyncSource {
 }
 
 impl JobSyncSource {
-    /// Sync a single job (for incremental updates after `jcli build`).
+    /// 同步单个作业（用于 `jcli build` 之后的增量更新）。
     pub async fn sync_job(&self, graph: &dyn GraphRepository) -> Result<SyncReport, DtError> {
         self.sync(graph).await
     }
@@ -96,12 +95,12 @@ impl SyncSource for JobSyncSource {
             ..SyncReport::default()
         };
 
-        // ── 1. Fetch views → for View nodes + CONTAINS mapping ──────────
+        // ── 1. 获取视图 → 用于 View 节点 + CONTAINS 映射 ──────────
         let all_views = self.client.list_views().await?;
         let views: Vec<_> = all_views.into_iter().filter(|v| v.name != "all").collect();
         report.namespaces = views.len();
 
-        // Build view→job mapping (which jobs belong to which views)
+        // 构建 view→job 映射（哪些作业属于哪些视图）
         let mut job_to_views: HashMap<String, Vec<String>> = HashMap::new();
         for view in &views {
             for job in &view.jobs {
@@ -114,7 +113,7 @@ impl SyncSource for JobSyncSource {
             }
         }
 
-        // ── 2. MERGE view nodes ──────────────────────────────────────────
+        // ── 2. 合并视图节点 ──────────────────────────────────────────
         for view in &views {
             let vid = Self::view_id(&view.name);
             let cypher = r#"
@@ -136,10 +135,10 @@ impl SyncSource for JobSyncSource {
             graph.write_query(cypher, params).await?;
         }
 
-        // ── 3. Fetch ALL jobs (flat list) for comprehensive coverage ─────
+        // ── 3. 获取全部作业（扁平列表）以保证覆盖完整 ─────
         let all_jobs = self.client.list_all_jobs().await?;
 
-        // Apply job filter if set
+        // 若设置了过滤条件则应用之
         let jobs: Vec<_> = if let Some(ref filter) = self.job_filter {
             all_jobs
                 .into_iter()
@@ -150,14 +149,14 @@ impl SyncSource for JobSyncSource {
         };
 
         if jobs.is_empty() {
-            println!("  (no matching jobs found)");
+            println!("  (未找到匹配的作业)");
             report.elapsed_ms = start.elapsed().as_millis() as u64;
             return Ok(report);
         }
 
-        println!("Jenkins sync: {} views, {} jobs", views.len(), jobs.len(),);
+        println!("Jenkins 同步: {} 个视图, {} 个作业", views.len(), jobs.len(),);
 
-        // ── 4. Process each job ──────────────────────────────────────────
+        // ── 4. 逐个处理作业 ──────────────────────────────────────────
         for job in &jobs {
             let jid = Self::job_id(&job.full_name, &job.name);
             let key = if job.full_name.is_empty() {
@@ -166,9 +165,9 @@ impl SyncSource for JobSyncSource {
                 &job.full_name
             };
 
-            print!("  job: {}... ", job.name);
+            print!("  作业: {}... ", job.name);
 
-            // MERGE job node
+            // 合并作业节点
             let merge_job = r#"
                 MERGE (j:JenkinsJob {job_id: $job_id})
                 ON CREATE SET
@@ -197,7 +196,7 @@ impl SyncSource for JobSyncSource {
             graph.write_query(merge_job, params).await?;
             report.configs += 1;
 
-            // RELATE job → its views (if any view carries this job)
+            // 关联作业 → 其视图（若有视图包含该作业）
             if let Some(view_names) = job_to_views.get(key) {
                 for vn in view_names {
                     let vid = Self::view_id(vn);
@@ -214,12 +213,12 @@ impl SyncSource for JobSyncSource {
                 }
             }
 
-            // ── 5. Fetch builds ──────────────────────────────────────────
+            // ── 5. 获取构建 ──────────────────────────────────────────
             let mut builds = match self.client.get_all_builds(&job.name, &job.full_name).await {
                 Ok(b) => b,
                 Err(e) => {
                     let msg = format!("{}: {e}", job.full_name);
-                    eprintln!("  ⚠ builds fetch failed: {msg}");
+                    eprintln!("  ⚠ 获取构建失败: {msg}");
                     report.add_error(&msg);
                     report.configs -= 1;
                     continue;
@@ -227,11 +226,11 @@ impl SyncSource for JobSyncSource {
             };
 
             if builds.is_empty() {
-                println!("0 builds");
+                println!("0 个构建");
                 continue;
             }
 
-            println!("{} builds", builds.len());
+            println!("{} 个构建", builds.len());
 
             builds.sort_by_key(|b| b.number);
 
@@ -276,7 +275,7 @@ impl SyncSource for JobSyncSource {
                 report.links_created += 1;
             }
 
-            // ── 6. Create build chain (NEXT_BUILD) ────────────────────────
+            // ── 6. 创建构建链（NEXT_BUILD） ────────────────────────
             for pair in builds.windows(2) {
                 let prev_id = Self::build_id(&job.full_name, &job.name, pair[0].number);
                 let next_id = Self::build_id(&job.full_name, &job.name, pair[1].number);
@@ -296,7 +295,7 @@ impl SyncSource for JobSyncSource {
             report.services += 1;
         }
 
-        // ── 7. Cleanup: only builds without parent jobs ──────────────────
+        // ── 7. 清理：仅删除没有父作业的构建 ──────────────────
         if self.job_filter.is_none() {
             let clean_builds = r#"
                 MATCH (b:JenkinsBuild)

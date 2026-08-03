@@ -1,9 +1,9 @@
-//! K8s log streaming / download logic (stub).
+//! K8s 日志流式输出 / 下载逻辑（占位实现）。
 //!
-//! Future: implements `GetLogs` (server-side stream) and `DownloadLogs` RPCs.
-//! Uses Kuboard WebSocket API or kubectl-equivalent K8s client under the hood.
+//! 后续将实现 `GetLogs`（服务端流式）和 `DownloadLogs` RPC。
+//! 底层使用 Kuboard WebSocket API 或与 kubectl 等价的 K8s 客户端。
 
-/// Placeholder for log streaming logic.
+/// 日志流式输出逻辑的占位实现。
 pub struct K8sLogStream;
 
 impl K8sLogStream {

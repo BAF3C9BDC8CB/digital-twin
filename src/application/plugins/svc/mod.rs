@@ -1,11 +1,11 @@
-//! Svc plugin — local microservice lifecycle management.
+//! Svc 插件——本地微服务生命周期管理。
 //!
-//! Provides gRPC services for listing, starting, stopping, restarting,
-//! and tailing logs of local microservices.
+//! 提供 gRPC 服务：本地微服务的列表、启动、停止、重启
+//! 以及日志尾随。
 //!
-//! **Generated from:** `proto/plugin_svc.proto`
+//! **由以下文件生成：** `proto/plugin_svc.proto`
 //!
-//! NOTE: tonic-build proto compilation is deferred.
+//! NOTE: tonic-build proto 编译暂缓。
 
 pub mod logs;
 pub mod manager;

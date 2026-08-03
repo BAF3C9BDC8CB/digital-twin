@@ -1,13 +1,11 @@
-//! Batch-accumulating async sync worker for KG → Qdrant.
+//! 批量累积的异步同步 worker——负责 KG → Qdrant。
 //!
-//! Collects individual sync requests (label + key + value), fetches
-//! nodes from the graph database, and delegates embedding to the global
-//! [`VectorQueue`](super::queue::VectorQueue) for priority-aware GPU
-//! scheduling.
+//! 收集单个同步请求（label + key + value），从图数据库获取节点，
+//! 并将向量化委托给全局 [`VectorQueue`](super::queue::VectorQueue)，
+//! 以实现按优先级感知的 GPU 调度。
 //!
-//! This module ONLY handles the fetch + upsert pipeline.  Embedding
-//! is done through the global queue so that user searches (HIGH lane)
-//! always preempt background sync (LOW lane).
+//! 本模块只处理 fetch + upsert 流水线。向量化通过全局队列完成，
+//! 这样用户搜索（HIGH 通道）始终优先于后台同步（LOW 通道）。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,7 +17,7 @@ use super::kg_bridge::KgBridge;
 use super::queue::VectorQueue;
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
 const MAX_BATCH: usize = 64;
@@ -40,11 +38,11 @@ struct SyncItem {
 // SyncAccumulator
 // ---------------------------------------------------------------------------
 
-/// Collects KG nodes for background sync.
+/// 收集 KG 节点以进行后台同步。
 ///
-/// Fetches nodes from the graph database and passes them to `KgBridge::process_batch`,
-/// which embeds via the global VectorQueue (LOW priority) and upserts to
-/// Qdrant.
+/// 从图数据库获取节点，并传给 `KgBridge::process_batch`，
+/// 后者通过全局 VectorQueue（LOW 优先级）完成向量化并 upsert 到
+/// Qdrant。
 pub struct SyncAccumulator {
     tx: mpsc::UnboundedSender<SyncItem>,
     flush_notify: Arc<Notify>,
@@ -52,11 +50,10 @@ pub struct SyncAccumulator {
 }
 
 impl SyncAccumulator {
-    /// Spawn a background worker.
+    /// 启动一个后台 worker。
     ///
-    /// `bridge` must already be configured with a [`VectorQueue`] so
-    /// that its `process_batch` call routes embedding through the
-    /// global priority queue.
+    /// `bridge` 必须已配置 [`VectorQueue`]，这样其 `process_batch`
+    /// 调用会经由全局优先级队列完成向量化。
     pub fn spawn(bridge: Arc<KgBridge>, _queue: Arc<VectorQueue>) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<SyncItem>();
         let flush_notify = Arc::new(Notify::new());
@@ -106,7 +103,7 @@ impl SyncAccumulator {
         }
     }
 
-    /// Enqueue a node for background (LOW-priority) sync.  Never blocks.
+    /// 将节点入队以进行后台（LOW 优先级）同步。绝不阻塞。
     pub fn enqueue(&self, label: &str, key: &str, value: &str) -> bool {
         self.tx
             .send(SyncItem {
@@ -117,14 +114,14 @@ impl SyncAccumulator {
             .is_ok()
     }
 
-    /// Signal the worker to flush immediately and wait briefly.
+    /// 通知 worker 立即 flush，并短暂等待。
     pub async fn flush(&self) {
         self.flush_notify.notify_one();
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
-/// Fetch nodes from the graph database, then delegate to KgBridge for embed+upsert.
+/// 从图数据库获取节点，再委托给 KgBridge 完成向量化与 upsert。
 async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
     if buffer.is_empty() {
         return;
@@ -141,7 +138,7 @@ async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
             Ok(None) => {}
             Err(e) => {
                 tracing::warn!(
-                    "[sync-acc] fetch {} {}={}: {e}",
+                    "[sync-acc] 获取 {} {}={} 失败: {e}",
                     item.label,
                     item.prop_key,
                     item.prop_value
@@ -154,9 +151,9 @@ async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
         return;
     }
 
-    tracing::debug!("[sync-acc] flushing {} node(s)", nodes.len());
+    tracing::debug!("[sync-acc] 正在 flush {} 个节点", nodes.len());
 
     if let Err(e) = bridge.process_batch(&nodes).await {
-        tracing::warn!("[sync-acc] upsert failed for {} nodes: {e}", nodes.len());
+        tracing::warn!("[sync-acc] {} 个节点 upsert 失败: {e}", nodes.len());
     }
 }

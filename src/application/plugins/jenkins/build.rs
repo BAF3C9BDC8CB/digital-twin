@@ -1,9 +1,9 @@
-//! Build streaming / log retrieval logic (stub).
+//! 构建流式输出 / 日志拉取逻辑（占位实现）。
 //!
-//! Future: implements `Build` (server-side streaming) and `GetBuildLog` RPCs.
-//! Stream build console output in real-time via Jenkins API.
+//! 后续将实现 `Build`（服务端流式）和 `GetBuildLog` RPC。
+//! 通过 Jenkins API 实时流式输出构建控制台日志。
 
-/// Placeholder for build streaming.
+/// 构建流式输出的占位实现。
 pub struct BuildStream;
 
 impl BuildStream {

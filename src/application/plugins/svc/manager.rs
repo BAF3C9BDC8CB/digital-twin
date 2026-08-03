@@ -1,9 +1,9 @@
-//! Service manager — tracks running microservice processes (stub).
+//! 服务管理器——跟踪运行中的微服务进程（占位实现）。
 //!
-//! Future: manages child processes with tokio::process::Command (async),
-//! tracks PIDs, handles graceful shutdown via SIGTERM.
+//! 后续将使用 tokio::process::Command（异步）管理子进程，
+//! 跟踪 PID，并通过 SIGTERM 实现优雅停机。
 
-/// Placeholder for service lifecycle management.
+/// 服务生命周期管理的占位实现。
 pub struct ServiceManager;
 
 impl ServiceManager {

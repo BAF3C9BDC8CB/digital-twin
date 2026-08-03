@@ -1,21 +1,20 @@
-//! V2 domain types for K8s sync.
+//! K8s 同步的 V2 领域类型。
 //!
-//! These are the graph node representations for entities that belong in the
-//! **Reality World** (persisted to the knowledge graph).
+//! 这些是属于 **Reality World**（持久化到知识图谱）实体的图节点表示。
 //!
-//! ## What goes into the graph database
+//! ## 哪些内容进入图数据库
 //!
-//! | K8s Object    | Graph Label | Rationale |
+//! | K8s 对象    | 图标签 | 说明 |
 //! |---------------|-----------------|-----------|
-//! | Deployment    | `K8sDeployment` | Desired-state infrastructure |
-//! | Service       | `K8sService`    | Stable network endpoint |
-//! | Node (Worker) | `Server`        | Physical/virtual machine asset |
-//! | Pod           | _(not stored)_  | Ephemeral — Runtime only |
+//! | Deployment    | `K8sDeployment` | 期望状态的基础设施 |
+//! | Service       | `K8sService`    | 稳定的网络端点 |
+//! | Node (Worker) | `Server`        | 物理/虚拟机资产 |
+//! | Pod           | _（不存储）_  | 瞬态——仅存在于 Runtime |
 //!
-//! API response structs below have allow(dead_code) because serde needs every
-//! field for deserialization even if the current sync logic doesn't read them.
+//! 下面的 API 响应结构体带有 allow(dead_code)，因为即使当前同步逻辑
+//! 不读取某些字段，serde 反序列化也需要每个字段。
 
-#![allow(dead_code)] // API response fields used by serde, not all read by sync logic
+#![allow(dead_code)] // API 响应字段由 serde 使用，同步逻辑并非全部读取
 
 use serde::{Deserialize, Serialize};
 
@@ -23,32 +22,32 @@ use serde::{Deserialize, Serialize};
 // K8sDeployment
 // ---------------------------------------------------------------------------
 
-/// A K8s Deployment persisted as a `:K8sDeployment` node in the graph database.
+/// 以 `:K8sDeployment` 节点持久化到图数据库的 K8s Deployment。
 ///
-/// Uniqueness constraint: `(name, namespace)`.
-/// Relationship: `(:ServiceInstance)-[:DEPLOYED_AS]->(:K8sDeployment)`
+/// 唯一性约束：`(name, namespace)`。
+/// 关系：`(:ServiceInstance)-[:DEPLOYED_AS]->(:K8sDeployment)`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct K8sDeployment {
-    /// Deployment name (e.g. `my-app-stable`).
+    /// Deployment 名称（例如 `my-app-stable`）。
     pub name: String,
-    /// K8s namespace.
+    /// K8s 命名空间。
     pub namespace: String,
-    /// Container image (first container).
+    /// 容器镜像（第一个容器）。
     pub image: String,
-    /// Desired number of replicas.
+    /// 期望的副本数。
     pub replicas: i64,
-    /// Number of available replicas.
+    /// 可用副本数。
     pub available: i64,
-    /// Deployment strategy (e.g. `RollingUpdate`).
+    /// Deployment 策略（例如 `RollingUpdate`）。
     pub strategy: String,
-    /// Labels as a JSON-encoded string.
+    /// JSON 编码字符串形式的标签。
     pub labels: String,
-    /// Creation timestamp (RFC 3339).
+    /// 创建时间戳（RFC 3339）。
     pub created_at: String,
 }
 
 impl K8sDeployment {
-    /// Composite key for uniqueness: `(name, namespace)`.
+    /// 唯一性复合键：`(name, namespace)`。
     pub fn composite_key(&self) -> String {
         format!("{}::{}", self.namespace, self.name)
     }
@@ -58,59 +57,59 @@ impl K8sDeployment {
 // K8sService
 // ---------------------------------------------------------------------------
 
-/// A K8s Service persisted as a `:K8sService` node in the graph database.
+/// 以 `:K8sService` 节点持久化到图数据库的 K8s Service。
 ///
-/// Relationship: `(:Namespace)-[:HAS_SERVICE]->(:K8sService)`
+/// 关系：`(:Namespace)-[:HAS_SERVICE]->(:K8sService)`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct K8sService {
-    /// Service name.
+    /// 服务名。
     pub name: String,
-    /// K8s namespace.
+    /// K8s 命名空间。
     pub namespace: String,
-    /// Cluster-internal IP address.
+    /// 集群内部 IP 地址。
     pub cluster_ip: String,
-    /// Service type (`ClusterIP`, `NodePort`, `LoadBalancer`, `ExternalName`).
+    /// 服务类型（`ClusterIP`、`NodePort`、`LoadBalancer`、`ExternalName`）。
     #[serde(rename = "type")]
     pub svc_type: String,
 }
 
 impl K8sService {
-    /// Composite key for uniqueness: `(name, namespace)`.
+    /// 唯一性复合键：`(name, namespace)`。
     pub fn composite_key(&self) -> String {
         format!("{}::{}", self.namespace, self.name)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Server (from K8s Node)
+// Server（来自 K8s Node）
 // ---------------------------------------------------------------------------
 
-/// A Server node derived from a K8s worker node.
+/// 由 K8s worker 节点派生的 Server 节点。
 ///
-/// Persisted as a `:Server` node in the graph database.
-/// Relationship: `(:Server)-[:DEPLOYED_IN]->(:Environment)`
+/// 以 `:Server` 节点持久化到图数据库。
+/// 关系：`(:Server)-[:DEPLOYED_IN]->(:Environment)`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct K8sServer {
-    /// Unique server identifier (generated via SHA256 of node name).
+    /// 唯一服务器标识（通过对节点名做 SHA256 生成）。
     pub server_id: String,
-    /// K8s node name (used as server name).
+    /// K8s 节点名（用作服务器名）。
     pub name: String,
-    /// Node hostname.
+    /// 节点主机名。
     pub hostname: String,
-    /// Service type (always `"kubernetes_node"` for K8s nodes).
+    /// 服务类型（K8s 节点始终为 `"kubernetes_node"`）。
     pub service_type: String,
-    /// CPU capacity (e.g. `"8"`).
+    /// CPU 容量（例如 `"8"`）。
     pub cpu_cores: String,
-    /// Memory capacity (e.g. `"32Gi"`).
+    /// 内存容量（例如 `"32Gi"`）。
     pub memory_gb: String,
-    /// Kuboard URL for this cluster.
+    /// 该集群的 Kuboard URL。
     pub url: String,
-    /// Human-readable description.
+    /// 人类可读的描述。
     pub description: String,
 }
 
 impl K8sServer {
-    /// Generate a `server_id` from the node name.
+    /// 根据节点名生成 `server_id`。
     pub fn make_server_id(node_name: &str) -> String {
         use sha2::{Digest, Sha256};
         let hash = Sha256::digest(node_name.as_bytes());
@@ -119,16 +118,16 @@ impl K8sServer {
 }
 
 // ---------------------------------------------------------------------------
-// Low-level API response types (K8s JSON shapes)
+// 底层 API 响应类型（K8s JSON 结构）
 // ---------------------------------------------------------------------------
 
-/// Paginated list response from K8s API.
+/// K8s API 的分页列表响应。
 #[derive(Debug, Deserialize)]
 pub(crate) struct K8sItemList<T> {
     pub items: Vec<T>,
 }
 
-/// Common K8s ObjectMeta (subset).
+/// 通用 K8s ObjectMeta（子集）。
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct K8sMeta {
     pub name: String,
@@ -150,7 +149,7 @@ pub(crate) struct OwnerRef {
     pub name: String,
 }
 
-// ── Pod (for CLI display, not persisted in the graph database) ───────────
+// ── Pod（用于 CLI 展示，不持久化到图数据库） ───────────
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PodItem {
@@ -458,7 +457,7 @@ mod tests {
     fn k8s_server_make_id() {
         let id = K8sServer::make_server_id("worker-1");
         assert!(id.starts_with("server::k8s::"));
-        assert_eq!(id.len(), "server::k8s::".len() + 20); // 10 bytes hex
+        assert_eq!(id.len(), "server::k8s::".len() + 20); // 10 字节 hex
     }
 
     #[test]

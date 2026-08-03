@@ -1,16 +1,15 @@
-//! ResourceSyncSource — K8s resource sync for V2 schema.
+//! ResourceSyncSource——V2 模式的 K8s 资源同步。
 //!
-//! Fetches deployments, services, and nodes from K8s via the Kuboard proxy
-//! and writes them as `K8sDeployment`, `K8sService`, and `Server` nodes in
-//! Memgraph.
+//! 通过 Kuboard 代理从 K8s 获取 Deployment、Service 和节点，
+//! 并以 `K8sDeployment`、`K8sService`、`Server` 节点写入 Memgraph。
 //!
-//! ## What is synced
+//! ## 同步内容
 //!
-//! | K8s Object    | Memgraph Label | Sync Condition        |
+//! | K8s 对象    | Memgraph 标签 | 同步条件        |
 //! |---------------|-----------------|-----------------------|
-//! | Deployment    | K8sDeployment   | always                |
-//! | Service       | K8sService      | always                |
-//! | Node (Worker) | Server          | full sync only        |
+//! | Deployment    | K8sDeployment   | 始终                |
+//! | Service       | K8sService      | 始终                |
+//! | Node (Worker) | Server          | 仅全量同步        |
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -23,25 +22,25 @@ use crate::domain::traits::GraphRepository;
 use crate::shared::coordinator::WriteCoordinator;
 
 // ============================================================================
-// K8sSyncSummary — per-resource-type report
+// K8sSyncSummary——按资源类型汇总报告
 // ============================================================================
 
-/// Summary of a single K8s resource sync operation.
+/// 单次 K8s 资源同步操作的汇总。
 #[derive(Debug, Clone)]
 pub struct K8sSyncSummary {
-    /// Resource type name (e.g. "k8s/deployments").
+    /// 资源类型名（例如 "k8s/deployments"）。
     pub resource: String,
-    /// Number of items fetched from the K8s API.
+    /// 从 K8s API 获取的条目数。
     pub items_fetched: usize,
-    /// Items written to Memgraph (created or updated via MERGE).
+    /// 写入 Memgraph 的条目数（通过 MERGE 创建或更新）。
     pub items_written: usize,
-    /// Items skipped due to write coordinator conflict.
+    /// 因写入协调器冲突而跳过的条目数。
     pub items_skipped: usize,
-    /// Items that failed to write.
+    /// 写入失败的条目数。
     pub items_failed: usize,
-    /// Error messages collected during sync.
+    /// 同步过程中收集的错误消息。
     pub errors: Vec<String>,
-    /// Wall-clock elapsed time in milliseconds.
+    /// 墙钟耗时（毫秒）。
     pub elapsed_ms: u64,
 }
 
@@ -65,25 +64,25 @@ impl K8sSyncSummary {
         }
     }
 
-    /// Returns `true` if no write errors occurred.
+    /// 若未发生写入错误则返回 `true`。
     pub fn is_success(&self) -> bool {
         self.items_failed == 0 && self.errors.is_empty()
     }
 }
 
 // ============================================================================
-// K8sResourceSync — unified entry point
+// K8sResourceSync——统一入口
 // ============================================================================
 
-/// Orchestrates the full K8s resource sync: deployments, services, nodes.
+/// 编排完整的 K8s 资源同步：deployments、services、nodes。
 pub struct K8sResourceSync {
     config: K8sSyncConfig,
-    /// Optional limit for testing/dry-runs.
+    /// 用于测试/演练的可选限制。
     limit: Option<usize>,
 }
 
 impl K8sResourceSync {
-    /// Create a new sync instance.
+    /// 创建新的同步实例。
     pub fn new(config: K8sSyncConfig) -> Self {
         Self {
             config,
@@ -91,26 +90,26 @@ impl K8sResourceSync {
         }
     }
 
-    /// Set an item limit per resource type (useful for testing/dev).
+    /// 设置每种资源类型的条目上限（便于测试/开发）。
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
     }
 
-    /// Run the complete sync: login, fetch, write.
+    /// 运行完整同步：登录、获取、写入。
     ///
-    /// Returns a vector of per-resource-type summaries.
+    /// 返回按资源类型汇总的向量。
     pub async fn run(&self, graph: &dyn GraphRepository) -> Result<Vec<K8sSyncSummary>, DtError> {
-        tracing::info!("[k8s] Connecting to Kuboard ({})...", self.config.server);
+        tracing::info!("[k8s] 正在连接 Kuboard ({})...", self.config.server);
         let client = KuboardClient::connect(self.config.clone()).await?;
-        tracing::info!("[k8s] Authenticated successfully");
+        tracing::info!("[k8s] 认证成功");
 
         let coordinator = WriteCoordinator::new();
         let mut summaries = Vec::new();
 
         let namespaces = self.config.effective_namespaces();
 
-        // ── Ensure namespace nodes exist ──
+        // ── 确保命名空间节点存在 ──
         for ns in &namespaces {
             ensure_namespace(graph, ns).await?;
         }
@@ -147,7 +146,7 @@ impl K8sResourceSync {
             summaries.push(summary);
         }
 
-        // ── Nodes → Servers (from pods via nodeName + hostIP) ──
+        // ── Nodes → Servers（通过 Pod 的 nodeName + hostIP 获取） ──
         if self.limit.is_none() {
             let start = Instant::now();
             let mut node_map: std::collections::HashMap<String, (String, String)> =
@@ -179,7 +178,7 @@ impl K8sResourceSync {
             summaries.push(summary);
         }
 
-        // ── Cross-linking ──
+        // ── 交叉关联 ──
         run_cross_linking(graph, &namespaces).await?;
 
         Ok(summaries)
@@ -187,7 +186,7 @@ impl K8sResourceSync {
 }
 
 // ============================================================================
-// Deployment sync
+// Deployment 同步
 // ============================================================================
 
 async fn sync_deployments(
@@ -238,7 +237,7 @@ async fn sync_deployments(
             .unwrap_or("")
             .to_string();
 
-        // Write K8sDeployment node
+        // 写入 K8sDeployment 节点
         let params: HashMap<String, serde_json::Value> = [
             ("name".to_string(), serde_json::Value::String(name.clone())),
             ("ns".to_string(), serde_json::Value::String(ns.to_string())),
@@ -273,12 +272,12 @@ async fn sync_deployments(
             }
             Err(e) => {
                 failed += 1;
-                errors.push(format!("deployment {}/{}: {e}", ns, name));
+                errors.push(format!("Deployment {}/{}: {e}", ns, name));
                 continue;
             }
         };
 
-        // Link Deployment → Namespace
+        // 关联 Deployment → Namespace
         let link_params: HashMap<String, serde_json::Value> = [
             ("ns".to_string(), serde_json::Value::String(ns.to_string())),
             ("name".to_string(), serde_json::Value::String(name.clone())),
@@ -306,7 +305,7 @@ async fn sync_deployments(
 }
 
 // ============================================================================
-// Service sync
+// Service 同步
 // ============================================================================
 
 async fn sync_services(
@@ -355,12 +354,12 @@ async fn sync_services(
             }
             Err(e) => {
                 failed += 1;
-                errors.push(format!("service {}/{}: {e}", ns, name));
+                errors.push(format!("Service {}/{}: {e}", ns, name));
                 continue;
             }
         };
 
-        // Link Service → Namespace
+        // 关联 Service → Namespace
         let link_params: HashMap<String, serde_json::Value> = [
             ("ns".to_string(), serde_json::Value::String(ns.to_string())),
             ("name".to_string(), serde_json::Value::String(name.clone())),
@@ -388,7 +387,7 @@ async fn sync_services(
 }
 
 // ============================================================================
-// Server sync (from K8s Nodes)
+// Server 同步（来自 K8s 节点）
 // ============================================================================
 
 async fn sync_servers(
@@ -448,7 +447,7 @@ async fn sync_servers(
                 written += 1;
             }
             Err(e) => {
-                errors.push(format!("server {}: {e}", srv.name));
+                errors.push(format!("Server {}: {e}", srv.name));
             }
         };
     }
@@ -464,7 +463,7 @@ async fn sync_servers(
 }
 
 // ---------------------------------------------------------------------------
-// Namespace helper
+// Namespace 辅助函数
 // ---------------------------------------------------------------------------
 
 async fn ensure_namespace(graph: &dyn GraphRepository, ns: &str) -> Result<(), DtError> {
@@ -482,7 +481,7 @@ async fn ensure_namespace(graph: &dyn GraphRepository, ns: &str) -> Result<(), D
 }
 
 // ---------------------------------------------------------------------------
-// Cross-linking
+// 交叉关联
 // ---------------------------------------------------------------------------
 
 async fn run_cross_linking(
@@ -490,7 +489,7 @@ async fn run_cross_linking(
     namespaces: &[String],
 ) -> Result<(), DtError> {
     for ns in namespaces {
-        // ── K8sService → NacosService (name match) ──
+        // ── K8sService → NacosService（名称匹配） ──
         let _ = graph
             .write_query(
                 r#"
@@ -510,7 +509,7 @@ async fn run_cross_linking(
             )
             .await;
 
-        // ── K8sDeployment → NacosConfig (name prefix match) ──
+        // ── K8sDeployment → NacosConfig（名称前缀匹配） ──
         let _ = graph
             .write_query(
                 r#"
@@ -530,7 +529,7 @@ async fn run_cross_linking(
             )
             .await;
 
-        // ── K8sDeployment → NacosService (name match) ──
+        // ── K8sDeployment → NacosService（名称匹配） ──
         let _ = graph
             .write_query(
                 r#"
@@ -550,7 +549,7 @@ async fn run_cross_linking(
             )
             .await;
 
-        // ── K8s Namespace → NacosNamespace (env match) ──
+        // ── K8s Namespace → NacosNamespace（环境匹配） ──
         let env_name = if ns == "newoffen" { "prod" } else { "test" };
         let _ = graph
             .write_query(
@@ -575,7 +574,7 @@ async fn run_cross_linking(
             )
             .await;
 
-        // ── Server → Namespace(K8s) (NODE_IN) ──
+        // ── Server → Namespace(K8s)（NODE_IN） ──
         let _ = graph
             .write_query(
                 r#"
@@ -597,7 +596,7 @@ async fn run_cross_linking(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

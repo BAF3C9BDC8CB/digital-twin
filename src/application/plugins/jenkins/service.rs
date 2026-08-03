@@ -1,6 +1,6 @@
-//! Jenkins Plugin — native REST API client (no external binary).
+//! Jenkins 插件——原生 REST API 客户端（不依赖外部二进制）。
 //!
-//! Uses `JenkinsApiClient` for all Jenkins operations via direct HTTP.
+//! 所有 Jenkins 操作均通过直接 HTTP 调用 `JenkinsApiClient` 完成。
 
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 use async_trait::async_trait;
@@ -9,45 +9,45 @@ use crate::application::plugins::jenkins::client::JenkinsApiClient;
 use crate::application::plugins::Plugin;
 use crate::domain::error::DtError;
 
-/// Jenkins CI/CD plugin backed by native HTTP client.
+/// 基于原生 HTTP 客户端的 Jenkins CI/CD 插件。
 #[derive(Default)]
 pub struct JenkinsPluginService {
     client: JenkinsApiClient,
 }
 
 impl JenkinsPluginService {
-    /// Create a new Jenkins plugin service.
+    /// 创建新的 Jenkins 插件服务。
     pub fn new(client: JenkinsApiClient) -> Self {
         Self { client }
     }
 
-    // ── CLI-facing methods ──────────────────────────────────────────────────
+    // ── 面向 CLI 的方法 ──────────────────────────────────────────────────
 
-    /// List all Jenkins jobs.
+    /// 列出所有 Jenkins 作业。
     pub async fn list_jobs(&self) -> Result<String, DtError> {
         self.client.list_jobs().await
     }
 
-    /// Show build parameters for a job.
+    /// 显示某个作业的构建参数。
     pub async fn get_params(&self, job: &str) -> Result<String, DtError> {
         self.client.get_params(job).await
     }
 
-    /// Show build history for a job.
+    /// 显示某个作业的构建历史。
     pub async fn get_history(&self, job: &str, limit: Option<u32>) -> Result<String, DtError> {
         self.client.get_history(job, limit).await
     }
 
-    /// Get console output for a specific build of a job.
+    /// 获取某个作业指定构建的控制台输出。
     pub async fn get_build_log(&self, job: &str, build: Option<&str>) -> Result<String, DtError> {
         self.client.get_build_log(job, build).await
     }
 
-    /// Trigger a build for a job.
+    /// 触发某个作业的构建。
     ///
-    /// Parameters:
-    /// - `job`      — Jenkins job name
-    /// - `params`   — build parameters as `&[(key, value)]`
+    /// 参数：
+    /// - `job`      — Jenkins 作业名
+    /// - `params`   — 构建参数，形如 `&[(key, value)]`
     pub async fn trigger_build(
         &self,
         job: &str,
@@ -75,13 +75,13 @@ impl Plugin for JenkinsPluginService {
         &self,
         _server: &mut tonic::transport::server::Server,
     ) -> Result<(), PluginError> {
-        // TODO: wire generated JenkinsPluginServer when proto is compiled
+        // TODO: proto 编译完成后装配生成的 JenkinsPluginServer
         Ok(())
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
         ctx.log
-            .info("[jenkins] plugin initialized (native HTTP client)");
+            .info("[jenkins] 插件已初始化（原生 HTTP 客户端）");
         Ok(())
     }
 

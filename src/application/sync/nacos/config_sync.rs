@@ -1,10 +1,10 @@
-//! Nacos configuration synchronisation.
+//! Nacos 配置同步。
 //!
-//! Implements [`SyncSource`] for Nacos config data, producing:
-//! - [`NacosConfig`] nodes with `config_id = dt://nacos/{ns}/{data_id}`
-//! - [`ConfigKey`] nodes extracted from config content
-//! - [`Database`] nodes for detected JDBC/Redis/Kafka connection strings
-//! - Relationships: `BELONGS_TO`, `CONTAINS`
+//! 为 Nacos 配置数据实现 [`SyncSource`]，生成：
+//! - [`NacosConfig`] 节点，`config_id = dt://nacos/{ns}/{data_id}`
+//! - 从配置内容提取的 [`ConfigKey`] 节点
+//! - 检测到 JDBC/Redis/Kafka 连接字符串的 [`Database`] 节点
+//! - 关系：`BELONGS_TO`、`CONTAINS`
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
@@ -23,7 +23,7 @@ use crate::shared::chunker::{
 };
 
 // ---------------------------------------------------------------------------
-// Convenience: build a Cypher params HashMap
+// 便捷函数：构建 Cypher 参数 HashMap
 // ---------------------------------------------------------------------------
 
 fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
@@ -34,34 +34,34 @@ fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Va
 }
 
 // ---------------------------------------------------------------------------
-// Regex patterns for connection-string extraction
+// 连接字符串提取的正则模式
 // ---------------------------------------------------------------------------
 
-/// JDBC URL: `jdbc:mysql://host:port/db?...` or `jdbc:postgresql://...`
+/// JDBC URL：`jdbc:mysql://host:port/db?...` 或 `jdbc:postgresql://...`
 static JDBC_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)jdbc:(mysql|postgresql|mariadb|sqlserver|oracle|h2|dm)://([^/\s?]+)(/\S+)?")
-        .expect("JDBC regex")
+        .expect("JDBC 正则")
 });
 
-/// Redis connection: `redis://host:port/db`, `rediss://...`, or `host:port` in redis context
+/// Redis 连接：`redis://host:port/db`、`rediss://...`，或 redis 上下文中的 `host:port`
 static REDIS_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)(?:redis|rediss)://([^/\s?]+)").expect("Redis regex"));
+    LazyLock::new(|| Regex::new(r"(?i)(?:redis|rediss)://([^/\s?]+)").expect("Redis 正则"));
 
-/// Redis host:port pattern (e.g. `redis.host=127.0.0.1`, `redis.port=6379`)
+/// Redis host:port 模式（例如 `redis.host=127.0.0.1`、`redis.port=6379`）
 static REDIS_HOST_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:spring\.)?redis\.host\s*[:=]\s*(\S+)").expect("Redis host regex")
+    Regex::new(r"(?i)(?:spring\.)?redis\.host\s*[:=]\s*(\S+)").expect("Redis host 正则")
 });
 
-/// Kafka bootstrap servers: `kafka.bootstrap-servers=host:port,host:port`
+/// Kafka bootstrap servers：`kafka.bootstrap-servers=host:port,host:port`
 static KAFKA_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:spring\.)?kafka\.bootstrap-servers\s*[:=]\s*(\S+)").expect("Kafka regex")
+    Regex::new(r"(?i)(?:spring\.)?kafka\.bootstrap-servers\s*[:=]\s*(\S+)").expect("Kafka 正则")
 });
 
 // ---------------------------------------------------------------------------
-// Config key extraction
+// 配置键提取
 // ---------------------------------------------------------------------------
 
-/// Extract `ConfigKey` entries from configuration content.
+/// 从配置内容中提取 `ConfigKey` 条目。
 fn extract_config_keys(namespace: &str, content: &str) -> Vec<ConfigKeyEntry> {
     let is_yaml = content.lines().any(|l| {
         let trimmed = l.trim();
@@ -152,7 +152,7 @@ fn classify_key(key: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Database extraction from content
+// 从内容中提取数据库
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -251,7 +251,7 @@ fn default_port_for(db_type: &str) -> u16 {
 }
 
 // ---------------------------------------------------------------------------
-// Config type detection
+// 配置类型检测
 // ---------------------------------------------------------------------------
 
 fn detect_config_type(data_id: &str) -> String {
@@ -270,24 +270,23 @@ fn detect_config_type(data_id: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// NacosConfigEntry — lightweight config item for vectorisation
+// NacosConfigEntry——用于向量化的轻量配置条目
 // ---------------------------------------------------------------------------
 
-/// A lightweight representation of a single Nacos config key-value pair
-/// for vectorisation into Qdrant.
+/// 单个 Nacos 配置键值对的轻量表示，用于向量化到 Qdrant。
 #[derive(Debug, Clone)]
 pub struct NacosConfigEntry {
-    /// Unique identifier (e.g. "dt://nacos/{ns}/{data_id}#{key}").
+    /// 唯一标识（例如 "dt://nacos/{ns}/{data_id}#{key}"）。
     pub entity_id: String,
-    /// Configuration key name.
+    /// 配置键名。
     pub key: String,
-    /// Configuration value.
+    /// 配置值。
     pub value: String,
-    /// Nacos namespace name.
+    /// Nacos 命名空间名。
     pub namespace: String,
-    /// The data_id this key belongs to.
+    /// 该键所属的 data_id。
     pub data_id: String,
-    /// Config group name.
+    /// 配置组名。
     pub group: String,
 }
 
@@ -295,14 +294,13 @@ pub struct NacosConfigEntry {
 // ConfigVectorizer
 // ---------------------------------------------------------------------------
 
-/// Vectorises Nacos config keys and values into Qdrant for semantic search.
+/// 将 Nacos 配置键值向量化到 Qdrant 以用于语义搜索。
 ///
-/// After nacos-sync writes config keys/values to Memgraph, this vectoriser
-/// embeds the key name + value text using the configured embedding service,
-/// then upserts the resulting vectors into a Qdrant collection named
-/// `{project}_semantic`.
+/// nacos-sync 将配置键值写入 Memgraph 后，该向量器使用配置的向量化
+/// 服务对键名 + 值文本进行向量化，然后将结果向量 upsert 到名为
+/// `{project}_semantic` 的 Qdrant 集合。
 ///
-/// # Usage
+/// # 用法
 ///
 /// ```ignore
 /// let vectorizer = ConfigVectorizer::new(embed_service, vector_repo);
@@ -314,20 +312,20 @@ pub struct ConfigVectorizer {
 }
 
 impl ConfigVectorizer {
-    /// Create a new ConfigVectorizer.
+    /// 创建新的 ConfigVectorizer。
     pub fn new(embed: Arc<dyn EmbedService>, vector: Arc<dyn VectorRepository>) -> Self {
         Self { embed, vector }
     }
 
-    /// Embed and upsert config entries into the Qdrant semantic collection.
+    /// 将配置条目向量化并 upsert 到 Qdrant 语义集合。
     ///
-    /// # Process
-    /// 1. Collect all search texts from key + value
+    /// # 流程
+    /// 1. 从键 + 值收集所有搜索文本
     /// 2. `embed_batch(texts)` → vectors
-    /// 3. Build Qdrant points with full payload
-    /// 4. Upsert into `{project}_semantic` collection
+    /// 3. 构建带完整 payload 的 Qdrant points
+    /// 4. upsert 到 `{project}_semantic` 集合
     ///
-    /// Returns the number of entries successfully vectorised.
+    /// 返回成功向量化的条目数。
     pub async fn vectorize_configs(
         &self,
         entries: &[NacosConfigEntry],
@@ -340,16 +338,16 @@ impl ConfigVectorizer {
         let collection = crate::shared::collections::DOC_CHUNKS.to_string();
         self.vector.ensure_collection(&collection, 1024).await?;
 
-        // Build search texts: concatenate key + value for richer semantics
+        // 构建搜索文本：拼接键 + 值以获得更丰富的语义
         let texts: Vec<String> = entries
             .iter()
             .map(|e| format!("{}: {}", e.key, e.value))
             .collect();
 
-        // Generate embeddings
+        // 生成向量
         let vectors = self.embed.embed_batch(&texts).await?;
 
-        // Build Qdrant points
+        // 构建 Qdrant points
         let points: Vec<serde_json::Value> = entries
             .iter()
             .zip(vectors.iter())
@@ -358,16 +356,16 @@ impl ConfigVectorizer {
                     "id": entry.entity_id,
                     "vector": vec,
                     "payload": {
-                        // ---- identity ----
+                        // ---- 标识 ----
                         "entity_id": entry.entity_id,
-                        // ---- key-value ----
+                        // ---- 键值 ----
                         "key": entry.key,
                         "value": entry.value,
-                        // ---- origin ----
+                        // ---- 来源 ----
                         "namespace": entry.namespace,
                         "data_id": entry.data_id,
                         "group": entry.group,
-                        // ---- metadata ----
+                        // ---- 元数据 ----
                         "source_type": "nacos_config",
                         "project": project,
                     }
@@ -379,11 +377,10 @@ impl ConfigVectorizer {
         Ok(entries.len())
     }
 
-    /// Vectorise config keys extracted during sync — convenience wrapper
-    /// over [`vectorize_configs`].
+    /// 向量化同步期间提取的配置键——[`vectorize_configs`] 的便捷包装。
     ///
-    /// Builds `NacosConfigEntry` from the raw fields, then calls
-    /// `vectorize_configs`.
+    /// 从原始字段构建 `NacosConfigEntry`，然后调用
+    /// `vectorize_configs`。
     #[allow(dead_code)]
     pub(crate) async fn vectorize_config_keys(
         &self,
@@ -415,21 +412,21 @@ impl ConfigVectorizer {
 }
 
 // ---------------------------------------------------------------------------
-// ConfigChunkVectorizer — adaptive chunk → vector embedding
+// ConfigChunkVectorizer——自适应分块 → 向量化
 // ---------------------------------------------------------------------------
 
-/// A chunk to be vectorised — section name and its key-value pairs.
+/// 待向量化的分块——区块名及其键值对。
 #[derive(Debug, Clone)]
 pub struct ChunkToVectorize {
     pub section_name: String,
     pub key_values: Vec<(String, String)>,
 }
 
-/// Vectorises config chunks into the dedicated `config_chunks` Qdrant
-/// collection (dim=1024, BGE-M3).
+/// 将配置分块向量化到专门的 `config_chunks` Qdrant 集合
+///（维度 1024，BGE-M3）。
 ///
-/// Each chunk contains all key-value pairs from one adaptive section,
-/// formatted as `key=value\n...` text for embedding.
+/// 每个分块包含一个自适应区块的全部键值对，
+/// 以 `key=value\n...` 文本形式供向量化使用。
 pub struct ConfigChunkVectorizer {
     embed: Arc<dyn EmbedService>,
     vector: Arc<dyn VectorRepository>,
@@ -443,7 +440,7 @@ impl ConfigChunkVectorizer {
         Self { embed, vector }
     }
 
-    /// Vectorise one or more config chunks for a given config file.
+    /// 为给定配置文件向量化一个或多个配置分块。
     pub async fn vectorize_chunks(
         &self,
         chunks: &[ChunkToVectorize],
@@ -461,7 +458,7 @@ impl ConfigChunkVectorizer {
             .ensure_collection(Self::COLLECTION, Self::VECTOR_DIM)
             .await?;
 
-        // Build full text for each chunk: section_name + all key=value lines
+        // 为每个分块构建完整文本：section_name + 全部 key=value 行
         let texts: Vec<String> = chunks
             .iter()
             .map(|c| {
@@ -488,18 +485,18 @@ impl ConfigChunkVectorizer {
                     "id": id,
                     "vector": vec,
                     "payload": {
-                        // ---- section ----
+                        // ---- 区块 ----
                         "section_name": chunk.section_name,
                         "config_type": config_type,
-                        // ---- origin ----
+                        // ---- 来源 ----
                         "namespace": namespace,
                         "data_id": data_id,
                         "group": group,
                         "environment": environment.unwrap_or(""),
-                        // ---- content ----
+                        // ---- 内容 ----
                         "text": build_chunk_text(chunk),
                         "key_count": chunk.key_values.len(),
-                        // ---- metadata ----
+                        // ---- 元数据 ----
                         "source_type": "config_chunk",
                     }
                 })
@@ -510,7 +507,7 @@ impl ConfigChunkVectorizer {
         Ok(chunks.len())
     }
 
-    /// Delete stale chunk vectors for a config file before re-upserting.
+    /// 在重新 upsert 前删除配置文件对应的过期分块向量。
     pub async fn delete_by_data_id(&self, namespace: &str, data_id: &str) -> Result<(), DtError> {
         self.vector
             .delete_by_filter(
@@ -526,7 +523,7 @@ impl ConfigChunkVectorizer {
     }
 }
 
-/// Build the chunk text used for embedding.
+/// 构建用于向量化的分块文本。
 pub fn build_chunk_text(chunk: &ChunkToVectorize) -> String {
     let mut text = chunk.section_name.clone();
     for (k, v) in &chunk.key_values {
@@ -540,26 +537,26 @@ pub fn build_chunk_text(chunk: &ChunkToVectorize) -> String {
 // ConfigSyncSource
 // ---------------------------------------------------------------------------
 
-/// Synchronises Nacos configuration data into the knowledge graph.
+/// 将 Nacos 配置数据同步到知识图谱。
 ///
-/// # Produced graph nodes
+/// # 生成的图节点
 ///
 /// - `NacosConfig` — `config_id = dt://nacos/{ns}/{data_id}`
-/// - `NacosGroup` — configuration group
-/// - `ConfigKey` — individual configuration key-value pairs
-/// - `Database` — auto-detected from JDBC/Redis/Kafka connection strings
+/// - `NacosGroup` — 配置组
+/// - `ConfigKey` — 单个配置键值对
+/// - `Database` — 从 JDBC/Redis/Kafka 连接字符串自动检测
 ///
-/// # Change detection
+/// # 变更检测
 ///
-/// Content is hashed with SHA256. A node is only updated when the hash differs
-/// from the stored value, avoiding unnecessary writes.
+/// 内容使用 SHA256 哈希。仅当哈希与存储值不同时才更新节点，
+/// 避免不必要的写入。
 pub struct ConfigSyncSource {
     client: NacosClient,
     env_name: String,
 }
 
 impl ConfigSyncSource {
-    /// Create a new config sync source.
+    /// 创建新的配置同步源。
     pub fn new(client: NacosClient, env_name: String) -> Self {
         Self { client, env_name }
     }
@@ -575,7 +572,7 @@ impl SyncSource for ConfigSyncSource {
     async fn sync(&self, graph: &dyn GraphRepository) -> Result<SyncReport, DtError> {
         let ts = Utc::now().to_rfc3339();
 
-        // 1. Fetch namespaces
+        // 1. 获取命名空间
         let ns_resp = self.client.list_namespaces().await?;
         let mut namespaces = 0usize;
         let mut configs_total = 0usize;
@@ -589,10 +586,10 @@ impl SyncSource for ConfigSyncSource {
                 continue;
             }
 
-            tracing::debug!("[nacos/config] syncing namespace: {ns_name}");
+            tracing::debug!("[nacos/config] 正在同步命名空间: {ns_name}");
             namespaces += 1;
 
-            // 2. MERGE NacosNamespace
+            // 2. 合并 NacosNamespace
             let ns_node_id = format!("dt://nacos/ns/{}", ns_id);
             let ns_cypher = r#"
 MERGE (n:NacosNamespace {namespace_id: $ns_node_id})
@@ -637,7 +634,7 @@ SET n.namespace = $ns_name,
                     let config_type = detect_config_type(&cfg_item.data_id);
                     let config_id = format!("dt://nacos/{}/{}", ns_id, cfg_item.data_id);
 
-                    // MERGE NacosGroup
+                    // 合并 NacosGroup
                     graph
                         .write_query(
                             "MERGE (g:NacosGroup {name: $group}) SET g.namespace = $ns_name, g.updated_at = $ts",
@@ -650,7 +647,7 @@ SET n.namespace = $ns_name,
                         .await?;
                     links += 1;
 
-                    // MERGE NacosConfig (only update if hash changed)
+                    // 合并 NacosConfig（仅当哈希变化时更新）
                     graph
                         .write_query(
                             r#"MERGE (c:NacosConfig {config_id: $config_id})
@@ -679,7 +676,7 @@ ON MATCH SET
                         )
                         .await?;
 
-                    // Link NacosConfig → NacosGroup (BELONGS_TO)
+                    // 关联 NacosConfig → NacosGroup（BELONGS_TO）
                     graph
                         .write_query(
                             "MATCH (g:NacosGroup {name: $group}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (c)-[:BELONGS_TO]->(g)",
@@ -691,7 +688,7 @@ ON MATCH SET
                         .await?;
                     links += 1;
 
-                    // Link NacosConfig → NacosNamespace (IN_NAMESPACE)
+                    // 关联 NacosConfig → NacosNamespace（IN_NAMESPACE）
                     graph
                         .write_query(
                             "MATCH (ns:NacosNamespace {namespace_id: $ns_node_id}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (c)-[:IN_NAMESPACE]->(ns)",
@@ -703,7 +700,7 @@ ON MATCH SET
                         .await?;
                     links += 1;
 
-                    // Extract and upsert ConfigKeys
+                    // 提取并 upsert ConfigKeys
                     if !content.is_empty() {
                         let keys = extract_config_keys(ns_name, &content);
                         for key_entry in &keys {
@@ -725,7 +722,7 @@ ON MATCH SET
                                 )
                                 .await?;
 
-                            // Link ConfigKey → NacosConfig (CONTAINS)
+                            // 关联 ConfigKey → NacosConfig（CONTAINS）
                             graph
                                 .write_query(
                                     "MATCH (k:ConfigKey {name: $name, namespace: $ns}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (k)-[:CONTAINS]->(c)",
@@ -751,8 +748,8 @@ ON MATCH SET
                             let section_id =
                                 format!("{}#{}", config_id, section_name.replace('.', "_"));
 
-                            // Build a concise summary from leaf key=value entries only
-                            // Skips structural lines (keys with no value on the same line)
+                            // 仅从叶子 key=value 条目构建简洁摘要
+                            // 跳过结构性行（同一行没有值的键）
                             let summary = {
                                 let text: Vec<&str> =
                                     sec_chunks.iter().map(|c| c.text.as_str()).collect();
@@ -761,14 +758,14 @@ ON MATCH SET
                                     .lines()
                                     .filter_map(|l| {
                                         let trimmed = l.trim();
-                                        // Skip structural lines: empty, comment, or key: (no value)
+                                        // 跳过结构性行：空行、注释行或 key:（无值）
                                         if trimmed.is_empty()
                                             || trimmed.starts_with('#')
                                             || trimmed.ends_with(':')
                                         {
                                             return None;
                                         }
-                                        // Normalise "key: value" → "key=value"
+                                        // 规范化 "key: value" → "key=value"
                                         if let Some(pos) = trimmed.find(':') {
                                             let k = trimmed[..pos].trim();
                                             let v = trimmed[pos + 1..].trim();
@@ -776,7 +773,7 @@ ON MATCH SET
                                                 return Some(format!("{}={}", k, v));
                                             }
                                         }
-                                        // Already "key=value" format
+                                        // 已是 "key=value" 格式
                                         if let Some(pos) = trimmed.find('=') {
                                             let k = trimmed[..pos].trim();
                                             let v = trimmed[pos + 1..].trim();
@@ -786,16 +783,16 @@ ON MATCH SET
                                         }
                                         None
                                     })
-                                    .take(10) // limit to 10 pairs to keep summary concise
+                                    .take(10) // 限制为 10 对以保持摘要简洁
                                     .collect();
                                 if pairs.is_empty() {
-                                    format!("{}: (structural keys only)", section_name)
+                                    format!("{}: （仅结构性键）", section_name)
                                 } else {
                                     format!("{}: {}", section_name, pairs.join(", "))
                                 }
                             };
 
-                            // MERGE ConfigSection node
+                            // 合并 ConfigSection 节点
                             graph
                                 .write_query(
                                     r#"MERGE (s:ConfigSection {section_id: $section_id})
@@ -814,7 +811,7 @@ ON MATCH SET s.summary = $summary, s.updated_at = $ts"#,
                                 )
                                 .await?;
 
-                            // Link NacosConfig → ConfigSection
+                            // 关联 NacosConfig → ConfigSection
                             graph
                                 .write_query(
                                     "MATCH (c:NacosConfig {config_id: $config_id})
@@ -830,7 +827,7 @@ ON MATCH SET s.summary = $summary, s.updated_at = $ts"#,
                         }
                     }
 
-                    // Extract and upsert Database nodes from connection strings
+                    // 从连接字符串提取并 upsert Database 节点
                     if !content.is_empty() {
                         let databases = extract_databases(ns_name, &content);
                         for db in &databases {
@@ -853,7 +850,7 @@ ON MATCH SET d.updated_at = $ts"#,
                                 .await?;
                             links += 1;
 
-                            // Link Database → NacosConfig (DETECTED_IN)
+                            // 关联 Database → NacosConfig（DETECTED_IN）
                             graph
                                 .write_query(
                                     "MATCH (d:Database {database_id: $db_id}) MATCH (c:NacosConfig {config_id: $config_id}) MERGE (d)-[:DETECTED_IN]->(c)",
@@ -897,7 +894,7 @@ ON MATCH SET d.updated_at = $ts"#,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1053,12 +1050,12 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // ConfigVectorizer tests
+    // ConfigVectorizer 测试
     // -------------------------------------------------------------------
 
     use crate::domain::types::CollectionInfo;
 
-    /// Mock EmbedService — returns zero vectors of correct dimension.
+    /// 模拟向量化服务——返回正确维度的零向量。
     struct MockEmbed;
     #[async_trait::async_trait]
     impl EmbedService for MockEmbed {
@@ -1070,7 +1067,7 @@ mod tests {
         }
     }
 
-    /// Mock VectorRepository — captures upsert calls.
+    /// 模拟向量仓库——捕获 upsert 调用。
     use std::sync::Mutex;
     struct MockVector {
         upserted: Mutex<Vec<serde_json::Value>>,
@@ -1166,7 +1163,7 @@ mod tests {
         let upserted = vector.upserted.lock().unwrap();
         assert_eq!(upserted.len(), 2);
 
-        // Verify payload shape
+        // 验证 payload 结构
         let p0 = &upserted[0];
         assert_eq!(p0["id"], "dt://nacos/ns1/app.yaml/server.port");
         assert_eq!(p0["payload"]["key"], "server.port");
@@ -1196,7 +1193,7 @@ mod tests {
 
         let upserted = vector.upserted.lock().unwrap();
         assert_eq!(upserted.len(), 1);
-        // Entity ID uses underscores for replacements
+        // 实体 ID 用下划线替换
         assert_eq!(
             upserted[0]["id"].as_str().unwrap(),
             "dt://nacos/prod/app.yaml/server_port"
@@ -1219,7 +1216,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // ConfigChunkVectorizer tests
+    // ConfigChunkVectorizer 测试
     // -------------------------------------------------------------------
 
     #[test]
@@ -1299,11 +1296,11 @@ mod tests {
         let embed = Arc::new(MockEmbed);
         let vector = Arc::new(MockVector::new());
         let cv = ConfigChunkVectorizer::new(embed, vector);
-        // Just verify it doesn't panic — mock delete_by_filter returns Ok
+        // 仅验证不会 panic——模拟 delete_by_filter 返回 Ok
         cv.delete_by_data_id("test", "app.yaml").await.unwrap();
     }
 
-    /// Integration: adaptive chunk → vectorize for a YAML snippet.
+    /// 集成：自适应分块 → 对 YAML 片段向量化。
     #[test]
     fn adaptive_chunk_to_chunk_vectorize_integration() {
         let yaml = "\
@@ -1317,14 +1314,14 @@ spring:\n  datasource:\n    url: jdbc:mysql://localhost/db\n    username: admin\
         );
         assert!(!sections.is_empty(), "expected at least 1 section");
 
-        // Verify druid-style grouping works on chunk text
+        // 验证 druid 风格分组在分块文本上有效
         for (name, pairs) in &sections {
             assert!(!name.is_empty());
             assert!(!pairs.is_empty());
         }
     }
 
-    /// Integration: properties adaptive chunk → vectorize
+    /// 集成：properties 自适应分块 → 向量化
     #[test]
     fn adaptive_props_chunk_to_vectorize_integration() {
         let props = "\

@@ -1,9 +1,9 @@
-//! Nacos service registry synchronisation.
+//! Nacos 服务注册同步。
 //!
-//! Implements [`SyncSource`] for Nacos service discovery data, producing:
-//! - [`NacosService`] nodes with `service_id = dt://nacos/{ns}/{service_name}`
-//! - [`Service`] nodes linked via `REGISTERED_IN`
-//! - Relationships: `REGISTERED_IN`
+//! 为 Nacos 服务发现数据实现 [`SyncSource`]，生成：
+//! - [`NacosService`] 节点，`service_id = dt://nacos/{ns}/{service_name}`
+//! - 通过 `REGISTERED_IN` 关联的 [`Service`] 节点
+//! - 关系：`REGISTERED_IN`
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use super::client::NacosClient;
 use crate::application::sync::traits::{SyncReport, SyncSource};
 
-/// Convenience: build a Cypher params HashMap.
+/// 便捷函数：构建 Cypher 参数 HashMap。
 fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
     pairs
         .iter()
@@ -26,14 +26,14 @@ fn params(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Va
 // ServiceSyncSource
 // ---------------------------------------------------------------------------
 
-/// Synchronises Nacos service registry data into the knowledge graph.
+/// 将 Nacos 服务注册数据同步到知识图谱。
 ///
-/// # Produced graph nodes
+/// # 生成的图节点
 ///
 /// - `NacosService` — `service_id = dt://nacos/{ns}/{service_name}`
-/// - `Service` — the corresponding Digital Twin service node
+/// - `Service` — 对应的 Digital Twin 服务节点
 ///
-/// # Relationships
+/// # 关系
 ///
 /// - `(:Service)-[:REGISTERED_IN]->(:NacosService)`
 pub struct ServiceSyncSource {
@@ -42,7 +42,7 @@ pub struct ServiceSyncSource {
 }
 
 impl ServiceSyncSource {
-    /// Create a new service sync source.
+    /// 创建新的服务同步源。
     pub fn new(client: NacosClient, env_name: String) -> Self {
         Self { client, env_name }
     }
@@ -57,7 +57,7 @@ impl SyncSource for ServiceSyncSource {
     async fn sync(&self, graph: &dyn GraphRepository) -> Result<SyncReport, DtError> {
         let ts = Utc::now().to_rfc3339();
 
-        // 1. Fetch namespaces
+        // 1. 获取命名空间
         let ns_resp = self.client.list_namespaces().await?;
         let mut namespaces = 0usize;
         let mut services_total = 0usize;
@@ -71,7 +71,7 @@ impl SyncSource for ServiceSyncSource {
                 continue;
             }
 
-            // 2. Fetch service list for this namespace
+            // 2. 获取该命名空间的服务列表
             let svc_list = match self.client.list_services(ns_id).await? {
                 Some(l) => l,
                 None => continue,
@@ -79,7 +79,7 @@ impl SyncSource for ServiceSyncSource {
 
             namespaces += 1;
 
-            // 2. MERGE NacosNamespace
+            // 2. 合并 NacosNamespace
             let ns_node_id = format!("dt://nacos/ns/{}", ns_id);
             graph
                 .write_query(
@@ -96,7 +96,7 @@ SET n.namespace = $ns_name, n.description = $ns_name, n.updated_at = $ts"#,
             for svc_item in &svc_list.service_list {
                 let service_id = format!("dt://nacos/{}/{}", ns_id, svc_item.name);
 
-                // 3. MERGE NacosService
+                // 3. 合并 NacosService
                 let nacos_svc_cypher = r#"
 MERGE (ns:NacosService {service_id: $service_id})
 SET ns.name = $name,
@@ -124,7 +124,7 @@ SET ns.name = $name,
                     )
                     .await?;
 
-                // 4. MERGE Service and link via REGISTERED_IN
+                // 4. 合并 Service 并通过 REGISTERED_IN 关联
                 let svc_cypher = r#"
 MERGE (s:Service {service_id: $dt_service_id})
 ON CREATE SET
@@ -147,7 +147,7 @@ ON MATCH SET
                     )
                     .await?;
 
-                // 5. Link Service → NacosService (REGISTERED_IN)
+                // 5. 关联 Service → NacosService（REGISTERED_IN）
                 let link_cypher = r#"
 MATCH (s:Service {service_id: $dt_service_id})
 MATCH (ns:NacosService {service_id: $service_id})
@@ -164,7 +164,7 @@ MERGE (s)-[:REGISTERED_IN]->(ns)
                     .await?;
                 links += 1;
 
-                // 6. Link NacosService → NacosNamespace (IN_NAMESPACE)
+                // 6. 关联 NacosService → NacosNamespace（IN_NAMESPACE）
                 graph
                     .write_query(
                         "MATCH (svc:NacosService {service_id: $service_id}) MATCH (ns:NacosNamespace {namespace_id: $ns_node_id}) MERGE (svc)-[:IN_NAMESPACE]->(ns)",
@@ -176,7 +176,7 @@ MERGE (s)-[:REGISTERED_IN]->(ns)
                     .await?;
                 links += 1;
 
-                // 7. Fetch and MERGE NacosInstance nodes
+                // 7. 获取并合并 NacosInstance 节点
                 if let Ok(Some(inst_resp)) = self.client.list_instances(&svc_item.name, ns_id).await
                 {
                     if let Some(instances) = &inst_resp.list {
@@ -212,7 +212,7 @@ SET i.service_name = $svc_name,
                                 )
                                 .await?;
 
-                            // Link NacosInstance → NacosService (INSTANCE_OF)
+                            // 关联 NacosInstance → NacosService（INSTANCE_OF）
                             graph
                                 .write_query(
                                     "MATCH (i:NacosInstance {instance_id: $instance_id}) MATCH (svc:NacosService {service_id: $service_id}) MERGE (i)-[:INSTANCE_OF]->(svc)",
@@ -250,7 +250,7 @@ SET i.service_name = $svc_name,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

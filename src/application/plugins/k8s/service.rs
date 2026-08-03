@@ -1,7 +1,7 @@
-//! K8s Plugin — native Kuboard K8s API client (no external binary).
+//! K8s 插件——原生 Kuboard K8s API 客户端（不依赖外部二进制）。
 //!
-//! Reuses the existing `KuboardClient` from `src/application/sync/k8s/client.rs`
-//! for all Kubernetes operations. No subprocess calls — all HTTP via reqwest.
+//! 复用 `src/application/sync/k8s/client.rs` 中现有的 `KuboardClient`
+//! 执行所有 Kubernetes 操作。无子进程调用——全部通过 reqwest 走 HTTP。
 
 use crate::domain::types::{HealthStatus, PluginContext, PluginError};
 use async_trait::async_trait;
@@ -12,17 +12,17 @@ use crate::application::sync::k8s::types::{DeploymentItem, PodItem, ServiceItem}
 use crate::application::sync::k8s::K8sSyncConfig;
 use crate::domain::error::DtError;
 
-/// K8s plugin service backed by a native Kuboard HTTP client.
+/// 基于原生 Kuboard HTTP 客户端的 K8s 插件服务。
 #[derive(Default)]
 pub struct K8sPluginService {
-    /// The Kuboard client, lazily initialized.
-    /// Uses an internal mutability pattern via the async init method.
+    /// Kuboard 客户端，惰性初始化。
+    /// 通过 async init 方法使用内部可变模式。
     client: Option<KuboardClient>,
     config: Option<K8sSyncConfig>,
 }
 
 impl K8sPluginService {
-    /// Create a new K8s plugin service (does not connect yet).
+    /// 创建新的 K8s 插件服务（暂不连接）。
     pub fn new(config: K8sSyncConfig) -> Self {
         Self {
             client: None,
@@ -30,7 +30,7 @@ impl K8sPluginService {
         }
     }
 
-    /// Connect to Kuboard (must be called before using CLI methods).
+    /// 连接到 Kuboard（使用 CLI 方法前必须先调用）。
     pub async fn connect(&mut self) -> Result<(), DtError> {
         if let Some(cfg) = self.config.take() {
             self.client = Some(KuboardClient::connect(cfg).await?);
@@ -38,34 +38,34 @@ impl K8sPluginService {
         Ok(())
     }
 
-    /// Private helper to get the client reference.
+    /// 获取客户端引用的私有辅助方法。
     fn client(&self) -> Result<&KuboardClient, DtError> {
         self.client.as_ref().ok_or_else(|| {
-            DtError::General("K8s client not connected — call connect() first".into())
+            DtError::General("K8s 客户端未连接——请先调用 connect()".into())
         })
     }
 
-    // ── CLI-facing methods ──────────────────────────────────────────────────
+    // ── 面向 CLI 的方法 ──────────────────────────────────────────────────
 
-    /// Get Pod list for a namespace.
+    /// 获取指定命名空间的 Pod 列表。
     pub async fn get_pods(&self, namespace: &str) -> Result<String, DtError> {
         let pods = self.client()?.fetch_pods(namespace).await;
         Ok(format_pods_table(&pods))
     }
 
-    /// Get Deployment list for a namespace.
+    /// 获取指定命名空间的 Deployment 列表。
     pub async fn get_deployments(&self, namespace: &str) -> Result<String, DtError> {
         let deps = self.client()?.fetch_deployments(namespace).await;
         Ok(format_deployments_table(&deps))
     }
 
-    /// Get Service list for a namespace.
+    /// 获取指定命名空间的 Service 列表。
     pub async fn get_services(&self, namespace: &str) -> Result<String, DtError> {
         let svcs = self.client()?.fetch_services(namespace).await;
         Ok(format_services_table(&svcs))
     }
 
-    /// Get Pod logs (text).
+    /// 获取 Pod 日志（文本）。
     pub async fn get_logs(
         &self,
         pod: &str,
@@ -77,7 +77,7 @@ impl K8sPluginService {
             .await
     }
 
-    /// Download Pod logs to a local file.
+    /// 将 Pod 日志下载到本地文件。
     pub async fn download_logs(
         &self,
         pod: &str,
@@ -90,30 +90,30 @@ impl K8sPluginService {
             .get_pod_logs(pod, namespace, tail_lines)
             .await?;
         std::fs::write(output_path, &logs)?;
-        Ok(format!("Logs written to {output_path}"))
+        Ok(format!("日志已写入 {output_path}"))
     }
 
-    /// Generic status query for a K8s resource type (pods, deploy, svc).
+    /// 对某类 K8s 资源（pods、deploy、svc）的通用状态查询。
     pub async fn get_status(&self, resource: &str, namespace: &str) -> Result<String, DtError> {
         match resource {
             "pods" => self.get_pods(namespace).await,
             "deploy" => self.get_deployments(namespace).await,
             "svc" => self.get_services(namespace).await,
-            _ => Err(DtError::General(format!("unknown resource: {resource}"))),
+            _ => Err(DtError::General(format!("未知资源类型: {resource}"))),
         }
     }
 }
 
-// ── Formatting helpers ─────────────────────────────────────────────────────
+// ── 格式化辅助函数 ─────────────────────────────────────────────────────
 
 fn format_pods_table(pods: &[PodItem]) -> String {
     if pods.is_empty() {
-        return "(no pods)".into();
+        return "(无 Pod)".into();
     }
     let mut out = String::new();
     out.push_str(&format!(
         "{:<40} {:<10} {:<14} {:<12} {:<12} {:<22}\n",
-        "NAME", "READY", "STATUS", "RESTARTS", "NODE", "AGE"
+        "名称", "就绪", "状态", "重启", "节点", "时长"
     ));
     for p in pods {
         let name = &p.metadata.name;
@@ -153,12 +153,12 @@ fn format_pods_table(pods: &[PodItem]) -> String {
 
 fn format_deployments_table(deps: &[DeploymentItem]) -> String {
     if deps.is_empty() {
-        return "(no deployments)".into();
+        return "(无 Deployment)".into();
     }
     let mut out = String::new();
     out.push_str(&format!(
         "{:<40} {:<10} {:<10} {:<10}\n",
-        "NAME", "READY", "DESIRED", "STRATEGY"
+        "名称", "就绪", "期望", "策略"
     ));
     for d in deps {
         let name = &d.metadata.name;
@@ -184,12 +184,12 @@ fn format_deployments_table(deps: &[DeploymentItem]) -> String {
 
 fn format_services_table(svcs: &[ServiceItem]) -> String {
     if svcs.is_empty() {
-        return "(no services)".into();
+        return "(无 Service)".into();
     }
     let mut out = String::new();
     out.push_str(&format!(
         "{:<40} {:<14} {:<14} {:<30}\n",
-        "NAME", "TYPE", "CLUSTER-IP", "PORTS"
+        "名称", "类型", "集群IP", "端口"
     ));
     for s in svcs {
         let name = &s.metadata.name;
@@ -270,13 +270,13 @@ impl Plugin for K8sPluginService {
         &self,
         _server: &mut tonic::transport::server::Server,
     ) -> Result<(), PluginError> {
-        // TODO: when proto is compiled, wire the generated service
+        // TODO: proto 编译完成后装配生成的服务
         Ok(())
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
         ctx.log
-            .info("[k8s] plugin initialized (native Kuboard client)");
+            .info("[k8s] 插件已初始化（原生 Kuboard 客户端）");
         Ok(())
     }
 

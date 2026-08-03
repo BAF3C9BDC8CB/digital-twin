@@ -1,31 +1,31 @@
-//! KG → Qdrant bridge — syncs V2 business-label nodes from the graph database
-//! into the Qdrant vector store for semantic search.
+//! KG → Qdrant 桥接——将图数据库中 V2 业务标签节点同步到
+//! Qdrant 向量库，用于语义搜索。
 //!
-//! ## V2 Design
+//! ## V2 设计
 //!
-//! Unlike V1 which synced a limited set of Infrastructure-labelled nodes,
-//! V2 syncs **all business-label nodes** according to the V2 data schema:
+//! 与仅同步有限 Infrastructure 标签节点的 V1 不同，
+//! V2 按照 V2 数据模式同步**全部业务标签节点**：
 //!
-//! - **Infrastructure nodes**:  Server, Database, K8sDeployment, K8sService
-//! - **Service nodes**:         Service, ServiceInstance
-//! - **Nacos nodes**:           NacosConfig, NacosService, NacosNamespace,
-//!   NacosGroup, NacosInstance
-//! - **Knowledge nodes**:       Knowledge, Concept, Playbook, Experience, Domain
-//! - **Document nodes**:        Document, Endpoint, ConfigKey, Table
-//! - **Event nodes**:           Deployment, ConfigChange, BugFix, Decision, PodEvent
-//! - **Cross-cutting**:         Thread, Requirement
+//! - **基础设施节点**：  Server、Database、K8sDeployment、K8sService
+//! - **服务节点**：         Service、ServiceInstance
+//! - **Nacos 节点**：           NacosConfig、NacosService、NacosNamespace、
+//!   NacosGroup、NacosInstance
+//! - **知识节点**：       Knowledge、Concept、Playbook、Experience、Domain
+//! - **文档节点**：        Document、Endpoint、ConfigKey、Table
+//! - **事件节点**：           Deployment、ConfigChange、BugFix、Decision、PodEvent
+//! - **横切节点**：         Thread、Requirement
 //!
-//! ## Sync modes
+//! ## 同步模式
 //!
-//! - **Full sync** (`sync_all`):  re-syncs every node regardless of timestamp.
-//! - **Incremental sync** (`sync_incremental`): only syncs nodes where
-//!   `_kg_synced_at IS NULL` (i.e. newly created or mutated since last sync).
+//! - **全量同步**（`sync_all`）：无论时间戳如何，重新同步所有节点。
+//! - **增量同步**（`sync_incremental`）：仅同步 `_kg_synced_at IS NULL`
+//!   的节点（即上次同步后新建或变更的节点）。
 //!
-//! ## Search text construction
+//! ## 搜索文本构造
 //!
-//! Each node type has its own `build_search_text` logic that concatenates
-//! the most semantically meaningful properties for embedding. This ensures
-//! that vector search returns relevant results per entity type.
+//! 每种节点类型都有自己的 `build_search_text` 逻辑，用于拼接
+//! 最具语义意义的属性进行向量化。这确保向量搜索能按实体类型
+//! 返回相关结果。
 
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -38,36 +38,35 @@ use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use super::traits::SyncReport;
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
-/// Qdrant collection name for KG node vectors.
+/// KG 节点向量在 Qdrant 中的集合名。
 const KG_COLLECTION: &str = "kg_nodes";
 
-/// Default vector dimension (BGE-M3 = 1024).
+/// 默认向量维度（BGE-M3 = 1024）。
 const VECTOR_DIM: u32 = 1024;
 
-/// Batch size for embedding + upsert — balances throughput with GPU memory.
-/// fp16 BGE-M3 ~1.2 GB + 128×512×1024 activations ~128 MB/batch.
+/// 向量化 + upsert 的批量大小——平衡吞吐量与 GPU 内存。
+/// fp16 BGE-M3 约 1.2 GB + 128×512×1024 激活约 128 MB/批。
 const BATCH_SIZE: usize = 128;
 
-/// Number of concurrent batches for pipelined embed→upsert.
-/// 2 concurrent on 8GB GPU is safe with fp16.
+/// 流水线向量化→upsert 的并发批次数。
+/// 8GB GPU 上 fp16 时 2 路并发是安全的。
 const CONCURRENCY: usize = 2;
 
-/// V2 business labels that are synced to Qdrant for semantic search.
+/// 同步到 Qdrant 以用于语义搜索的 V2 业务标签。
 ///
-/// These cover all entity types defined in the V2 data schema that carry
-/// semantically searchable content.  Ephemeral / structural labels
-/// (e.g. `Project`, `Module`, `Method`, `Class`) are deliberately excluded
-/// because they are handled by the code-index pipeline.
+/// 这些覆盖 V2 数据模式中定义的所有携带可语义搜索内容的实体类型。
+/// 瞬态 / 结构性标签（如 `Project`、`Module`、`Method`、`Class`）
+/// 被有意排除，因为它们由代码索引流水线处理。
 pub const BUSINESS_LABELS: &[&str] = &[
-    // -- Infrastructure --
+    // -- 基础设施 --
     "Server",
     "Database",
     "K8sDeployment",
     "K8sService",
-    // -- Service registry --
+    // -- 服务注册 --
     "Service",
     "ServiceInstance",
     // -- Nacos --
@@ -76,42 +75,42 @@ pub const BUSINESS_LABELS: &[&str] = &[
     "NacosNamespace",
     "NacosGroup",
     "NacosInstance",
-    // -- Knowledge --
+    // -- 知识 --
     "Knowledge",
     "Concept",
     "Playbook",
     "Experience",
     "Domain",
-    // -- Documents & data --
+    // -- 文档与数据 --
     "Document",
     "Endpoint",
     "ConfigKey",
     "ConfigSection",
     "Table",
-    // -- Events --
+    // -- 事件 --
     "ConfigChange",
     "BugFix",
     "Decision",
     "PodEvent",
-    // -- Cross-cutting --
+    // -- 横切 --
     "Thread",
     "Requirement",
 ];
 
 // ---------------------------------------------------------------------------
-// KgNode — raw row from the graph database
+// KgNode——图数据库的原始行
 // ---------------------------------------------------------------------------
 
-/// A single node row returned by the fetch Cypher query.
+/// 获取 Cypher 查询返回的单行节点。
 ///
-/// Each row contains: `[node_properties, elementId, labels]`.
+/// 每行包含：`[node_properties, elementId, labels]`。
 #[derive(Debug, Clone)]
 pub(crate) struct KgNode {
-    /// Graph element ID (Memgraph node ID) (used as the source for point-id hashing).
+    /// 图元素 ID（Memgraph 节点 ID）（用作 point-id 哈希的输入）。
     element_id: String,
-    /// All labels on this node (e.g. `["Server", "Infrastructure"]`).
+    /// 该节点上的所有标签（例如 `["Server", "Infrastructure"]`）。
     labels: Vec<String>,
-    /// Full property map from the node.
+    /// 节点的完整属性映射。
     properties: serde_json::Value,
 }
 
@@ -119,10 +118,10 @@ pub(crate) struct KgNode {
 // KgBridge
 // ---------------------------------------------------------------------------
 
-/// Bridges the graph database to Qdrant by embedding business-label
-/// nodes and upserting them as vectors for semantic search.
+/// 通过向量化业务标签节点并作为向量 upsert 到 Qdrant，
+/// 将图数据库桥接到 Qdrant 以实现语义搜索。
 ///
-/// # Example
+/// # 示例
 ///
 /// ```ignore
 /// let bridge = KgBridge::new(graph, embed, vector);
@@ -133,13 +132,13 @@ pub struct KgBridge {
     graph: Arc<dyn GraphRepository>,
     embed: Arc<dyn EmbedService>,
     vector: Arc<dyn VectorRepository>,
-    /// Optional global queue for priority-aware embedding.
-    /// When present, `process_batch` routes through the queue (LOW lane).
+    /// 可选：用于优先级感知向量化的全局队列。
+    /// 存在时，`process_batch` 会经由队列（LOW 通道）处理。
     queue: Option<Arc<super::queue::VectorQueue>>,
 }
 
 impl KgBridge {
-    /// Create a new bridge wired to the three backend services.
+    /// 创建连接到三个后端服务的新桥接。
     pub fn new(
         graph: Arc<dyn GraphRepository>,
         embed: Arc<dyn EmbedService>,
@@ -153,35 +152,34 @@ impl KgBridge {
         }
     }
 
-    /// Attach a global VectorQueue for priority-aware embedding.
+    /// 挂载全局 VectorQueue 以实现优先级感知的向量化。
     ///
-    /// When set, `process_batch` routes embed calls through the queue's
-    /// LOW-priority lane so background sync yields to user searches.
+    /// 设置后，`process_batch` 会将向量化调用路由到队列的
+    /// LOW 优先级通道，使后台同步让位于用户搜索。
     pub fn with_queue(mut self, queue: Arc<super::queue::VectorQueue>) -> Self {
         self.queue = Some(queue);
         self
     }
 
     // ------------------------------------------------------------------
-    // Public API
+    // 公共 API
     // ------------------------------------------------------------------
 
-    /// Full sync: re-embeds and upserts **every** business-label node.
+    /// 全量同步：重新向量化并 upsert **每个**业务标签节点。
     ///
-    /// This is a potentially expensive operation — prefer
-    /// [`sync_incremental`](Self::sync_incremental) for routine use.
+    /// 这可能是代价较高的操作——日常使用请优先
+    /// 选择 [`sync_incremental`](Self::sync_incremental)。
     pub async fn sync_all(&self) -> Result<SyncReport, DtError> {
         self.sync_impl(false).await
     }
 
-    /// Incremental sync: only processes nodes whose `_kg_synced_at`
-    /// property is `NULL` — i.e. nodes that were created or had their
-    /// sync marker reset since the last successful sync.
+    /// 增量同步：仅处理 `_kg_synced_at` 属性为 `NULL` 的节点——
+    /// 即上次成功同步后被创建或同步标记被重置的节点。
     pub async fn sync_incremental(&self) -> Result<SyncReport, DtError> {
         self.sync_impl(true).await
     }
 
-    /// Detect whether config content is YAML by filename extension or content.
+    /// 通过文件扩展名或内容判断配置内容是否为 YAML。
     fn detect_is_yaml(data_id: &str, config_type: &str, content: &str) -> bool {
         if config_type == "yaml" || config_type == "yml" {
             return true;
@@ -189,7 +187,7 @@ impl KgBridge {
         if config_type == "properties" || config_type == "json" || config_type == "xml" {
             return false;
         }
-        // Detect from filename
+        // 从文件名判断
         let lower = data_id.to_lowercase();
         if lower.ends_with(".yaml") || lower.ends_with(".yml") {
             return true;
@@ -197,7 +195,7 @@ impl KgBridge {
         if lower.ends_with(".properties") || lower.ends_with(".json") || lower.ends_with(".xml") {
             return false;
         }
-        // Content-based detection: YAML has top-level "key:" lines
+        // 基于内容的判断：YAML 有顶层 "key:" 行
         for line in content.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -211,7 +209,7 @@ impl KgBridge {
         false
     }
 
-    /// Reconstruct config text in original format.
+    /// 按原始格式重建配置文本。
     fn reconstruct_text(name: &str, pairs: &[(String, String)], is_yaml: bool) -> String {
         if !is_yaml {
             let mut t = name.to_string();
@@ -221,7 +219,7 @@ impl KgBridge {
             }
             return t;
         }
-        // YAML: reconstruct indented tree from dotted keys
+        // YAML：从点号分隔的键重建缩进树
         let prefix = name.to_string();
         let prefix_parts: Vec<&str> = prefix.split('.').collect();
         let prefix_depth = prefix_parts.len();
@@ -239,7 +237,7 @@ impl KgBridge {
                 continue;
             }
             let rel_parts = &full_parts[prefix_depth..];
-            // Output intermediate keys (track to avoid duplicates)
+            // 输出中间键（跟踪以避免重复）
             let mut cur_path = String::new();
             for (i, part) in rel_parts.iter().enumerate() {
                 if !cur_path.is_empty() {
@@ -260,15 +258,15 @@ impl KgBridge {
         text.trim_end().to_string()
     }
 
-    /// Sync adaptive config chunks from ConfigSection + ConfigKey
-    /// nodes into the Qdrant `config_chunks` collection.
+    /// 将 ConfigSection + ConfigKey 节点的自适应配置分块
+    /// 同步到 Qdrant 的 `config_chunks` 集合。
     ///
-    /// Uses `chunk_config_adaptive` from the Nacos config content stored in
-    /// NacosConfig nodes, embeds each chunk via BGE-M3, and upserts into Qdrant.
+    /// 对 NacosConfig 节点中存储的 Nacos 配置内容使用 `chunk_config_adaptive`，
+    /// 通过 BGE-M3 向量化每个分块，并 upsert 到 Qdrant。
     pub async fn sync_config_chunks(&self) -> Result<SyncReport, DtError> {
         let start = Instant::now();
 
-        // Fetch NacosConfig nodes with their content
+        // 获取 NacosConfig 节点及其内容
         let cypher = r#"
             MATCH (c:NacosConfig)
             WHERE c.content IS NOT NULL AND c.content <> ''
@@ -284,13 +282,13 @@ impl KgBridge {
             return Ok(SyncReport::skipped("config_chunks"));
         }
 
-        tracing::info!("[config_chunks] chunking and vectorising {} configs", total);
+        tracing::info!("[config_chunks] 正在分块并向量化 {} 个配置", total);
 
         let mut chunk_count = 0usize;
         let collection = "config_chunks";
         self.vector.ensure_collection(collection, 1024).await?;
 
-        // Use chunk_config_adaptive from our chunker module
+        // 使用我们 chunker 模块中的 chunk_config_adaptive
         use crate::shared::chunker::chunk_config_adaptive;
 
         for cfg in &configs {
@@ -314,7 +312,7 @@ impl KgBridge {
                 continue;
             }
 
-            // Build chunk texts and embed
+            // 构建分块文本并向量化
             let texts: Vec<String> = sections
                 .iter()
                 .map(|(name, pairs)| Self::reconstruct_text(name, pairs, is_yaml))
@@ -323,12 +321,12 @@ impl KgBridge {
             let vectors = match self.embed.embed_batch(&texts).await {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!("[config_chunks] embed failed for {}: {}", data_id, e);
+                    tracing::warn!("[config_chunks] {} 向量化失败: {}", data_id, e);
                     continue;
                 }
             };
 
-            // Build Qdrant points
+            // 构建 Qdrant points
             let points: Vec<serde_json::Value> = sections
                 .iter()
                 .zip(vectors.iter())
@@ -338,16 +336,16 @@ impl KgBridge {
                         "id": format!("{}#{}", config_id, section_name),
                         "vector": vec,
                         "payload": {
-                            // ---- origin ----
+                            // ---- 来源 ----
                             "namespace": namespace,
                             "data_id": data_id,
                             "group": group,
-                            // ---- content ----
+                            // ---- 内容 ----
                             "section_name": section_name,
                             "config_type": config_type,
                             "text": text,
                             "key_count": pairs.len(),
-                            // ---- metadata ----
+                            // ---- 元数据 ----
                             "source_type": "config_chunk",
                         }
                     })
@@ -355,7 +353,7 @@ impl KgBridge {
                 .collect();
 
             if let Err(e) = self.vector.upsert(collection, points.clone()).await {
-                tracing::warn!("[config_chunks] upsert failed for {}: {}", data_id, e);
+                tracing::warn!("[config_chunks] {} upsert 失败: {}", data_id, e);
             } else {
                 chunk_count += points.len();
             }
@@ -363,7 +361,7 @@ impl KgBridge {
 
         let elapsed = start.elapsed();
         tracing::info!(
-            "[config_chunks] done: {} chunks from {} configs ({:.1}s)",
+            "[config_chunks] 完成: {} 个分块来自 {} 个配置（{:.1}s）",
             chunk_count,
             total,
             elapsed.as_secs_f64()
@@ -379,32 +377,31 @@ impl KgBridge {
     }
 
     // ------------------------------------------------------------------
-    // Single-node sync — for auto-sync after write
+    // 单节点同步——用于写入后的自动同步
     // ------------------------------------------------------------------
 
-    /// Sync a single KG node to Qdrant, looked up by (label, property_key, value).
+    /// 将单个 KG 节点同步到 Qdrant，按 (label, property_key, value) 查找。
     ///
-    /// This is used for **auto-sync after write**: after a node is created or
-    /// mutated via `dt memorize` / `dt learn` / `dt event`, this method fetches
-    /// the node from the graph database and syncs it into Qdrant immediately — so the vector
-    /// index is always current without needing a manual `dt kg-sync`.
+    /// 用于**写入后自动同步**：节点通过 `dt memorize` / `dt learn` / `dt event`
+    /// 创建或变更后，本方法立即从图数据库获取该节点并同步到 Qdrant——
+    /// 这样无需手动执行 `dt kg-sync`，向量索引也始终是最新的。
     ///
-    /// If the node isn't found (e.g. the label isn't in [`BUSINESS_LABELS`]),
-    /// it silently succeeds — not every graph node needs to be in Qdrant.
+    /// 若未找到节点（例如标签不在 [`BUSINESS_LABELS`] 中），
+    /// 则静默成功——并非每个图节点都需要进入 Qdrant。
     ///
-    /// # Arguments
-    /// - `label` — graph label (e.g. `"Knowledge"`, `"Experience"`, `"Decision"`).
-    /// - `prop_key` — the property used to look up the node (e.g. `"knowledge_id"`).
-    /// - `prop_value` — the property value.
+    /// # 参数
+    /// - `label` — 图标签（例如 `"Knowledge"`、`"Experience"`、`"Decision"`）。
+    /// - `prop_key` — 用于查找节点的属性（例如 `"knowledge_id"`）。
+    /// - `prop_value` — 属性值。
     pub async fn sync_node_by_property(
         &self,
         label: &str,
         prop_key: &str,
         prop_value: &str,
     ) -> Result<(), DtError> {
-        // Only sync business-label nodes.
+        // 仅同步业务标签节点。
         if !BUSINESS_LABELS.contains(&label) {
-            tracing::debug!("[kg-sync] skip non-business label: {label}");
+            tracing::debug!("[kg-sync] 跳过非业务标签: {label}");
             return Ok(());
         }
 
@@ -422,23 +419,23 @@ impl KgBridge {
         let nodes = parse_graph_rows(&result)?;
 
         if nodes.is_empty() {
-            tracing::debug!("[kg-sync] node not found: label={label} {prop_key}={prop_value}");
+            tracing::debug!("[kg-sync] 未找到节点: label={label} {prop_key}={prop_value}");
             return Ok(());
         }
 
         self.process_batch(&nodes).await?;
 
-        tracing::debug!("[kg-sync] auto-synced 1 node: label={label} {prop_key}={prop_value}",);
+        tracing::debug!("[kg-sync] 已自动同步 1 个节点: label={label} {prop_key}={prop_value}",);
         Ok(())
     }
 
     // ------------------------------------------------------------------
-    // Internal (exposed for BatchAccumulator)
+    // 内部（暴露给 BatchAccumulator）
     // ------------------------------------------------------------------
 
-    /// Fetch a single business-label node from Memgraph by (label, key, value).
+    /// 按 (label, key, value) 从 Memgraph 获取单个业务标签节点。
     ///
-    /// Returns `None` if the node isn't found or isn't a business label.
+    /// 若未找到节点或节点不是业务标签，则返回 `None`。
     pub(crate) async fn fetch_node(
         &self,
         label: &str,
@@ -465,29 +462,29 @@ impl KgBridge {
     }
 
     // ------------------------------------------------------------------
-    // Implementation
+    // 实现
     // ------------------------------------------------------------------
 
-    /// Shared sync logic — `incremental` controls the Cypher WHERE clause.
+    /// 共享的同步逻辑——`incremental` 控制 Cypher 的 WHERE 子句。
     async fn sync_impl(&self, incremental: bool) -> Result<SyncReport, DtError> {
         let start = Instant::now();
         let mode = if incremental { "incremental" } else { "full" };
 
         tracing::info!(
-            "[kg-sync] starting {} sync (BATCH_SIZE={BATCH_SIZE}, CONCURRENCY={CONCURRENCY})",
+            "[kg-sync] 开始 {} 同步（BATCH_SIZE={BATCH_SIZE}, CONCURRENCY={CONCURRENCY}）",
             mode
         );
 
-        // 1.  Ensure the Qdrant collection exists.
+        // 1.  确保 Qdrant 集合存在。
         self.vector
             .ensure_collection(KG_COLLECTION, VECTOR_DIM)
             .await?;
 
-        // 2.  Fetch nodes from the graph database.
+        // 2.  从图数据库获取节点。
         let nodes = self.fetch_nodes(incremental).await?;
 
         if nodes.is_empty() {
-            tracing::info!("[kg-sync] no nodes to sync");
+            tracing::info!("[kg-sync] 没有需要同步的节点");
             return Ok(SyncReport {
                 source: format!("kg-sync/{mode}"),
                 ..SyncReport::default()
@@ -495,26 +492,26 @@ impl KgBridge {
         }
 
         let total = nodes.len();
-        tracing::info!("[kg-sync] fetched {total} nodes");
+        tracing::info!("[kg-sync] 已获取 {total} 个节点");
 
         let mut synced: usize = 0;
         let mut failed: usize = 0;
         let mut errors: Vec<String> = Vec::new();
 
-        // 3.  Process in batches with concurrent pipelining (if >1 batch).
+        // 3.  分批处理，支持并发流水线（若多于 1 批）。
         if total <= BATCH_SIZE || CONCURRENCY < 2 {
-            // Single batch or no concurrency — sequential.
+            // 单批或无并发——顺序处理。
             for chunk in nodes.chunks(BATCH_SIZE) {
                 match self.process_batch(chunk).await {
                     Ok(count) => synced += count,
                     Err(e) => {
                         failed += chunk.len();
-                        errors.push(format!("batch error: {e}"));
+                        errors.push(format!("批次错误: {e}"));
                     }
                 }
             }
         } else {
-            // Multiple batches — pipelined concurrency.
+            // 多批——流水线并发。
             use futures::stream::{self, StreamExt};
 
             let embed = self.embed.clone();
@@ -524,7 +521,7 @@ impl KgBridge {
             let chunks: Vec<Vec<KgNode>> = nodes.chunks(BATCH_SIZE).map(|c| c.to_vec()).collect();
 
             tracing::info!(
-                "[kg-sync] pipelining {} batches x {} nodes, {} concurrent",
+                "[kg-sync] 流水线处理 {} 批 x {} 个节点，{} 路并发",
                 chunks.len(),
                 BATCH_SIZE,
                 CONCURRENCY,
@@ -546,7 +543,7 @@ impl KgBridge {
                     Ok(count) => synced += count,
                     Err(e) => {
                         failed += BATCH_SIZE;
-                        errors.push(format!("batch error: {e}"));
+                        errors.push(format!("批次错误: {e}"));
                     }
                 }
             }
@@ -555,7 +552,7 @@ impl KgBridge {
         let elapsed = start.elapsed().as_millis() as u64;
 
         tracing::info!(
-            "[kg-sync] complete — {synced}/{total} synced, {failed} failed ({elapsed}ms)",
+            "[kg-sync] 完成——{synced}/{total} 已同步，{failed} 失败（{elapsed}ms）",
         );
 
         Ok(SyncReport {
@@ -572,25 +569,25 @@ impl KgBridge {
         })
     }
 
-    /// Process a single batch: embed → upsert → mark synced.
+    /// 处理单个批次：向量化 → upsert → 标记已同步。
     pub(crate) async fn process_batch(&self, chunk: &[KgNode]) -> Result<usize, DtError> {
-        // (a) Build search texts from node properties.
+        // (a) 根据节点属性构建搜索文本。
         let texts: Vec<String> = chunk.iter().map(build_search_text).collect();
 
-        // (b) Generate embeddings.
+        // (b) 生成向量。
         let vectors = self.embed.embed_batch(&texts).await?;
 
-        // (c) Build Qdrant points.
+        // (c) 构建 Qdrant points。
         let points: Vec<serde_json::Value> = chunk
             .iter()
             .zip(vectors.iter())
             .map(|(node, vec)| build_qdrant_point(node, vec))
             .collect();
 
-        // (d) Upsert to Qdrant.
+        // (d) upsert 到 Qdrant。
         self.vector.upsert(KG_COLLECTION, points).await?;
 
-        // (e) Mark nodes as synced in Memgraph.
+        // (e) 在 Memgraph 中标记节点为已同步。
         let eids: Vec<&str> = chunk.iter().map(|n| n.element_id.as_str()).collect();
         let mut params = HashMap::new();
         params.insert("eids".to_string(), serde_json::json!(eids));
@@ -607,12 +604,12 @@ impl KgBridge {
         Ok(chunk.len())
     }
 
-    /// Fetch business-label nodes from Memgraph.
+    /// 从 Memgraph 获取业务标签节点。
     ///
-    /// When `incremental` is `true`, only nodes without `_kg_synced_at`
-    /// are returned.
+    /// 当 `incremental` 为 `true` 时，仅返回没有 `_kg_synced_at`
+    /// 的节点。
     async fn fetch_nodes(&self, incremental: bool) -> Result<Vec<KgNode>, DtError> {
-        // Build label OR-clause:  n:Server OR n:Database OR n:K8sDeployment OR ...
+        // 构建标签 OR 子句：n:Server OR n:Database OR n:K8sDeployment OR ...
         let label_conds: Vec<String> = BUSINESS_LABELS.iter().map(|l| format!("n:{l}")).collect();
         let label_clause = label_conds.join(" OR ");
 
@@ -638,7 +635,7 @@ impl KgBridge {
     }
 }
 
-/// Owned version of process_batch for use in concurrent streams.
+/// process_batch 的所有权版本，用于并发流处理。
 pub(crate) async fn process_batch_owned(
     embed: Arc<dyn EmbedService>,
     vector: Arc<dyn VectorRepository>,
@@ -668,14 +665,13 @@ pub(crate) async fn process_batch_owned(
 }
 
 // ---------------------------------------------------------------------------
-// Search text construction — per label type
+// 搜索文本构造——按标签类型
 // ---------------------------------------------------------------------------
 
-/// Build a free-text search string from a KG node's properties.
+/// 根据 KG 节点的属性构建自由文本搜索字符串。
 ///
-/// The choice of properties is label-aware so that the resulting
-/// embedding captures the most discriminative information for each
-/// entity type.
+/// 属性选择按标签感知，使生成的向量能捕获每种实体类型
+/// 最具区分度的信息。
 pub(crate) fn build_search_text(node: &KgNode) -> String {
     let props = &node.properties;
     let primary_label = node
@@ -686,7 +682,7 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
         .unwrap_or("Unknown");
 
     match primary_label {
-        // ── Infrastructure ──────────────────────────────────────────
+        // ── 基础设施 ──────────────────────────────────────────
         "Server" => concat_props(
             props,
             &[
@@ -716,7 +712,7 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
             ],
         ),
 
-        // ── Service registry ───────────────────────────────────────
+        // ── 服务注册 ───────────────────────────────────────
         "Service" => concat_props(
             props,
             &[
@@ -746,9 +742,9 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
             &["instance_id", "service_name", "ip", "port", "namespace"],
         ),
 
-        // ── Knowledge ──────────────────────────────────────────────
-        // Enhanced: include all semantically rich fields for better vector quality.
-        // summary/content carry the pitfall text; definition carries the concept definition.
+        // ── 知识 ──────────────────────────────────────────────
+        // 增强：包含所有语义丰富的字段以获得更好的向量质量。
+        // summary/content 承载踩坑文本；definition 承载概念定义。
         "Knowledge" => concat_props(
             props,
             &[
@@ -789,7 +785,7 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
         ),
         "Domain" => concat_props(props, &["name", "description", "summary"]),
 
-        // ── Documents & data ───────────────────────────────────────
+        // ── 文档与数据 ───────────────────────────────────────
         "Document" => concat_props(props, &["title", "content", "source_file", "description"]),
         "Endpoint" => concat_props(
             props,
@@ -812,7 +808,7 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
         ),
         "Table" => concat_props(props, &["table_name", "db_type", "description", "columns"]),
 
-        // ── Events ─────────────────────────────────────────────────
+        // ── 事件 ─────────────────────────────────────────────────
         "Deployment" => concat_props(props, &["name", "env", "branch", "description"]),
         "ConfigChange" => concat_props(props, &["name", "data_id", "description", "summary"]),
         "BugFix" => concat_props(props, &["title", "file", "description", "summary"]),
@@ -837,8 +833,7 @@ pub(crate) fn build_search_text(node: &KgNode) -> String {
     }
 }
 
-/// Concatenate non-empty property values (in order) into a space-separated
-/// search text string.
+/// 将非空属性值（按顺序）拼接成以空格分隔的搜索文本字符串。
 fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
     let mut parts: Vec<String> = Vec::with_capacity(keys.len());
 
@@ -851,7 +846,7 @@ fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
                 serde_json::Value::Number(n) => {
                     parts.push(n.to_string());
                 }
-                // I3: string arrays contribute each element (e.g. keywords)
+                // I3: 字符串数组贡献每个元素（例如 keywords）
                 serde_json::Value::Array(arr) => {
                     for item in arr {
                         match item {
@@ -861,11 +856,11 @@ fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
                             serde_json::Value::Number(n) => {
                                 parts.push(n.to_string());
                             }
-                            _ => { /* skip nulls, bools, nested arrays/objects */ }
+                            _ => { /* 跳过 null、布尔值、嵌套数组/对象 */ }
                         }
                     }
                 }
-                _ => { /* skip nulls, bools, objects */ }
+                _ => { /* 跳过 null、布尔值、对象 */ }
             }
         }
     }
@@ -874,14 +869,14 @@ fn concat_props(props: &serde_json::Value, keys: &[&str]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Qdrant point construction
+// Qdrant point 构造
 // ---------------------------------------------------------------------------
 
-/// Build a Qdrant point JSON value from a KG node and its embedding vector.
+/// 根据 KG 节点及其向量构建 Qdrant point 的 JSON 值。
 ///
-/// I1: the point ID is derived from the node's stable **business ID**
-/// (not the volatile graph elementId), so re-created graph nodes map back
-/// onto the same vector point and upserts stay idempotent across rebuilds.
+/// I1: point ID 派生自节点的稳定 **business ID**（而非易变的图
+/// elementId），因此重建后的图节点仍映射到同一个向量 point，
+/// 跨重建的 upsert 保持幂等。
 fn build_qdrant_point(node: &KgNode, vector: &[f32]) -> serde_json::Value {
     let point_id = make_point_id(&business_id(node));
     let payload = build_payload(node);
@@ -893,28 +888,27 @@ fn build_qdrant_point(node: &KgNode, vector: &[f32]) -> serde_json::Value {
     })
 }
 
-/// Embed a single KG node and upsert it into the Qdrant `kg_nodes` collection.
+/// 向量化单个 KG 节点并 upsert 到 Qdrant 的 `kg_nodes` 集合。
 ///
-/// This is the **immediate embedding** entry point — called right after a
-/// knowledge/concept/experience node is written to the graph, so the vector
-/// index is always current without needing a separate `dt kg-sync` run.
+/// 这是**即时向量化**入口——知识/概念/经验节点写入图数据库后立即调用，
+/// 这样无需单独执行 `dt kg-sync`，向量索引也始终是最新的。
 ///
-/// # Arguments
-/// - `graph` — graph repository (for marking `_kg_synced_at`)
-/// - `embed` — embedding service (BGE-M3)
-/// - `vector` — vector repository (Qdrant)
-/// - `label` — primary business label (e.g. "Knowledge", "Concept", "Experience")
-/// - `id_field` — the node's unique ID property name (e.g. "knowledge_id")
-/// - `id_value` — the node's unique ID value
-/// - `properties` — full property map of the node (used to build search text)
+/// # 参数
+/// - `graph` — 图仓库（用于标记 `_kg_synced_at`）
+/// - `embed` — 向量化服务（BGE-M3）
+/// - `vector` — 向量仓库（Qdrant）
+/// - `label` — 主要业务标签（例如 "Knowledge"、"Concept"、"Experience"）
+/// - `id_field` — 节点的唯一 ID 属性名（例如 "knowledge_id"）
+/// - `id_value` — 节点的唯一 ID 值
+/// - `properties` — 节点的完整属性映射（用于构建搜索文本）
 ///
-/// # Flow
-/// 1. Construct a temporary `KgNode` from the given properties
-/// 2. Build search text via `build_search_text`
-/// 3. Embed the text via `embed.embed_batch`
-/// 4. Build Qdrant point via `build_qdrant_point`
-/// 5. Upsert into `kg_nodes` collection
-/// 6. Mark the node `_kg_synced_at = datetime()` in the graph
+/// # 流程
+/// 1. 根据给定属性构造临时 `KgNode`
+/// 2. 通过 `build_search_text` 构建搜索文本
+/// 3. 通过 `embed.embed_batch` 向量化文本
+/// 4. 通过 `build_qdrant_point` 构建 Qdrant point
+/// 5. upsert 到 `kg_nodes` 集合
+/// 6. 在图数据库中标记节点 `_kg_synced_at = datetime()`
 pub async fn embed_kg_node(
     graph: &dyn GraphRepository,
     embed: &dyn EmbedService,
@@ -924,16 +918,16 @@ pub async fn embed_kg_node(
     id_value: &str,
     properties: &serde_json::Value,
 ) -> Result<(), DtError> {
-    // Only embed business-label nodes
+    // 仅向量化业务标签节点
     if !BUSINESS_LABELS.contains(&label) {
-        tracing::debug!("[embed_kg_node] skip non-business label: {label}");
+        tracing::debug!("[embed_kg_node] 跳过非业务标签: {label}");
         return Ok(());
     }
 
-    // 1. Fetch the real Memgraph elementId for this node. The Qdrant payload's
-    //    "elementId" field must be a real graph element ID (format "4:xxx:yyy")
-    //    so that `expand_nodes` (which uses `WHERE elementId(n) IN $ids`) can
-    //    match against it. Constructing a synthetic id breaks graph expansion.
+    // 1. 获取该节点真实的 Memgraph elementId。Qdrant payload 中的
+    //    "elementId" 字段必须是真实的图元素 ID（格式 "4:xxx:yyy"），
+    //    这样 `expand_nodes`（使用 `WHERE elementId(n) IN $ids`）才能
+    //    匹配到它。构造合成 id 会破坏图展开。
     let fetch_cypher =
         format!("MATCH (n:{label} {{{id_field}: $value}}) RETURN elementId(n) AS eid");
     let mut fetch_params = HashMap::new();
@@ -950,35 +944,35 @@ pub async fn embed_kg_node(
         .map(String::from)
         .ok_or_else(|| {
             DtError::Repository(format!(
-                "embed_kg_node: node not found {label} {id_field}={id_value}"
+                "embed_kg_node: 未找到节点 {label} {id_field}={id_value}"
             ))
         })?;
 
-    // 2. Construct KgNode with the REAL elementId
+    // 2. 使用真实的 elementId 构造 KgNode
     let node = KgNode {
         element_id: real_element_id.clone(),
         labels: vec![label.to_string()],
         properties: properties.clone(),
     };
 
-    // 3. Build search text
+    // 3. 构建搜索文本
     let text = build_search_text(&node);
 
-    // 4. Embed
+    // 4. 向量化
     let vectors = embed.embed_batch(std::slice::from_ref(&text)).await?;
     let vec = match vectors.into_iter().next() {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    // 5. Build Qdrant point (build_payload writes node.element_id into "elementId")
+    // 5. 构建 Qdrant point（build_payload 将 node.element_id 写入 "elementId"）
     let point = build_qdrant_point(&node, &vec);
 
-    // 6. Upsert to Qdrant
+    // 6. upsert 到 Qdrant
     vector.ensure_collection(KG_COLLECTION, VECTOR_DIM).await?;
     vector.upsert(KG_COLLECTION, vec![point]).await?;
 
-    // 7. Mark synced in graph
+    // 7. 在图数据库中标记已同步
     let mark_cypher =
         format!("MATCH (n:{label} {{{id_field}: $value}}) SET n._kg_synced_at = datetime()");
     let mut mark_params = HashMap::new();
@@ -989,19 +983,19 @@ pub async fn embed_kg_node(
     graph.write_query(&mark_cypher, mark_params).await?;
 
     tracing::debug!(
-        "[embed_kg_node] embedded {label} {id_field}={id_value} (eid={})",
+        "[embed_kg_node] 已向量化 {label} {id_field}={id_value}（eid={}）",
         real_element_id
     );
     Ok(())
 }
 
-/// Build the Qdrant payload from node properties.
+/// 根据节点属性构建 Qdrant payload。
 ///
-/// I2/I4: unified core schema (§7.2) shared with extracted-entity points —
+/// I2/I4: 与提取实体 point 共享的统一核心模式（§7.2）——
 /// `{elementId, business_id, name, type, summary, keywords, project, labels,
-/// doc_id?, origin, source}`. `summary` is the **full** text (no truncation).
-/// `description` is kept as a legacy alias of `summary` because existing
-/// consumers (retriever.rs, search_mcp.rs) read it.
+/// doc_id?, origin, source}`。`summary` 为**完整**文本（不截断）。
+/// `description` 作为 `summary` 的遗留别名保留，因为现有消费方
+/// （retriever.rs、search_mcp.rs）读取它。
 fn build_payload(node: &KgNode) -> serde_json::Value {
     let props = &node.properties;
     let bid = business_id(node);
@@ -1011,7 +1005,7 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
         .find(|l| BUSINESS_LABELS.contains(&l.as_str()))
         .map(|l| l.to_lowercase())
         .unwrap_or_default();
-    // Full representative text: first non-empty of summary/description/content.
+    // 完整代表文本：summary/description/content 中第一个非空值。
     let summary = ["summary", "description", "content"]
         .iter()
         .find_map(|k| props.get(k).and_then(|v| v.as_str()))
@@ -1033,10 +1027,10 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
         .filter(|s| !s.is_empty())
         .unwrap_or("learned");
 
-    // Display title: name → title → file_path basename → business_id last segment.
-    // Document nodes carry no `name` property (consolidate only sets
-    // doc_id/project/file_path/doc_type) — without this fallback their payload
-    // name is null, breaking the §7.2 shape assertion and knowledge retrieval.
+    // 显示标题：name → title → file_path 文件名 → business_id 最后一段。
+    // Document 节点没有 `name` 属性（consolidate 仅设置
+    // doc_id/project/file_path/doc_type）——没有该兜底时其 payload
+    // name 为 null，会破坏 §7.2 结构断言与知识检索。
     let name = props
         .get("name")
         .and_then(|v| v.as_str())
@@ -1060,26 +1054,26 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
         .unwrap_or_else(|| bid.rsplit('/').next().unwrap_or(&bid).to_string());
 
     let mut payload = serde_json::json!({
-        // ---- identity ----
+        // ---- 标识 ----
         "elementId": node.element_id,
         "business_id": bid,
         "name": name,
         "type": primary_label,
         "labels": node.labels,
-        // ---- content (I4: full, untruncated) ----
+        // ---- 内容（I4：完整、不截断） ----
         "summary": summary,
         "description": summary,
         "keywords": keywords,
-        // ---- scope ----
+        // ---- 范围 ----
         "project": props.get("project").cloned().unwrap_or(serde_json::Value::Null),
-        // ---- provenance ----
+        // ---- 来源 ----
         "origin": origin,
         "source": "kg",
-        // ---- label-specific extensions (display) ----
+        // ---- 标签专属扩展（展示用） ----
         "service_type": props.get("service_type").cloned().unwrap_or(serde_json::Value::Null),
         "environment": props.get("environment").cloned().unwrap_or(serde_json::Value::Null),
     });
-    // doc_id only when present (extracted/business doc-linked nodes)
+    // 仅在存在时写入 doc_id（提取/业务文档关联的节点）
     if let Some(doc_id) = props.get("doc_id").and_then(|v| v.as_str()) {
         if !doc_id.is_empty() {
             payload["doc_id"] = serde_json::Value::String(doc_id.to_string());
@@ -1088,11 +1082,11 @@ fn build_payload(node: &KgNode) -> serde_json::Value {
     payload
 }
 
-/// Generate a deterministic UUID v4 from a stable business ID via SHA-256.
+/// 通过 SHA-256 从稳定的 business ID 生成确定性的 UUID v4。
 ///
-/// This ensures the same business ID always maps to the same Qdrant point
-/// ID across sync runs, allowing idempotent upserts. `pub(crate)` so the
-/// Consolidate layer (Task 2, §7.4) can derive point IDs from business IDs.
+/// 这确保同一 business ID 在多次同步运行中始终映射到同一个 Qdrant
+/// point ID，从而支持幂等 upsert。设为 `pub(crate)` 以便 Consolidate
+/// 层（任务 2、§7.4）能从 business ID 派生 point ID。
 pub(crate) fn make_point_id(business_id: &str) -> String {
     let hash = Sha256::digest(business_id.as_bytes());
     format!(
@@ -1106,19 +1100,19 @@ pub(crate) fn make_point_id(business_id: &str) -> String {
     )
 }
 
-/// Derive the stable business ID for a KG node (I1).
+/// 派生 KG 节点的稳定 business ID（I1）。
 ///
-/// Priority order:
-/// 1. Explicit unique-ID properties (`knowledge_id`, `concept_id`, …) —
-///    these are the node's true business identity and survive graph rebuilds.
-/// 2. `name` (optionally qualified by `namespace`/`db` for composite-key
-///    nodes like K8sDeployment/Table/ConfigKey).
-/// 3. `element_id` as a last-resort fallback (legacy behaviour).
+/// 优先级顺序：
+/// 1. 显式唯一 ID 属性（`knowledge_id`、`concept_id`、…）——
+///    这些是节点的真实业务标识，图重建后依然有效。
+/// 2. `name`（对于 K8sDeployment/Table/ConfigKey 等复合键节点，
+///    可由 `namespace`/`db` 限定）。
+/// 3. `element_id` 作为最后兜底（遗留行为）。
 pub(crate) fn business_id(node: &KgNode) -> String {
     business_id_from_props(&node.properties, &node.element_id)
 }
 
-/// Explicit unique-ID property keys in priority order (I1).
+/// 按优先级顺序排列的显式唯一 ID 属性键（I1）。
 const ID_KEYS: &[&str] = &[
     "entity_id",
     "knowledge_id",
@@ -1143,10 +1137,10 @@ const ID_KEYS: &[&str] = &[
     "analysis_id",
 ];
 
-/// Derive the stable business ID from a property map (S5 共享入口).
+/// 从属性映射派生稳定 business ID（S5 共享入口）。
 ///
-/// Same 21-key priority order as [`business_id`]; used by retrieve.rs for
-/// graph-expansion neighbours that never materialise as `KgNode`.
+/// 与 [`business_id`] 相同的 21 键优先级顺序；retrieve.rs 用它为
+/// 从不物化为 `KgNode` 的图展开邻居派生 ID。
 pub(crate) fn business_id_from_props(props: &serde_json::Value, element_id_fallback: &str) -> String {
     for key in ID_KEYS {
         if let Some(s) = props.get(key).and_then(|v| v.as_str()) {
@@ -1156,7 +1150,7 @@ pub(crate) fn business_id_from_props(props: &serde_json::Value, element_id_fallb
         }
     }
 
-    // Composite-identity nodes: name qualified by namespace/db.
+    // 复合标识节点：由 namespace/db 限定的 name。
     if let Some(name) = props
         .get("name")
         .and_then(|v| v.as_str())
@@ -1176,15 +1170,15 @@ pub(crate) fn business_id_from_props(props: &serde_json::Value, element_id_fallb
     element_id_fallback.to_string()
 }
 
-/// Delete the `kg_nodes` vector point belonging to a business node (I5).
+/// 删除属于某个业务节点的 `kg_nodes` 向量 point（I5）。
 ///
-/// Closure of §7.5: when a graph node is deleted, its vector point must go
-/// too. Deletion is by payload `business_id` match — deterministic because
-/// I1 makes business_id ↔ point 1:1 by construction.
+/// 补全 §7.5：图节点被删除时，其向量 point 也必须一并删除。
+/// 通过 payload 的 `business_id` 匹配删除——确定性源于
+/// I1 使 business_id ↔ point 按构造为 1:1。
 ///
-/// Caveat: legacy points written before I2 lack the `business_id` payload
-/// key and are NOT matched; they are cleared by the one-time `kg_nodes`
-/// wipe documented in §12 risk item 6.
+/// 注意：I2 之前写入的遗留 point 缺少 `business_id` payload 键，
+/// 不会被匹配；它们由 §12 风险项 6 中记录的一次性 `kg_nodes`
+/// 清空处理。
 pub async fn delete_kg_vector(
     vector: &dyn VectorRepository,
     business_id: &str,
@@ -1200,34 +1194,34 @@ pub async fn delete_kg_vector(
 }
 
 // ---------------------------------------------------------------------------
-// Graph result parsing
+// 图结果解析
 // ---------------------------------------------------------------------------
 
-/// Parse the raw graph response JSON into a `Vec<KgNode>`.
+/// 将原始图响应 JSON 解析为 `Vec<KgNode>`。
 ///
-/// Handles two response formats:
-/// 1. **Bolt driver** — `Value::Array` of row objects:
+/// 处理两种响应格式：
+/// 1. **Bolt driver**——行对象的 `Value::Array`：
 ///    ```json
 ///    [{"n": {...}, "eid": "4:...", "lbls": ["Server"]}]
 ///    ```
-/// 2. **HTTP API** (legacy fallback):
+/// 2. **HTTP API**（遗留兜底）：
 ///    ```json
 ///    {"results":[{"columns":["n","eid","lbls"],"data":[{"row":[{...},"4:...",["Server"]]}]}]}
 ///    ```
 fn parse_graph_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
-    // Try Bolt driver format first (Array of row objects).
+    // 先尝试 Bolt driver 格式（行对象的数组）。
     if let Some(rows) = raw.as_array() {
         return parse_bolt_rows(rows);
     }
 
-    // Fall back to HTTP API format.
+    // 回退到 HTTP API 格式。
     let rows = raw
         .get("results")
         .and_then(|r| r.as_array())
         .and_then(|results| results.first())
         .and_then(|first| first.get("data"))
         .and_then(|data| data.as_array())
-        .ok_or_else(|| DtError::Repository("missing 'results[0].data' in graph response".into()))?;
+        .ok_or_else(|| DtError::Repository("图响应中缺少 'results[0].data'".into()))?;
 
     let mut nodes: Vec<KgNode> = Vec::with_capacity(rows.len());
 
@@ -1235,7 +1229,7 @@ fn parse_graph_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
         let row = row_val
             .get("row")
             .and_then(|r| r.as_array())
-            .ok_or_else(|| DtError::Repository("missing 'row' in graph data item".into()))?;
+            .ok_or_else(|| DtError::Repository("图数据条目中缺少 'row'".into()))?;
 
         if row.len() < 3 {
             continue;
@@ -1263,10 +1257,10 @@ fn parse_graph_rows(raw: &serde_json::Value) -> Result<Vec<KgNode>, DtError> {
     Ok(nodes)
 }
 
-/// Parse rows from the Bolt driver format (Array of JSON objects).
+/// 解析 Bolt driver 格式的行（JSON 对象数组）。
 ///
-/// Each object has keys `n` (node properties), `eid` (elementId string),
-/// and `lbls` (labels array).
+/// 每个对象包含键 `n`（节点属性）、`eid`（elementId 字符串）和
+/// `lbls`（标签数组）。
 fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
     let mut nodes: Vec<KgNode> = Vec::with_capacity(rows.len());
 
@@ -1280,7 +1274,7 @@ fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
             .to_string();
 
         if element_id.is_empty() {
-            // Try legacy row array format inside each row object
+            // 尝试每个行对象内部的遗留行数组格式
             if let Some(row_arr) = row.get("row").and_then(|r| r.as_array()) {
                 if row_arr.len() >= 3 {
                     let props = row_arr[0].clone();
@@ -1325,7 +1319,7 @@ fn parse_bolt_rows(rows: &[serde_json::Value]) -> Result<Vec<KgNode>, DtError> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1366,7 +1360,7 @@ mod tests {
         let eid = "4:test-element-id-123";
         let id1 = make_point_id(eid);
         let id2 = make_point_id(eid);
-        assert_eq!(id1, id2, "same elementId must produce same UUID");
+        assert_eq!(id1, id2, "相同的 elementId 必须生成相同的 UUID");
     }
 
     #[test]
@@ -1375,20 +1369,20 @@ mod tests {
         let id_b = make_point_id("4:bbb");
         assert_ne!(
             id_a, id_b,
-            "different elementIds must produce different UUIDs"
+            "不同的 elementIds 必须生成不同的 UUID"
         );
     }
 
     #[test]
     fn make_point_id_is_valid_uuid() {
         let id = make_point_id("4:some-element");
-        // Should match UUID v4 pattern: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx
+        // 应匹配 UUID v4 模式：xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx
         let parts: Vec<&str> = id.split('-').collect();
-        assert_eq!(parts.len(), 5, "must have 5 dash-separated parts");
+        assert_eq!(parts.len(), 5, "必须包含 5 个以破折号分隔的部分");
         assert_eq!(parts[0].len(), 8);
         assert_eq!(parts[1].len(), 4);
         assert_eq!(parts[2].len(), 4);
-        assert!(parts[2].starts_with('4'), "version nibble must be 4");
+        assert!(parts[2].starts_with('4'), "版本半字节必须为 4");
         assert_eq!(parts[3].len(), 4);
         assert!(
             parts[3].starts_with('8')
@@ -1397,7 +1391,7 @@ mod tests {
                 || parts[3].starts_with('b')
                 || parts[3].starts_with('A')
                 || parts[3].starts_with('B'),
-            "variant bits must be 10xx"
+            "变体位必须为 10xx"
         );
         assert_eq!(parts[4].len(), 12);
     }
@@ -1556,11 +1550,11 @@ mod tests {
         };
         let payload = build_payload(&node);
         let desc = payload["description"].as_str().unwrap();
-        assert_eq!(desc.len(), 500, "description must be preserved in full");
+        assert_eq!(desc.len(), 500, "description 必须完整保留");
         assert_eq!(
             payload["summary"].as_str().unwrap().len(),
             500,
-            "summary mirrors description in full"
+            "summary 完整镜像 description"
         );
     }
 
@@ -1627,7 +1621,7 @@ mod tests {
 
     #[test]
     fn business_id_falls_back_to_qualified_name() {
-        // Composite-key nodes (K8sDeployment/Table/ConfigKey): name@namespace
+        // 复合键节点（K8sDeployment/Table/ConfigKey）：name@namespace
         let node = KgNode {
             element_id: "4:xyz".into(),
             labels: vec!["K8sDeployment".into()],
@@ -1687,7 +1681,7 @@ mod tests {
                 ]
             }]
         });
-        let nodes = parse_graph_rows(&raw).expect("should parse");
+        let nodes = parse_graph_rows(&raw).expect("应能解析");
         assert_eq!(nodes.len(), 2);
 
         assert_eq!(nodes[0].element_id, "4:eid-1");
@@ -1707,7 +1701,7 @@ mod tests {
                 "data": []
             }]
         });
-        let nodes = parse_graph_rows(&raw).expect("should parse empty");
+        let nodes = parse_graph_rows(&raw).expect("应能解析空响应");
         assert!(nodes.is_empty());
     }
 
@@ -1749,8 +1743,8 @@ mod tests {
 
     #[test]
     fn point_id_stable_across_element_id_change() {
-        // I1 core property: re-created graph node (new elementId, same
-        // business identity) maps to the SAME point → idempotent upsert.
+        // I1 核心属性：重建后的图节点（新的 elementId、相同的
+        // 业务标识）映射到同一个 point → 幂等 upsert。
         let props = serde_json::json!({
             "name": "api",
             "server_id": "dt://server/proj/api",
@@ -1833,7 +1827,7 @@ mod tests {
         };
         delete_kg_vector(&vector, "dt://knowledge/proj/pattern/foo")
             .await
-            .expect("delete should succeed");
+            .expect("删除应成功");
 
         let captured = vector.captured.lock().unwrap();
         assert_eq!(captured.len(), 1);
@@ -1859,7 +1853,7 @@ mod tests {
         assert_eq!(
             labels.len(),
             orig_len,
-            "BUSINESS_LABELS must have no duplicates"
+            "BUSINESS_LABELS 不得有重复"
         );
     }
 
@@ -1911,7 +1905,7 @@ mod tests {
                 }),
             };
             let text = build_search_text(&node);
-            assert!(!text.is_empty(), "search text empty for label '{label}'");
+            assert!(!text.is_empty(), "标签 '{label}' 的搜索文本为空");
         }
     }
 
@@ -1990,19 +1984,18 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // embed_kg_node — behavioural test (C1 regression)
+    // embed_kg_node——行为测试（C1 回归）
     //
-    // Verifies that embed_kg_node:
-    //   1. Issues a read_query to fetch the REAL Memgraph elementId
-    //   2. Calls embed_batch
-    //   3. Upserts a Qdrant point whose payload "elementId" is the REAL
-    //      Memgraph element id (format "4:xxx:yyy") — NOT the synthetic
-    //      "<label>/<id_field>=<id_value>" string that previously broke
-    //      `expand_nodes` lookups.
-    //   4. Issues a write_query to mark _kg_synced_at.
+    // 验证 embed_kg_node：
+    //   1. 发起 read_query 获取真实的 Memgraph elementId
+    //   2. 调用 embed_batch
+    //   3. upsert 的 Qdrant point 的 payload "elementId" 是真实的
+    //      Memgraph 元素 id（格式 "4:xxx:yyy"）——而非先前破坏
+    //      `expand_nodes` 查找的合成 "<label>/<id_field>=<id_value>" 字符串。
+    //   4. 发起 write_query 标记 _kg_synced_at。
     // ------------------------------------------------------------------
 
-    /// Mock graph: returns a fixed real Memgraph elementId, counts writes.
+    /// 模拟图：返回固定的真实 Memgraph elementId，并统计写入次数。
     struct MockGraph {
         write_count: std::sync::Mutex<usize>,
     }
@@ -2014,8 +2007,8 @@ mod tests {
             _query: &str,
             _params: HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
-            // Simulate Memgraph Bolt response: array of row objects with the
-            // real elementId under the "eid" key (matches the fetch Cypher:
+            // 模拟 Memgraph Bolt 响应：行对象数组，在 "eid" 键下携带
+            // 真实 elementId（与获取 Cypher 匹配：
             //   MATCH (n:Knowledge {knowledge_id: $value}) RETURN elementId(n) AS eid
             Ok(serde_json::json!([{"eid": "4:1:abc123"}]))
         }
@@ -2032,7 +2025,7 @@ mod tests {
         }
     }
 
-    /// Mock embed: returns a single 1024-dim vector.
+    /// 模拟向量化：返回单个 1024 维向量。
     struct MockEmbed;
 
     #[async_trait]
@@ -2045,7 +2038,7 @@ mod tests {
         }
     }
 
-    /// Mock vector: captures upserted Qdrant points for inspection.
+    /// 模拟向量库：捕获 upsert 的 Qdrant points 供检查。
     struct MockVector {
         upserted: std::sync::Mutex<Vec<serde_json::Value>>,
     }
@@ -2117,40 +2110,39 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "embed_kg_node should succeed: {:?}",
+            "embed_kg_node 应成功: {:?}",
             result.err()
         );
 
-        // 1. write_query must have been called once (to mark _kg_synced_at).
+        // 1. write_query 必须被调用一次（用于标记 _kg_synced_at）。
         assert_eq!(
             *graph.write_count.lock().unwrap(),
             1,
-            "marking query should be called exactly once"
+            "标记查询应恰好被调用一次"
         );
 
-        // 2. Exactly one Qdrant point should have been upserted.
+        // 2. 应恰好 upsert 一个 Qdrant point。
         let upserted = vector.upserted.lock().unwrap();
-        assert_eq!(upserted.len(), 1, "one point should be upserted");
+        assert_eq!(upserted.len(), 1, "应 upsert 一个 point");
 
-        // 3. The payload's "elementId" field MUST be the real Memgraph element
-        //    id returned by the mock read query — NOT the synthetic
-        //    `Knowledge/knowledge_id=dt://knowledge/test/test/test` string
-        //    that the previous implementation wrote (and which broke
-        //    `expand_nodes` lookups).
-        let payload = upserted[0].get("payload").expect("point must have payload");
+        // 3. payload 的 "elementId" 字段必须是模拟 read query 返回的真实
+        //    Memgraph 元素 id——而非先前实现写入的合成
+        //    `Knowledge/knowledge_id=dt://knowledge/test/test/test` 字符串
+        //    （该字符串曾破坏 `expand_nodes` 查找）。
+        let payload = upserted[0].get("payload").expect("point 必须包含 payload");
         let element_id = payload
             .get("elementId")
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert_eq!(
             element_id, "4:1:abc123",
-            "should use real Memgraph elementId; got: {element_id}"
+            "应使用真实的 Memgraph elementId；实际为: {element_id}"
         );
     }
 
     // ------------------------------------------------------------------
-    // build_search_text — regression coverage for the immediate-embedding
-    // labels used by `embed_kg_node` (Knowledge / Concept / Experience).
+    // build_search_text——为 `embed_kg_node`（Knowledge / Concept /
+    // Experience）使用的即时向量化标签提供回归覆盖。
     // `build_search_text` 已有实现，这里加测验证其正确性。ref: brief Step 5/6
     // ------------------------------------------------------------------
 

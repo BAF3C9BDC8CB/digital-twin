@@ -1,16 +1,16 @@
-//! Global priority queue for ALL vector embedding operations.
+//! 所有向量化操作的全局优先级队列。
 //!
-//! ## Motivation
+//! ## 动机
 //!
-//! Previously, embed calls were ad-hoc and uncoordinated:
-//! - Search queries called `embed.embed_batch()` directly (blocking)
-//! - Build pipeline used `buffer_unordered(3)` (limited concurrency)
-//! - KG sync used `SyncAccumulator` (only path with queueing)
+//! 此前，向量化调用是临时且无协调的：
+//! - 搜索查询直接调用 `embed.embed_batch()`（阻塞）
+//! - 构建流水线使用 `buffer_unordered(3)`（并发受限）
+//! - KG 同步使用 `SyncAccumulator`（唯一带队列的路径）
 //!
-//! This led to GPU starvation: user searches could be blocked by a running
-//! sync job, and low-priority sync wasted GPU cycles on single-item embeds.
+//! 这导致 GPU 饥饿：用户搜索可能被正在运行的同步任务阻塞，
+//! 而低优先级同步又浪费 GPU 周期去向量化单项。
 //!
-//! ## Design
+//! ## 设计
 //!
 //! ```text
 //!   dt search ──→ [HIGH] ──┐
@@ -28,13 +28,13 @@
 //!                    └────────────────────────────────┘
 //! ```
 //!
-//! - **HIGH**: User search/query — processed next, never batched (1 text)
-//! - **NORMAL**: Code indexing (build) — batch up to 32, minimal timeout
-//! - **LOW**: KG sync — batch up to 64, 500ms idle timeout, fire-and-forget
+//! - **HIGH**：用户搜索/查询——优先处理，绝不批量（1 条文本）
+//! - **NORMAL**：代码索引（build）——最多批量 32，超时极短
+//! - **LOW**：KG 同步——最多批量 64，500ms 空闲超时，即发即忘
 //!
-//! The worker uses `tokio::select!` with `biased` so HIGH is always polled
-//! before NORMAL, and NORMAL before LOW.  Between batch processing, the
-//! worker yields and checks higher-priority lanes.
+//! worker 使用带 `biased` 的 `tokio::select!`，因此 HIGH 始终先于
+//! NORMAL 被轮询，NORMAL 先于 LOW。在批次处理间隙，
+//! worker 会出让并检查更高优先级通道。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,22 +46,22 @@ use crate::domain::error::DtError;
 use crate::domain::traits::EmbedService;
 
 // ---------------------------------------------------------------------------
-// Priority
+// 优先级
 // ---------------------------------------------------------------------------
 
-/// Priority of an embed request.
+/// 向量化请求的优先级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
-    /// Background sync — can wait, large batches.
+    /// 后台同步——可等待，大批量。
     Low = 0,
-    /// Code indexing (build) — moderate batching.
+    /// 代码索引（build）——适中批量。
     Normal = 1,
-    /// User search / query — process immediately, no batching.
+    /// 用户搜索/查询——立即处理，不批量。
     High = 2,
 }
 
 impl Priority {
-    /// gRPC metadata header value for this priority.
+    /// 该优先级对应的 gRPC metadata 头值。
     pub fn as_header(&self) -> &'static str {
         match self {
             Priority::High => "high",
@@ -72,38 +72,38 @@ impl Priority {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
-/// Maximum batch size for LOW priority (sync).
+/// LOW 优先级（同步）的最大批量。
 const LOW_BATCH: usize = 64;
 
-/// Maximum batch size for NORMAL priority (build).
+/// NORMAL 优先级（build）的最大批量。
 const NORMAL_BATCH: usize = 32;
 
-/// Idle timeout before flushing a LOW batch (ms).
+/// 刷新 LOW 批次前的空闲超时（毫秒）。
 const LOW_FLUSH_MS: u64 = 500;
 
-/// Idle timeout before flushing a NORMAL batch (ms).
+/// 刷新 NORMAL 批次前的空闲超时（毫秒）。
 const NORMAL_FLUSH_MS: u64 = 100;
 
 // ---------------------------------------------------------------------------
-// EmbedTask — internal request payload
+// EmbedTask——内部请求负载
 // ---------------------------------------------------------------------------
 
-/// An embed request travelling through the priority queue.
+/// 在优先级队列中流转的向量化请求。
 struct EmbedTask {
     texts: Vec<String>,
     priority: Priority,
-    /// Response channel — None for fire-and-forget LOW requests.
+    /// 响应通道——LOW 即发即忘请求为 None。
     response: Option<oneshot::Sender<Result<Vec<Vec<f32>>, DtError>>>,
 }
 
 // ---------------------------------------------------------------------------
-// SyncItem — for LOW-priority batch sync
+// SyncItem——用于 LOW 优先级批量同步
 // ---------------------------------------------------------------------------
 
-/// A KG node that needs syncing to Qdrant (LOW priority only).
+/// 需要同步到 Qdrant 的 KG 节点（仅 LOW 优先级）。
 #[derive(Debug, Clone)]
 pub struct SyncItem {
     pub label: String,
@@ -115,29 +115,29 @@ pub struct SyncItem {
 // VectorQueue
 // ---------------------------------------------------------------------------
 
-/// Global priority queue for vector embedding.
+/// 向量化的全局优先级队列。
 ///
-/// All embed operations must go through this queue.  The queue is
-/// process-global: created once in `main.rs` and shared via `Arc`.
+/// 所有向量化操作都必须经过该队列。队列为进程级全局：
+/// 在 `main.rs` 中创建一次，并通过 `Arc` 共享。
 pub struct VectorQueue {
-    /// HIGH lane: user searches.
+    /// HIGH 通道：用户搜索。
     hi_tx: mpsc::UnboundedSender<EmbedTask>,
-    /// NORMAL lane: code indexing (build).
+    /// NORMAL 通道：代码索引（build）。
     norm_tx: mpsc::UnboundedSender<EmbedTask>,
-    /// LOW lane: background sync.
+    /// LOW 通道：后台同步。
     lo_tx: mpsc::UnboundedSender<EmbedTask>,
-    /// Signal to flush LOW lane immediately.
+    /// 立即刷新 LOW 通道的信号。
     flush_notify: Arc<Notify>,
-    /// Background worker handle.
+    /// 后台 worker 句柄。
     _handle: JoinHandle<()>,
-    /// Reference to the embed service for direct gRPC calls.
+    /// 用于直接 gRPC 调用的向量化服务引用。
     embed: Arc<dyn EmbedService>,
 }
 
 impl VectorQueue {
-    /// Spawn the background worker and return the queue handle.
+    /// 启动后台 worker 并返回队列句柄。
     ///
-    /// The worker runs until all senders are dropped.
+    /// worker 运行直到所有发送端被丢弃。
     pub fn spawn(embed: Arc<dyn EmbedService>) -> Self {
         let embed2 = embed.clone();
         let (hi_tx, mut hi_rx) = mpsc::unbounded_channel::<EmbedTask>();
@@ -147,24 +147,24 @@ impl VectorQueue {
         let flush_notify2 = flush_notify.clone();
 
         let handle = tokio::spawn(async move {
-            // LOW lane: accumulated batch buffer.
+            // LOW 通道：累积的批次缓冲区。
             let mut lo_buf: Vec<EmbedTask> = Vec::with_capacity(LOW_BATCH);
-            // NORMAL lane: accumulated batch buffer.
+            // NORMAL 通道：累积的批次缓冲区。
             let mut norm_buf: Vec<EmbedTask> = Vec::with_capacity(NORMAL_BATCH);
 
             loop {
-                // ── biased select: HIGH first, then NORMAL, then LOW ──
+                // ── biased select：先 HIGH，再 NORMAL，后 LOW ──
                 tokio::select! {
                     biased;
 
-                    // HIGH priority — process immediately, one at a time.
+                    // HIGH 优先级——立即处理，一次一个。
                     task_opt = hi_rx.recv() => {
                         match task_opt {
                             Some(task) => {
                                 let _ = process_high(&embed2, task).await;
                             }
                             None => {
-                                // All senders dropped — flush remaining and exit.
+                                // 所有发送端已丢弃——刷新剩余并退出。
                                 flush_batch(&embed2, &mut norm_buf).await;
                                 flush_batch(&embed2, &mut lo_buf).await;
                                 break;
@@ -172,7 +172,7 @@ impl VectorQueue {
                         }
                     }
 
-                    // NORMAL priority — accumulate batch, flush on threshold or timeout.
+                    // NORMAL 优先级——累积批次，达阈值或超时后刷新。
                     task_opt = norm_rx.recv() => {
                         match task_opt {
                             Some(task) => {
@@ -195,7 +195,7 @@ impl VectorQueue {
                         }
                     }
 
-                    // LOW priority — accumulate batch, flush on threshold or signal.
+                    // LOW 优先级——累积批次，达阈值或收到信号后刷新。
                     task_opt = lo_rx.recv() => {
                         match task_opt {
                             Some(task) => {
@@ -218,17 +218,17 @@ impl VectorQueue {
                         }
                     }
 
-                    // LOW flush signal.
+                    // LOW 刷新信号。
                     _ = flush_notify2.notified() => {
                         flush_batch(&embed2, &mut lo_buf).await;
                     }
 
-                    // NORMAL idle timeout.
+                    // NORMAL 空闲超时。
                     _ = tokio::time::sleep(Duration::from_millis(NORMAL_FLUSH_MS)), if !norm_buf.is_empty() => {
                         flush_batch(&embed2, &mut norm_buf).await;
                     }
 
-                    // LOW idle timeout.
+                    // LOW 空闲超时。
                     _ = tokio::time::sleep(Duration::from_millis(LOW_FLUSH_MS)), if !lo_buf.is_empty() => {
                         flush_batch(&embed2, &mut lo_buf).await;
                     }
@@ -247,13 +247,13 @@ impl VectorQueue {
     }
 
     // ------------------------------------------------------------------
-    // Public API
+    // 公共 API
     // ------------------------------------------------------------------
 
-    /// Embed text(s) at HIGH priority (user search).
+    /// 以 HIGH 优先级向量化文本（用户搜索）。
     ///
-    /// Processes immediately — returns as soon as embedding is done.
-    /// Never batched: each call is a separate gRPC request.
+    /// 立即处理——向量化完成即返回。
+    /// 绝不批量：每次调用都是独立的 gRPC 请求。
     pub async fn embed_high(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
         if texts.is_empty() {
             return Ok(vec![]);
@@ -265,13 +265,13 @@ impl VectorQueue {
             response: Some(tx),
         });
         rx.await
-            .map_err(|_| DtError::Repository("queue closed".into()))?
+            .map_err(|_| DtError::Repository("队列已关闭".into()))?
     }
 
-    /// Embed text(s) at NORMAL priority (code indexing / build).
+    /// 以 NORMAL 优先级向量化文本（代码索引 / build）。
     ///
-    /// May be batched with up to 32 other NORMAL requests for GPU
-    /// efficiency.  Returns when the batch is processed.
+    /// 为提升 GPU 效率，可与最多 32 个其他 NORMAL 请求合并批量。
+    /// 批次处理完成后返回。
     pub async fn embed_normal(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
         if texts.is_empty() {
             return Ok(vec![]);
@@ -283,14 +283,13 @@ impl VectorQueue {
             response: Some(tx),
         });
         rx.await
-            .map_err(|_| DtError::Repository("queue closed".into()))?
+            .map_err(|_| DtError::Repository("队列已关闭".into()))?
     }
 
-    /// Enqueue text(s) at LOW priority (background sync).  Non-blocking.
+    /// 以 LOW 优先级将文本入队（后台同步）。非阻塞。
     ///
-    /// Use this for fire-and-forget operations where the caller doesn't
-    /// need the embedding result.  Call [`flush_low`](Self::flush_low)
-    /// to drain the queue before process exit.
+    /// 用于调用方不需要向量化结果的即发即忘操作。
+    /// 进程退出前请调用 [`flush_low`](Self::flush_low) 清空队列。
     pub fn enqueue_low(&self, texts: Vec<String>) {
         if texts.is_empty() {
             return;
@@ -302,30 +301,30 @@ impl VectorQueue {
         });
     }
 
-    /// Signal the LOW lane to flush immediately and wait briefly.
+    /// 通知 LOW 通道立即刷新并短暂等待。
     ///
-    /// Call this before process exit to ensure queued sync items are
-    /// processed.  Safe to call multiple times.
+    /// 进程退出前调用，确保排队的同步条目被处理。
+    /// 可安全多次调用。
     pub async fn flush_low(&self) {
         self.flush_notify.notify_one();
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
-    /// Return a reference to the underlying embed service.
+    /// 返回底层向量化服务的引用。
     ///
-    /// Used by components that need to set gRPC metadata (priority header)
-    /// before calling embed.  Prefer using [`embed_high`], [`embed_normal`],
-    /// or [`enqueue_low`] instead.
+    /// 供需要在调用向量化前设置 gRPC metadata（优先级头）的组件使用。
+    /// 优先使用 [`embed_high`]、[`embed_normal`]
+    /// 或 [`enqueue_low`]。
     pub fn embed_service(&self) -> &Arc<dyn EmbedService> {
         &self.embed
     }
 }
 
 // ---------------------------------------------------------------------------
-// Batch processing helpers
+// 批次处理辅助函数
 // ---------------------------------------------------------------------------
 
-/// Process a single HIGH-priority task immediately.
+/// 立即处理单个 HIGH 优先级任务。
 async fn process_high(embed: &Arc<dyn EmbedService>, task: EmbedTask) {
     let result = embed.embed_batch(&task.texts).await;
     if let Some(tx) = task.response {
@@ -333,7 +332,7 @@ async fn process_high(embed: &Arc<dyn EmbedService>, task: EmbedTask) {
     }
 }
 
-/// Embed all texts in a batch and respond to each caller.
+/// 向量化批次中的所有文本并响应每个调用方。
 async fn flush_batch(embed: &Arc<dyn EmbedService>, buffer: &mut Vec<EmbedTask>) {
     if buffer.is_empty() {
         return;
@@ -342,7 +341,7 @@ async fn flush_batch(embed: &Arc<dyn EmbedService>, buffer: &mut Vec<EmbedTask>)
     let tasks: Vec<EmbedTask> = buffer.drain(..).collect();
     let count = tasks.len();
 
-    // Collect all texts from all tasks.
+    // 收集所有任务的全部文本。
     let mut all_texts: Vec<String> = Vec::new();
     let mut idx_map: Vec<(usize, usize)> = Vec::with_capacity(count); // (task_idx, start)
     for task in &tasks {
@@ -352,15 +351,15 @@ async fn flush_batch(embed: &Arc<dyn EmbedService>, buffer: &mut Vec<EmbedTask>)
     }
 
     tracing::debug!(
-        "[vec-queue] flushing {} task(s), {} text(s) total",
+        "[vec-queue] 正在刷新 {} 个任务，共 {} 条文本",
         count,
         all_texts.len(),
     );
 
-    // One gRPC call for all texts.
+    // 所有文本一次 gRPC 调用。
     match embed.embed_batch(&all_texts).await {
         Ok(all_vecs) => {
-            // Distribute vectors back to each task.
+            // 将向量分发给每个任务。
             for (ti, task) in tasks.into_iter().enumerate() {
                 if let Some(tx) = task.response {
                     let (start, len) = idx_map[ti];
@@ -370,7 +369,7 @@ async fn flush_batch(embed: &Arc<dyn EmbedService>, buffer: &mut Vec<EmbedTask>)
             }
         }
         Err(e) => {
-            // Propagate error to all waiters.
+            // 将错误传播给所有等待方。
             let err_msg = format!("{e}");
             for task in tasks {
                 if let Some(tx) = task.response {
