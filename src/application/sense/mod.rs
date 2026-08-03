@@ -173,6 +173,16 @@ impl SenseService {
             (vec![], vec![])
         };
 
+        // --- 关键实体（T5，indexed 且 graph 可用时） ---
+        let key_entities = if status == SenseStatus::Indexed {
+            match &self.graph {
+                Some(g) => brief::key_entities(g.as_ref(), name).await,
+                None => vec![],
+            }
+        } else {
+            vec![]
+        };
+
         SenseReport {
             status,
             project: Some(ProjectRef {
@@ -188,7 +198,7 @@ impl SenseService {
             }),
             dirs,
             languages,
-            key_entities: vec![],
+            key_entities,
             candidates: vec![],
             degraded,
         }

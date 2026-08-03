@@ -1,6 +1,7 @@
 //! 简报聚合：目录画像、语言分布、关键实体。
 
-use crate::application::sense::{DirStat, LangStat};
+use crate::application::sense::{DirStat, KeyEntity, LangStat};
+use crate::domain::traits::GraphRepository;
 
 /// 由 payloads 聚合目录画像与语言分布。
 /// dir 口径：file_path 去掉 project_root 前缀后的第一级目录；根级文件归 "."。
@@ -52,6 +53,116 @@ pub fn aggregate_dirs(
     languages.sort_by(|a, b| b.pct.cmp(&a.pct).then(a.ext.cmp(&b.ext)));
 
     (dirs, languages)
+}
+
+/// 关键实体：CALLS 入度 top10；0 行 → Class 名称启发式；仍空 → vec![]。
+pub async fn key_entities(graph: &dyn GraphRepository, project: &str) -> Vec<KeyEntity> {
+    let mut params = std::collections::HashMap::new();
+    params.insert(
+        "p".to_string(),
+        serde_json::Value::String(project.to_string()),
+    );
+
+    // 首选：CALLS 入度
+    let in_degree = graph
+        .read_query(
+            "MATCH (m:Method {project: $p})<-[:CALLS]-() \
+             RETURN m.name AS name, count(*) AS d ORDER BY d DESC LIMIT 10",
+            params.clone(),
+        )
+        .await
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    if !in_degree.is_empty() {
+        return in_degree
+            .iter()
+            .map(|r| KeyEntity {
+                name: r
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                kind: "method".into(),
+                source: "in_degree".into(),
+                in_degree: r.get("d").and_then(|d| d.as_u64()).unwrap_or(0),
+            })
+            .collect();
+    }
+
+    // 降级：Class 名称启发式
+    let heuristic = graph
+        .read_query(
+            "MATCH (c:Class {project: $p}) \
+             WHERE c.name ENDS WITH 'Controller' OR c.name ENDS WITH 'Service' \
+                OR c.name ENDS WITH 'Mapper' OR c.name ENDS WITH 'Application' \
+             RETURN c.name AS name LIMIT 10",
+            params,
+        )
+        .await
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    heuristic
+        .iter()
+        .map(|r| KeyEntity {
+            name: r
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            kind: "class".into(),
+            source: "heuristic".into(),
+            in_degree: 0,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod key_entity_tests {
+    use super::key_entities;
+    use crate::application::sense::stubs::StubGraph;
+
+    #[tokio::test]
+    async fn in_degree_top10() {
+        let g = StubGraph {
+            method_count: 0,
+            class_count: 0,
+            calls_rows: vec![serde_json::json!({"name": "handle_build", "d": 12})],
+            heuristic_rows: vec![],
+        };
+        let out = key_entities(&g, "p").await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].name, "handle_build");
+        assert_eq!(out[0].in_degree, 12);
+        assert_eq!(out[0].source, "in_degree");
+        assert_eq!(out[0].kind, "method");
+    }
+
+    #[tokio::test]
+    async fn heuristic_fallback() {
+        let g = StubGraph {
+            method_count: 0,
+            class_count: 0,
+            calls_rows: vec![],
+            heuristic_rows: vec![serde_json::json!({"name": "PayController"})],
+        };
+        let out = key_entities(&g, "p").await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].source, "heuristic");
+        assert_eq!(out[0].kind, "class");
+    }
+
+    #[tokio::test]
+    async fn both_empty_returns_empty() {
+        let g = StubGraph {
+            method_count: 0,
+            class_count: 0,
+            calls_rows: vec![],
+            heuristic_rows: vec![],
+        };
+        assert!(key_entities(&g, "p").await.is_empty());
+    }
 }
 
 #[cfg(test)]
