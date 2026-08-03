@@ -214,6 +214,18 @@ enum Commands {
         project: Option<String>,
     },
 
+    /// 环境感知：定位目录所属项目，输出索引状态与内容简报。
+    ///
+    /// 用法: dt sense [path] [--json]
+    Sense {
+        /// 目标目录（缺省为当前工作目录）。
+        path: Option<std::path::PathBuf>,
+
+        /// 输出纯 JSON 到 stdout（供 MCP / 脚本使用）。
+        #[arg(long = "json")]
+        json: bool,
+    },
+
     /// 将 Nacos 配置同步到知识图谱。
     ///
     /// 用法: dt nacos-sync [test|prod]
@@ -1242,6 +1254,24 @@ async fn main() -> anyhow::Result<()> {
             let vector = connect_vector().await;
             dt_daemon::interfaces::cli::build::handle_search(
                 query, world, limit, json, project, graph, vector,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        // ---- CLI 模式: dt sense ----
+        Some(Commands::Sense { path, json }) => {
+            let cfg = load_config();
+            let projects = cfg
+                .as_ref()
+                .map(resolve_project_paths)
+                .unwrap_or_default();
+            let graph = connect_graph().await;
+            let vector = connect_vector().await;
+            let snapshot = connect_snapshot().await;
+            let ignored = dirs_like_home_config(".config/digital-twin/ignored_dirs.yaml");
+            dt_daemon::interfaces::cli::sense::handle_sense(
+                path, json, projects, graph, vector, snapshot, ignored,
             )
             .await?;
             return Ok(());

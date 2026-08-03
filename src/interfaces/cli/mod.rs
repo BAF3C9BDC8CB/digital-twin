@@ -14,4 +14,5 @@ pub mod kub;
 pub mod learn;
 pub mod memorize;
 pub mod search_render;
+pub mod sense;
 pub mod sync;
