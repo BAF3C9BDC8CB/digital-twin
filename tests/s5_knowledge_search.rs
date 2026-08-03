@@ -108,11 +108,11 @@ async fn s5a_graph_expansion_brings_relates_neighbors() {
         origin: None,
         doc_id: None,
     };
-    let result = cws.search(&req).await.expect("search must succeed");
+    let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
 
     // 结构断言（S5a 契约）
-    assert!(!result.hits.is_empty(), "knowledge world must return hits");
+    assert!(!result.hits.is_empty(), "knowledge 世界必须返回命中结果");
     assert!(
         result.degraded.contains(&"rerank_unavailable".to_string()),
         "S5a 无 rerank → 必须打 rerank_unavailable: {:?}",
@@ -183,7 +183,7 @@ async fn s5a_canonical_query_attribution() {
         origin: None,
         doc_id: None,
     };
-    let result = cws.search(&req).await.expect("search must succeed");
+    let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
     let pos = result
         .hits
@@ -242,7 +242,7 @@ async fn s5b_rerank_full_fusion_live() {
         return;
     };
     let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), Some(rerank_router(XINFERENCE)));
-    let result = cws.search(&same_query()).await.expect("search must succeed");
+    let result = cws.search(&same_query()).await.expect("搜索必须成功");
     print_hits(&result);
 
     assert!(!result.hits.is_empty());
@@ -285,7 +285,7 @@ async fn s5b_rerank_outage_falls_back_live() {
     // 指向不可达地址模拟 rerank 服务关停
     let dead = rerank_router("http://localhost:1/v1");
     let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), Some(dead));
-    let result = cws.search(&same_query()).await.expect("search must succeed");
+    let result = cws.search(&same_query()).await.expect("搜索必须成功");
     print_hits(&result);
 
     assert!(!result.hits.is_empty(), "rerank 关停不得阻塞返回");
@@ -323,7 +323,7 @@ async fn s5c_doc_world_returns_chunk_text() {
         origin: None,
         doc_id: None,
     };
-    let result = cws.search(&req).await.expect("search must succeed");
+    let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
 
     assert!(!result.hits.is_empty(), "doc 世界应返回证据块");
@@ -357,7 +357,7 @@ async fn s5c_with_evidence_backfills_top5_entities() {
         origin: None,
         doc_id: None,
     };
-    let result = cws.search(&req).await.expect("search must succeed");
+    let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
     for h in result.hits.iter().take(5) {
         println!("evidence for {}: {:?}", h.id, h.evidence);

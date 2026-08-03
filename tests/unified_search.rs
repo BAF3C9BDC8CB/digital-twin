@@ -7,7 +7,7 @@ fn dt(args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_dt"))
         .args(args)
         .output()
-        .expect("dt binary");
+        .expect("dt 可执行文件启动失败");
     (
         String::from_utf8_lossy(&out.stdout).to_string(),
         String::from_utf8_lossy(&out.stderr).to_string(),
@@ -17,9 +17,9 @@ fn dt(args: &[&str]) -> (String, String, i32) {
 
 fn search_json(args: &[&str]) -> serde_json::Value {
     let (stdout, stderr, code) = dt(args);
-    assert_eq!(code, 0, "dt search failed: {stderr}");
+    assert_eq!(code, 0, "dt search 执行失败: {stderr}");
     serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("stdout is not pure JSON: {e}\n--- stdout ---\n{stdout}"))
+        .unwrap_or_else(|e| panic!("stdout 不是纯 JSON: {e}\n--- stdout ---\n{stdout}"))
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn u_all_world_finds_createapp_with_analysis_and_location() {
     let m = hits
         .iter()
         .find(|h| h["entity_type"] == "Method" && h["title"] == "createApp")
-        .unwrap_or_else(|| panic!("no createApp Method hit in all-world results: {hits:?}"));
+        .unwrap_or_else(|| panic!("全世界结果中未找到 createApp Method 命中: {hits:?}"));
     assert!(m["file_path"].as_str().unwrap().contains("app.js"));
     assert_eq!(m["start_line"], 32);
     assert!(!m["llm_analysis"].as_str().unwrap_or("").is_empty());
@@ -43,13 +43,13 @@ fn u_all_world_finds_createapp_with_analysis_and_location() {
 fn u_knowledge_ifcode_semantic_hit_via_cli() {
     let v = search_json(&["search", "新增渠道的唯一代码标识", "--world", "knowledge", "--json"]);
     let hits = v["hits"].as_array().unwrap();
-    assert!(!hits.is_empty(), "knowledge world empty");
+    assert!(!hits.is_empty(), "knowledge 世界无命中结果");
     let top3: Vec<String> = hits
         .iter()
         .take(3)
         .map(|h| h["title"].as_str().unwrap_or("").to_lowercase())
         .collect();
-    assert!(top3.iter().any(|t| t.contains("ifcode")), "ifCode not in top3: {top3:?}");
+    assert!(top3.iter().any(|t| t.contains("ifcode")), "ifCode 未进入前 3: {top3:?}");
 }
 
 /// memory 世界：当前 Memgraph 无预置事件节点（S5 Task 0 清库重建后事件为空），
@@ -67,7 +67,7 @@ async fn u_memory_world_finds_seeded_event() {
         "",
     )
     .await
-    .expect("memgraph connect");
+    .expect("连接 Memgraph 失败");
     let repo: Arc<dyn GraphRepository> = Arc::new(graph);
 
     let mut params = HashMap::new();
@@ -81,14 +81,14 @@ async fn u_memory_world_finds_seeded_event() {
         params.clone(),
     )
     .await
-    .expect("seed probe event");
+    .expect("创建探针事件失败");
 
     let v = search_json(&["search", "UNIFIED_PROBE_7X9", "--world", "memory", "--json"]);
     let hits = v["hits"].as_array().unwrap();
     assert!(
         hits.iter().any(|h| h["entity_type"] == "Decision"
             && h["title"] == "unified-search-live-probe"),
-        "seeded event not found: {hits:?}"
+        "未找到已创建的探针事件: {hits:?}"
     );
 
     repo.write_query(
@@ -96,7 +96,7 @@ async fn u_memory_world_finds_seeded_event() {
         params,
     )
     .await
-    .expect("cleanup probe event");
+    .expect("清理探针事件失败");
 }
 
 #[test]

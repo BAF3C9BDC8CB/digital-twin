@@ -44,7 +44,7 @@ const FIXTURE_DIR: &str = "test/fixtures/knowledge";
 
 fn fixture_docs() -> Vec<PathBuf> {
     let mut docs: Vec<PathBuf> = std::fs::read_dir(FIXTURE_DIR)
-        .unwrap_or_else(|e| panic!("cannot read {FIXTURE_DIR}: {e}"))
+        .unwrap_or_else(|e| panic!("无法读取 {FIXTURE_DIR}: {e}"))
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("md"))
@@ -81,7 +81,7 @@ async fn extract_real_docs_meets_quality_gates() {
     let docs = fixture_docs();
     assert!(
         docs.len() >= 5,
-        "brief requires >= 5 real documents, found {}",
+        "任务书要求至少 5 篇真实文档，实际发现 {}",
         docs.len()
     );
     println!("== documents ({}) ==", docs.len());
@@ -93,12 +93,12 @@ async fn extract_real_docs_meets_quality_gates() {
     let healthy = client.health_check().await.unwrap_or(false);
     assert!(
         healthy,
-        "LLM endpoint unreachable — start the model server first"
+        "LLM 端点不可达 — 请先启动模型服务"
     );
     println!("== provider healthy, model: {model} ==");
 
     let registry = Arc::new(
-        PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts must load"),
+        PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts 必须加载成功"),
     );
     let llm = LlmClientProcessor::new(client, model, registry, LlmConfig::default());
     let chunk = ChunkProcessor::default();
@@ -116,16 +116,16 @@ async fn extract_real_docs_meets_quality_gates() {
             .unwrap_or("?")
             .to_string();
         let text = std::fs::read_to_string(doc)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", doc.display()));
+            .unwrap_or_else(|e| panic!("无法读取 {}: {e}", doc.display()));
 
         let mut ctx = PipelineContext::new(doc.clone(), text, "knowledge-fixtures".to_string());
-        let chunk_out = chunk.execute(&ctx).await.expect("chunk processor failed");
+        let chunk_out = chunk.execute(&ctx).await.expect("分块处理器执行失败");
         ctx.add_output("chunk", chunk_out);
 
-        let out = llm.execute(&ctx).await.expect("llm processor failed");
+        let out = llm.execute(&ctx).await.expect("LLM 处理器执行失败");
         let graphs: Vec<ExtractedGraph> =
-            serde_json::from_value(out.get("graphs").expect("graphs missing").clone())
-                .expect("graphs must deserialize");
+            serde_json::from_value(out.get("graphs").expect("缺少 graphs 字段").clone())
+                .expect("graphs 反序列化失败");
 
         let file_degraded = graphs.iter().filter(|g| g.degraded).count();
         println!(
@@ -209,12 +209,12 @@ async fn extract_real_docs_meets_quality_gates() {
 
     assert!(
         parse_success >= 0.90,
-        "metric 1 failed: parse success {:.1}% < 90%",
+        "指标 1 未达标：解析成功率 {:.1}% < 90%",
         parse_success * 100.0
     );
     assert!(
         coverage >= 0.95,
-        "metric 2 failed: head/tail coverage {:.1}% < 95%",
+        "指标 2 未达标：头尾实体覆盖率 {:.1}% < 95%",
         coverage * 100.0
     );
 }
