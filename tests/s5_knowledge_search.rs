@@ -299,3 +299,81 @@ async fn s5b_rerank_outage_falls_back_live() {
     assert!((b.final_score - expect).abs() < 1e-9);
     println!("ACCEPT: rerank outage → degraded fallback works");
 }
+
+// ---------------------------------------------------------------------------
+// S5c：world=doc 证据检索 + with_evidence 回填
+// ---------------------------------------------------------------------------
+
+/// §9.5：world=doc 返回 doc_chunks 原文段落（无 nacos 点污染）。
+#[tokio::test]
+#[ignore]
+async fn s5c_doc_world_returns_chunk_text() {
+    let Some((graph, vector, embed)) = live_backends().await else {
+        eprintln!("SKIP: live backends unavailable");
+        return;
+    };
+    let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), None);
+    let req = SearchRequest {
+        query: "ifCode 编码规则".into(),
+        world: Some("doc".into()),
+        limit: Some(5),
+        project: Some("test-pipeline".into()),
+        max_hops: None,
+        with_evidence: None,
+        origin: None,
+        doc_id: None,
+    };
+    let result = cws.search(&req).await.expect("search must succeed");
+    print_hits(&result);
+
+    assert!(!result.hits.is_empty(), "doc 世界应返回证据块");
+    for h in &result.hits {
+        assert!(h.id.starts_with("dt://doc/"), "id 应为 doc_id:block_index 形态");
+        assert!(h.id.rsplit(':').next().unwrap().parse::<u32>().is_ok());
+        assert!(!h.snippet.is_empty(), "snippet 应含原文 text（nacos 点无 text 会被剔除）");
+        assert_eq!(h.source_world, "doc");
+        assert_eq!(h.entity_type, "Doc");
+        assert!(h.source_ref.is_some());
+    }
+    println!("ACCEPT: doc world returned {} chunk(s) with原文 text", result.hits.len());
+}
+
+/// §9.5：with_evidence 时 top-5 实体各附 ≤2 段证据。
+#[tokio::test]
+#[ignore]
+async fn s5c_with_evidence_backfills_top5_entities() {
+    let Some((graph, vector, embed)) = live_backends().await else {
+        eprintln!("SKIP: live backends unavailable");
+        return;
+    };
+    let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), None);
+    let req = SearchRequest {
+        query: "新增渠道的唯一代码标识".into(),
+        world: Some("knowledge".into()),
+        limit: Some(10),
+        project: Some("test-pipeline".into()),
+        max_hops: Some(1),
+        with_evidence: Some(true),
+        origin: None,
+        doc_id: None,
+    };
+    let result = cws.search(&req).await.expect("search must succeed");
+    print_hits(&result);
+    for h in result.hits.iter().take(5) {
+        println!("evidence for {}: {:?}", h.id, h.evidence);
+    }
+
+    assert!(!result.hits.is_empty());
+    // 至少 ifCode（top-1）拿到证据；每实体 ≤2 段
+    let with_ev: Vec<_> = result.hits.iter().take(5).filter(|h| h.evidence.is_some()).collect();
+    assert!(!with_ev.is_empty(), "top-5 至少一个实体应回填到证据");
+    assert!(with_ev
+        .iter()
+        .all(|h| h.evidence.as_ref().unwrap().len() <= 2));
+    let ifcode = result.hits.iter().find(|h| h.id.to_lowercase().ends_with("/ifcode"));
+    assert!(
+        ifcode.and_then(|h| h.evidence.as_ref()).is_some_and(|e| !e.is_empty()),
+        "ifCode 应有证据段落"
+    );
+    println!("ACCEPT: with_evidence backfilled {} top-5 entitie(s)", with_ev.len());
+}

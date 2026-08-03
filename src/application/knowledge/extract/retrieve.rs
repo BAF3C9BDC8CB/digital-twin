@@ -9,7 +9,7 @@ use crate::application::context::graph_parse::parse_graph_rows;
 use crate::application::context::search_mcp::SearchHit;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, RerankService, VectorRepository};
-use crate::shared::collections::KG_NODES;
+use crate::shared::collections::{DOC_CHUNKS, KG_NODES};
 use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
@@ -991,6 +991,89 @@ ORDER BY eid, d.doc_id
 }
 
 // ---------------------------------------------------------------------------
+// ⑤ 证据回填（§5.5.2；with_evidence，仅 knowledge 世界）
+// ---------------------------------------------------------------------------
+
+/// 把 doc_chunks 命中按 entity_ids 归属到 top-N 实体：每实体 ≤2 段、按分数降序。
+/// 前置条件：entity_ids 数组匹配只在 QdrantRepo 原生 filter（R7）下成立——
+/// 本函数只负责分组；filter 构造见 backfill_evidence，数组匹配语义由测试锁死。
+fn group_evidence(
+    results: &[serde_json::Value],
+    ids: &[&str],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut per_entity: std::collections::HashMap<String, Vec<(f64, String)>> =
+        std::collections::HashMap::new();
+    for hit in results {
+        let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let Some(payload) = hit.get("payload") else {
+            continue;
+        };
+        let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        if text.is_empty() {
+            continue;
+        }
+        let entity_ids: Vec<&str> = payload
+            .get("entity_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|e| e.as_str()).collect())
+            .unwrap_or_default();
+        for id in ids {
+            if entity_ids.contains(id) {
+                per_entity
+                    .entry(id.to_string())
+                    .or_default()
+                    .push((score, text.to_string()));
+            }
+        }
+    }
+    per_entity
+        .into_iter()
+        .map(|(k, mut chunks)| {
+            chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            chunks.truncate(2);
+            (k, chunks.into_iter().map(|(_, t)| t).collect())
+        })
+        .collect()
+}
+
+impl Retriever {
+    /// knowledge top-5 实体从 doc_chunks 回填证据段落（合并单查询；best-effort 静默失败）。
+    pub async fn backfill_evidence(&self, query: &str, hits: &mut [SearchHit]) {
+        let ids: Vec<&str> = hits.iter().take(5).map(|h| h.id.as_str()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let should: Vec<serde_json::Value> = ids
+            .iter()
+            .map(|id| serde_json::json!({"key": "entity_ids", "match": {"value": id}}))
+            .collect();
+        let filter = serde_json::json!({
+            "must": [{"key": "source", "match": {"value": "doc"}}],
+            "should": should,
+        });
+        let Ok(embeddings) = self.embed.embed_batch(&[query.to_string()]).await else {
+            return;
+        };
+        let Some(qvec) = embeddings.into_iter().next() else {
+            return;
+        };
+        let Ok(results) = self
+            .vector
+            .search_with_filter(DOC_CHUNKS, qvec, 20, filter)
+            .await
+        else {
+            return;
+        };
+        let mut grouped = group_evidence(&results, &ids);
+        for hit in hits.iter_mut().take(5) {
+            if let Some(chunks) = grouped.remove(&hit.id) {
+                hit.evidence = Some(chunks);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1704,5 +1787,73 @@ mod tests {
         // 未配置：false
         let r3 = Retriever::new(None, Arc::new(empty_vector()), Arc::new(MockEmbed), None);
         assert!(!r3.apply_rerank("q", &mut c2).await);
+    }
+
+    #[test]
+    fn group_evidence_caps_two_chunks_per_entity_prefers_high_score() {
+        let chunk = |eids: &[&str], text: &str, score: f64| {
+            json!({
+                "score": score,
+                "payload": {"text": text, "entity_ids": eids, "source": "doc",
+                             "doc_id": "d", "block_index": 0}
+            })
+        };
+        let results = vec![
+            chunk(&["E1"], "低分证据", 0.5),
+            chunk(&["E1", "E2"], "高分证据", 0.9),
+            chunk(&["E1"], "中分证据", 0.7),
+            chunk(&["E3"], "别人的证据", 0.99),
+            {
+                // nacos 形状点：无 text → 跳过
+                let mut c = chunk(&["E1"], "", 0.99);
+                c["payload"].as_object_mut().unwrap().remove("text");
+                c["payload"].as_object_mut().unwrap().remove("entity_ids");
+                c
+            },
+        ];
+        let grouped = group_evidence(&results, &["E1", "E2"]);
+        assert_eq!(grouped["E1"].len(), 2);
+        assert_eq!(grouped["E1"][0], "高分证据"); // 按分数降序
+        assert_eq!(grouped["E1"][1], "中分证据");
+        assert_eq!(grouped["E2"].len(), 1);
+        assert!(!grouped.contains_key("E3")); // 不在 top-N 请求列表
+    }
+
+    #[tokio::test]
+    async fn backfill_evidence_builds_merged_should_filter() {
+        let vector = Arc::new(empty_vector());
+        let r = Retriever::new(None, vector.clone(), Arc::new(MockEmbed), None);
+        let mut hits = vec![SearchHit {
+            id: "E1".into(),
+            title: "t".into(),
+            snippet: "s".into(),
+            source_world: "knowledge".into(),
+            entity_type: "Channel".into(),
+            score: 0.9,
+            source_ref: None,
+            file_path: None,
+            start_line: None,
+            end_line: None,
+            signature: None,
+            calls: vec![],
+            element_id: None,
+            score_breakdown: None,
+            hop: Some(0),
+            via_same_as: None,
+            relations: None,
+            evidence: None,
+            rerank_degraded: None,
+        }];
+        r.backfill_evidence("q", &mut hits).await;
+        let filter = vector.captured_filter.lock().unwrap().clone().unwrap();
+        // must: source=doc；should: entity_ids 数组匹配（原生 filter 前置，§5.5）
+        let must = filter["must"].as_array().unwrap();
+        assert!(must
+            .iter()
+            .any(|c| c["key"] == "source" && c["match"]["value"] == "doc"));
+        let should = filter["should"].as_array().unwrap();
+        assert!(should
+            .iter()
+            .any(|c| c["key"] == "entity_ids" && c["match"]["value"] == "E1"));
     }
 }

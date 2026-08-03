@@ -318,7 +318,14 @@ impl CrossWorldSearch {
             origin: request.origin.as_deref(),
         };
         match retriever.search_knowledge(&req).await {
-            Ok(outcome) => (outcome.hits, outcome.degraded),
+            Ok(mut outcome) => {
+                if request.with_evidence == Some(true) {
+                    retriever
+                        .backfill_evidence(&request.query, &mut outcome.hits)
+                        .await;
+                }
+                (outcome.hits, outcome.degraded)
+            }
             Err(e) => {
                 tracing::warn!("knowledge retrieval failed: {e}");
                 (Vec::new(), Vec::new())
