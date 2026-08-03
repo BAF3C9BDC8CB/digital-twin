@@ -1,6 +1,7 @@
 //! dt sense —— 环境感知（只读）：定位 → 状态 → 简报/发现报告。
 
 pub mod brief;
+pub mod discover;
 pub mod locate;
 
 use std::path::{Path, PathBuf};
@@ -92,7 +93,12 @@ impl SenseService {
                 dirs: vec![],
                 languages: vec![],
                 key_entities: vec![],
-                candidates: vec![], // T6 discover 填充
+                candidates: discover::scan_candidates(
+                    input,
+                    self.ignored_dirs_file
+                        .as_deref()
+                        .unwrap_or(Path::new("/nonexistent")),
+                ),
                 degraded,
             };
         };
