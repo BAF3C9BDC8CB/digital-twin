@@ -1,5 +1,6 @@
 //! dt sense —— 环境感知（只读）：定位 → 状态 → 简报/发现报告。
 
+pub mod brief;
 pub mod locate;
 
 use std::path::{Path, PathBuf};
@@ -165,6 +166,13 @@ impl SenseService {
             SenseStatus::RegisteredNotIndexed
         };
 
+        // --- 目录画像 + 语言分布（T4，仅 indexed 时聚合） ---
+        let (dirs, languages) = if status == SenseStatus::Indexed {
+            brief::aggregate_dirs(&payloads, &root.display().to_string())
+        } else {
+            (vec![], vec![])
+        };
+
         SenseReport {
             status,
             project: Some(ProjectRef {
@@ -178,8 +186,8 @@ impl SenseService {
                 vectors,
                 last_build,
             }),
-            dirs: vec![],
-            languages: vec![],
+            dirs,
+            languages,
             key_entities: vec![],
             candidates: vec![],
             degraded,
@@ -379,6 +387,8 @@ mod status_tests {
         assert_eq!(s.classes, 3);
         assert_eq!(s.last_build.as_deref(), Some("2026-08-01T10:00:00"));
         assert!(r.degraded.is_empty());
+        assert!(!r.dirs.is_empty());
+        assert_eq!(r.languages[0].ext, "rs");
     }
 
     #[tokio::test]
