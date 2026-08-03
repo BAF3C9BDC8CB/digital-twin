@@ -231,14 +231,14 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
 
 /// Create an embed client for search, reading config from `config/pipeline.yaml`.
 /// Uses the provider router to support both SiliconFlow and XInference.
-fn create_search_embed_client() -> Arc<dyn EmbedService> {
-    use crate::infrastructure::embedder::{create_embed_router, ProviderConfig};
+fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
+    use crate::infrastructure::embedder::ProviderConfig;
 
     let pipeline_cfg = match PipelineConfig::load() {
         Ok(cfg) => cfg,
         Err(e) => {
             tracing::warn!("无法加载 pipeline.yaml ({e})，使用默认配置");
-            return create_embed_router(ProviderConfig::default_siliconflow());
+            return ProviderConfig::default_siliconflow();
         }
     };
 
@@ -246,7 +246,7 @@ fn create_search_embed_client() -> Arc<dyn EmbedService> {
         Some(p) => p,
         None => {
             tracing::warn!("pipeline.yaml 中无 providers 配置，使用默认配置");
-            return create_embed_router(ProviderConfig::default_siliconflow());
+            return ProviderConfig::default_siliconflow();
         }
     };
 
@@ -255,7 +255,7 @@ fn create_search_embed_client() -> Arc<dyn EmbedService> {
 
     let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
-    let cfg = ProviderConfig {
+    ProviderConfig {
         siliconflow_url: sf
             .map(|s| s.url.as_str())
             .unwrap_or("https://api.siliconflow.cn/v1")
@@ -280,8 +280,15 @@ fn create_search_embed_client() -> Arc<dyn EmbedService> {
         embed_provider: pcfg.embed_provider.clone(),
         rerank_provider: pcfg.rerank_provider.clone(),
         llm_provider: pcfg.llm_provider.clone(),
-    };
-    create_embed_router(cfg)
+    }
+}
+
+fn create_search_embed_client() -> Arc<dyn EmbedService> {
+    crate::infrastructure::embedder::create_embed_router(provider_config_from_pipeline())
+}
+
+fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService> {
+    crate::infrastructure::embedder::create_rerank_router(provider_config_from_pipeline())
 }
 
 /// Read the SiliconFlow LLM model name from `config/pipeline.yaml`.
@@ -745,818 +752,48 @@ pub async fn handle_build_all(
 }
 
 /// Extract embedded ASCII word sequences from a string that may mix
-/// Chinese and English (e.g. "Redis集群配置信息" → ["Redis"],
-/// "我所有的MySQL数据库地址" → ["MySQL"]).
-fn extract_ascii_words(s: &str) -> Vec<String> {
-    let re = regex::Regex::new(r"[a-zA-Z0-9_.-]+").unwrap();
-    re.find_iter(s)
-        .map(|m| m.as_str().to_lowercase())
-        .filter(|w| !w.is_empty())
-        .collect()
-}
 
-/// Handle `dt search` — semantic code search across worlds.
-///
-/// For "code" world: vector search across `*_methods` collections, falls
-/// back to CONTAINS text search.
-/// For "config"/"all" worlds: **hybrid search** — Qdrant vector search on
-/// `kg_nodes` + keyword CONTAINS search on config labels, fused
-/// with Reciprocal Rank Fusion. Multi-query expansion (Chinese + English)
-/// bridges the language gap between user queries and config property names.
-/// For "knowledge" / "memory" / etc.: Cypher text search.
+/// Handle `dt search` — 统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
 pub async fn handle_search(
     query: String,
     world: String,
     limit: usize,
-    path: Option<PathBuf>,
+    json: bool,
     project: Option<String>,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
-    tracing::info!(
-        "搜索: query={query} world={world} limit={limit} project={project:?} path={path:?}",
-        path = path.as_ref().map(|p| p.display().to_string()),
+    tracing::info!("搜索: query={query} world={world} limit={limit} json={json} project={project:?}");
+
+    if !json {
+        println!("Search: query=\"{query}\" world={world} limit={limit}");
+    }
+
+    use crate::application::context::search_mcp::CrossWorldSearchTrait;
+
+    let embed: Option<Arc<dyn EmbedService>> = Some(create_search_embed_client());
+    let rerank = Some(create_search_rerank_client());
+    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(
+        graph, vector, embed, rerank,
     );
-
-    println!("Search: query=\"{query}\" world={world} limit={limit}");
-    if let Some(ref p) = project {
-        println!("  project: {p}");
-    }
-    if let Some(ref p) = path {
-        println!("  scope: {}", p.display());
-    }
-
-    // ── Helper: get English keyword terms from query ────────────────
-    let get_keywords = |q: &str| -> Vec<String> {
-        let rewriter = crate::application::search::rewrite::QueryRewriter::with_defaults();
-        let candidates = rewriter.rewrite(q);
-        let mut terms: Vec<String> = Vec::new();
-        // Take original query words (extract embedded English terms like "Redis" from "Redis集群")
-        for w in extract_ascii_words(q) {
-            if !terms.contains(&w) {
-                terms.push(w);
-            }
-        }
-        // Take English-expanded terms (skip short/noisy ones like "db")
-        for c in candidates.iter().skip(1) {
-            if c.chars().all(|ch| ch.is_ascii()) {
-                for word in c.split_whitespace() {
-                    let w = word.to_lowercase();
-                    if w.len() >= 3 && !terms.contains(&w) {
-                        terms.push(w);
-                    }
-                }
-            }
-        }
-        terms.truncate(5);
-        terms
+    let req = crate::application::context::search_mcp::SearchRequest {
+        query: query.clone(),
+        world: Some(world),
+        limit: Some(limit),
+        project,
+        max_hops: None,
+        with_evidence: None,
+        origin: None,
+        doc_id: None,
     };
+    let result = cws.search(&req).await?;
 
-    // ── Config world: vector search on config_chunks (Qdrant) ────────────
-    // Uses full-chunk text embeddings to bridge the Chinese→English gap
-    // that prevented effective vector search on individual ConfigKey names.
-    // Falls back to keyword search when SiliconFlow API is unavailable.
-    if world == "config" {
-        // Attempt vector search on config_chunks + project _semantic
-        if let Some(vec_repo) = &vector {
-            let embed = create_search_embed_client();
-            // Build query variants for multi-vector fusion
-            let queries: Vec<String> = {
-                let mut qs = vec![query.clone()];
-                let ascii_terms: Vec<String> = extract_ascii_words(&query);
-                for t in &ascii_terms {
-                    if *t != query && !qs.contains(t) {
-                        qs.push(t.clone());
-                    }
-                }
-                if !query.to_lowercase().contains("config") {
-                    qs.push(format!("{} config", query));
-                }
-                qs.truncate(3);
-                qs
-            };
-
-            if let Ok(all_vectors) = embed.embed_batch(&queries).await {
-                use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
-                let mut rank_lists: Vec<Vec<RankedItem>> = Vec::new();
-
-                // Collect collections to search
-                let collections = vec![
-                    "config_chunks".to_string(),
-                    crate::shared::collections::DOC_CHUNKS.to_string(),
-                ];
-
-                for col in &collections {
-                    for qvec in &all_vectors {
-                        if let Ok(results) =
-                            vec_repo.search(col, qvec.clone(), (limit * 2) as u64).await
-                        {
-                            let list: Vec<RankedItem> = results
-                                .iter()
-                                .filter_map(|r| {
-                                    let score =
-                                        r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                    if score <= 0.0 {
-                                        return None;
-                                    }
-                                    let payload = r.get("payload").unwrap_or(r);
-                                    if col == "config_chunks" {
-                                        let section = payload
-                                            .get("section_name")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
-                                        let text = payload
-                                            .get("text")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
-                                        let data_id = payload
-                                            .get("data_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
-                                        Some(RankedItem {
-                                            id: r
-                                                .get("id")
-                                                .map(|v| v.to_string())
-                                                .unwrap_or_default(),
-                                            title: format!(
-                                                "[{}:{}] ({} keys)",
-                                                data_id,
-                                                section,
-                                                payload
-                                                    .get("key_count")
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(0)
-                                            ),
-                                            snippet: text.to_string(),
-                                            source_world: "vector/config_chunks".into(),
-                                            entity_type: "ConfigChunk".into(),
-                                            score,
-                                        })
-                                    } else {
-                                        // _semantic collection: only include config sections (#section-), not doc chunks
-                                        let doc_id = payload
-                                            .get("doc_id")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
-                                        if !doc_id.contains("#section-") {
-                                            return None;
-                                        }
-                                        let text = payload
-                                            .get("text")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
-                                        let section_name = doc_id
-                                            .rsplit_once("#section-")
-                                            .map(|(_, name)| name.to_string())
-                                            .unwrap_or_default();
-                                        let file_path = doc_id
-                                            .strip_prefix("dt://doc/")
-                                            .and_then(|s| s.split_once("#section-"))
-                                            .map(|(path, _)| path.to_string())
-                                            .unwrap_or_default();
-                                        // Store full text for keyword filtering; display shows first line
-                                        let display_line = format!(
-                                            "{}  {}",
-                                            file_path,
-                                            text.lines()
-                                                .next()
-                                                .unwrap_or("")
-                                                .chars()
-                                                .take(80)
-                                                .collect::<String>()
-                                        );
-                                        let snippet = format!("{}\n{}", text, display_line);
-                                        Some(RankedItem {
-                                            id: r
-                                                .get("id")
-                                                .map(|v| v.to_string())
-                                                .unwrap_or_default(),
-                                            title: section_name,
-                                            snippet,
-                                            source_world: format!("vector/{}", col),
-                                            entity_type: "Config".into(),
-                                            score,
-                                        })
-                                    }
-                                })
-                                .collect();
-                            if !list.is_empty() {
-                                rank_lists.push(list);
-                            }
-                        }
-                    }
-                }
-                if !rank_lists.is_empty() {
-                    let mut fused = reciprocal_rank_fusion(rank_lists, 60.0, limit);
-                    // For config search, filter results by ASCII keyword presence
-                    // (vector search returns too many low-score noise hits)
-                    let keywords: Vec<String> = extract_ascii_words(&query)
-                        .into_iter()
-                        .map(|w| w.to_lowercase())
-                        .filter(|w| w.len() >= 3)
-                        .collect();
-                    if !keywords.is_empty() {
-                        fused.retain(|item| {
-                            let combined =
-                                format!("{} {}", item.title, item.snippet).to_lowercase();
-                            keywords.iter().any(|kw| combined.contains(kw))
-                        });
-                    }
-                    let mut seen = std::collections::HashSet::new();
-                    for item in &fused {
-                        if !seen.insert(item.title.clone()) {
-                            continue;
-                        }
-                        println!("  [{:.4}] {}", item.score, item.title);
-                        // Show the full config content (not just one line)
-                        // snippet format for _semantic: "full_text\ndisplay_line"
-                        // snippet format for config_chunks: "text"
-                        let lines: Vec<&str> = item.snippet.lines().collect();
-                        if lines.len() > 1 {
-                            // _semantic: lines[0..-1] = full text, lines[-1] = display_line
-                            let content_lines: Vec<&str> =
-                                lines[..lines.len() - 1].iter().copied().collect();
-                            let content = content_lines.join("\n");
-                            // Show up to 10 lines of YAML content
-                            for (i, line) in content_lines.iter().enumerate() {
-                                if i >= 10 {
-                                    break;
-                                }
-                                println!("         {}", line);
-                            }
-                            if content_lines.len() > 10 {
-                                println!("         ... ({} more lines)", content_lines.len() - 10);
-                            }
-                            // Show file path from last line
-                            let display = lines[lines.len() - 1].trim();
-                            if !display.is_empty()
-                                && !content.contains(
-                                    display.split_once(' ').map(|(p, _)| p).unwrap_or(display),
-                                )
-                            {
-                                println!("         ── {}", display);
-                            }
-                        } else {
-                            let display = lines.last().map(|s| s.trim()).unwrap_or("");
-                            if !display.is_empty() {
-                                println!("         {}", display);
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-            }
-        }
-        // Fallback: CONTAINS keyword search on ConfigKey nodes
-        if vector.is_some() {
-            println!("  (vector search returned no results — falling back to keyword search)");
-        }
-        if let Some(graph_ref) = &graph {
-            let keywords = get_keywords(&query);
-            if !keywords.is_empty() {
-                // Split keywords: original ASCII terms (must-have) vs expanded terms
-                let orig_ascii: Vec<String> = query
-                    .split_whitespace()
-                    .filter(|w| w.chars().all(|c| c.is_ascii()))
-                    .map(|w| w.to_lowercase())
-                    .filter(|w| !w.is_empty())
-                    .collect();
-                // Strategy:
-                // - For queries with ASCII words: use ONLY the original ASCII terms
-                //   (expanded English e.g. "url"/"host" are too broad and match noise)
-                // - For Chinese-only queries: use all expanded English terms
-                let must_have = if !orig_ascii.is_empty() {
-                    // Use original ASCII terms only (e.g. "redis" → spring.redis.*)
-                    format!(
-                        "({})",
-                        orig_ascii
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                            .collect::<Vec<_>>()
-                            .join(" OR ")
-                    )
-                } else {
-                    // Chinese-only query: use all expanded English terms
-                    format!(
-                        "({})",
-                        keywords
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                            .collect::<Vec<_>>()
-                            .join(" OR ")
-                    )
-                };
-                let display_limit = if limit > 200 { limit } else { limit.max(50) };
-                let project_filter = project
-                    .as_ref()
-                    .map(|p| format!(" AND n.project = '{}' ", p.replace('\'', "\\'")))
-                    .unwrap_or_default();
-                let cypher = format!(
-                    "MATCH (n) WHERE (n:ConfigKey OR n:Server \
-                     OR n:Database OR n:NacosConfig OR n:NacosService) \
-                     AND {}{project_filter}\
-                     RETURN labels(n)[0] AS type, coalesce(n.name, '') AS name, \
-                            coalesce(n.value, n.summary, n.description, '') AS snippet, \
-                            coalesce(n.namespace, n.environment, n.project, '') AS source \
-                     ORDER BY size(n.name), n.name \
-                     LIMIT {}",
-                    must_have, display_limit
-                );
-                let mut params: HashMap<String, serde_json::Value> = HashMap::new();
-                for (i, k) in keywords.iter().enumerate() {
-                    params.insert(format!("kw{}", i), serde_json::Value::String(k.clone()));
-                }
-                match graph_ref.read_query(&cypher, params).await {
-                    Ok(result) => {
-                        if let Some(rows) = result.as_array() {
-                            let mut seen_names = std::collections::HashSet::new();
-                            for row in rows {
-                                let ty = row.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-                                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                // Deduplicate: only show first occurrence of each config name
-                                if !seen_names.insert(name.to_string()) {
-                                    continue;
-                                }
-                                let snippet =
-                                    row.get("snippet").and_then(|v| v.as_str()).unwrap_or("");
-                                let display = if snippet.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(": {}", snippet)
-                                };
-                                println!("  [{ty}] {name}{display}");
-                            }
-                            return Ok(());
-                        }
-                    }
-                    Err(e) => tracing::warn!("Config search failed: {e}"),
-                }
-            }
-        }
-        println!("  (no results)");
-        return Ok(());
-    }
-
-    // ── Shared: RankedItem collection from vector search + keyword ────
-    use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
-    let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
-
-    // ── Vector search path: code / all worlds ───────────────────────
-    let did_vector_search = if (world == "code"
-        || world == "all"
-        || world == "doc"
-        || world == "knowledge")
-        && vector.is_some()
-    {
-        let vec_repo = vector.as_ref().unwrap();
-
-        let embed: Option<Arc<dyn EmbedService>> = {
-            tracing::info!("搜索嵌入客户端已创建");
-            Some(create_search_embed_client())
-        };
-
-        if let Some(embed_svc) = embed {
-            let queries_to_embed: Vec<String> = if world == "code" {
-                vec![query.clone()]
-            } else {
-                let rewriter = crate::application::search::rewrite::QueryRewriter::with_defaults();
-                let candidates = rewriter.rewrite(&query);
-                let mut qs = vec![query.clone()];
-                for c in candidates.into_iter().skip(1) {
-                    if c != query && qs.len() < 2 {
-                        qs.push(c);
-                    }
-                }
-                qs
-            };
-
-            let all_query_vectors = match embed_svc.embed_batch(&queries_to_embed).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("嵌入失败 (非致命), 回退到关键词搜索: {e}");
-                    vec![]
-                }
-            };
-
-            if !all_query_vectors.is_empty() {
-                let collections_to_search: Vec<String> = match world.as_str() {
-                    "code" => {
-                        vec![crate::shared::collections::CODE_METHODS.to_string()]
-                    }
-                    "doc" => {
-                        vec![crate::shared::collections::DOC_CHUNKS.to_string()]
-                    }
-                    "knowledge" => {
-                        vec![crate::shared::collections::KG_NODES.to_string()]
-                    }
-                    "all" => {
-                        vec![
-                            crate::shared::collections::CODE_METHODS.to_string(),
-                            crate::shared::collections::DOC_CHUNKS.to_string(),
-                            crate::shared::collections::KG_NODES.to_string(),
-                        ]
-                    }
-                    _ => vec![],
-                };
-
-                for qvec in &all_query_vectors {
-                    for col in &collections_to_search {
-                        if let Ok(results) =
-                            vec_repo.search(col, qvec.clone(), (limit * 3) as u64).await
-                        {
-                            let mut rank_list: Vec<RankedItem> = Vec::new();
-                            for r in results {
-                                let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                                if score <= 0.0 {
-                                    continue;
-                                }
-                                let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
-                                // For kg_nodes, the Qdrant point `id` is a SHA-256 UUID that does NOT
-                                // match Memgraph's elementId. expand_nodes uses `WHERE elementId(n)
-                                // IN $ids`, so we must carry the real Memgraph elementId from the
-                                // payload here. Other collections keep the Qdrant point id.
-                                let id = if col == "kg_nodes" {
-                                    payload
-                                        .get("elementId")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from)
-                                        .or_else(|| r.get("id").map(|v| v.to_string()))
-                                        .unwrap_or_default()
-                                } else {
-                                    r.get("id").map(|v| v.to_string()).unwrap_or_default()
-                                };
-                                let name = payload
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|s| !s.is_empty())
-                                    .or_else(|| payload.get("text").and_then(|v| v.as_str()))
-                                    .unwrap_or("")
-                                    .to_string();
-                                let entity_type = payload
-                                    .get("labels")
-                                    .and_then(|v| v.as_array())
-                                    .and_then(|arr| arr.first())
-                                    .and_then(|v| v.as_str())
-                                    .or_else(|| payload.get("label").and_then(|v| v.as_str()))
-                                    .or_else(|| {
-                                        // Infer from collection name for code search
-                                        let t =
-                                            crate::shared::collections::entity_type_from_collection(
-                                                col,
-                                            );
-                                        (t != "?").then_some(t)
-                                    })
-                                    .unwrap_or("?")
-                                    .to_string();
-                                let desc = if col == crate::shared::collections::CODE_METHODS
-                                    || col.ends_with("_methods")
-                                {
-                                    let file = payload
-                                        .get("file_path")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    let start = payload
-                                        .get("start_line")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    let end = payload
-                                        .get("end_line")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    format!("{}: L{}-{}", file, start, end)
-                                } else if col == crate::shared::collections::DOC_CHUNKS
-                                    || col.ends_with("_semantic")
-                                {
-                                    // Doc chunks: extract file path from doc_id, show first line as summary
-                                    let doc_id = payload
-                                        .get("doc_id")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    // Skip config sections (#section-) when searching doc world
-                                    if world == "doc" && doc_id.contains("#section-") {
-                                        continue;
-                                    }
-                                    let chunk_path = doc_id
-                                        .strip_prefix("dt://doc/")
-                                        .and_then(|s| s.rsplit_once('#'))
-                                        .map(|(path, _)| path.to_string())
-                                        .unwrap_or_default();
-                                    let first_line = name
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("")
-                                        .chars()
-                                        .take(80)
-                                        .collect::<String>();
-                                    format!("{}  {}", chunk_path, first_line)
-                                } else {
-                                    payload
-                                        .get("description")
-                                        .or(payload.get("summary"))
-                                        .or(payload.get("value"))
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string()
-                                };
-                                rank_list.push(RankedItem {
-                                    id,
-                                    title: name,
-                                    snippet: desc,
-                                    source_world: format!("vector/{}", col),
-                                    entity_type,
-                                    score,
-                                });
-                            }
-                            if !rank_list.is_empty() {
-                                all_rank_lists.push(rank_list);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        true
+    if json {
+        // U-D4：--json 时 stdout 仅含 JSON（header 行已抑制，日志走 stderr）
+        println!("{}", crate::interfaces::cli::search_render::render_json(&result));
     } else {
-        false
-    };
-
-    // ── All world: also add keyword search on config labels ──
-    if world == "all" {
-        if let Some(graph_ref) = &graph {
-            let keywords = get_keywords(&query);
-            if !keywords.is_empty() {
-                let orig_ascii: Vec<String> = query
-                    .split_whitespace()
-                    .filter(|w| w.chars().all(|c| c.is_ascii()))
-                    .map(|w| w.to_lowercase())
-                    .filter(|w| !w.is_empty())
-                    .collect();
-                let must_have = if !orig_ascii.is_empty() {
-                    format!(
-                        "({})",
-                        orig_ascii
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                            .collect::<Vec<_>>()
-                            .join(" OR ")
-                    )
-                } else {
-                    format!(
-                        "({})",
-                        keywords
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("toLower(n.name) CONTAINS toLower($kw{})", i))
-                            .collect::<Vec<_>>()
-                            .join(" OR ")
-                    )
-                };
-                let cypher = format!(
-                    "MATCH (n) WHERE (n:ConfigKey OR n:ConfigSection OR n:Server \
-                     OR n:Database OR n:NacosConfig OR n:NacosService) \
-                     AND {} \
-                     RETURN n.elementId AS id, labels(n)[0] AS type, \
-                            coalesce(n.name, '') AS name, \
-                            coalesce(n.value, n.summary, n.description, '') AS snippet \
-                     LIMIT {}",
-                    must_have, limit
-                );
-                let mut params: HashMap<String, serde_json::Value> = HashMap::new();
-                for (i, k) in keywords.iter().enumerate() {
-                    params.insert(format!("kw{}", i), serde_json::Value::String(k.clone()));
-                }
-                if let Ok(result) = graph_ref.read_query(&cypher, params).await {
-                    if let Some(rows) = result.as_array() {
-                        let list: Vec<RankedItem> = rows
-                            .iter()
-                            .map(|row| RankedItem {
-                                id: row
-                                    .get("id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                title: row
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                snippet: row
-                                    .get("snippet")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                                source_world: "graph/config".into(),
-                                entity_type: row
-                                    .get("type")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("?")
-                                    .to_string(),
-                                score: 0.0,
-                            })
-                            .collect();
-                        if !list.is_empty() {
-                            all_rank_lists.push(list);
-                        }
-                    }
-                }
-            }
-        }
+        print!("{}", crate::interfaces::cli::search_render::render_human(&result));
     }
-
-    // ── KG graph expansion: expand vector hits via relationships ──
-    if let Some(graph_ref) = &graph {
-        // Collect elementIds from vector search results
-        let element_ids: Vec<String> = all_rank_lists
-            .iter()
-            .flat_map(|list| list.iter())
-            .filter_map(|item| {
-                // kg_nodes collection results have elementId in payload
-                if item.source_world.contains("kg_nodes") {
-                    Some(item.id.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !element_ids.is_empty() {
-            match crate::application::search::expansion::expand_nodes(
-                graph_ref.as_ref(),
-                &element_ids,
-                2,  // depth: 2 hops
-                50, // limit
-            )
-            .await
-            {
-                Ok(expanded) => {
-                    if !expanded.is_empty() {
-                        let expansion_list: Vec<RankedItem> = expanded
-                            .iter()
-                            .map(|node| RankedItem {
-                                id: node.element_id.clone(),
-                                title: format!(
-                                    "[{}] {} (via {})",
-                                    node.label, node.name, node.relation_type
-                                ),
-                                snippet: String::new(),
-                                source_world: "graph/expansion".into(),
-                                entity_type: node.label.clone(),
-                                score: 0.0,
-                            })
-                            .collect();
-                        all_rank_lists.push(expansion_list);
-                        tracing::info!(
-                            "KG graph expansion: {} related nodes found",
-                            expanded.len()
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("KG 图扩展失败 (非致命): {e}");
-                }
-            }
-        }
-    }
-
-    // ── Fuse vector + keyword with RRF ─────────────────────────────
-    if !all_rank_lists.is_empty() {
-        let mut fused = reciprocal_rank_fusion(all_rank_lists, 60.0, limit);
-        if world != "code" && world != "doc" {
-            fused.retain(|item| item.entity_type != "Document");
-        }
-        if !fused.is_empty() {
-            let mut seen_titles = std::collections::HashSet::new();
-            for item in &fused {
-                if !seen_titles.insert(item.title.clone()) {
-                    continue;
-                }
-                if (world == "doc" || world == "all") && item.entity_type == "Doc" {
-                    // Document search: show like code — file path + summary line
-                    let snippet_line = item.snippet.lines().next().unwrap_or("");
-                    println!("  [{:.4}] [Doc] {}", item.score, snippet_line);
-                } else {
-                    println!(
-                        "  [{:.4}] [{}] {}",
-                        item.score, item.entity_type, item.title
-                    );
-                    if !item.snippet.is_empty() {
-                        if item.entity_type == "Method" {
-                            // Method: snippet is "file_path  Class::signature  Lline-line"
-                            // Show full snippet (path + sig + line numbers) without truncation
-                            for line in item.snippet.lines() {
-                                println!("         {}", line);
-                            }
-                        } else {
-                            // Other types: truncate to 100 chars
-                            let short_snippet = if item.snippet.chars().count() > 100 {
-                                let truncated: String = item.snippet.chars().take(100).collect();
-                                format!("{}…", truncated)
-                            } else {
-                                item.snippet.clone()
-                            };
-                            if !short_snippet.is_empty() {
-                                println!("         {}", short_snippet);
-                            }
-                        }
-                    }
-                }
-            }
-            return Ok(());
-        }
-    }
-
-    // Fall through: code world still needs keyword fallback
-    if world == "code" && did_vector_search {
-        println!("  (vector search unavailable — falling back to keyword text search)");
-    }
-
-    // ── Cypher text search for code/knowledge/memory/other ──
-    // (Also serves as fallback for code when vector is down)
-    match graph {
-        Some(graph_ref) => {
-            let cypher = match world.as_str() {
-                "code" | "reality" => {
-                    let project_filter = project.as_ref()
-                        .map(|p| format!(" AND n.project = '{}' ", p.replace('\'', "\\'")))
-                        .unwrap_or_default();
-                    format!(
-                        "MATCH (n) WHERE (n:Method OR n:Class OR n:Interface) \
-                         AND (n.name CONTAINS $q OR n.file_path CONTAINS $q){project_filter}\
-                         RETURN labels(n)[0] AS type, coalesce(n.name, n.method_name, n.class_name, '') AS name, \
-                                coalesce(n.file_path, '') AS source \
-                         LIMIT {limit}"
-                    )
-                },
-                "doc" => {
-                    format!(
-                        "MATCH (d:Document) \
-                         WHERE d.name = $q \
-                         RETURN 'Document' AS type, coalesce(d.title, d.name) AS name, \
-                                substring(coalesce(d.content, ''), 0, 200) AS desc \
-                         LIMIT {limit}"
-                    )
-                },
-                "knowledge" => format!(
-                    "MATCH (n) WHERE (n:Knowledge OR n:Experience OR n:Concept OR n:Domain OR n:Playbook) \
-                     AND (n.name CONTAINS $q OR n.title CONTAINS $q OR n.summary CONTAINS $q) \
-                     RETURN labels(n)[0] AS type, coalesce(n.name, n.title, '') AS name, \
-                            coalesce(n.summary, n.description, '') AS desc \
-                     LIMIT {limit}"
-                ),
-                "memory" => format!(
-                    "MATCH (n) WHERE (n:Modification OR n:Deployment OR n:ConfigChange \
-                     OR n:BugFix OR n:Decision OR n:Conversation OR n:Session) \
-                     AND (n.details CONTAINS $q OR coalesce(n.summary, '') CONTAINS $q) \
-                     RETURN labels(n)[0] AS type, coalesce(n.name, n.entity_id, n.session_id, '') AS name, \
-                            coalesce(n.details, n.summary, '') AS desc \
-                     LIMIT {limit}"
-                ),
-                _ => format!(
-                    "MATCH (n) WHERE n.name CONTAINS $q OR n.title CONTAINS $q \
-                     OR n.details CONTAINS $q OR n.summary CONTAINS $q \
-                     RETURN labels(n)[0] AS type, coalesce(n.name, n.title, '') AS name, \
-                            coalesce(n.summary, n.details, '') AS desc \
-                     LIMIT {limit}"
-                ),
-            };
-
-            let mut params = HashMap::new();
-            params.insert("q".into(), serde_json::Value::String(query.clone()));
-            match graph_ref.read_query(&cypher, params).await {
-                Ok(result) => {
-                    if let Some(rows) = result.as_array() {
-                        if rows.is_empty() {
-                            println!("  (no results)");
-                        } else {
-                            for row in rows {
-                                let ty = row.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-                                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                let desc = row
-                                    .get("desc")
-                                    .or(row.get("source"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                println!("  [{ty}] {name}: {desc}");
-                            }
-                        }
-                    } else {
-                        println!("  (no results)");
-                    }
-                }
-                Err(e) => eprintln!("  Search error: {e}"),
-            }
-        }
-        None => {
-            if vector.is_none() {
-                tracing::warn!("图数据库和 Qdrant 都不可用 — 无搜索结果");
-                println!("  (No search backend available)");
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -1596,7 +833,8 @@ pub async fn handle_search_kg(
 
     println!("Search-KG: query=\"{query}\" limit={limit}");
 
-    use crate::application::search::fusion::{reciprocal_rank_fusion, RankedItem};
+    use crate::application::context::fusion::{reciprocal_rank_fusion, RankedItem};
+    use crate::application::context::search_config::extract_ascii_words;
 
     let mut all_rank_lists: Vec<Vec<RankedItem>> = Vec::new();
 

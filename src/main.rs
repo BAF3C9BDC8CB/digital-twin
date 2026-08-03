@@ -237,28 +237,28 @@ enum Commands {
         source: Option<String>,
     },
 
-    /// Semantic code search across worlds.
+    /// Unified search across worlds.
     ///
-    /// Usage: dt search <query> [--world code|knowledge|doc|config|all] [--limit 10]
+    /// Usage: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10] [--json]
     Search {
-        /// Search query string.
+        /// Search query string (positional).
         query: String,
 
-        /// Which world to search: code, knowledge, doc, config, all.
-        #[arg(long = "world", default_value = "code")]
+        /// Which world to search: all, code, knowledge, doc, config, memory.
+        #[arg(long = "world", default_value = "all")]
         world: String,
 
         /// Limit results.
         #[arg(long = "limit", default_value = "10")]
         limit: usize,
 
-        /// Scope to a project name (searches only {project}_methods in Qdrant).
+        /// Output pure JSON to stdout (for MCP / scripting).
+        #[arg(long = "json")]
+        json: bool,
+
+        /// Scope to a project name.
         #[arg(long = "project", short = 'p')]
         project: Option<String>,
-
-        /// Scope path.
-        #[arg(long = "path")]
-        path: Option<PathBuf>,
     },
 
     /// Semantic search of KG nodes via Qdrant vector store.
@@ -1573,13 +1573,13 @@ async fn main() -> anyhow::Result<()> {
             query,
             world,
             limit,
-            path,
+            json,
             project,
         }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             dt_daemon::interfaces::cli::build::handle_search(
-                query, world, limit, path, project, graph, vector,
+                query, world, limit, json, project, graph, vector,
             )
             .await?;
             return Ok(());

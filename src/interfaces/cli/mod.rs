@@ -15,5 +15,6 @@ pub mod jenkins_sync;
 pub mod kub;
 pub mod learn;
 pub mod memorize;
+pub mod search_render;
 pub mod sync;
 pub mod thread;

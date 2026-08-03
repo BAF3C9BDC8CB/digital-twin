@@ -83,11 +83,13 @@ pub fn init_logging() -> anyhow::Result<()> {
         .with_timer(LocalTimer);
 
     // ── Stderr layer (compact, human-readable) ──────────────────────
+    // 注意：fmt layer 默认写 stdout——必须显式指定 stderr（U-D4 stdout 纯净约束）。
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
         .with_ansi(true)
         .compact()
+        .with_writer(std::io::stderr)
         .with_timer(LocalTimer);
 
     // ── Assemble ────────────────────────────────────────────────────
