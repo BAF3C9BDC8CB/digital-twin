@@ -56,7 +56,7 @@ src/
 | Runtime | Pod 状态、服务运行态 | K8s API（实时查询） |
 | Reasoning | 观察 → 分析 → 决策链路 | Memgraph（会话结束时标记 stale） |
 
-**CLI 二进制**（`src/main.rs`）：`dt` 共 16 个命令，双模式：服务端（gRPC daemon）或 CLI 子命令。
+**CLI 二进制**（`src/main.rs`）：`dt` 共 17 个命令（含 `dt sense` 环境感知），双模式：服务端（gRPC daemon）或 CLI 子命令。
 
 ## 管线引擎
 

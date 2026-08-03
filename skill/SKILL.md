@@ -29,6 +29,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 
 | 场景 | 文档 |
 |------|------|
+| 🧭 **会话开始/进入新目录（环境感知）** | MCP: `dt_sense()` / CLI: `dt sense --json` |
 | 🎯 **Leader 工作流（高效并行执行）** | [EXECUTION-LEADER.md](./guides/EXECUTION-LEADER.md) |
 | 📖 **MCP 工具与 CLI 命令对照参考** | [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md) |
 | 🔍 **搜索代码逻辑、方法定位、文件查找** | [CODE-SEARCH.md](./guides/CODE-SEARCH.md) |

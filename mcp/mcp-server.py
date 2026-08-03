@@ -2,8 +2,8 @@
 """
 DT MCP Server V2 — 将 digital-twin CLI 命令注册为 OpenCode Tool
 
-提供工具 (24个):
-  搜索: dt_search_kg, dt_search
+提供工具 (25个):
+  搜索: dt_search_kg, dt_search, dt_sense
   知识: dt_memorize, dt_event, dt_learn
   管线: dt_build, nacos_sync, dt_kg_sync
   服务: svc_list, svc_status, svc_logs, svc_start, svc_stop, svc_restart
@@ -282,6 +282,16 @@ async def list_tools():
                     "limit": {"type": "integer", "description": "返回数量", "default": 10},
                     "project": {"type": "string", "description": "限定项目名（可选）"}
                 }, "required": ["query"]
+            }
+        ),
+        Tool(
+            name="dt_sense",
+            description="环境感知（会话开始时的第一个动作）：定位目录所属项目，返回项目简报（统计/目录画像/语言/关键实体）；未注册目录返回候选项目发现报告。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "目标目录，缺省为当前工作目录"}
+                }, "required": []
             }
         ),
 
@@ -594,7 +604,13 @@ async def call_tool(name: str, arguments: dict):
             cmd += ["--project", project]
         text = run_cmd(cmd)
 
-    # ===== 分析 =====
+    elif name == "dt_sense":
+        cmd = [DT_BIN, "sense"]
+        if arguments.get("path"):
+            cmd.append(arguments["path"])
+        cmd += ["--json"]
+        text = run_cmd(cmd, timeout=120)
+
     elif name == "dt_memorize":
         cmd = [DT_BIN, "memorize", "--type", arguments["type"], "--entity-id", arguments["entity_id"]]
         if arguments.get("entity_type"): cmd += ["--entity-type", arguments["entity_type"]]

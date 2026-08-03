@@ -1,8 +1,10 @@
 # 项目发现规则
 
-> AI 每次进入新工作空间时执行此规则。不在代码中实现，由 AI 按本文档自行判断。
-> **注意：项目注册表 = `~/.config/digital-twin/config.yaml` 的 `projects` 段（直接读文件，无 `dt list` 命令）；**
-> **索引状态用 `dt_health` 查看后端健康、用 `dt search "<类名>" --json` 验证是否已有索引；构建用 `dt build`（无参数 = 构建所有项目）或 MCP `dt_build`。**
+> **⚠️ 角色变更（dt sense 落地后）**：本文件的规则已固化进 `dt sense` 命令（未注册分支的候选发现逻辑）。
+> AI 正常流程第一个动作是 `dt_sense` / `dt sense --json`；本文件仅作为 sense 未注册分支行为的参考文档，
+> 以及 sense 不可用时的兜底手工流程。
+>
+> 项目注册表 = `~/.config/digital-twin/config.yaml` 的 `projects` 段；构建用 `dt build`（无参数 = 构建所有项目）或 MCP `dt_build`。
 
 ---
 

@@ -44,9 +44,9 @@ cargo build --release
 
 配置从 `~/.config/digital-twin/config.yaml` 加载。
 
-## CLI 命令 (16 个)
+## CLI 命令 (17 个)
 
-> **AI 助手使用时优先走 MCP 工具**（`mcp/mcp-server.py`，24 个工具，见文末「AI 集成」）；CLI 是降级/运维入口。
+> **AI 助手使用时优先走 MCP 工具**（`mcp/mcp-server.py`，25 个工具，见文末「AI 集成」）；CLI 是降级/运维入口。
 
 ### 管线
 
@@ -65,6 +65,7 @@ cargo build --release
 
 | 命令 | 功能 |
 |------|------|
+| `dt sense` | 环境感知：项目定位 + 索引状态 + 目录内容简报（会话开始第一个动作） |
 | `dt search` | 跨世界语义搜索（CrossWorldSearch 统一入口） |
 
 ### 知识
@@ -250,7 +251,7 @@ digital-twin-v2/
 │   ├── SKILL.md                # digital-twin 技能入口
 │   └── guides/                 # 操作指南 (13 份)
 ├── mcp/                        # MCP 服务器
-│   ├── mcp-server.py           # DT MCP Server V2 (24 工具)
+│   ├── mcp-server.py           # DT MCP Server V2 (25 工具)
 │   └── mcp-session-hooks.py    # 会话生命周期钩子 (旧版)
 ├── scripts/
 │   ├── build-all.sh            # 全项目构建
@@ -294,10 +295,11 @@ digital-twin-v2/
 
 ## AI 集成 (OpenCode / Claude Code)
 
-AI 助手通过 **MCP 协议**调用 `mcp/mcp-server.py`（24 个工具），检索/记忆类操作优先用 MCP Tool（返回结构化 JSON），CLI 仅作降级：
+AI 助手通过 **MCP 协议**调用 `mcp/mcp-server.py`（25 个工具），检索/记忆类操作优先用 MCP Tool（返回结构化 JSON），CLI 仅作降级：
 
 | 场景 | MCP Tool（首选） | CLI 降级 |
 |------|-----------------|---------|
+| 环境感知（会话开始） | `dt_sense` | `dt sense --json` |
 | 统一搜索（代码/知识/文档/配置/事件） | `dt_search` | `dt search` |
 | KG GraphRAG 搜索 | `dt_search_kg` | `dt search --world knowledge` |
 | 写知识/事件 | `dt_memorize` / `dt_event` / `dt_learn` | `dt memorize` / `dt event` / `dt learn` |
