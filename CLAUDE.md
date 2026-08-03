@@ -49,14 +49,14 @@ src/
 
 | World | Data | Storage |
 |-------|------|---------|
-| Reality | Code, config, K8s resources | Memgraph + Qdrant |
-| Knowledge | Concepts, patterns, playbooks, experience | Memgraph |
-| Memory | Events, sessions, timeline | Memgraph |
-| Semantic | Documents, API, log pattern vectors | Qdrant |
+| Reality | Code, config, K8s resources | Memgraph + Qdrant (`code_methods`/`config_chunks`) |
+| Knowledge | Concepts, patterns, playbooks, experience | Memgraph + Qdrant (`kg_nodes`, via `dt kg-sync`) |
+| Memory | Events, sessions, timeline | Memgraph only (keyword search, no vectors) |
+| Semantic | Documents, API, log pattern vectors | Qdrant (`doc_chunks`) |
 | Runtime | Pod status, service runtime | K8s API (live) |
-| Reasoning | Observation → Analysis → Decision chain | Memgraph (with TTL) |
+| Reasoning | Observation → Analysis → Decision chain | Memgraph (stale-marked at session end) |
 
-**CLI binary** (`src/main.rs`): `dt` with 27 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
+**CLI binary** (`src/main.rs`): `dt` with 16 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
 
 ## Pipeline Engine
 
@@ -77,16 +77,19 @@ Global collections with strict separation:
 - `code_methods` — code search (method-level, from `dt build`; single global collection, `project` payload field for filtering)
 - `kg_nodes` — knowledge graph entity vectors (from `dt kg-sync`)
 - `doc_chunks` — document block vectors (internal)
+- `config_chunks` — Nacos/config chunks (world=config search)
 
 ## CrossWorldSearch (`src/application/context/search_mcp.rs`)
 
 Unified search entry point — the single search stack behind CLI `dt search`, MCP `dt_search`/`dt_search_kg`, and gRPC `Search`. Dispatches by `world` parameter:
 - `world=code` → Qdrant `code_methods`
-- `world=knowledge` → Memgraph GraphRAG (vector recall + graph expansion + rerank)
-- `world=doc` → Qdrant `kg_nodes`/`doc_chunks`
-- `world=config` → Qdrant `config_chunks` (+ QueryRewriter)
-- `world=memory` → Memgraph event labels
-- `world=all` (default) → RRF fusion over code+knowledge+doc
+- `world=knowledge` → GraphRAG over `kg_nodes` vector recall + Memgraph expansion + rerank
+- `world=doc` → Qdrant `doc_chunks`
+- `world=config` → Qdrant `config_chunks`+`doc_chunks` (+ QueryRewriter), Cypher keyword fallback
+- `world=memory` → Memgraph event labels (keyword CONTAINS, no vectors)
+- `world=all` (default) → RRF fusion over code+knowledge+doc only (config/memory must be queried explicitly)
+
+Valid world values: `all`, `code`, `knowledge`, `doc`, `config`, `memory`. There is no `reality` world value — "Reality World" is the internal name for the code world.
 
 Every hit carries `llm_analysis` (method purpose/logic) and precise location (`file_path`/`start_line`/`end_line`).
 

@@ -18,7 +18,7 @@
 ```bash
 dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"
 dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>" --project "<项目>"
-dt nacos-sync --env test
+dt nacos-sync test
 ```
 
 ## 代码实体同步（自动）

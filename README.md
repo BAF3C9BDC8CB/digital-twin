@@ -15,16 +15,16 @@ src/
   shared/          # 横切: logging, coordinator, chunker, vectorizer, collections
 ```
 
-六世界聚合上下文：
+六世界模型：
 
 | 世界 | 数据 | 存储 |
 |------|------|------|
-| Reality | 代码、配置、K8s 资源 | Memgraph + Qdrant |
-| Knowledge | 概念、模式、Playbook、经验 | Memgraph |
-| Memory | 事件、会话、时间线 | Memgraph |
-| Semantic | 文档、API、日志模式向量 | Qdrant |
+| Reality | 代码、配置、K8s 资源 | Memgraph + Qdrant (`code_methods`/`config_chunks`) |
+| Knowledge | 概念、模式、Playbook、经验 | Memgraph + Qdrant (`kg_nodes`，经 `dt kg-sync` 桥接) |
+| Memory | 事件、会话、时间线 | Memgraph（事件标签，无向量，纯关键词检索） |
+| Semantic | 文档、API、日志模式向量 | Qdrant (`doc_chunks`) |
 | Runtime | Pod 状态、服务运行态 | K8s API 实时查询 |
-| Reasoning | 观察 → 分析 → 决策链路 | Memgraph (含 TTL) |
+| Reasoning | 观察 → 分析 → 决策链路 | Memgraph（session-end 时标记 stale） |
 
 ## 快速开始
 
@@ -44,9 +44,9 @@ cargo build --release
 
 配置从 `~/.config/digital-twin/config.yaml` 加载。
 
-## CLI 命令 (27 个)
+## CLI 命令 (16 个)
 
-> **AI 助手使用时优先走 MCP 工具**（`mcp/mcp-server.py`，33 个工具，见文末「AI 集成」）；CLI 是降级/运维入口。
+> **AI 助手使用时优先走 MCP 工具**（`mcp/mcp-server.py`，24 个工具，见文末「AI 集成」）；CLI 是降级/运维入口。
 
 ### 管线
 
@@ -74,31 +74,15 @@ cargo build --release
 | `dt memorize` | 写入知识节点（Knowledge/Experience/Concept/Domain/Playbook） |
 | `dt event` | 写入事件节点（Hook 驱动） |
 | `dt learn` | AI 任务后沉淀结构化知识到 Knowledge World |
-| `dt thread` | 管理 Digital Thread 生命周期 |
-
-### 分析
-
-| 命令 | 功能 |
-|------|------|
-| `dt context` | 六世界聚合上下文 |
-| `dt plan` | 匹配 Playbook 生成执行计划 |
-| `dt domain` | 领域知识模型子图 |
-| `dt history` | 历史相似任务检索 |
-| `dt dependency` | 调用链与依赖影响分析 |
-| `dt verify` | 修改后一致性验证（配置/数据库/API） |
 
 ### 运维
 
 | 命令 | 功能 |
 |------|------|
 | `dt backup` | 分层备份 (Memgraph + Qdrant + SQLite) |
-| `dt archive` | Memory World 数据归档 |
 | `dt clean` | 清空所有数据 |
-| `dt cleanup` | TTL 分级清理（支持 dry-run 预览） |
 | `dt schema init` | Schema 初始化（约束+索引） |
 | `dt health` | 后端服务健康检查 |
-| `dt metrics` | gRPC 指标查询 |
-| `dt llm-status` | 查看所有项目的 LLM 分析状态 |
 
 ### 插件
 
@@ -240,14 +224,14 @@ digital-twin-v2/
 │   │   └── parser/             # tree-sitter 解析器 (7 语言)
 │   ├── application/            # 应用层 (8 模块)
 │   │   ├── build/              # dt build (strategy/pipeline/watcher)
-│   │   ├── context/            # Context Builder + CrossWorldSearch 统一检索 (search_mcp/fusion)
+│   │   ├── context/            # CrossWorldSearch 统一检索 (search_mcp/search_config/search_memory/fusion)
 │   │   ├── hooks/              # Hook 事件驱动系统
 │   │   ├── knowledge/          # knowledge/memory/reasoning/thread
 │   │   ├── pipeline/           # Pipeline Engine (processor orchestration)
 │   │   ├── plugins/            # K8s/Svc/Jenkins 插件
 │   │   └── sync/               # nacos/k8s/jenkins/kg 同步
 │   ├── interfaces/             # 接口层
-│   │   ├── cli/                # 17 个 CLI 命令处理模块
+│   │   ├── cli/                # CLI 命令处理模块
 │   │   └── grpc/               # gRPC server + 8 个 service 实现
 │   └── shared/                 # 横切关注点
 │       ├── logging/            # JSON 日志 (tracing)
@@ -266,7 +250,7 @@ digital-twin-v2/
 │   ├── SKILL.md                # digital-twin 技能入口
 │   └── guides/                 # 操作指南 (13 份)
 ├── mcp/                        # MCP 服务器
-│   ├── mcp-server.py           # DT MCP Server V2 (33 工具)
+│   ├── mcp-server.py           # DT MCP Server V2 (24 工具)
 │   └── mcp-session-hooks.py    # 会话生命周期钩子 (旧版)
 ├── scripts/
 │   ├── build-all.sh            # 全项目构建
@@ -310,18 +294,17 @@ digital-twin-v2/
 
 ## AI 集成 (OpenCode / Claude Code)
 
-AI 助手通过 **MCP 协议**调用 `mcp/mcp-server.py`（33 个工具），检索/记忆/分析类操作优先用 MCP Tool（返回结构化 JSON），CLI 仅作降级：
+AI 助手通过 **MCP 协议**调用 `mcp/mcp-server.py`（24 个工具），检索/记忆类操作优先用 MCP Tool（返回结构化 JSON），CLI 仅作降级：
 
 | 场景 | MCP Tool（首选） | CLI 降级 |
 |------|-----------------|---------|
 | 统一搜索（代码/知识/文档/配置/事件） | `dt_search` | `dt search` |
 | KG GraphRAG 搜索 | `dt_search_kg` | `dt search --world knowledge` |
-| 写知识/事件 | `dt_memorize` / `dt_event` | `dt memorize` / `dt event` |
+| 写知识/事件 | `dt_memorize` / `dt_event` / `dt_learn` | `dt memorize` / `dt event` / `dt learn` |
 | 索引构建 | `dt_build` | `dt build` |
 | KG/Nacos 同步 | `dt_kg_sync` / `nacos_sync` | `dt kg-sync` / `dt nacos-sync` |
-| 上下文/计划/依赖/校验 | `dt_context` / `dt_plan` / `dt_dependency` / `dt_verify` | 同名 CLI |
 | Jenkins / 微服务 / K8s 日志 | `jcli_*` / `svc_*` / `kublog_*` | `dt jcli` / `dt kub` |
-| 健康检查/备份/清理/指标 | `dt_health` / `dt_backup` / `dt_cleanup` / `dt_metrics` | 同名 CLI |
+| 健康检查/备份 | `dt_health` / `dt_backup` | 同名 CLI |
 
 事件写入由 Hook 系统自动完成（AI 无需手动调 `dt_event`）：
 

@@ -2,15 +2,14 @@
 """
 DT MCP Server V2 — 将 digital-twin CLI 命令注册为 OpenCode Tool
 
-提供工具 (34个):
+提供工具 (24个):
   搜索: dt_search_kg, dt_search
-  分析: dt_context, dt_plan, dt_domain, dt_history, dt_dependency, dt_verify
-  知识: dt_memorize, dt_event, dt_learn, dt_thread
+  知识: dt_memorize, dt_event, dt_learn
   管线: dt_build, nacos_sync, dt_kg_sync
   服务: svc_list, svc_status, svc_logs, svc_start, svc_stop, svc_restart
   K8s:  kublog_status, kublog_logs, kublog_download
   Jenkins: jcli_list, jcli_params, jcli_history, jcli_build_log, jcli_build
-  运维: dt_health, dt_cleanup, dt_backup, dt_metrics
+  运维: dt_health, dt_backup
 
 ## 通信架构
 
@@ -93,8 +92,6 @@ def _after_tool_execute(tool_name: str, arguments: dict, result: str):
         "svc_status", "svc_logs", "svc_list",
         "kublog_status", "kublog_logs",
         "jcli_list", "jcli_params", "jcli_history", "jcli_build_log",
-        "dt_context", "dt_plan", "dt_domain", "dt_history", "dt_dependency",
-        "dt_verify", "dt_metrics",
     }
 
     if tool_name in SKIP_TOOLS:
@@ -288,93 +285,6 @@ async def list_tools():
             }
         ),
 
-        # ===== 分析 =====
-        Tool(
-            name="dt_context",
-            description="构建六世界聚合上下文。为任务聚合 code/knowledge/doc/domain/memory/playbook 六个世界的上下文。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "任务描述"},
-                    "worlds": {"type": "string", "description": "查询的世界(逗号分隔，如 code,knowledge)"},
-                    "max_tokens": {"type": "integer", "description": "最大 token 数"},
-                    "thread_id": {"type": "string", "description": "Digital Thread ID"}
-                }, "required": ["task"]
-            }
-        ),
-        Tool(
-            name="dt_plan",
-            description="为任务生成执行计划，基于 Playbook 匹配。可接收 dt_context 输出作为上下文。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "任务描述"},
-                    "context": {"type": "string", "description": "来自 dt_context 的上下文(可选)"},
-                    "thread_id": {"type": "string", "description": "Digital Thread ID"}
-                }, "required": ["task"]
-            }
-        ),
-        Tool(
-            name="dt_domain",
-            description="查询领域知识模型子图。按领域名深度遍历相关实体。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "领域名称 (e.g. \"支付\", \"部署\")"},
-                    "depth": {"type": "integer", "description": "遍历深度", "default": 2},
-                    "include_code": {"type": "boolean", "description": "是否包含代码实体", "default": False}
-                }, "required": ["name"]
-            }
-        ),
-        Tool(
-            name="dt_history",
-            description="从记忆世界检索相似历史任务。用于回溯经验、参考过往方案。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "任务描述(用于相似匹配)"},
-                    "domain": {"type": "string", "description": "领域过滤器"},
-                    "days": {"type": "integer", "description": "回溯天数", "default": 90},
-                    "limit": {"type": "integer", "description": "最大结果数", "default": 5}
-                }, "required": ["task"]
-            }
-        ),
-        Tool(
-            name="dt_dependency",
-            description="分析调用链和依赖影响。分析指定实体的上下游依赖关系。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target": {"type": "string", "description": "目标实体(方法名/类名/服务名)"},
-                    "direction": {
-                        "type": "string",
-                        "description": "方向: upstream/downstream/both",
-                        "enum": ["upstream", "downstream", "both"],
-                        "default": "both"
-                    },
-                    "depth": {"type": "integer", "description": "遍历深度", "default": 2},
-                    "type": {
-                        "type": "string",
-                        "description": "依赖类型: code/config/service/all",
-                        "default": "all"
-                    }
-                }, "required": ["target"]
-            }
-        ),
-        Tool(
-            name="dt_verify",
-            description="代码变更后的一致性校验。支持配置、数据库、API 签名检查。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "files": {"type": "string", "description": "变更文件路径(逗号分隔)"},
-                    "check_config": {"type": "boolean", "description": "检查 Nacos 配置一致性", "default": False},
-                    "check_db": {"type": "boolean", "description": "检查数据库 schema 一致性", "default": False},
-                    "check_api": {"type": "boolean", "description": "检查 API 签名一致性", "default": False}
-                }, "required": []
-            }
-        ),
-
         # ===== 知识 =====
         Tool(
             name="dt_memorize",
@@ -419,26 +329,6 @@ async def list_tools():
                     "success": {"type": "boolean", "description": "任务是否成功"},
                     "project": {"type": "string", "description": "所属项目"}
                 }, "required": ["task"]
-            }
-        ),
-        Tool(
-            name="dt_thread",
-            description="管理 Digital Thread 生命周期：创建、追加会话、追加决策、查看、关闭。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "description": "操作: create/add-session/add-decision/get/list/close",
-                        "enum": ["create", "add-session", "add-decision", "get", "list", "close"],
-                        "default": "list"
-                    },
-                    "name": {"type": "string", "description": "Thread 名称(create 时使用)"},
-                    "description": {"type": "string", "description": "Thread 描述(create 时使用)"},
-                    "thread_id": {"type": "string", "description": "Thread ID(add-session/add-decision/get/close 时使用)"},
-                    "session_id": {"type": "string", "description": "Session ID(add-session 时使用)"},
-                    "decision_id": {"type": "string", "description": "Decision ID(add-decision 时使用)"}
-                }, "required": []
             }
         ),
 
@@ -659,22 +549,6 @@ async def list_tools():
             inputSchema={"type": "object", "properties": {}, "required": []}
         ),
         Tool(
-            name="dt_cleanup",
-            description="分级清理：预览或执行清理 reasoning/memory/snapshots。默认 dry-run 预览模式。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dry_run": {"type": "boolean", "description": "预览模式(仅显示，不执行)", "default": True},
-                    "execute": {"type": "boolean", "description": "执行清理", "default": False},
-                    "targets": {
-                        "type": "string",
-                        "description": "清理目标(逗号分隔): reasoning/memory/snapshots/all",
-                        "default": "all"
-                    }
-                }, "required": []
-            }
-        ),
-        Tool(
             name="dt_backup",
             description="系统备份：分级备份 Memgraph/Qdrant/SQLite。支持 backup/restore/list/verify 四种操作。",
             inputSchema={
@@ -687,18 +561,6 @@ async def list_tools():
                         "default": "backup"
                     },
                     "date": {"type": "string", "description": "恢复/校验的日期 YYYY-MM-DD"}
-                }, "required": []
-            }
-        ),
-        Tool(
-            name="dt_metrics",
-            description="查询系统 metrics(通过 gRPC)。支持 watch 模式和按名称过滤。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "watch": {"type": "boolean", "description": "持续 watch 模式", "default": False},
-                    "interval": {"type": "integer", "description": "轮询间隔(秒)", "default": 5},
-                    "filter": {"type": "string", "description": "按名称过滤(glob, 如 dt_build*)"}
                 }, "required": []
             }
         ),
@@ -733,70 +595,6 @@ async def call_tool(name: str, arguments: dict):
         text = run_cmd(cmd)
 
     # ===== 分析 =====
-    elif name == "dt_context":
-        task = arguments.get("task", "")
-        cmd = [DT_BIN, "context", "--task", task]
-        if arguments.get("worlds"):
-            cmd += ["--worlds", arguments["worlds"]]
-        if arguments.get("max_tokens"):
-            cmd += ["--max-tokens", str(arguments["max_tokens"])]
-        if arguments.get("thread_id"):
-            cmd += ["--thread-id", arguments["thread_id"]]
-        text = run_cmd(cmd, timeout=300)
-
-    elif name == "dt_plan":
-        task = arguments.get("task", "")
-        cmd = [DT_BIN, "plan", "--task", task]
-        if arguments.get("context"):
-            cmd += ["--context", arguments["context"]]
-        if arguments.get("thread_id"):
-            cmd += ["--thread-id", arguments["thread_id"]]
-        text = run_cmd(cmd, timeout=300)
-
-    elif name == "dt_domain":
-        name_val = arguments.get("name", "")
-        cmd = [DT_BIN, "domain", "--name", name_val]
-        if arguments.get("depth"):
-            cmd += ["--depth", str(arguments["depth"])]
-        if arguments.get("include_code"):
-            cmd += ["--include-code"]
-        text = run_cmd(cmd, timeout=120)
-
-    elif name == "dt_history":
-        task = arguments.get("task", "")
-        cmd = [DT_BIN, "history", "--task", task]
-        if arguments.get("domain"):
-            cmd += ["--domain", arguments["domain"]]
-        if arguments.get("days"):
-            cmd += ["--days", str(arguments["days"])]
-        if arguments.get("limit"):
-            cmd += ["--limit", str(arguments["limit"])]
-        text = run_cmd(cmd, timeout=120)
-
-    elif name == "dt_dependency":
-        target = arguments.get("target", "")
-        cmd = [DT_BIN, "dependency", "--target", target]
-        if arguments.get("direction"):
-            cmd += ["--direction", arguments["direction"]]
-        if arguments.get("depth"):
-            cmd += ["--depth", str(arguments["depth"])]
-        if arguments.get("type"):
-            cmd += ["--type", arguments["type"]]
-        text = run_cmd(cmd, timeout=120)
-
-    elif name == "dt_verify":
-        cmd = [DT_BIN, "verify"]
-        if arguments.get("files"):
-            cmd += ["--files", arguments["files"]]
-        if arguments.get("check_config"):
-            cmd += ["--check-config"]
-        if arguments.get("check_db"):
-            cmd += ["--check-db"]
-        if arguments.get("check_api"):
-            cmd += ["--check-api"]
-        text = run_cmd(cmd, timeout=120)
-
-    # ===== 知识 =====
     elif name == "dt_memorize":
         cmd = [DT_BIN, "memorize", "--type", arguments["type"], "--entity-id", arguments["entity_id"]]
         if arguments.get("entity_type"): cmd += ["--entity-type", arguments["entity_type"]]
@@ -830,22 +628,6 @@ async def call_tool(name: str, arguments: dict):
             cmd += ["--project", arguments["project"]]
         text = run_cmd(cmd, timeout=120)
 
-    elif name == "dt_thread":
-        action = arguments.get("action", "list")
-        cmd = [DT_BIN, "thread", "--action", action]
-        if arguments.get("name"):
-            cmd += ["--name", arguments["name"]]
-        if arguments.get("description"):
-            cmd += ["--description", arguments["description"]]
-        if arguments.get("thread_id"):
-            cmd += ["--thread-id", arguments["thread_id"]]
-        if arguments.get("session_id"):
-            cmd += ["--session-id", arguments["session_id"]]
-        if arguments.get("decision_id"):
-            cmd += ["--decision-id", arguments["decision_id"]]
-        text = run_cmd(cmd, timeout=120)
-
-    # ===== 管线 =====
     elif name == "dt_build":
         if arguments.get("all"):
             cmd = [DT_BIN, "build", "--all"]
@@ -947,34 +729,12 @@ async def call_tool(name: str, arguments: dict):
     elif name == "dt_health":
         text = run_cmd([DT_BIN, "health"])
 
-    elif name == "dt_cleanup":
-        cmd = [DT_BIN, "cleanup"]
-        dry_run = arguments.get("dry_run", True)
-        execute = arguments.get("execute", False)
-        if execute:
-            cmd += ["--execute"]
-        elif dry_run:
-            cmd += ["--dry-run"]
-        targets = arguments.get("targets", "all")
-        cmd += ["--targets", targets]
-        text = run_cmd(cmd, timeout=300)
-
     elif name == "dt_backup":
         action = arguments.get("action", "backup")
         cmd = [DT_BIN, "backup", "--action", action]
         if arguments.get("date"):
             cmd += ["--date", arguments["date"]]
         text = run_cmd(cmd, timeout=600)
-
-    elif name == "dt_metrics":
-        cmd = [DT_BIN, "metrics"]
-        if arguments.get("watch"):
-            cmd += ["--watch"]
-        if arguments.get("interval"):
-            cmd += ["--interval", str(arguments["interval"])]
-        if arguments.get("filter"):
-            cmd += ["--filter", arguments["filter"]]
-        text = run_cmd(cmd, timeout=300)
 
     else:
         text = f"未知工具: {name}"

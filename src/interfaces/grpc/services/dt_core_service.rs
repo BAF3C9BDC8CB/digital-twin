@@ -7,7 +7,6 @@
 //! |-------------|-------------------------------|
 //! | `Build`      | [`build_service::handle_build`] |
 //! | `Search`     | [`build_service::handle_search`] |
-//! | `GetContext` | [`context_service::handle_get_context`] |
 //! | `RecordEvent`| [`memory_service::handle_record_event`] |
 //! | `Memorize`   | [`knowledge_service::handle_memorize`] |
 //! | `Sync`       | [`sync_service::handle_sync`] |
@@ -20,7 +19,7 @@ use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use super::{build_service, context_service, knowledge_service, memory_service, sync_service};
+use super::{build_service, knowledge_service, memory_service, sync_service};
 
 /// gRPC service implementation for `dt.core.DtCore`.
 ///
@@ -70,21 +69,6 @@ impl DtCore for DtCoreServiceImpl {
         let req = request.into_inner();
         let resp =
             build_service::handle_search(req, self.graph.clone(), self.vector.clone()).await?;
-        Ok(Response::new(resp))
-    }
-
-    async fn get_context(
-        &self,
-        request: Request<ContextRequest>,
-    ) -> Result<Response<ContextResponse>, Status> {
-        let req = request.into_inner();
-        let resp = context_service::handle_get_context(
-            req,
-            self.graph.clone(),
-            self.vector.clone(),
-            self.embed.clone(),
-        )
-        .await?;
         Ok(Response::new(resp))
     }
 

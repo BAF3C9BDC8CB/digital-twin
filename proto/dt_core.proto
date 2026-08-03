@@ -12,9 +12,6 @@ service DtCore {
   // Semantic code search.
   rpc Search(SearchRequest) returns (SearchResponse);
 
-  // Retrieve context for a given query or entity.
-  rpc GetContext(ContextRequest) returns (ContextResponse);
-
   // Record an event (deploy, install, config change, etc.).
   rpc RecordEvent(EventRequest) returns (dt.common.Empty);
 
@@ -93,19 +90,6 @@ message SearchResponse {
   repeated SearchResult results = 1;
   int32 total = 2;
   double elapsed_secs = 3;
-}
-
-// ---- Context ----
-
-message ContextRequest {
-  string query = 1;
-  repeated string file_paths = 2;
-  int32 max_tokens = 3;
-}
-
-message ContextResponse {
-  string context = 1;
-  int32 token_count = 2;
 }
 
 // ---- Event ----

@@ -33,7 +33,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 | 📖 **MCP 工具与 CLI 命令对照参考** | [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md) |
 | 🔍 **搜索代码逻辑、方法定位、文件查找** | [CODE-SEARCH.md](./guides/CODE-SEARCH.md) |
 | 🧠 **查知识图谱（任何任务的第一个动作）** | [KG-QUERY.md](./guides/KG-QUERY.md) |
-| 🔄 **KG 节点同步到向量库** | MCP: `dt_kg_sync` / CLI: `dt kg-sync --incremental` |
+| 🔄 **KG 节点同步到向量库** | MCP: `dt_kg_sync` / CLI: `dt kg-sync`（默认增量） |
 | AI 操作后必须触发的写入（代码修改/部署/配置变更等） | [TRIGGER-RULES.md](./guides/TRIGGER-RULES.md) |
 | 写入事件/知识/记忆，或结束会话 | [WRITE-EVENTS.md](./guides/WRITE-EVENTS.md) |
 | 长任务全流程：Brainstorming → 计划 → 子 agent → 审查 → 验收 | [LONG-TASK-WORKFLOW.md](./guides/LONG-TASK-WORKFLOW.md) |

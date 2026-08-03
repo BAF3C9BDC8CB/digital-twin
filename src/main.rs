@@ -31,11 +31,8 @@ enum Commands {
     /// Wipe all data from Memgraph, Qdrant, and SQLite.
     ///
     /// Requires `--confirm` to actually execute. Without it, prints a
-    /// summary of what would be deleted and exits.
-    ///
-    /// Use `--targets reasoning` to only clean stale Reasoning nodes
-    /// (Observation, Analysis, Decision) that have been marked stale for
-    /// more than 30 days. Supports `--dry-run` for preview.
+    /// summary of what would be deleted and exits. Supports `--dry-run`
+    /// for preview.
     Clean {
         /// Confirm the destructive operation.
         #[arg(long = "confirm")]
@@ -46,7 +43,7 @@ enum Commands {
         dry_run: bool,
 
         /// Specific targets to clean (comma-separated).
-        /// Supported: "reasoning", "all" (default when no targets specified).
+        /// Supported: "all" (default when no targets specified).
         #[arg(long = "targets", value_delimiter = ',')]
         targets: Vec<String>,
 
@@ -56,28 +53,6 @@ enum Commands {
         test: bool,
     },
 
-    /// Tiered cleanup with dry-run, execute, and per-target selection.
-    ///
-    /// Supports:
-    /// - `reasoning`  — delete stale Reasoning nodes (Observation/Analysis/Decision >30d)
-    /// - `memory`     — archive Memory World events beyond retention (365d)
-    /// - `snapshots`  — remove orphaned SQLite snapshot rows
-    /// - `all`        — run all cleanup targets
-    Cleanup {
-        /// Preview only — show what would be cleaned without executing.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-
-        /// Execute the cleanup (otherwise defaults to dry-run).
-        #[arg(long = "exec")]
-        execute: bool,
-
-        /// Specific targets to clean (comma-separated).
-        /// Supported: "reasoning", "memory", "snapshots", "all".
-        #[arg(long = "targets", value_delimiter = ',', default_value = "all")]
-        targets: Vec<String>,
-    },
-
     /// System backup — tiered backup of Memgraph, Qdrant, and SQLite.
     ///
     /// Default (no subcommand) creates a new backup.
@@ -85,25 +60,6 @@ enum Commands {
     Backup {
         #[command(subcommand)]
         action: Option<BackupAction>,
-    },
-
-    /// Memory World archiving — archive events beyond retention to compressed files.
-    ///
-    /// `dt archive` — dry-run preview.
-    /// `dt archive <YYYY-MM-DD>` — archive events before this date.
-    /// `dt archive --exec <YYYY-MM-DD>` — execute (without --exec, runs dry-run).
-    /// `dt archive --list` — list existing archive files.
-    Archive {
-        /// Cutoff date — archive events before this date (format: YYYY-MM-DD).
-        before: Option<String>,
-
-        /// Execute the archive (otherwise runs dry-run preview).
-        #[arg(long = "exec")]
-        execute: bool,
-
-        /// List existing archive files.
-        #[arg(long = "list")]
-        list: bool,
     },
 
     /// Schema management commands.
@@ -261,134 +217,6 @@ enum Commands {
         project: Option<String>,
     },
 
-    /// Build aggregated six-world context for a task.
-    ///
-    /// Usage: dt context <task> [--worlds ...] [--max-tokens ...]
-    Context {
-        /// Task description.
-        task: String,
-
-        /// Worlds to query (comma-separated).
-        #[arg(long = "worlds")]
-        worlds: Option<String>,
-
-        /// Max tokens.
-        #[arg(long = "max-tokens")]
-        max_tokens: Option<usize>,
-
-        /// Thread ID.
-        #[arg(long = "thread-id")]
-        thread_id: Option<String>,
-    },
-
-    /// Generate execution plan by matching playbooks.
-    ///
-    /// Usage: dt plan <task> [--context ...] [--thread-id ...]
-    Plan {
-        /// Task description.
-        task: String,
-
-        /// Optional context from dt_context output.
-        #[arg(long = "context")]
-        context: Option<String>,
-
-        /// Thread ID.
-        #[arg(long = "thread-id")]
-        thread_id: Option<String>,
-    },
-
-    /// Query domain knowledge model subgraph.
-    ///
-    /// Usage: dt domain <name> [--depth 2] [--include-code]
-    Domain {
-        /// Domain name (e.g. "支付", "部署").
-        name: String,
-
-        /// Traversal depth.
-        #[arg(long = "depth", default_value = "2")]
-        depth: usize,
-
-        /// Include code entities.
-        #[arg(long = "include-code")]
-        include_code: bool,
-    },
-
-    /// Retrieve similar historical tasks from Memory World.
-    ///
-    /// Usage: dt history <task> [--domain ...] [--days 90] [--limit 5]
-    History {
-        /// Task description for similarity matching.
-        task: String,
-
-        /// Domain filter.
-        #[arg(long = "domain")]
-        domain: Option<String>,
-
-        /// Lookback days.
-        #[arg(long = "days", default_value = "90")]
-        days: u32,
-
-        /// Max results.
-        #[arg(long = "limit", default_value = "5")]
-        limit: usize,
-    },
-
-    /// Analyze call-chain and dependency impact.
-    ///
-    /// Usage: dt dependency <target> [--direction both] [--depth 2] [--type all]
-    Dependency {
-        /// Target entity (method name, class name, service name).
-        target: String,
-
-        /// Direction: upstream, downstream, both.
-        #[arg(long = "direction", default_value = "both")]
-        direction: String,
-
-        /// Traversal depth.
-        #[arg(long = "depth", default_value = "2")]
-        depth: usize,
-
-        /// Dependency type: code, config, service, all.
-        #[arg(long = "type", default_value = "all")]
-        dep_type: String,
-    },
-
-    /// Verify consistency after code changes.
-    ///
-    /// Usage: dt verify <files> [--check-config] [--check-db] [--check-api]
-    Verify {
-        /// Changed file paths (comma-separated).
-        #[arg(value_delimiter = ',')]
-        files: Vec<String>,
-
-        /// Check Nacos config consistency.
-        #[arg(long = "check-config")]
-        check_config: bool,
-
-        /// Check database schema consistency.
-        #[arg(long = "check-db")]
-        check_db: bool,
-
-        /// Check API signature consistency.
-        #[arg(long = "check-api")]
-        check_api: bool,
-    },
-
-    /// Query system metrics via gRPC (no HTTP).
-    Metrics {
-        /// Watch mode — continuous output.
-        #[arg(long = "watch")]
-        watch: bool,
-
-        /// Poll interval in seconds.
-        #[arg(long = "interval", default_value = "5")]
-        interval: u64,
-
-        /// Filter metric names (glob, e.g. "dt_build*").
-        #[arg(long = "filter")]
-        filter: Option<String>,
-    },
-
     /// Synchronize Nacos configuration to Knowledge Graph.
     ///
     /// Usage: dt nacos-sync [test|prod]
@@ -421,18 +249,6 @@ enum Commands {
         /// Sync adaptive config chunks to Qdrant config_chunks collection.
         #[arg(long = "config-chunks")]
         config_chunks: bool,
-    },
-
-    /// Show LLM analysis status for all projects.
-    LlmStatus,
-
-    /// Manage Digital Thread lifecycle.
-    ///
-    /// Subcommands: list, get <id>, create <name>, close <id>,
-    ///              add-session <thread-id> <session-id>, add-decision <thread-id> <decision-id>
-    Thread {
-        #[command(subcommand)]
-        action: Option<ThreadAction>,
     },
 
     /// Kubernetes operations: pods, logs, download, status (via kublog).
@@ -523,44 +339,6 @@ enum BackupAction {
     Verify {
         /// Backup date (format: YYYY-MM-DD).
         date: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ThreadAction {
-    /// List all threads.
-    List,
-    /// Get thread details by ID.
-    Get {
-        /// Thread ID.
-        thread_id: String,
-    },
-    /// Create a new thread.
-    Create {
-        /// Thread name.
-        name: String,
-        /// Thread description.
-        #[arg(long)]
-        description: Option<String>,
-    },
-    /// Close a thread.
-    Close {
-        /// Thread ID.
-        thread_id: String,
-    },
-    /// Add a session to a thread.
-    AddSession {
-        /// Thread ID.
-        thread_id: String,
-        /// Session ID.
-        session_id: String,
-    },
-    /// Add a decision to a thread.
-    AddDecision {
-        /// Thread ID.
-        thread_id: String,
-        /// Decision ID.
-        decision_id: String,
     },
 }
 
@@ -1003,17 +781,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialize unified logging via dt-log (JSON → file + stderr fallback)
     dt_daemon::shared::logging::init::init_logging()?;
 
-    // Register built-in metrics
-    dt_daemon::interfaces::grpc::services::metrics_service::MetricsServiceImpl::register_builtins();
-
     let cli = Cli::parse();
 
     match cli.command {
         // ---- CLI mode: dt clean ----
         Some(Commands::Clean {
             confirm,
-            dry_run,
-            targets,
+            dry_run: _,
+            targets: _,
             test,
         }) => {
             // Handle --test: clean test- prefixed data (fail-fast, no Noop fallback)
@@ -1054,11 +829,6 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            if targets.iter().any(|t| t == "reasoning") {
-                dt_daemon::interfaces::cli::cleanup::run_clean_reasoning(dry_run).await?;
-                return Ok(());
-            }
-
             let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_clean(
                 confirm,
@@ -1067,51 +837,6 @@ async fn main() -> anyhow::Result<()> {
                     .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
             )
             .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt cleanup (tiered cleanup) ----
-        Some(Commands::Cleanup {
-            dry_run,
-            execute,
-            targets,
-        }) => {
-            let is_dry_run = dry_run || !execute;
-
-            if targets.iter().any(|t| t == "all") {
-                if is_dry_run {
-                    println!("=== dt cleanup --targets all (dry-run) ===");
-                    println!("  Use --exec to perform actual cleanup.");
-                    println!();
-                }
-                dt_daemon::interfaces::cli::cleanup::run_cleanup_all(is_dry_run).await?;
-                return Ok(());
-            }
-
-            let mut any_target = false;
-
-            if targets.iter().any(|t| t == "reasoning") {
-                any_target = true;
-                dt_daemon::interfaces::cli::cleanup::run_clean_reasoning(is_dry_run).await?;
-            }
-
-            if targets.iter().any(|t| t == "memory") {
-                any_target = true;
-                dt_daemon::interfaces::cli::cleanup::run_cleanup_memory(is_dry_run).await?;
-            }
-
-            if targets.iter().any(|t| t == "snapshots") {
-                any_target = true;
-                dt_daemon::interfaces::cli::cleanup::run_cleanup_snapshots(is_dry_run).await?;
-            }
-
-            if !any_target {
-                eprintln!(
-                    "Unknown targets: {:?}. Supported: reasoning, memory, snapshots, all",
-                    targets
-                );
-            }
-
             return Ok(());
         }
 
@@ -1195,54 +920,6 @@ async fn main() -> anyhow::Result<()> {
                     }
                     println!("  Duration: {:.1}s", report.duration_seconds,);
                 }
-            }
-
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt archive ----
-        Some(Commands::Archive {
-            before,
-            execute,
-            list: list_flag,
-        }) => {
-            if list_flag {
-                println!("=== dt archive --list ===");
-                let entries = dt_daemon::interfaces::cli::archive::list_archives().await?;
-
-                if entries.is_empty() {
-                    println!("No archives found.");
-                } else {
-                    println!(" {:<30}  {:>8}  {:>6}", "DATE RANGE", "SIZE", "EVENTS");
-                    println!(
-                        " {:<30}  {:>8}  {:>6}",
-                        "------------------------------", "--------", "------"
-                    );
-                    for entry in &entries {
-                        println!(
-                            " {:<30}  {:>7}B  {:>6}",
-                            entry.date_range, entry.size_bytes, entry.events_count,
-                        );
-                    }
-                    println!();
-                    println!("Total: {} archive(s)", entries.len());
-                }
-
-                return Ok(());
-            }
-
-            let dry_run = !execute;
-            let report =
-                dt_daemon::interfaces::cli::archive::run_archive(before.as_deref(), dry_run)
-                    .await?;
-
-            if !dry_run {
-                println!();
-                println!("Archive created:");
-                println!("  File:    {}", report.archive_file.display());
-                println!("  Events:  {}", report.events_archived);
-                println!("  Space:   {} bytes freed", report.space_freed_bytes);
-                println!("  Time:    {:.1}s", report.duration_seconds);
             }
 
             return Ok(());
@@ -1573,120 +1250,6 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt context ----
-        Some(Commands::Context {
-            task,
-            worlds,
-            max_tokens,
-            thread_id,
-        }) => {
-            let graph = connect_graph().await;
-            let embed = connect_embed().await;
-            dt_daemon::interfaces::cli::context::handle_context(
-                task, worlds, max_tokens, thread_id, graph, embed,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt plan ----
-        Some(Commands::Plan {
-            task,
-            context,
-            thread_id,
-        }) => {
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_plan(task, context, thread_id, graph)
-                .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt domain ----
-        Some(Commands::Domain {
-            name,
-            depth,
-            include_code,
-        }) => {
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_domain(name, depth, include_code, graph)
-                .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt history ----
-        Some(Commands::History {
-            task,
-            domain,
-            days,
-            limit,
-        }) => {
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_history(task, domain, days, limit, graph)
-                .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt dependency ----
-        Some(Commands::Dependency {
-            target,
-            direction,
-            depth,
-            dep_type,
-        }) => {
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_dependency(
-                target, direction, depth, dep_type, graph,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt verify ----
-        Some(Commands::Verify {
-            files,
-            check_config,
-            check_db,
-            check_api,
-        }) => {
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::context::handle_verify(
-                files,
-                check_config,
-                check_db,
-                check_api,
-                graph,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt metrics ----
-        Some(Commands::Metrics {
-            watch,
-            interval,
-            filter,
-        }) => {
-            tracing::info!(
-                "dt-daemon CLI: metrics --watch {watch} --interval {interval} --filter {:?}",
-                filter,
-            );
-
-            if watch {
-                println!("Metrics: watch mode, interval={interval}s");
-                if let Some(ref f) = filter {
-                    println!("  filter: {f}");
-                }
-            } else {
-                println!("Metrics snapshot:");
-                if let Some(ref f) = filter {
-                    println!("  filter: {f}");
-                }
-            }
-            tracing::info!("metrics 查询完成 (占位符)");
-
-            return Ok(());
-        }
-
         // ---- CLI mode: dt nacos-sync ----
         Some(Commands::NacosSync { env }) => {
             let config = load_config();
@@ -1736,74 +1299,6 @@ async fn main() -> anyhow::Result<()> {
                 config_chunks,
                 graph,
                 queue,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt llm-status ----
-        Some(Commands::LlmStatus) => {
-            let snapshot = connect_snapshot().await;
-            if let Some(_snap) = snapshot {
-                // Query SQLite for LLM analysis progress per project
-                // The snapshot repo has is_llm_analyzed / mark_llm_analyzed
-                // For status, we need to count pending vs done
-                // This is a simplified version — just show which projects have LLM progress
-                println!("LLM Analysis Status:");
-                println!("  (Detailed status requires querying SQLite llm_progress table)");
-                println!("  Use 'dt build --test' to verify LLM analysis works");
-            } else {
-                println!("LLM Analysis Status: SQLite unavailable");
-            }
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt thread ----
-        Some(Commands::Thread { action }) => {
-            let graph = connect_graph().await;
-            let (action_str, name, description, thread_id, session_id, decision_id) =
-                match action.unwrap_or(ThreadAction::List) {
-                    ThreadAction::List => ("list".into(), None, None, None, None, None),
-                    ThreadAction::Get { thread_id } => {
-                        ("get".into(), None, None, Some(thread_id), None, None)
-                    }
-                    ThreadAction::Create { name, description } => {
-                        ("create".into(), Some(name), description, None, None, None)
-                    }
-                    ThreadAction::Close { thread_id } => {
-                        ("close".into(), None, None, Some(thread_id), None, None)
-                    }
-                    ThreadAction::AddSession {
-                        thread_id,
-                        session_id,
-                    } => (
-                        "add-session".into(),
-                        None,
-                        None,
-                        Some(thread_id),
-                        Some(session_id),
-                        None,
-                    ),
-                    ThreadAction::AddDecision {
-                        thread_id,
-                        decision_id,
-                    } => (
-                        "add-decision".into(),
-                        None,
-                        None,
-                        Some(thread_id),
-                        None,
-                        Some(decision_id),
-                    ),
-                };
-            dt_daemon::interfaces::cli::thread::handle_thread(
-                action_str,
-                name,
-                description,
-                thread_id,
-                session_id,
-                decision_id,
-                graph,
             )
             .await?;
             return Ok(());

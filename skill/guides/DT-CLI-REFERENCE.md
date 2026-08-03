@@ -16,7 +16,7 @@
 | "XX 功能的代码在哪里/怎么实现的" | `dt_search(query="XX", world="code", project="<项目名>")` | 代码语义搜索，命中含 llm_analysis + 文件行号 |
 | "XX 的逻辑是什么"（模糊） | `dt_search(query="XX")`（默认 world=all） | 代码+知识+文档 RRF 融合 |
 | "查文档/手册里的说明" | `dt_search(query="XX", world="doc")` | 文档块检索，含原文 |
-| "之前做过类似的事吗" | `dt_search(query="XX", world="memory")` 或 `dt_history(task="XX")` | 事件/历史任务检索 |
+| "之前做过类似的事吗" | `dt_search(query="XX", world="memory")` | 事件/历史任务检索（Memgraph 事件标签关键词） |
 | "代码仓库/GitLab/ELK/K8s 地址" | `dt_search_kg(query="关键字", limit=5)` | 服务 URL 类走 KG |
 | Jenkins Job 信息/构建历史/参数 | `jcli_list` / `jcli_params` / `jcli_history` | Jenkins 类走 jcli 工具 |
 | "微服务状态/日志" | `svc_list` / `svc_status` / `svc_logs` | 本地服务走 svc 工具 |
@@ -53,8 +53,8 @@ dt search "XX" --limit 10                                  # all 世界
 | 场景 | MCP Tool（首选） | CLI 降级 |
 |------|-----------------|---------|
 | KG 节点增加了新的基础设施/服务 | `dt_kg_sync()` | `dt kg-sync`（全量） |
-| KG 节点有少量变更 | `dt_kg_sync()` | `dt kg-sync --incremental` |
-| Nacos 配置有更新 | `nacos_sync(env="test")` | `dt nacos-sync --env test` |
+| KG 节点有少量变更 | `dt_kg_sync()` | `dt kg-sync`（默认即增量） |
+| Nacos 配置有更新 | `nacos_sync(env="test")` | `dt nacos-sync test`（位置参数） |
 | K8s 资源有变化 | （无 MCP 等价物） | `dt k8s-sync` |
 | Jenkins Views/Jobs/Builds | （无 MCP 等价物） | `dt jc-sync` |
 
@@ -68,7 +68,7 @@ dt search "XX" --limit 10                                  # all 世界
 | "dt_search 返回空" | 先 `dt_health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
 | "knowledge 世界报错" | `dt_health`，看 KG Bridge 检查项 | kg_nodes 集合可能不存在，需 `dt_kg_sync` |
 | 验证新项目解析是否正常 | `dt build --path <路径> --name <项目名>` 后用 `dt_health` 确认 | 实测索引（无独立 validate 命令） |
-| 数据备份/清理/指标 | `dt_backup` / `dt_cleanup` / `dt_metrics`（MCP） | 运维类工具 |
+| 数据备份/清空 | `dt_backup`（MCP）/ `dt clean`（CLI） | 运维类工具 |
 
 ---
 
@@ -90,12 +90,10 @@ dt search "XX" --limit 10                                  # all 世界
 | 搜索 KG（GraphRAG） | `dt_search_kg` | `dt search --world knowledge` |
 | 写知识/事件 | `dt_memorize` / `dt_event` | `dt memorize` / `dt event` |
 | 任务经验沉淀 | `dt_learn` | `dt learn` |
-| Digital Thread 管理 | `dt_thread` | `dt thread` |
 | 索引代码 | `dt_build` | `dt build` |
 | 同步 KG | `dt_kg_sync` | `dt kg-sync` |
-| 同步 Nacos | `nacos_sync` | `dt nacos-sync` |
+| 同步 Nacos | `nacos_sync` | `dt nacos-sync [test|prod]` |
 | 健康检查 | `dt_health` | `dt health` |
-| 上下文/计划/领域/历史/依赖/校验 | `dt_context` / `dt_plan` / `dt_domain` / `dt_history` / `dt_dependency` / `dt_verify` | 同名 CLI |
 | 查 Jenkins | `jcli_*` | `dt jcli` |
 | 管微服务 | `svc_*` | （MCP 专属，无 CLI） |
 | 查 K8s 日志 | `kublog_*` | `dt kub` |

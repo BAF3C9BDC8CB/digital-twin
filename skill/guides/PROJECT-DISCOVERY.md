@@ -2,7 +2,7 @@
 
 > AI 每次进入新工作空间时执行此规则。不在代码中实现，由 AI 按本文档自行判断。
 > **注意：项目注册表 = `~/.config/digital-twin/config.yaml` 的 `projects` 段（直接读文件，无 `dt list` 命令）；**
-> **索引状态用 `dt llm-status` / `dt_health` 查看；构建用 `dt build`（无参数 = 构建所有项目）或 MCP `dt_build`。**
+> **索引状态用 `dt_health` 查看后端健康、用 `dt search "<类名>" --json` 验证是否已有索引；构建用 `dt build`（无参数 = 构建所有项目）或 MCP `dt_build`。**
 
 ---
 
@@ -16,8 +16,8 @@
 # 1. 读项目注册表
 cat ~/.config/digital-twin/config.yaml   # projects 段：base + name 列表
 
-# 2. 查各项目索引/LLM 分析状态
-dt llm-status
+# 2. 验证某项目是否已索引（能搜到方法即已索引）
+dt search "<已知类名或方法名>" --project <项目名> --json
 ```
 
 对照判断当前目录下的项目：
@@ -61,7 +61,7 @@ dt llm-status
 | 已在 `config.yaml` 注册 | `~/.config/digital-twin/config.yaml` projects 段中已列出 |
 | 已知非项目目录 | `scanner.ignore_dirs` 中列出的目录（.git .weave node_modules ...） |
 | 用户已拒绝且不再询问 | `ignored_dirs.yaml` 中列出的路径 |
-| 已有索引 | `dt llm-status` 输出中该项目有数据 |
+| 已有索引 | `dt search "<关键词>" --project <项目名>` 能搜到方法 |
 
 ---
 
@@ -138,7 +138,7 @@ dt build
 ```
 工作目录: /data/aflmProjects/warehouse
 
-1. 读 config.yaml projects 段 + dt llm-status:
+1. 读 config.yaml projects 段 + dt search 抽查索引:
    已注册且有索引: yyc-caigou, yyc-yaochang-gongsi
    已注册但无索引: warehouse
    （uvp-business-center 等未列出 → 未注册）
