@@ -1,11 +1,11 @@
-//! Digital Twin V2 daemon — single-crate layered architecture.
+//! Digital Twin V2 守护进程 — 单 crate 分层架构。
 //!
-//! Layered DDD architecture:
-//!   domain/          → entities, value objects, domain traits (zero deps)
-//!   infrastructure/   → Memgraph, Qdrant, SQLite, scanner, parser
-//!   application/      → use-case orchestration (build, sync, context, knowledge, plugins)
-//!   interfaces/       → gRPC server + CLI command handlers
-//!   shared/           → logging, coordinator, chunker
+//! 分层 DDD 架构:
+//!   domain/          → 实体、值对象、领域 trait（零依赖）
+//!   infrastructure/   → Memgraph、Qdrant、SQLite、scanner、parser
+//!   application/      → 用例编排（build、sync、context、knowledge、plugins）
+//!   interfaces/       → gRPC 服务器 + CLI 命令处理器
+//!   shared/           → logging、coordinator、chunker
 
 pub mod application;
 pub mod domain;

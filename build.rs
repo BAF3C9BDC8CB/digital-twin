@@ -1,6 +1,6 @@
-//! Build script for dt-daemon proto compilation.
+//! dt-daemon proto 编译的构建脚本。
 //!
-//! Uses tonic-build to compile .proto definitions into Rust code.
+//! 使用 tonic-build 将 .proto 定义编译为 Rust 代码。
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proto_dir = std::path::Path::new("proto");

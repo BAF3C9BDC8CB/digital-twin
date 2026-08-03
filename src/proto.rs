@@ -1,9 +1,9 @@
-//! Auto-generated protobuf code from proto/*.proto
+//! 由 proto/*.proto 自动生成的 protobuf 代码
 //!
-//! Compiled by tonic-build in build.rs.  Each `include!()` pulls the
-//! generated file from the cargo OUT_DIR.
+//! 由 build.rs 中的 tonic-build 编译。每个 `include!()` 从 cargo 的
+//! OUT_DIR 引入生成的文件。
 
-/// Common shared types (HealthStatus, Error, Empty, KeyValue).
+/// 通用共享类型（HealthStatus、Error、Empty、KeyValue）。
 pub mod dt {
     pub mod common {
         include!(concat!(env!("OUT_DIR"), "/dt.common.rs"));

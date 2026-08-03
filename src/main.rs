@@ -1,12 +1,11 @@
-//! Digital Twin V2 daemon — composition root and gRPC server.
+//! Digital Twin V2 守护进程 — 组合根与 gRPC 服务器。
 //!
-//! # Dual-mode
+//! # 双模式
 //!
-//! The daemon binary operates in one of three modes:
+//! 该守护进程二进制支持三种运行模式：
 //!
-//! 1. **Server mode** (default) — starts the gRPC server.
-//! 2. **CLI mode** — when invoked with a recognised subcommand (e.g. `build`,
-//!    `search`), executes the command and exits.
+//! 1. **服务器模式**（默认）— 启动 gRPC 服务器。
+//! 2. **CLI 模式** — 以已识别的子命令（如 `build`、`search`）调用时，执行命令并退出。
 
 use clap::{Parser, Subcommand};
 use dt_daemon::domain::traits::{
@@ -17,10 +16,10 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// ---- CLI definition ----
+// ---- CLI 定义 ----
 
 #[derive(Parser)]
-#[command(name = "dt-daemon", version = env!("CARGO_PKG_VERSION"), about = "Digital Twin daemon")]
+#[command(name = "dt-daemon", version = env!("CARGO_PKG_VERSION"), about = "Digital Twin 守护进程")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -28,291 +27,289 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Wipe all data from Memgraph, Qdrant, and SQLite.
+    /// 清空 Memgraph、Qdrant 与 SQLite 中的所有数据。
     ///
-    /// Requires `--confirm` to actually execute. Without it, prints a
-    /// summary of what would be deleted and exits. Supports `--dry-run`
-    /// for preview.
+    /// 需要 `--confirm` 才会真正执行；未提供时仅打印将要删除内容的摘要并退出。
+    /// 支持 `--dry-run` 进行预览。
     Clean {
-        /// Confirm the destructive operation.
+        /// 确认破坏性操作。
         #[arg(long = "confirm")]
         confirm: bool,
 
-        /// Preview only — show what would be deleted without executing.
+        /// 仅预览 — 显示将被删除的内容而不真正执行。
         #[arg(long = "dry-run")]
         dry_run: bool,
 
-        /// Specific targets to clean (comma-separated).
-        /// Supported: "all" (default when no targets specified).
+        /// 要清理的指定目标（逗号分隔）。
+        /// 支持值: "all"（未指定目标时的默认值）。
         #[arg(long = "targets", value_delimiter = ',')]
         targets: Vec<String>,
 
-        /// Clean all test- prefixed data (nodes + Qdrant collections).
-        /// Equivalent to the cleanup phase of `dt build --test`.
+        /// 清理所有 test- 前缀的数据（节点 + Qdrant 集合）。
+        /// 等价于 `dt build --test` 的清理阶段。
         #[arg(long = "test")]
         test: bool,
     },
 
-    /// System backup — tiered backup of Memgraph, Qdrant, and SQLite.
+    /// 系统备份 — Memgraph、Qdrant 与 SQLite 的分层备份。
     ///
-    /// Default (no subcommand) creates a new backup.
-    /// Subcommands: list, restore <date>, verify <date>.
+    /// 默认（无子命令）创建新备份。
+    /// 子命令: list、restore <date>、verify <date>。
     Backup {
         #[command(subcommand)]
         action: Option<BackupAction>,
     },
 
-    /// Schema management commands.
+    /// 模式（Schema）管理命令。
     #[command(subcommand)]
     Schema(SchemaAction),
 
-    /// Check health of all backend services (Memgraph, Qdrant, SQLite).
+    /// 检查所有后端服务的健康状态（Memgraph、Qdrant、SQLite）。
     Health,
 
-    /// Write a knowledge entry (Knowledge, Experience, Concept, Domain, Playbook).
+    /// 写入一条知识记录（Knowledge、Experience、Concept、Domain、Playbook）。
     ///
-    /// Used by `dt memorize` and the MCP tool `dt_memorize` to persist
-    /// structured knowledge into the Knowledge World subgraph.
+    /// 由 `dt memorize` 与 MCP 工具 `dt_memorize` 调用，将结构化知识
+    /// 持久化到 Knowledge World 子图中。
     ///
-    /// Usage: dt memorize <type> <entity-id> <details> [--project <name>]
+    /// 用法: dt memorize <type> <entity-id> <details> [--project <name>]
     Memorize {
-        /// Knowledge type: Decision | KnowledgeAdded | Environment | Dependencies.
+        /// 知识类型: Decision | KnowledgeAdded | Environment | Dependencies。
         knowledge_type: String,
 
-        /// Unique identifier for the entity.
+        /// 实体的唯一标识符。
         entity_id: String,
 
-        /// Human-readable details in key: value format (semicolon-separated).
+        /// 人类可读的详情，key: value 格式（分号分隔）。
         details: String,
 
-        /// Entity type label (e.g. ArchitectureDecision, Knowledge, Experience).
+        /// 实体类型标签（如 ArchitectureDecision、Knowledge、Experience）。
         #[arg(long = "entity-type")]
         entity_type: Option<String>,
 
-        /// Optional project name for scoping.
+        /// 可选的项目名称，用于作用域限定。
         #[arg(long = "project")]
         project: Option<String>,
     },
 
-    /// Fire a named hook with a JSON context object.
+    /// 以 JSON 上下文对象触发一个具名 hook。
     ///
-    /// Replaces the old `--type` / `--entity-id` / `--details` interface.
-    /// The hook and its side-effect templates are configured in
-    /// `config/event-hooks.yaml`.
+    /// 取代旧的 `--type` / `--entity-id` / `--details` 接口。
+    /// hook 及其副作用模板在 `config/event-hooks.yaml` 中配置。
     ///
-    /// Usage: dt event <hook> '<json>'
+    /// 用法: dt event <hook> '<json>'
     Event {
-        /// Hook name (e.g. code_modified, jenkins_deploy_completed).
+        /// Hook 名称（如 code_modified、jenkins_deploy_completed）。
         hook_name: String,
 
-        /// JSON object with fields for the hook's side-effect templates.
+        /// 携带 hook 副作用模板所需字段的 JSON 对象。
         context: String,
     },
 
-    /// Learn from AI task execution — write structured knowledge into Knowledge World.
+    /// 从 AI 任务执行中学习 — 将结构化知识写入 Knowledge World。
     ///
-    /// Accepts task name, entities, patterns, pitfalls, decisions, and
-    /// success/failure flags.  Synthesises Knowledge, Experience, and Playbook
-    /// nodes and updates Playbook success/failure counters.
+    /// 接收任务名称、实体、模式、陷阱、决策以及成功/失败标志，
+    /// 综合生成 Knowledge、Experience 与 Playbook 节点，
+    /// 并更新 Playbook 的成功/失败计数。
     ///
-    /// Usage: dt learn <task> [--pattern ...] [--pitfalls ...] [--project ...]
+    /// 用法: dt learn <task> [--pattern ...] [--pitfalls ...] [--project ...]
     Learn {
-        /// Task title or description (e.g. "支付平台迁移").
+        /// 任务标题或描述（如 "支付平台迁移"）。
         task: String,
 
-        /// Comma-separated list of affected entities (files, classes, services).
+        /// 受影响的实体列表（文件、类、服务），逗号分隔。
         #[arg(long = "entities", value_delimiter = ',')]
         entities: Vec<String>,
 
-        /// Recognised solution pattern.
+        /// 已识别的解决方案模式。
         #[arg(long = "pattern")]
         pattern: Option<String>,
 
-        /// Comma-separated pitfalls encountered.
+        /// 遇到过的陷阱，逗号分隔。
         #[arg(long = "pitfalls", value_delimiter = ',')]
         pitfalls: Vec<String>,
 
-        /// Comma-separated architecture/technical decisions.
+        /// 架构/技术决策，逗号分隔。
         #[arg(long = "decisions", value_delimiter = ',')]
         decisions: Vec<String>,
 
-        /// Optional digital-thread ID for cross-task lineage.
+        /// 可选的 digital-thread ID，用于跨任务血缘追踪。
         #[arg(long = "thread-id")]
         thread_id: Option<String>,
 
-        /// Whether execution succeeded.
+        /// 执行是否成功。
         #[arg(long = "success")]
         success: Option<bool>,
 
-        /// Owning project name.
+        /// 所属项目名称。
         #[arg(long = "project")]
         project: Option<String>,
     },
 
-    /// Build (index) a project into the knowledge graph.
+    /// 将项目构建（索引）到知识图谱。
     ///
-    /// `dt build` — build all projects from config.yaml (default).
-    /// `dt build --path <path>` — build a project by root path.
-    /// `dt build --name <name>` — build a project by name in config.yaml.
-    /// `dt build --file <file>` — single file incremental update.
-    /// `dt build --full` — full rebuild (can combine with --path/--name/--file/--test).
-    /// `dt build --test` — run self-contained pipeline integration test.
+    /// `dt build` — 从 config.yaml 构建所有项目（默认）。
+    /// `dt build --path <path>` — 按根路径构建项目。
+    /// `dt build --name <name>` — 按 config.yaml 中的名称构建项目。
+    /// `dt build --file <file>` — 单文件增量更新。
+    /// `dt build --full` — 全量重建（可与 --path/--name/--file/--test 组合）。
+    /// `dt build --test` — 运行自包含的流水线集成测试。
     Build {
-        /// Project root path.
+        /// 项目根路径。
         #[arg(long = "path")]
         path: Option<PathBuf>,
 
-        /// Project name (from config.yaml).
+        /// 项目名称（来自 config.yaml）。
         #[arg(long = "name", short = 'n')]
         name: Option<String>,
 
-        /// Single file path (for incremental single-file update).
+        /// 单文件路径（用于增量单文件更新）。
         #[arg(long = "file")]
         file: Option<PathBuf>,
 
-        /// Full rebuild — bypass incremental snapshots.
+        /// 全量重建 — 绕过增量快照。
         #[arg(long = "full")]
         full: bool,
 
-        /// Skip pipeline analysis after build (enabled by default).
+        /// 构建后跳过流水线分析（默认启用）。
         #[arg(long = "no-pipeline")]
         no_pipeline: bool,
 
-        /// Run the self-contained pipeline integration test.
+        /// 运行自包含的流水线集成测试。
         ///
-        /// Creates test- prefixed nodes and collections, verifies
-        /// every entity type, then cleans up automatically.
-        /// Combine with --full to force a full rebuild when incremental
-        /// progress is stale; use `dt clean --test` to manually clean test data.
+        /// 创建 test- 前缀的节点与集合，验证每种实体类型，
+        /// 然后自动清理。
+        /// 当增量进度过期时，可配合 --full 强制全量重建；
+        /// 使用 `dt clean --test` 可手动清理测试数据。
         #[arg(long = "test")]
         test: bool,
 
-        /// Source type to build: code (default), knowledge (sync KG nodes to vectors).
-        /// Use "knowledge" as a replacement for `dt kg-sync`.
+        /// 要构建的源类型: code（默认）、knowledge（将 KG 节点同步为向量）。
+        /// 使用 "knowledge" 替代 `dt kg-sync`。
         #[arg(long = "source")]
         source: Option<String>,
     },
 
-    /// Unified search across worlds.
+    /// 跨世界统一搜索。
     ///
-    /// Usage: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10] [--json]
+    /// 用法: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10] [--json]
     Search {
-        /// Search query string (positional).
+        /// 搜索查询字符串（位置参数）。
         query: String,
 
-        /// Which world to search: all, code, knowledge, doc, config, memory.
+        /// 要搜索的世界: all、code、knowledge、doc、config、memory。
         #[arg(long = "world", default_value = "all")]
         world: String,
 
-        /// Limit results.
+        /// 结果数量上限。
         #[arg(long = "limit", default_value = "10")]
         limit: usize,
 
-        /// Output pure JSON to stdout (for MCP / scripting).
+        /// 向 stdout 输出纯 JSON（用于 MCP / 脚本调用）。
         #[arg(long = "json")]
         json: bool,
 
-        /// Scope to a project name.
+        /// 限定到某个项目名称。
         #[arg(long = "project", short = 'p')]
         project: Option<String>,
     },
 
-    /// Synchronize Nacos configuration to Knowledge Graph.
+    /// 将 Nacos 配置同步到知识图谱。
     ///
-    /// Usage: dt nacos-sync [test|prod]
+    /// 用法: dt nacos-sync [test|prod]
     NacosSync {
-        /// Target environment (default: test).
+        /// 目标环境（默认: test）。
         #[arg(default_value = "test")]
         env: String,
     },
 
-    /// Synchronize Kubernetes resources to Knowledge Graph.
+    /// 将 Kubernetes 资源同步到知识图谱。
     K8sSync {
-        /// Dry-run mode.
+        /// dry-run 模式。
         #[arg(long = "dry-run")]
         dry_run: bool,
     },
 
-    /// Synchronize KG nodes to Qdrant vector store.
+    /// 将 KG 节点同步到 Qdrant 向量存储。
     ///
-    /// Default: incremental (only new/unsynchronized nodes).
-    /// Use --full for complete rebuild.
+    /// 默认: 增量（仅同步新增/未同步的节点）。
+    /// 使用 --full 进行全量重建。
     KgSync {
-        /// Full rebuild — sync all nodes (bypass incremental).
+        /// 全量重建 — 同步所有节点（绕过增量）。
         #[arg(long = "full")]
         full: bool,
 
-        /// Specific labels (comma-separated).
+        /// 指定的标签（逗号分隔）。
         #[arg(long = "labels")]
         labels: Option<String>,
 
-        /// Sync adaptive config chunks to Qdrant config_chunks collection.
+        /// 将自适应配置分块同步到 Qdrant 的 config_chunks 集合。
         #[arg(long = "config-chunks")]
         config_chunks: bool,
     },
 
-    /// Kubernetes operations: pods, logs, download, status (via kublog).
+    /// Kubernetes 操作: pods、logs、download、status（经由 kublog）。
     Kub {
-        /// Action: pods, logs, download, status.
+        /// 操作: pods、logs、download、status。
         action: String,
 
-        /// K8s namespace.
+        /// K8s 命名空间。
         #[arg(long = "ns", default_value = "default")]
         namespace: String,
 
-        /// Pod name (for logs / download).
+        /// Pod 名称（用于 logs / download）。
         #[arg(long = "pod")]
         pod: Option<String>,
 
-        /// Log time window (e.g. "1h", "30m").
+        /// 日志时间窗口（如 "1h"、"30m"）。
         #[arg(long = "since")]
         since: Option<String>,
 
-        /// Output file path (for download).
+        /// 输出文件路径（用于 download）。
         #[arg(short = 'o', long = "output")]
         output: Option<String>,
 
-        /// Resource type for status (pods, deploy, svc).
+        /// status 的资源类型（pods、deploy、svc）。
         #[arg(long = "resource", default_value = "pods")]
         resource: String,
     },
 
-    /// Jenkins CI/CD operations (via jcli).
+    /// Jenkins CI/CD 操作（经由 jcli）。
     Jcli {
-        /// Action: list, params, history, log, build.
+        /// 操作: list、params、history、log、build。
         action: String,
 
-        /// Job name.
+        /// Job 名称。
         #[arg(long = "job", short = 'j')]
         job: Option<String>,
 
-        /// Build number (for log).
+        /// 构建编号（用于 log）。
         #[arg(long = "build")]
         build: Option<String>,
 
-        /// Max results (for history).
+        /// 最大结果数（用于 history）。
         #[arg(long = "limit")]
         limit: Option<u32>,
 
-        /// Build parameters: KEY=VALUE,... (for build).
+        /// 构建参数: KEY=VALUE,...（用于 build）。
         #[arg(long = "params")]
         params: Option<String>,
 
-        /// Environment: test (default) or production.
+        /// 环境: test（默认）或 production。
         #[arg(long = "env", default_value = "test")]
         env: String,
     },
 
-    /// Synchronize Jenkins Views, Jobs, and Builds to Knowledge Graph.
+    /// 将 Jenkins 的 Views、Jobs 与 Builds 同步到知识图谱。
     JcSync {
-        /// Specific job name to sync. Default: sync all jobs.
+        /// 要同步的指定 Job 名称。默认: 同步所有 Job。
         #[arg(long = "job")]
         job: Option<String>,
     },
 
-    /// Start the gRPC daemon server or show status.
+    /// 启动 gRPC 守护进程服务器或显示状态。
     Daemon {
-        /// Action: start (launch gRPC server) or status (health check).
+        /// 操作: start（启动 gRPC 服务器）或 status（健康检查）。
         #[arg(default_value = "start")]
         action: String,
     },
@@ -320,31 +317,31 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SchemaAction {
-    /// Initialize V2 schema — create all uniqueness constraints and indexes.
+    /// 初始化 V2 模式 — 创建所有唯一性约束与索引。
     Init,
 }
 
 #[derive(Subcommand)]
 enum BackupAction {
-    /// Create a new backup (default).
+    /// 创建新备份（默认）。
     Create,
-    /// List available backups.
+    /// 列出可用备份。
     List,
-    /// Restore from a backup by date (YYYY-MM-DD).
+    /// 按日期（YYYY-MM-DD）从备份恢复。
     Restore {
-        /// Backup date (format: YYYY-MM-DD).
+        /// 备份日期（格式: YYYY-MM-DD）。
         date: String,
     },
-    /// Verify backup integrity by date (YYYY-MM-DD).
+    /// 按日期（YYYY-MM-DD）校验备份完整性。
     Verify {
-        /// Backup date (format: YYYY-MM-DD).
+        /// 备份日期（格式: YYYY-MM-DD）。
         date: String,
     },
 }
 
-// ---- Config loading ----
+// ---- 配置加载 ----
 
-/// Minimal YAML subset needed to extract project paths from config.yaml.
+/// 从 config.yaml 提取项目路径所需的最小 YAML 子集。
 #[derive(Debug, Deserialize)]
 struct DaemonConfig {
     #[serde(default)]
@@ -396,7 +393,7 @@ struct QdrantServiceConfig {
     url: Option<String>,
 }
 
-/// Nacos environment URLs from config.yaml `services.nacos`.
+/// 来自 config.yaml `services.nacos` 的 Nacos 环境 URL。
 #[derive(Debug, Deserialize, Default)]
 struct NacosUrls {
     #[serde(default)]
@@ -405,7 +402,7 @@ struct NacosUrls {
     prod: Option<String>,
 }
 
-/// K8s/Kuboard connection details from config.yaml `services.k8s`.
+/// 来自 config.yaml `services.k8s` 的 K8s/Kuboard 连接信息。
 #[derive(Debug, Deserialize, Default)]
 struct K8sEndpointConfig {
     #[serde(default)]
@@ -420,7 +417,7 @@ struct K8sEndpointConfig {
     skip_tls_verify: Option<bool>,
 }
 
-/// Jenkins connection details from config.yaml `services.jenkins`.
+/// 来自 config.yaml `services.jenkins` 的 Jenkins 连接信息。
 #[derive(Debug, Deserialize, Default)]
 struct JenkinsEndpointConfig {
     #[serde(default)]
@@ -431,10 +428,10 @@ struct JenkinsEndpointConfig {
     token: Option<String>,
 }
 
-/// SQLite snapshot store configuration from config.yaml `services.sqlite`.
+/// 来自 config.yaml `services.sqlite` 的 SQLite 快照存储配置。
 #[derive(Debug, Deserialize)]
 struct SqliteConfig {
-    /// Path to the SQLite snapshot database file.
+    /// SQLite 快照数据库文件的路径。
     #[serde(default = "default_sqlite_path")]
     path: String,
 }
@@ -451,13 +448,13 @@ fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
 }
 
-/// HanLP service configuration from config.yaml `services.hanlp`.
+/// 来自 config.yaml `services.hanlp` 的 HanLP 服务配置。
 #[derive(Debug, Deserialize, Default)]
 struct HanlpConfig {
-    /// Base URL (e.g. http://localhost:8765).
+    /// 基础 URL（如 http://localhost:8765）。
     #[serde(default)]
     url: String,
-    /// API key (optional, typically empty for local).
+    /// API key（可选，本地部署时通常为空）。
     #[serde(default)]
     api_key: String,
 }
@@ -469,7 +466,7 @@ struct ProjectGroup {
     items: Vec<serde_yaml::Value>,
 }
 
-/// Load configuration from `~/.config/digital-twin/config.yaml`.
+/// 从 `~/.config/digital-twin/config.yaml` 加载配置。
 fn load_config() -> Option<DaemonConfig> {
     let path = dirs_like_home_config(".config/digital-twin/config.yaml")?;
     if !path.exists() {
@@ -493,13 +490,13 @@ fn load_config() -> Option<DaemonConfig> {
     }
 }
 
-/// Resolve `~/.config/...` without pulling in the `dirs` crate.
+/// 解析 `~/.config/...`，无需引入 `dirs` crate。
 fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(suffix))
 }
 
-/// Flatten project groups into `(name, full_path)` pairs.
+/// 将项目组扁平化为 `(name, full_path)` 对。
 fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     for group in &cfg.projects {
@@ -517,7 +514,7 @@ fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
                     }
                 }
                 _ => {
-                    // Skip unrecognised item shapes.
+                    // 跳过无法识别的条目结构。
                 }
             }
         }
@@ -525,15 +522,15 @@ fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// Resolve the Memgraph Bolt URI from config.yaml `services.graph`.
+/// 从 config.yaml `services.graph` 解析 Memgraph Bolt URI。
 ///
-/// If `url` is set but uses HTTP scheme (e.g. `http://localhost:7474`),
-/// converts it to Bolt (`bolt://localhost:7687`).  If no URL is configured,
-/// returns the default `bolt://localhost:7687`.
+/// 若 `url` 已设置但使用 HTTP 协议（如 `http://localhost:7474`），
+/// 则转换为 Bolt（`bolt://localhost:7687`）。若未配置 URL，
+/// 返回默认值 `bolt://localhost:7687`。
 fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     match &cfg.url {
         Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
-            // Extract host from HTTP URL, use default Bolt port
+            // 从 HTTP URL 中提取主机名，使用默认 Bolt 端口
             if let Some(host) = url
                 .trim_start_matches("http://")
                 .trim_start_matches("https://")
@@ -551,8 +548,8 @@ fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     }
 }
 
-/// Connect to Memgraph using values from config.yaml (or sensible defaults).
-/// Returns an `Arc<dyn GraphRepository>` ready for use by services.
+/// 使用 config.yaml 中的值（或合理默认值）连接 Memgraph。
+/// 返回可供服务直接使用的 `Arc<dyn GraphRepository>`。
 async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
@@ -573,8 +570,8 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     }
 }
 
-/// Build a HookEngine from `~/.config/digital-twin/event-hooks.yaml`.
-/// Returns `None` if Memgraph is unavailable or the config file is missing.
+/// 从 `~/.config/digital-twin/event-hooks.yaml` 构建 HookEngine。
+/// 若 Memgraph 不可用或配置文件缺失，则返回 `None`。
 async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::HookEngine>> {
     let graph = connect_graph().await?;
     let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
@@ -593,7 +590,7 @@ async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::Hook
     }
 }
 
-/// Connect to Memgraph using values from config.yaml (or sensible defaults).
+/// 使用 config.yaml 中的值（或合理默认值）连接 Memgraph。
 async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::MemgraphClient> {
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
@@ -614,8 +611,8 @@ async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::Memgr
     }
 }
 
-/// Connect to Qdrant vector store using config.yaml (or sensible defaults).
-/// Returns an `Arc<dyn VectorRepository>` ready for use by services.
+/// 使用 config.yaml 中的值（或合理默认值）连接 Qdrant 向量存储。
+/// 返回可供服务直接使用的 `Arc<dyn VectorRepository>`。
 async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>> {
     let cfg = load_config()?;
     let qdrant_uri = cfg
@@ -638,10 +635,10 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
     }
 }
 
-/// Connect to the embedding service using the provider router.
+/// 通过 provider 路由连接嵌入服务。
 ///
-/// Reads provider config exclusively from config/pipeline.yaml (PipelineConfig).
-/// This function is the single source of truth for embed service creation.
+/// 仅从 config/pipeline.yaml（PipelineConfig）读取 provider 配置。
+/// 该函数是创建 embed 服务的唯一事实来源。
 async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
     use dt_daemon::application::pipeline::config::PipelineConfig;
 
@@ -651,7 +648,7 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
     let sf = pcfg.siliconflow.as_ref();
     let xi = pcfg.xinference.as_ref();
 
-    // At least one provider must have a non-empty URL
+    // 至少有一个 provider 必须配置非空 URL
     let sf_url = sf.map(|s| s.url.as_str()).unwrap_or("");
     let xi_url = xi.map(|s| s.url.as_str()).unwrap_or("");
     if sf_url.is_empty() && xi_url.is_empty() {
@@ -689,7 +686,7 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
     ))
 }
 
-/// Connect to the HanLP local NLP service from config.yaml.
+/// 从 config.yaml 连接 HanLP 本地 NLP 服务。
 async fn connect_hanlp() -> Option<Arc<dt_daemon::infrastructure::hanlp::HanlpClient>> {
     let cfg = load_config()?;
     let url = cfg.services.hanlp.url.clone();
@@ -705,9 +702,9 @@ async fn connect_hanlp() -> Option<Arc<dt_daemon::infrastructure::hanlp::HanlpCl
     Some(client)
 }
 
-/// Build an optional KgBridge for auto-syncing nodes to Qdrant after writes.
+/// 构建可选的 KgBridge，用于写入后自动将节点同步到 Qdrant。
 ///
-/// Requires both `graph` and `vector`; `queue` provides priority-aware embedding.
+/// 需要同时具备 `graph` 与 `vector`；`queue` 提供带优先级的嵌入能力。
 async fn build_kg_bridge(
     graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
     vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
@@ -723,7 +720,7 @@ async fn build_kg_bridge(
     Some(Arc::new(bridge.with_queue(queue?)))
 }
 
-/// Build an optional SyncAccumulator for batch-accumulating background sync.
+/// 构建可选的 SyncAccumulator，用于批量累积的后台同步。
 async fn build_sync_acc(
     graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
     vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
@@ -735,7 +732,7 @@ async fn build_sync_acc(
     ))
 }
 
-/// Connect to the SQLite snapshot store (falls back to None if unavailable).
+/// 连接 SQLite 快照存储（不可用时回退为 None）。
 async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::SnapshotRepository>> {
     let db_path = load_config()
         .map(|c| c.services.sqlite.path.clone())
@@ -753,7 +750,7 @@ async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::Snapsho
     }
 }
 
-/// Build a resolved K8sSyncConfig from config.yaml services.k8s.
+/// 从 config.yaml 的 services.k8s 构建解析后的 K8sSyncConfig。
 fn resolve_k8s_config(
     config: &Option<DaemonConfig>,
 ) -> Option<dt_daemon::application::sync::k8s::K8sSyncConfig> {
@@ -774,48 +771,48 @@ fn resolve_k8s_config(
     })
 }
 
-// ---- Main ----
+// ---- 主函数 ----
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize unified logging via dt-log (JSON → file + stderr fallback)
+    // 通过 dt-log 初始化统一日志（JSON → 文件 + stderr 兜底）
     dt_daemon::shared::logging::init::init_logging()?;
 
     let cli = Cli::parse();
 
     match cli.command {
-        // ---- CLI mode: dt clean ----
+        // ---- CLI 模式: dt clean ----
         Some(Commands::Clean {
             confirm,
             dry_run: _,
             targets: _,
             test,
         }) => {
-            // Handle --test: clean test- prefixed data (fail-fast, no Noop fallback)
+            // 处理 --test: 清理 test- 前缀的数据（快速失败，无 Noop 兜底）
             if test {
-                // a. Connect to real Memgraph — fail fast if unavailable
+                // a. 连接真实 Memgraph — 不可用时快速失败
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
                         eprintln!(
-                            "error: Memgraph unavailable — clean --test requires real backends"
+                            "错误: Memgraph 不可用 — clean --test 需要真实后端"
                         );
                         std::process::exit(1);
                     }
                 };
 
-                // b. Connect to real Qdrant — fail fast if unavailable
+                // b. 连接真实 Qdrant — 不可用时快速失败
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
                         eprintln!(
-                            "error: Qdrant unavailable — clean --test requires real backends"
+                            "错误: Qdrant 不可用 — clean --test 需要真实后端"
                         );
                         std::process::exit(1);
                     }
                 };
 
-                // c. Connect to SQLite for snapshot cleanup (optional, non-fatal)
+                // c. 连接 SQLite 用于快照清理（可选，非致命）
                 let snapshot = connect_snapshot().await;
 
                 let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
@@ -825,7 +822,7 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await
                 .map_err(|e| anyhow::anyhow!(e))?;
-                println!("Cleaned {} test- nodes and collections", deleted);
+                println!("已清理 {} 个 test- 节点与集合", deleted);
                 return Ok(());
             }
 
@@ -840,17 +837,17 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt backup ----
+        // ---- CLI 模式: dt backup ----
         Some(Commands::Backup { action }) => {
             match action.unwrap_or(BackupAction::Create) {
                 BackupAction::Create => {
                     println!("=== dt backup ===");
                     let report = dt_daemon::interfaces::cli::backup::create_backup().await?;
                     println!();
-                    println!("Backup created:");
-                    println!("  Location:   {}", report.location.display());
+                    println!("备份已创建:");
+                    println!("  位置:       {}", report.location.display());
                     println!(
-                        "  Memgraph:   {} ({} bytes)",
+                        "  Memgraph:   {} ({} 字节)",
                         if report.targets.memgraph {
                             "✓"
                         } else {
@@ -859,25 +856,25 @@ async fn main() -> anyhow::Result<()> {
                         report.targets.memgraph_size_bytes,
                     );
                     println!(
-                        "  Qdrant:     {} ({} bytes)",
+                        "  Qdrant:     {} ({} 字节)",
                         if report.targets.qdrant { "✓" } else { "✗" },
                         report.targets.qdrant_size_bytes,
                     );
                     println!(
-                        "  SQLite:     {} ({} bytes)",
+                        "  SQLite:     {} ({} 字节)",
                         if report.targets.sqlite { "✓" } else { "✗" },
                         report.targets.sqlite_size_bytes,
                     );
-                    println!("  Duration:   {:.1}s", report.duration_seconds,);
+                    println!("  耗时:       {:.1}s", report.duration_seconds,);
                 }
                 BackupAction::List => {
                     println!("=== dt backup list ===");
                     let entries = dt_daemon::interfaces::cli::backup::list_backups().await?;
 
                     if entries.is_empty() {
-                        println!("No backups found.");
+                        println!("未找到任何备份。");
                     } else {
-                        println!(" {:<12}  {:<10}  {:>8}", "DATE", "SIZE", "FILES");
+                        println!(" {:<12}  {:<10}  {:>8}", "日期", "大小", "文件数");
                         println!(
                             " {:<12}  {:<10}  {:>8}",
                             "------------", "----------", "--------"
@@ -889,13 +886,13 @@ async fn main() -> anyhow::Result<()> {
                             );
                         }
                         println!();
-                        println!("Total: {} backup(s)", entries.len());
+                        println!("共 {} 个备份", entries.len());
                     }
                 }
                 BackupAction::Restore { date } => {
                     println!("=== dt backup restore {date} ===");
                     dt_daemon::interfaces::cli::backup::restore_backup(&date).await?;
-                    println!("Restore complete.");
+                    println!("恢复完成。");
                 }
                 BackupAction::Verify { date } => {
                     println!("=== dt backup verify {date} ===");
@@ -904,28 +901,28 @@ async fn main() -> anyhow::Result<()> {
 
                     println!();
                     if report.all_valid {
-                        println!("✅ All checksums valid!");
+                        println!("✅ 所有校验和有效!");
                     } else {
-                        println!("❌ Checksum mismatch detected:");
+                        println!("❌ 检测到校验和不匹配:");
                     }
 
                     for file in &report.files {
                         let status = if file.valid { "✅" } else { "❌" };
                         println!(
-                            "  {} {} — expected: {}",
+                            "  {} {} — 期望: {}",
                             status,
                             file.file_name,
                             &file.expected[..32.min(file.expected.len())],
                         );
                     }
-                    println!("  Duration: {:.1}s", report.duration_seconds,);
+                    println!("  耗时: {:.1}s", report.duration_seconds,);
                 }
             }
 
             return Ok(());
         }
 
-        // ---- CLI mode: dt schema init ----
+        // ---- CLI 模式: dt schema init ----
         Some(Commands::Schema(SchemaAction::Init)) => {
             let memgraph = connect_memgraph().await;
             dt_daemon::interfaces::cli::cleanup::run_schema_init(
@@ -937,7 +934,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt health ----
+        // ---- CLI 模式: dt health ----
         Some(Commands::Health) => {
             let memgraph = connect_memgraph().await;
             let qdrant = connect_vector().await;
@@ -953,7 +950,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt memorize ----
+        // ---- CLI 模式: dt memorize ----
         Some(Commands::Memorize {
             knowledge_type,
             entity_id,
@@ -980,7 +977,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt event ----
+        // ---- CLI 模式: dt event ----
         Some(Commands::Event { hook_name, context }) => {
             let hook_engine = connect_hook_engine().await;
             let graph = connect_graph().await;
@@ -999,7 +996,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt learn ----
+        // ---- CLI 模式: dt learn ----
         Some(Commands::Learn {
             task,
             entities,
@@ -1024,7 +1021,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt build ----
+        // ---- CLI 模式: dt build ----
         Some(Commands::Build {
             path,
             name,
@@ -1034,63 +1031,63 @@ async fn main() -> anyhow::Result<()> {
             test,
             source,
         }) => {
-            // ── dt build --test: run self-contained pipeline integration test ──
+            // ── dt build --test: 运行自包含的流水线集成测试 ──
             if test {
                 tracing::info!("dt build --test: 启动流水线集成测试");
 
-                // a. Connect to real Memgraph — fail fast if unavailable
+                // a. 连接真实 Memgraph — 不可用时快速失败
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
                         eprintln!(
-                            "error: Memgraph unavailable — build --test requires real backends"
+                            "错误: Memgraph 不可用 — build --test 需要真实后端"
                         );
                         std::process::exit(1);
                     }
                 };
 
-                // b. Connect to real Qdrant — fail fast if unavailable
+                // b. 连接真实 Qdrant — 不可用时快速失败
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
                         eprintln!(
-                            "error: Qdrant unavailable — build --test requires real backends"
+                            "错误: Qdrant 不可用 — build --test 需要真实后端"
                         );
                         std::process::exit(1);
                     }
                 };
 
-                // c. Connect to SiliconFlow (fallback to Noop if unavailable — embed quality doesn't affect test validity)
+                // c. 连接 SiliconFlow（不可用时回退为 Noop — embed 质量不影响测试有效性）
                 let embed: Arc<dyn EmbedService> = connect_embed().await.unwrap_or_else(|| {
                     tracing::warn!("SiliconFlow 不可用，使用 NoopEmbedService");
                     Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
                         as Arc<dyn EmbedService>
                 });
 
-                // d. Connect to real SQLite snapshot store — fail fast if unavailable
+                // d. 连接真实 SQLite 快照存储 — 不可用时快速失败
                 let snapshot: Arc<dyn SnapshotRepository> = match connect_snapshot().await {
                     Some(c) => c,
                     None => {
-                        eprintln!("error: SQLite snapshot store unavailable — build --test requires real backends");
+                        eprintln!("错误: SQLite 快照存储不可用 — build --test 需要真实后端");
                         std::process::exit(1);
                     }
                 };
 
-                // e. Run build (incremental by default — first run detects no snapshots
-                //    and processes all files; subsequent runs skip unchanged files).
-                //    full: user-passable via `dt build --test --full` — forces a full
-                //    rebuild and bypasses incremental snapshots (use when SQLite progress
-                //    is stale, e.g. after the KG was wiped outside `dt clean --test`).
-                //    pipeline=true: post-build pipeline ENABLED — same code path as production build,
-                //    including LLM background analysis (Phase 2). This ensures --test exercises the
-                //    exact same pipeline as real builds. LLM runs in background (non-blocking).
-                //    `dt clean --test` remains available to wipe test data manually.
+                // e. 运行构建（默认增量 — 首次运行检测不到快照，处理所有文件；
+                //    后续运行跳过未变更的文件）。
+                //    full: 可通过 `dt build --test --full` 传入 — 强制全量重建
+                //    并绕过增量快照（当 SQLite 进度过期时使用，例如在
+                //    `dt clean --test` 之外清空了 KG 之后）。
+                //    pipeline=true: 构建后流水线已启用 — 与生产构建走同一代码路径，
+                //    包括 LLM 后台分析（Phase 2）。这确保 --test 使用与真实构建
+                //    完全相同的流水线。LLM 在后台运行（非阻塞）。
+                //    `dt clean --test` 仍可用于手动清理测试数据。
                 dt_daemon::interfaces::cli::build::handle_build(
                     PathBuf::from("/data/myProject/digital-twin-v2/test"),
                     Some("test-pipeline".to_string()),
                     None, // file
-                    full, // full: ②a fix — pass through user flag (was hardcoded false)
-                    true, // pipeline: ENABLED — same code path as production build (Phase 4 change)
+                    full, // full: ②a fix — 透传用户 flag（原来是硬编码 false）
+                    true, // pipeline: 已启用 — 与生产构建同一代码路径（Phase 4 变更）
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),
@@ -1100,22 +1097,22 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
 
-                // h. Verify test data
+                // h. 验证测试数据
                 let report =
                     dt_daemon::application::pipeline::test::runner::verify_test_data(graph, vector)
                         .await;
 
-                // i. Print the test report
+                // i. 打印测试报告
                 report.print();
 
-                // j. Exit with failure code if any checks failed
+                // j. 若任一检查失败则以防错误码退出
                 if report.failed > 0 {
                     std::process::exit(1);
                 }
                 return Ok(());
             }
 
-            // ── dt build --source knowledge: replace dt kg-sync ──
+            // ── dt build --source knowledge: 替代 dt kg-sync ──
             if let Some(ref src) = source {
                 if src == "knowledge" {
                     tracing::info!("dt build --source knowledge: 同步 KG 节点到向量库");
@@ -1124,7 +1121,7 @@ async fn main() -> anyhow::Result<()> {
                     let vector = connect_vector().await;
 
                     if graph.is_none() || embed.is_none() || vector.is_none() {
-                        eprintln!("error: build --source knowledge requires Memgraph + Qdrant + embed backends");
+                        eprintln!("错误: build --source knowledge 需要 Memgraph + Qdrant + embed 后端");
                         std::process::exit(1);
                     }
 
@@ -1147,12 +1144,12 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                     return Ok(());
                 } else {
-                    eprintln!("error: unknown source type '{src}'. Supported: knowledge");
+                    eprintln!("错误: 未知的 source 类型 '{src}'。支持: knowledge");
                     std::process::exit(1);
                 }
             }
 
-            // No args at all → build all projects from config.yaml
+            // 无任何参数 → 从 config.yaml 构建所有项目
             if path.is_none() && name.is_none() && file.is_none() {
                 let memgraph = connect_memgraph().await;
                 let graph: Option<Arc<dyn GraphRepository>> =
@@ -1163,13 +1160,13 @@ async fn main() -> anyhow::Result<()> {
                 let snapshot = connect_snapshot().await;
 
                 let Some(cfg) = load_config() else {
-                    eprintln!("error: config.yaml not found");
+                    eprintln!("错误: 未找到 config.yaml");
                     std::process::exit(1);
                 };
 
                 let projects = resolve_project_paths(&cfg);
                 if projects.is_empty() {
-                    eprintln!("error: no projects configured in config.yaml");
+                    eprintln!("错误: config.yaml 中未配置任何项目");
                     std::process::exit(1);
                 }
 
@@ -1197,8 +1194,8 @@ async fn main() -> anyhow::Result<()> {
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
 
-            // When --name is given, resolve actual path from config.yaml.
-            // e.g. --name order-center → /data/aflmProjects/aflm/uvp-order-center
+            // 指定 --name 时，从 config.yaml 解析实际路径。
+            // 例如 --name order-center → /data/aflmProjects/aflm/uvp-order-center
             let actual_path = if let Some(ref n) = name {
                 let cfg = load_config();
                 cfg.as_ref()
@@ -1208,9 +1205,9 @@ async fn main() -> anyhow::Result<()> {
                             .find(|(proj_name, _)| proj_name == n)
                             .map(|(_, proj_path)| proj_path)
                     })
-                    .unwrap_or_else(|| path.expect("--path is required"))
+                    .unwrap_or_else(|| path.expect("必须提供 --path"))
             } else {
-                path.expect("--path is required")
+                path.expect("必须提供 --path")
             };
 
             let batch_config = load_config().map(|c| c.batch).unwrap_or_default();
@@ -1233,7 +1230,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt search ----
+        // ---- CLI 模式: dt search ----
         Some(Commands::Search {
             query,
             world,
@@ -1250,7 +1247,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt nacos-sync ----
+        // ---- CLI 模式: dt nacos-sync ----
         Some(Commands::NacosSync { env }) => {
             let config = load_config();
             let nacos_url = match env.as_str() {
@@ -1262,7 +1259,7 @@ async fn main() -> anyhow::Result<()> {
                     .as_ref()
                     .and_then(|c| c.services.nacos.prod.as_deref())
                     .unwrap_or("https://nacos.newoffen.com/nacos"),
-                _ => anyhow::bail!("unknown env: {env}, expected test or prod"),
+                _ => anyhow::bail!("未知环境: {env}，应为 test 或 prod"),
             };
 
             let graph = connect_graph().await;
@@ -1270,7 +1267,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt k8s-sync ----
+        // ---- CLI 模式: dt k8s-sync ----
         Some(Commands::K8sSync { dry_run }) => {
             let config = load_config();
             let k8s_cfg = resolve_k8s_config(&config);
@@ -1280,14 +1277,14 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt kg-sync ----
+        // ---- CLI 模式: dt kg-sync ----
         Some(Commands::KgSync {
             full,
             labels,
             config_chunks,
         }) => {
-            eprintln!("⚠️  Deprecated: `dt kg-sync` is deprecated. Use `dt build --source knowledge` instead.");
-            eprintln!("   The command still works but will be removed in a future release.");
+            eprintln!("⚠️  已弃用: `dt kg-sync` 已弃用。请改用 `dt build --source knowledge`。");
+            eprintln!("   该命令仍可使用，但将在未来的版本中移除。");
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let queue =
@@ -1304,7 +1301,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI mode: dt kub ----
+        // ---- CLI 模式: dt kub ----
         Some(Commands::Kub {
             action,
             namespace,
@@ -1322,13 +1319,13 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 }
                 None => {
-                    eprintln!("K8s not configured in config.yaml (services.k8s). Add k8s section to enable.");
+                    eprintln!("config.yaml（services.k8s）中未配置 K8s。请添加 k8s 配置段以启用。");
                 }
             }
             return Ok(());
         }
 
-        // ---- CLI mode: dt jcli ----
+        // ---- CLI 模式: dt jcli ----
         Some(Commands::Jcli {
             action,
             job,
@@ -1358,13 +1355,13 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 }
                 None => {
-                    eprintln!("Jenkins not configured in config.yaml (services.jenkins). Add jenkins section with url/user/token to enable.");
+                    eprintln!("config.yaml（services.jenkins）中未配置 Jenkins。请添加包含 url/user/token 的 jenkins 配置段以启用。");
                 }
             }
             return Ok(());
         }
 
-        // ---- CLI mode: dt jc-sync ----
+        // ---- CLI 模式: dt jc-sync ----
         Some(Commands::JcSync { job }) => {
             let config = load_config();
             let jenkins_creds = config.as_ref().and_then(|c| {
@@ -1387,13 +1384,13 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 }
                 None => {
-                    eprintln!("Jenkins not configured in config.yaml (services.jenkins). Add jenkins section with url/user/token to enable.");
+                    eprintln!("config.yaml（services.jenkins）中未配置 Jenkins。请添加包含 url/user/token 的 jenkins 配置段以启用。");
                 }
             }
             return Ok(());
         }
 
-        // ---- dt daemon status ----
+        // ---- dt daemon status 分支 ----
         Some(Commands::Daemon { action }) => {
             match action.as_str() {
                 "status" => {
@@ -1411,14 +1408,14 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 }
                 _ => {
-                    // start — fall through to server mode
+                    // start — 落入服务器模式
                     return Ok(());
                 }
             }
             return Ok(());
         }
 
-        // ---- Server mode (default / dt daemon start) ----
+        // ---- 服务器模式（默认 / dt daemon start） ----
         None => {
             tracing::info!("dt-daemon 启动中 (服务器模式)");
 
@@ -1428,13 +1425,13 @@ async fn main() -> anyhow::Result<()> {
                 ..AppConfig::default()
             };
 
-            // Listen for Ctrl+C so we can shut down gracefully
+            // 监听 Ctrl+C 以便优雅关闭
             let shutdown = tokio::spawn(async {
                 tokio::signal::ctrl_c().await.ok();
                 tracing::info!("收到关闭信号");
             });
 
-            // Run server (blocks until error or explicit shutdown)
+            // 运行服务器（阻塞至出错或显式关闭）
             tokio::select! {
                 result = dt_daemon::interfaces::grpc::server::run(config) => {
                     if let Err(e) = result {
