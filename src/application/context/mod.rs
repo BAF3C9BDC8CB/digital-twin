@@ -1,6 +1,7 @@
 pub mod context_service;
 pub mod dependency;
 pub mod domain_query;
+pub mod fusion;
 pub mod graph_parse;
 pub mod history;
 pub mod models;

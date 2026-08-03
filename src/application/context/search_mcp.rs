@@ -416,47 +416,62 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
         let project = request.project.as_deref();
 
         let mut per_world = std::collections::HashMap::new();
-        let mut all_hits = Vec::new();
         let mut degraded: Vec<String> = Vec::new();
 
-        // Search code world
-        if world == "all" || world == "code" {
-            if let Ok(hits) = self.search_code(&request.query, project, limit).await {
-                per_world.insert("code".to_string(), hits.len());
-                all_hits.extend(hits);
-            }
-        }
+        let all_hits = if world == "all" {
+            // U-D2/U-D3：all = code+knowledge+doc，跨世界 RRF
+            let mut lists: Vec<Vec<SearchHit>> = Vec::new();
 
-        // Search knowledge world (S5: GraphRAG hybrid retrieval via retrieve.rs)
-        if world == "all" || world == "knowledge" {
-            let (hits, dgr) = self.search_knowledge(request).await;
+            let code_hits = self
+                .search_code(&request.query, project, limit)
+                .await
+                .unwrap_or_default();
+            per_world.insert("code".to_string(), code_hits.len());
+            lists.push(code_hits);
+
+            let (kn_hits, dgr) = self.search_knowledge(request).await;
             degraded.extend(dgr);
-            per_world.insert("knowledge".to_string(), hits.len());
-            all_hits.extend(hits);
-        }
+            per_world.insert("knowledge".to_string(), kn_hits.len());
+            lists.push(kn_hits);
 
-        // Search doc world (S5: doc_chunks; "vector" 保留为 "doc" 别名，§8.7)
-        if world == "all" || world == "doc" || world == "vector" {
-            if let Ok(hits) = self
+            let doc_hits = self
                 .search_doc(&request.query, project, request.doc_id.as_deref(), limit)
                 .await
-            {
-                per_world.insert("doc".to_string(), hits.len());
-                all_hits.extend(hits);
-            }
-        }
+                .unwrap_or_default();
+            per_world.insert("doc".to_string(), doc_hits.len());
+            lists.push(doc_hits);
 
-        // Sort by score descending
-        all_hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+            crate::application::context::fusion::rrf_hits(lists, 60.0, limit)
+        } else {
+            let mut hits = match world {
+                "code" => self
+                    .search_code(&request.query, project, limit)
+                    .await
+                    .unwrap_or_default(),
+                "knowledge" => {
+                    let (h, dgr) = self.search_knowledge(request).await;
+                    degraded.extend(dgr);
+                    h
+                }
+                // "vector" 保留为 "doc" 别名（S5 §8.7）
+                "doc" | "vector" => self
+                    .search_doc(&request.query, project, request.doc_id.as_deref(), limit)
+                    .await
+                    .unwrap_or_default(),
+                // config / memory 分支由 Task 3 / Task 4 加入
+                _ => Vec::new(),
+            };
+            per_world.insert(world.to_string(), hits.len());
+            hits.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            hits.truncate(limit);
+            hits
+        };
 
-        // Cap to limit across all worlds
         let total = all_hits.len();
-        all_hits.truncate(limit);
-
         Ok(CrossWorldResult {
             query: request.query.clone(),
             world: world.to_string(),
