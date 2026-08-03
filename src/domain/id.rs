@@ -1,9 +1,8 @@
-//! Entity ID generation rules for the Digital Twin system.
+//! 数字孪生系统的实体 ID 生成规则。
 //!
-//! Implements the `dt://entity/...` URI scheme used to uniquely identify
-//! code entities across projects.
+//! 实现用于跨项目唯一标识代码实体的 `dt://entity/...` URI 方案。
 
-/// Generate a method ID: `dt://entity/{project}/class/{class_name}/method/{method_name}@{line}`
+/// 生成方法 ID：`dt://entity/{project}/class/{class_name}/method/{method_name}@{line}`
 pub fn make_method_id(
     project: &str,
     file_path: &str,
@@ -11,7 +10,7 @@ pub fn make_method_id(
     method_name: &str,
     start_line: usize,
 ) -> String {
-    // Sanitize slashes in file_path
+    // 清理 file_path 中的斜杠
     let _clean_file = file_path.replace('/', ".");
     format!(
         "dt://entity/{project}/class/{class_name}/method/{method_name}@{start_line}",
@@ -22,7 +21,7 @@ pub fn make_method_id(
     )
 }
 
-/// Generate a class ID: `dt://entity/{project}/package/{package}/class/{name}`
+/// 生成类 ID：`dt://entity/{project}/package/{package}/class/{name}`
 pub fn make_class_id(project: &str, package: &str, class_name: &str) -> String {
     let pkg = if package.is_empty() { "_root" } else { package };
     format!(
@@ -33,7 +32,7 @@ pub fn make_class_id(project: &str, package: &str, class_name: &str) -> String {
     )
 }
 
-/// Generate a module ID: `dt://entity/{project}/module/{name}`
+/// 生成模块 ID：`dt://entity/{project}/module/{name}`
 pub fn make_module_id(project: &str, module_name: &str) -> String {
     format!(
         "dt://entity/{project}/module/{name}",
@@ -42,12 +41,12 @@ pub fn make_module_id(project: &str, module_name: &str) -> String {
     )
 }
 
-/// Generate a placeholder entity ID.
+/// 生成占位实体 ID。
 pub fn placeholder_id() -> String {
     "dt://entity/placeholder".to_string()
 }
 
-/// Generate a document ID: `dt://doc/{project}/{file_path}`
+/// 生成文档 ID：`dt://doc/{project}/{file_path}`
 pub fn make_document_id(project: &str, file_path: &str) -> String {
     let clean_path = file_path.replace('\\', "/");
     format!(
@@ -58,7 +57,7 @@ pub fn make_document_id(project: &str, file_path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

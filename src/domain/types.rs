@@ -1,21 +1,21 @@
-//! Core domain types for the Digital Twin system.
+//! 数字孪生系统的核心领域类型。
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// Health & Plugin
+// 健康状态与插件
 // ---------------------------------------------------------------------------
 
-/// Health status of a plugin or service.
+/// 插件或服务的健康状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HealthStatus {
-    /// Fully operational.
+    /// 完全正常运行。
     Healthy,
-    /// Degraded but usable.
+    /// 已降级但仍可用。
     Degraded(String),
-    /// Not available.
+    /// 不可用。
     Unhealthy(String),
 }
 
@@ -25,44 +25,44 @@ impl HealthStatus {
     }
 }
 
-/// Plugin-specific error type. The `From<PluginError> for tonic::Status`
-/// conversion is implemented in `dt-plugins` where `tonic` is a dependency.
+/// 插件专用错误类型。`From<PluginError> for tonic::Status` 转换在 `dt-plugins`
+/// 中实现（`tonic` 是那里的依赖项）。
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
-    #[error("plugin not found: {0}")]
+    #[error("插件未找到：{0}")]
     NotFound(String),
-    #[error("plugin init failed: {0}")]
+    #[error("插件初始化失败：{0}")]
     InitFailed(String),
-    #[error("gRPC registration failed: {0}")]
+    #[error("gRPC 注册失败：{0}")]
     GrpcRegistration(String),
-    #[error("health check failed: {0}")]
+    #[error("健康检查失败：{0}")]
     HealthCheck(String),
-    #[error("shutdown failed: {0}")]
+    #[error("关闭失败：{0}")]
     Shutdown(String),
-    #[error("internal: {0}")]
+    #[error("内部错误：{0}")]
     Internal(#[from] anyhow::Error),
 }
 
 // ---------------------------------------------------------------------------
-// Config
+// 配置
 // ---------------------------------------------------------------------------
 
-/// Shared application configuration.
+/// 共享的应用配置。
 #[derive(Debug, Clone)]
 pub struct AppConfig {
-    /// Data directory for the system.
+    /// 系统数据目录。
     pub data_dir: PathBuf,
-    /// Memgraph connection URI (bolt://).
+    /// Memgraph 连接 URI（bolt://）。
     pub memgraph_uri: String,
-    /// Memgraph username.
+    /// Memgraph 用户名。
     pub memgraph_user: String,
-    /// Memgraph password.
+    /// Memgraph 密码。
     pub memgraph_password: String,
-    /// Qdrant gRPC endpoint.
+    /// Qdrant gRPC 端点。
     pub qdrant_uri: String,
-    /// Embed server gRPC endpoint.
+    /// Embed 服务 gRPC 端点。
     pub embed_uri: String,
-    /// Daemon gRPC listen address.
+    /// Daemon gRPC 监听地址。
     pub listen_addr: String,
 }
 
@@ -80,20 +80,20 @@ impl Default for AppConfig {
     }
 }
 
-/// Batch processing sizes for build pipeline and upsert operations.
+/// 构建流水线与 upsert 操作的批处理大小。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct BatchConfig {
-    /// Number of items per UNWIND batch when writing nodes to Memgraph.
-    /// Applies to Method, Class, and Module nodes uniformly.
+    /// 向 Memgraph 写入节点时每个 UNWIND 批次包含的条目数。
+    /// 统一适用于 Method、Class 和 Module 节点。
     #[serde(default = "default_unwind_batch")]
     pub unwind: usize,
-    /// Number of text items per embedding gRPC call.
+    /// 每次 embedding gRPC 调用处理的文本条目数。
     #[serde(default = "default_embed_batch")]
     pub embed: usize,
-    /// Number of vector points per Qdrant upsert call.
+    /// 每次 Qdrant upsert 调用处理的向量点数。
     #[serde(default = "default_upsert_batch")]
     pub upsert: usize,
-    /// Number of concurrent embedding gRPC streams.
+    /// 并发的 embedding gRPC 流数量。
     #[serde(default = "default_embed_concurrency")]
     pub embed_concurrency: usize,
 }
@@ -123,17 +123,16 @@ impl Default for BatchConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Logger
+// 日志器
 // ---------------------------------------------------------------------------
 
-/// Logger handle for plugins (async-safe, no blocking I/O).
+/// 插件的日志器句柄（异步安全，无阻塞 I/O）。
 ///
-/// All messages are emitted through the `tracing` crate. The plugin name is
-/// included in the message itself because `tracing` event macros require a
-/// `&'static str` target. The JSON formatter picks up the Rust module path
-/// as `target`, and the plugin name is embedded in the `message` field.
+/// 所有消息都通过 `tracing` crate 发出。插件名包含在消息本身中，因为
+/// `tracing` 事件宏要求 `&'static str` 作为 target。JSON 格式化器将 Rust
+/// 模块路径作为 `target`，插件名则内嵌在 `message` 字段中。
 ///
-/// For key-value structured fields, use the `tracing::info!` macro directly:
+/// 如需键值结构字段，请直接使用 `tracing::info!` 宏：
 /// ```ignore
 /// tracing::info!(plugin = "k8s", pods = 12, "pod listing complete");
 /// ```
@@ -170,7 +169,7 @@ impl PluginLogger {
     }
 }
 
-/// Core context passed to all plugins at initialization.
+/// 初始化时传递给所有插件的核心上下文。
 pub struct PluginContext {
     pub graph: Arc<dyn crate::domain::traits::GraphRepository>,
     pub vector: Arc<dyn crate::domain::traits::VectorRepository>,
@@ -180,10 +179,10 @@ pub struct PluginContext {
 }
 
 // ---------------------------------------------------------------------------
-// V2 Code Entity Types
+// V2 代码实体类型
 // ---------------------------------------------------------------------------
 
-/// Programming language.
+/// 编程语言。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Language {
     Java,
@@ -222,7 +221,7 @@ impl Language {
     }
 }
 
-/// Kinds of classes.
+/// 类的种类。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClassKind {
     Class,
@@ -244,132 +243,132 @@ impl ClassKind {
     }
 }
 
-/// V2 Method node — a parsed method/function entity.
+/// V2 Method 节点——一个已解析的方法/函数实体。
 #[derive(Debug, Clone)]
 pub struct MethodBlock {
     /// dt://entity/{project}/class/{className}/method/{name}@{line}
     pub method_id: String,
-    /// Simple method name.
+    /// 简单方法名。
     pub name: String,
-    /// Full signature line.
+    /// 完整签名行。
     pub signature: String,
-    /// Parameter list string.
+    /// 参数列表字符串。
     pub params: String,
-    /// Return type.
+    /// 返回类型。
     pub return_type: String,
-    /// Owning class name.
+    /// 所属类名。
     pub class_name: String,
-    /// File absolute path.
+    /// 文件绝对路径。
     pub file_path: String,
-    /// Package or module name.
+    /// 包名或模块名。
     pub package_or_module: String,
-    /// Language.
+    /// 语言。
     pub language: String,
-    /// Project name.
+    /// 项目名。
     pub project: String,
-    /// Start line (1-indexed).
+    /// 起始行（从 1 开始）。
     pub start_line: usize,
-    /// End line (1-indexed).
+    /// 结束行（从 1 开始）。
     pub end_line: usize,
-    /// Method names called within the body.
+    /// 方法体内调用的方法名列表。
     pub calls: Vec<String>,
-    /// Comment / docstring summary.
+    /// 注释 / docstring 摘要。
     pub comment: String,
-    /// Full source text (for embedding).
+    /// 完整源代码文本（用于 embedding）。
     pub source_text: String,
 }
 
-/// V2 Class node — a parsed class/interface/enum/struct entity.
+/// V2 Class 节点——一个已解析的类/接口/枚举/结构体实体。
 #[derive(Debug, Clone)]
 pub struct ClassBlock {
     /// dt://entity/{project}/package/{package}/class/{name}
     pub class_id: String,
-    /// Class name.
+    /// 类名。
     pub name: String,
-    /// Class kind.
+    /// 类的种类。
     pub kind: ClassKind,
-    /// File absolute path.
+    /// 文件绝对路径。
     pub file_path: String,
-    /// Package or module name.
+    /// 包名或模块名。
     pub package_or_module: String,
-    /// Project name.
+    /// 项目名。
     pub project: String,
-    /// Start line.
+    /// 起始行。
     pub start_line: usize,
-    /// End line.
+    /// 结束行。
     pub end_line: usize,
-    /// Method IDs contained in this class.
+    /// 该类包含的方法 ID 列表。
     pub method_ids: Vec<String>,
 }
 
-/// V2 Module node — auto-generated from package/module paths.
+/// V2 Module 节点——由包/模块路径自动生成。
 #[derive(Debug, Clone)]
 pub struct ModuleBlock {
     /// dt://entity/{project}/module/{name}
     pub module_id: String,
-    /// Module name.
+    /// 模块名。
     pub name: String,
-    /// Project name.
+    /// 项目名。
     pub project: String,
 }
 
 // ---------------------------------------------------------------------------
-// Qdrant / Vector Types
+// Qdrant / 向量类型
 // ---------------------------------------------------------------------------
 
-/// Information about a Qdrant collection.
+/// 关于 Qdrant 集合的信息。
 #[derive(Debug, Clone)]
 pub struct CollectionInfo {
-    /// Collection name (e.g. "myproject_methods_v1").
+    /// 集合名称（例如 "myproject_methods_v1"）。
     pub name: String,
-    /// Total number of points stored.
+    /// 已存储的点总数。
     pub points_count: u64,
-    /// Vector dimension (e.g. 1024 for BGE-M3).
+    /// 向量维度（例如 BGE-M3 为 1024）。
     pub vector_dim: u32,
-    /// Embedding model version used for this collection.
+    /// 该集合使用的 embedding 模型版本。
     pub model_version: String,
 }
 
 // ---------------------------------------------------------------------------
-// Build Pipeline Types
+// 构建流水线类型
 // ---------------------------------------------------------------------------
 
-/// Result of parsing a single file.
+/// 解析单个文件的结果。
 #[derive(Debug, Clone, Default)]
 pub struct ParseResult {
     pub methods: Vec<MethodBlock>,
     pub classes: Vec<ClassBlock>,
 }
 
-/// File snapshot for change detection.
+/// 用于变更检测的文件快照。
 #[derive(Debug, Clone)]
 pub struct FileSnapshot {
-    /// Relative file path within the project.
+    /// 项目内的相对文件路径。
     pub file_path: String,
-    /// Project name.
+    /// 项目名。
     pub project: String,
-    /// SHA1 hash of file contents.
+    /// 文件内容的 SHA1 哈希。
     pub file_sha1: String,
-    /// File modification time (unix epoch seconds as float).
+    /// 文件修改时间（Unix 纪元秒，浮点数）。
     pub file_mtime: f64,
-    /// Number of methods extracted.
+    /// 提取的方法数量。
     pub method_count: u32,
-    /// Last update timestamp (ISO 8601).
+    /// 最后更新时间戳（ISO 8601）。
     pub updated_at: String,
 }
 
-/// Scanner configuration.
+/// 扫描器配置。
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
-    /// Directories to ignore.
+    /// 需要忽略的目录。
     pub ignore_dirs: HashSet<String>,
-    /// Extensions to ignore (with dot prefix, e.g. ".class").
+    /// 需要忽略的扩展名（带点前缀，例如 ".class"）。
     pub ignore_ext: HashSet<String>,
-    /// Maximum file size in bytes.
+    /// 最大文件大小（字节）。
     pub max_file_size: u64,
-    /// Document file extensions (without dot prefix, e.g. "md", "txt").
+    /// 文档文件扩展名（不带点前缀，例如 "md"、"txt"）。
     pub document_extensions: HashSet<String>,
-    /// Maximum document file size in bytes (default 5 MB).
+    /// 最大文档文件大小（字节，默认 5 MB）。
     pub max_doc_file_size: u64,
 }
 
@@ -411,27 +410,27 @@ impl Default for ScanConfig {
     }
 }
 
-/// Build completion report.
+/// 构建完成报告。
 #[derive(Debug, Clone)]
 pub struct BuildReport {
-    /// Project name.
+    /// 项目名。
     pub project: String,
-    /// Total files scanned.
+    /// 扫描的文件总数。
     pub files_scanned: usize,
-    /// Files that changed (new or modified).
+    /// 发生变更的文件数（新增或修改）。
     pub files_changed: usize,
-    /// Total methods in graph for this project.
+    /// 该项目在图中累计的方法总数。
     pub methods_total: usize,
-    /// New methods added in this build.
+    /// 本次构建新增的方法数。
     pub methods_new: usize,
-    /// Total classes in graph for this project.
+    /// 该项目在图中累计的类总数。
     pub classes_total: usize,
-    /// Elapsed time in milliseconds.
+    /// 耗时（毫秒）。
     pub elapsed_ms: u64,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

@@ -1,34 +1,34 @@
-//! Error types for the Digital Twin system.
+//! 数字孪生系统的错误类型。
 
-/// Top-level error enum for the application.
+/// 应用最顶层的错误枚举。
 #[derive(Debug, thiserror::Error)]
 pub enum DtError {
-    /// Generic error with message.
+    /// 带消息的通用错误。
     #[error("{0}")]
     General(String),
-    /// I/O error.
-    #[error("io: {0}")]
+    /// I/O 错误。
+    #[error("I/O 错误：{0}")]
     Io(#[from] std::io::Error),
-    /// JSON serialization/deserialization error.
-    #[error("json: {0}")]
+    /// JSON 序列化/反序列化错误。
+    #[error("JSON 错误：{0}")]
     Json(#[from] serde_json::Error),
-    /// Repository error — wraps underlying storage errors.
-    #[error("repository: {0}")]
+    /// 仓库错误——包装底层存储错误。
+    #[error("存储层错误：{0}")]
     Repository(String),
-    /// Configuration error.
-    #[error("config: {0}")]
+    /// 配置错误。
+    #[error("配置错误：{0}")]
     Config(String),
-    /// gRPC / network error.
-    #[error("grpc: {0}")]
+    /// gRPC / 网络错误。
+    #[error("gRPC 错误：{0}")]
     Grpc(String),
-    /// Not found.
-    #[error("not found: {0}")]
+    /// 未找到。
+    #[error("未找到：{0}")]
     NotFound(String),
-    /// Timeout.
-    #[error("timeout: {0}")]
+    /// 超时。
+    #[error("超时：{0}")]
     Timeout(String),
-    /// Network / HTTP error.
-    #[error("network: {0}")]
+    /// 网络 / HTTP 错误。
+    #[error("网络错误：{0}")]
     Network(String),
 }
 
