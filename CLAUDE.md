@@ -1,158 +1,158 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件为 Claude Code（claude.ai/code）在本仓库中处理代码时提供指引。
 
-## Build & Test Commands
+## 构建与测试命令
 
 ```bash
-# Build the project
+# 构建项目
 cargo build
 cargo build --release
 
-# Run all unit tests (inline #[cfg(test)] modules)
+# 运行全部单元测试（源码内联的 #[cfg(test)] 模块）
 cargo test
 
-# Run a single test
+# 运行单个测试
 cargo test test_name
-cargo test <module>::<test_name>  # e.g., cargo test domain::id::tests::method_id_structure
+cargo test <module>::<test_name>  # 例如：cargo test domain::id::tests::method_id_structure
 
-# Run tests in a specific module
+# 运行指定模块中的测试
 cargo test domain::id
 cargo test application::build
 
-# Integration tests (require Memgraph + Qdrant running)
-# These run via the `dt` CLI binary, not cargo test:
-dt build --test        # BuildCommand integration test — builds test-pipeline project, verifies KG+Qdrant
-dt clean --test        # Remove all test- prefixed data
+# 集成测试（需要 Memgraph + Qdrant 运行中）
+# 通过 `dt` CLI 二进制运行，而非 cargo test：
+dt build --test        # BuildCommand 集成测试——构建 test-pipeline 项目，验证 KG+Qdrant
+dt clean --test        # 删除所有 test- 前缀的数据
 
-# Lint
+# Lint 检查
 cargo clippy --all-targets
 
-# Format
+# 格式化
 cargo fmt
 ```
 
-## Key Architecture
+## 核心架构
 
-**Single-crate DDD layered architecture** (`src/lib.rs` is the crate root):
+**单 crate DDD 分层架构**（`src/lib.rs` 为 crate 根）：
 
 ```
 src/
-  domain/          # Domain layer: types, traits, error, config, id (zero internal deps)
-  infrastructure/  # Infrastructure: Memgraph, Qdrant, SQLite, tree-sitter parsers, scanner, embedder
-  application/     # Application layer: build, sync, context, knowledge, plugins (orchestration)
-  interfaces/      # Interface layer: gRPC server, CLI command handlers
-  shared/          # Cross-cutting: logging, coordinator, chunker, vectorizer
+  domain/          # 领域层：类型、traits、error、config、id（零内部依赖）
+  infrastructure/  # 基础设施：Memgraph、Qdrant、SQLite、tree-sitter 解析器、scanner、embedder
+  application/     # 应用层：build、sync、context、knowledge、plugins（编排）
+  interfaces/      # 接口层：gRPC server、CLI 命令处理
+  shared/          # 横切关注点：logging、coordinator、chunker、vectorizer
 ```
 
-**Six World Model** — the system classifies data into six worlds:
+**六世界模型**——系统将数据划分为六个世界：
 
-| World | Data | Storage |
-|-------|------|---------|
-| Reality | Code, config, K8s resources | Memgraph + Qdrant (`code_methods`/`config_chunks`) |
-| Knowledge | Concepts, patterns, playbooks, experience | Memgraph + Qdrant (`kg_nodes`, via `dt kg-sync`) |
-| Memory | Events, sessions, timeline | Memgraph only (keyword search, no vectors) |
-| Semantic | Documents, API, log pattern vectors | Qdrant (`doc_chunks`) |
-| Runtime | Pod status, service runtime | K8s API (live) |
-| Reasoning | Observation → Analysis → Decision chain | Memgraph (stale-marked at session end) |
+| 世界 | 数据 | 存储 |
+|------|------|------|
+| Reality | 代码、配置、K8s 资源 | Memgraph + Qdrant（`code_methods`/`config_chunks`） |
+| Knowledge | 概念、模式、Playbook、经验 | Memgraph + Qdrant（`kg_nodes`，经 `dt kg-sync` 桥接） |
+| Memory | 事件、会话、时间线 | 仅 Memgraph（关键词检索，无向量） |
+| Semantic | 文档、API、日志模式向量 | Qdrant（`doc_chunks`） |
+| Runtime | Pod 状态、服务运行态 | K8s API（实时查询） |
+| Reasoning | 观察 → 分析 → 决策链路 | Memgraph（会话结束时标记 stale） |
 
-**CLI binary** (`src/main.rs`): `dt` with 16 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
+**CLI 二进制**（`src/main.rs`）：`dt` 共 16 个命令，双模式：服务端（gRPC daemon）或 CLI 子命令。
 
-## Pipeline Engine
+## 管线引擎
 
-Processor orchestration framework for converting unstructured files into structured knowledge:
+将非结构化文件转换为结构化知识的处理器编排框架：
 
 ```
 File → TreeSitterProcessor → ChunkProcessor → {HanlpClientProcessor → LlmClientProcessor} → StoreProcessor → KG+Qdrant
 ```
 
-- **CPU stages** (priority ≥ 85): tree_sitter (100), chunk (90) — run in full parallel
-- **GPU stages** (priority < 85): hanlp (80), llm (60) — semaphore-capped concurrency
-- Config: `config/pipeline.yaml`
-- Processors: `src/application/pipeline/processors/`
+- **CPU 阶段**（优先级 ≥ 85）：tree_sitter（100）、chunk（90）——全并行执行
+- **GPU 阶段**（优先级 < 85）：hanlp（80）、llm（60）——信号量限流并发
+- 配置：`config/pipeline.yaml`
+- 处理器：`src/application/pipeline/processors/`
 
-## Qdrant Collections
+## Qdrant 集合
 
-Global collections with strict separation:
-- `code_methods` — code search (method-level, from `dt build`; single global collection, `project` payload field for filtering)
-- `kg_nodes` — knowledge graph entity vectors (from `dt kg-sync`)
-- `doc_chunks` — document block vectors (internal)
-- `config_chunks` — Nacos/config chunks (world=config search)
+全局集合，严格分离：
+- `code_methods` ——代码搜索（方法级，来自 `dt build`；单个全局集合，`project` payload 字段用于过滤）
+- `kg_nodes` ——知识图谱实体向量（来自 `dt kg-sync`）
+- `doc_chunks` ——文档块向量（内部）
+- `config_chunks` ——Nacos/配置块（world=config 搜索）
 
-## CrossWorldSearch (`src/application/context/search_mcp.rs`)
+## CrossWorldSearch（`src/application/context/search_mcp.rs`）
 
-Unified search entry point — the single search stack behind CLI `dt search`, MCP `dt_search`/`dt_search_kg`, and gRPC `Search`. Dispatches by `world` parameter:
+统一搜索入口——CLI `dt search`、MCP `dt_search`/`dt_search_kg`、gRPC `Search` 背后的单一搜索栈，按 `world` 参数分派：
 - `world=code` → Qdrant `code_methods`
-- `world=knowledge` → GraphRAG over `kg_nodes` vector recall + Memgraph expansion + rerank
+- `world=knowledge` → 基于 `kg_nodes` 向量召回的 GraphRAG + Memgraph 图扩展 + rerank
 - `world=doc` → Qdrant `doc_chunks`
-- `world=config` → Qdrant `config_chunks`+`doc_chunks` (+ QueryRewriter), Cypher keyword fallback
-- `world=memory` → Memgraph event labels (keyword CONTAINS, no vectors)
-- `world=all` (default) → RRF fusion over code+knowledge+doc only (config/memory must be queried explicitly)
+- `world=config` → Qdrant `config_chunks`+`doc_chunks`（+ QueryRewriter），Cypher 关键词兜底
+- `world=memory` → Memgraph 事件标签（关键词 CONTAINS，无向量）
+- `world=all`（默认）→ 仅对 code+knowledge+doc 做 RRF 融合（config/memory 需显式查询）
 
-Valid world values: `all`, `code`, `knowledge`, `doc`, `config`, `memory`. There is no `reality` world value — "Reality World" is the internal name for the code world.
+合法的 world 取值：`all`、`code`、`knowledge`、`doc`、`config`、`memory`。没有 `reality` 取值——"Reality World" 是 code 世界的内部名称。
 
-Every hit carries `llm_analysis` (method purpose/logic) and precise location (`file_path`/`start_line`/`end_line`).
+每条命中都携带 `llm_analysis`（方法用途/逻辑）与精确位置（`file_path`/`start_line`/`end_line`）。
 
-## External Dependencies
+## 外部依赖
 
-- **Memgraph 5.x** (Bolt :7688) — knowledge graph
-- **Qdrant** (gRPC :6334) — vector storage
-- **SiliconFlow API** — embed (BGE-M3), rerank, chat (Qwen2.5-14B)
-- **tree-sitter** — multi-language AST parsing (Java, Python, JS, TS, Go, Rust, PHP)
+- **Memgraph 5.x**（Bolt :7688）——知识图谱
+- **Qdrant**（gRPC :6334）——向量存储
+- **SiliconFlow API** ——embed（BGE-M3）、rerank、chat（Qwen2.5-14B）
+- **tree-sitter** ——多语言 AST 解析（Java、Python、JS、TS、Go、Rust、PHP）
 
-## Code Style
+## 代码风格
 
-- `rust-toolchain.toml`: stable channel
-- `rustfmt`: max_width=100, tab_spaces=4, edition=2021
-- `clippy.toml`: cognitive-complexity-threshold=30, too-many-arguments-threshold=8
-- Error handling: `anyhow` for application, `thiserror` for domain errors (`DtError`)
-- Async: `tokio` + `async-trait` for async trait methods
-- Entity IDs: `dt://entity/{project}/...` URI scheme (see `src/domain/id.rs`)
+- `rust-toolchain.toml`：stable 通道
+- `rustfmt`：max_width=100、tab_spaces=4、edition=2021
+- `clippy.toml`：cognitive-complexity-threshold=30、too-many-arguments-threshold=8
+- 错误处理：应用层用 `anyhow`，领域错误用 `thiserror`（`DtError`）
+- 异步：`tokio` + `async-trait` 用于异步 trait 方法
+- 实体 ID：`dt://entity/{project}/...` URI 方案（见 `src/domain/id.rs`）
 
-## Build Strategies (`src/application/build/strategy/`)
+## 构建策略（`src/application/build/strategy/`）
 
-- **Incremental** (default): SHA1 diff against SQLite snapshots — only processes changed files
-- **FullRebuild**: wipe all data and rebuild from scratch
+- **Incremental**（默认）：与 SQLite 快照做 SHA1 差异比对——只处理变更的文件
+- **FullRebuild**：清空全部数据后从头重建
 
-## Test Infrastructure
+## 测试基础设施
 
-- **Unit tests**: inline `#[cfg(test)]` modules in source files, run via `cargo test`
-- **Integration tests**: `dt build --test` — runs against real test-pipeline project, verifies Memgraph + Qdrant output matches `test/expected.json`
-- **Test runner**: `src/application/pipeline/test/runner.rs` — standalone verify function
-- **Test fixtures**: `test/fixtures/` (Java, Python, Markdown, YAML)
-- **Test project**: `test/project/` — real project used for integration testing
+- **单元测试**：源码文件中的内联 `#[cfg(test)]` 模块，通过 `cargo test` 运行
+- **集成测试**：`dt build --test` ——对真实 test-pipeline 项目运行，验证 Memgraph + Qdrant 输出与 `test/expected.json` 一致
+- **测试运行器**：`src/application/pipeline/test/runner.rs` ——独立的 verify 函数
+- **测试夹具**：`test/fixtures/`（Java、Python、Markdown、YAML）
+- **测试项目**：`test/project/` ——用于集成测试的真实项目
 
-## Multi-Agent Team System
+## 多 Agent 团队系统
 
-The project uses a formal multi-agent team pipeline for code changes. Every change goes through:
+项目使用正式的多 Agent 团队流水线处理代码变更，每次变更都经过：
 
 ```
 Change Request → Architect Guard → [Implementer + Tester] → Reviewer → Integrator → Done
 ```
 
-### Agent Roles
+### Agent 角色
 
-| Agent | File | Role |
+| Agent | 文件 | 角色 |
 |-------|------|------|
-| **Architect** | `.claude/agents/architect.md` | DDD layer boundary guardian — checks `use crate::*` imports against layer rules |
-| **Implementer** | `.claude/agents/implementer.md` | Code implementation — TDD, cargo fmt, cargo clippy |
-| **Tester** | `.claude/agents/tester.md` | Test writing — unit tests, edge cases, error paths |
-| **Reviewer** | `.claude/agents/reviewer.md` | Code review — quality, security, performance |
-| **Integrator** | `.claude/agents/integrator.md` | Integration — full build, test suite, clippy, fmt check |
+| **Architect** | `.claude/agents/architect.md` | DDD 分层边界守护——按分层规则检查 `use crate::*` 导入 |
+| **Implementer** | `.claude/agents/implementer.md` | 代码实现——TDD、cargo fmt、cargo clippy |
+| **Tester** | `.claude/agents/tester.md` | 测试编写——单元测试、边界情况、错误路径 |
+| **Reviewer** | `.claude/agents/reviewer.md` | 代码审查——质量、安全、性能 |
+| **Integrator** | `.claude/agents/integrator.md` | 集成——完整构建、测试套件、clippy、fmt 检查 |
 
-### DDD Layer Rules (enforced by Architect)
+### DDD 分层规则（由 Architect 强制执行）
 
-| Layer | May import from | Must NOT import from |
+| 层 | 可导入 | 禁止导入 |
 |-------|----------------|---------------------|
-| `src/domain/` | `crate::domain::*` | `infrastructure/`, `application/`, `interfaces/` |
-| `src/infrastructure/` | `domain/`, `shared/` | `application/`, `interfaces/` |
-| `src/application/` | `domain/`, `infrastructure/`, `shared/` | `interfaces/` |
-| `src/interfaces/` | All layers | None |
-| `src/shared/` | `domain/` | `infrastructure/`, `application/`, `interfaces/` |
+| `src/domain/` | `crate::domain::*` | `infrastructure/`、`application/`、`interfaces/` |
+| `src/infrastructure/` | `domain/`、`shared/` | `application/`、`interfaces/` |
+| `src/application/` | `domain/`、`infrastructure/`、`shared/` | `interfaces/` |
+| `src/interfaces/` | 所有层 | 无 |
+| `src/shared/` | `domain/` | `infrastructure/`、`application/`、`interfaces/` |
 
-**Exception**: `src/main.rs` (composition root) may reference all layers.
+**例外**：`src/main.rs`（组合根）可引用所有层。
 
-### Workflows
+### 工作流
 
-- **`change-workflow`**: Full change pipeline — architect guard → implement + test → review → integrate
-- **`arch-guard-workflow`**: Standalone architecture check (read-only)
+- **`change-workflow`**：完整变更流水线——architect 守卫 → 实现 + 测试 → 审查 → 集成
+- **`arch-guard-workflow`**：独立的架构检查（只读）

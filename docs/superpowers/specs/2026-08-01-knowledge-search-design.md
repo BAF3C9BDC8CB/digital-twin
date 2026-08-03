@@ -227,7 +227,7 @@ top_n = DT_KG_RERANK_TOP_N（默认 50）
 60/40 为初值，S5b 后据 score_breakdown 观测校准（§8.4）。
 ```
 
-### 5.3 Rerank
+### 5.3 重排（Rerank）
 
 ```rust
 let docs: Vec<String> = candidates.iter()

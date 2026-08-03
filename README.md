@@ -127,7 +127,7 @@ CLI dt search / MCP dt_search / gRPC Search → CrossWorldSearch.search()
 4. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤
 5. 兜底：vector 不可用时用 Memgraph 全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`
 
-## Pipeline Engine
+## 管线引擎
 
 处理器编排框架，将非结构化文件（代码/文档/文本）通过多阶段处理管道转换为结构化知识。
 

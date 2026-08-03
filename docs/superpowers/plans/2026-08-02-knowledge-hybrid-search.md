@@ -1,4 +1,4 @@
-# Knowledge Hybrid Search (S5) Implementation Plan
+# 知识混合检索（S5）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -22,7 +22,7 @@
 - LLM 抽取存在漂移，集成实测断言一律用"存在性 + 位次归因"，不做精确相等（§9.1 容差）。
 - 每任务一次提交，conventional commits（`feat:` / `refactor:` / `test:`）。
 
-## File Structure
+## 文件结构
 
 | 文件 | 动作 | 职责 |
 |------|------|------|
