@@ -188,3 +188,39 @@
 4. MCP `dt_search` 返回合法 JSON，含 llm_analysis/file_path/start_line/end_line
 5. gRPC Search RPC 传 `world="knowledge"` 返回 ifCode 语义命中（S5 链路端到端）
 6. 全量 cargo test 与 clippy 达标（§10 基线）
+
+---
+
+## 12. 实施记录（2026-08-03）
+
+### 12.1 落地提交
+
+| 提交 | 内容 |
+|------|------|
+| `84f6bd3` | SearchHit.llm_analysis + search_code 单集合 + payload 级 project 过滤（U-D6） |
+| `ea33d6a` | fusion.rs 迁移 + all 世界 RRF（U-D2/U-D3） |
+| `ef5061f` | config 世界迁入（search_config + QueryRewriter + CONFIG_CHUNKS） |
+| `17d3129` | memory 世界迁入（事件标签 Cypher + elementId 定位） |
+| `fbd07e4` | CLI 渲染壳：三行制 + --json 纯 stdout + 默认 all；修 logging 默认 writer |
+| `d0f61c8` | dt search-kg 完全移除（U-D5 修订版，无兼容层） |
+| `c768938` | MCP 位置参数 + --json 透传；删 dt_search_expand（U-D7） |
+| `6bf785f` | gRPC proto 全量字段 + world 透传 + deprecated 函数删除 |
+| `42c9276` | 退役：application/search.rs + CollectionKind 命名体系 |
+
+### 12.2 实测结果（tests/unified_search.rs，6 passed / 0 failed）
+
+- `u_all_world_finds_createapp_with_analysis_and_location` ✓：默认 all 世界命中 createApp（Method，app.js:L32-36，llm_analysis 非空），code+knowledge+doc 三世界 RRF 融合
+- `u_knowledge_ifcode_semantic_hit_via_cli` ✓：knowledge 世界 ifCode 语义 #1（0.9414，hop=0，来源决策文档）——**S5 GraphRAG 链路首次产物可达**
+- `u_memory_world_finds_seeded_event` ✓：自种 Decision 探针→检索命中→清理
+- `u_config_world_returns_valid_json` ✓：config 世界管线可用（本地无 config_chunks 数据，验证结构）
+- `u_search_kg_removed_clap_error` ✓：exit=2 + `unrecognized subcommand`
+- `u_human_format_three_lines_for_method` ✓：人类格式三行制（标题/分析/位置）
+- 单测基线：779 passed / 2 预存失败不变；clippy 0 error
+
+### 12.3 实施期偏差（已并入本文档）
+
+1. **`--path` 参数删除**：原实现仅打印不参与检索，CLI 与 MCP 传参同步移除
+2. **logging 默认 writer bug**：tracing fmt layer 未指定 writer 时默认 stdout，与 `stderr_layer` 命名/注释意图相悖——修 U-D4 时发现并修复（`.with_writer(std::io::stderr)`），全 CLI 日志回归 stderr
+3. **Qdrant 数值 point id → RRF 键坍缩**：code_methods 数值 id 被 `as_str()` 提取为 "?"，全 code 命中共享 RRF 键 `code:?` 坍缩为单条——search_code id 提取兼容 number/UUID，缺失回退 payload `entity_id`/`file_path:name`（单测防回归）
+4. **memory live 测试自种探针**：S5 Task 0 清库重建后图中无事件节点，测试改为种子→断言→清理自包含模式
+5. **all-world 测试按 title 精确定位**：RRF 融合后第一 Method 是 createOrder（code rank1），目标命中需按 title=="createApp" 定位

@@ -31,7 +31,7 @@
 - Consumes: code_methods payload 已有 `llm_analysis`/`project` 字段（实测确认）
 - Produces: `SearchHit.llm_analysis: Option<String>`（serde default）；`search_code` 只查 `CODE_METHODS` 单集合、project 过滤下沉 payload 级
 
-- [ ] **Step 1: 写失败测试 — search_code 提取 llm_analysis 且只查单集合**
+- [x] **Step 1: 写失败测试 — search_code 提取 llm_analysis 且只查单集合**
 
 在 `search_mcp.rs` tests 模块追加（StubVector/StubEmbed 已存在于 :626-692，复用）：
 
@@ -71,12 +71,12 @@ async fn code_world_extracts_llm_analysis_and_uses_single_collection() {
 
 注意：StubVector 的 `list_collections()` 返回 `Ok(vec![])`——改造后 search_code 不再调 list_collections；若仍走旧逻辑则 hits 为空、测试失败，恰好双重验证。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test --lib application::context::search_mcp 2>&1 | tail -5`
 Expected: FAIL（`llm_analysis` 字段不存在编译错误，或旧逻辑 hits 为空断言失败）
 
-- [ ] **Step 3: SearchHit 增加 llm_analysis 字段**
+- [x] **Step 3: SearchHit 增加 llm_analysis 字段**
 
 `search_mcp.rs:70`（`signature` 字段后）插入：
 
@@ -91,7 +91,7 @@ Expected: FAIL（`llm_analysis` 字段不存在编译错误，或旧逻辑 hits 
 - `retrieve.rs` :963、:1826 及 `rg -n "SearchHit {" src/ tests/` 列出的其余全部构造点，一律 `llm_analysis: None`
 - `search_mcp.rs` 既有测试的 SearchHit 字面量（:476-515、:554-574）同样补字段
 
-- [ ] **Step 4: search_code 改造 — 单集合 + payload 提取**
+- [x] **Step 4: search_code 改造 — 单集合 + payload 提取**
 
 `search_mcp.rs:179-193` 删除 collection 发现逻辑，替换为：
 
@@ -120,12 +120,12 @@ Expected: FAIL（`llm_analysis` 字段不存在编译错误，或旧逻辑 hits 
                                 .map(|s| s.to_string()),
 ```
 
-- [ ] **Step 5: 运行测试确认通过 + 全量回归**
+- [x] **Step 5: 运行测试确认通过 + 全量回归**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3`
 Expected: 新测试 PASS；773+N passed / 2 failed（预存不变）
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/application/context/search_mcp.rs src/application/knowledge/extract/retrieve.rs
@@ -145,7 +145,7 @@ git commit -m "feat(unified-search): SearchHit.llm_analysis + search_code single
 - Consumes: `search.rs:3-53` 的 RankedItem/reciprocal_rank_fusion（**逐字搬移**，Task 3 复用）
 - Produces: `fusion::rrf_hits(world_lists: Vec<Vec<SearchHit>>, k: f64, limit: usize) -> Vec<SearchHit>`；world="all" 时 hits 为 RRF 融合序（score=RRF 分），单世界路径保持原生分数
 
-- [ ] **Step 1: 写失败测试 — rrf_hits 融合语义**
+- [x] **Step 1: 写失败测试 — rrf_hits 融合语义**
 
 新建 `src/application/context/fusion.rs`，先只写测试：
 
@@ -185,12 +185,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test --lib application::context::fusion 2>&1 | tail -3`
 Expected: FAIL（模块/函数不存在）
 
-- [ ] **Step 3: 实现 fusion.rs**
+- [x] **Step 3: 实现 fusion.rs**
 
 文件主体 = `search.rs:6-52` 的 `RankedItem` + `reciprocal_rank_fusion` **逐字搬移**（去掉外层 `pub mod fusion {}` 包裹，置于文件顶层），头部加模块文档，末尾追加：
 
@@ -231,7 +231,7 @@ pub fn rrf_hits(world_lists: Vec<Vec<SearchHit>>, k: f64, limit: usize) -> Vec<S
 
 `context/mod.rs` 插入 `pub mod fusion;`。
 
-- [ ] **Step 4: search() dispatch 重写（all→RRF；单世界保持）**
+- [x] **Step 4: search() dispatch 重写（all→RRF；单世界保持）**
 
 `search_mcp.rs:408-463` 的 `search` 函数体重写为：
 
@@ -311,12 +311,12 @@ pub fn rrf_hits(world_lists: Vec<Vec<SearchHit>>, k: f64, limit: usize) -> Vec<S
 
 既有测试兼容性：`knowledge_world_with_empty_backends_returns_empty_and_no_panic`（:600）断言 `per_world_counts["knowledge"]==Some(0)`——单世界分支仍 insert ✓；doc 两个 stub 测试（:694/:752）走单世界分支，`per_world_counts["doc"]==1` ✓。
 
-- [ ] **Step 5: 运行测试确认通过 + 全量回归**
+- [x] **Step 5: 运行测试确认通过 + 全量回归**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3`
 Expected: 基线不扩大，fusion 2 个新测试 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/application/context/fusion.rs src/application/context/mod.rs src/application/context/search_mcp.rs
@@ -338,7 +338,7 @@ git commit -m "feat(unified-search): fusion.rs migration + all-world RRF over Se
 - Consumes: `fusion::{RankedItem, reciprocal_rank_fusion}`（Task 2）；`build.rs:750-765` `extract_ascii_words`（**逐字搬移**）；`search.rs:253-325` QueryRewriter（**逐字搬移**为私有模块）
 - Produces: `impl CrossWorldSearch { pub(crate) async fn search_config(&self, query: &str, project: Option<&str>, limit: usize) -> (Vec<SearchHit>, Vec<String>) }`；degraded 取值 `"embed_unavailable"` / `"graph_unavailable"`；`pub(crate) fn graph_ref(&self) -> &Option<Arc<dyn GraphRepository>>`（Task 4 复用）
 
-- [ ] **Step 1: collections.rs 加常量 + search_mcp 加 graph_ref**
+- [x] **Step 1: collections.rs 加常量 + search_mcp 加 graph_ref**
 
 `collections.rs:14` 后：
 
@@ -356,7 +356,7 @@ pub const CONFIG_CHUNKS: &str = "config_chunks";
     }
 ```
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 新建 `search_config.rs`，`#[cfg(test)]`（stub 从 search_mcp.rs tests :626-692 复制精简版，测试不跨文件共享 stub）：
 
@@ -443,12 +443,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 Run: `cargo test --lib application::context::search_config 2>&1 | tail -3`
 Expected: FAIL（模块不存在）
 
-- [ ] **Step 4: 实现 search_config.rs**
+- [x] **Step 4: 实现 search_config.rs**
 
 文件结构：
 
@@ -487,7 +487,7 @@ pub(crate) mod rewrite {
 4. `reciprocal_rank_fusion(rank_lists, 60.0, limit)` → ASCII 关键词过滤（build.rs:951-964：query 中 ≥3 字符 ascii 词小写化，title+snippet 小写含任一才保留）→ 按 title 去重 → 映射 SearchHit：`source_world: "config"`，`source_ref: None`，其余 None/空（含 `llm_analysis: None`）；非空则返回 `(hits, degraded)`
 5. **Cypher 回退**（build.rs:1010-1099）：graph 缺失 → `degraded.push("graph_unavailable".into())` 返回空。keywords = `extract_ascii_words(query)` + QueryRewriter 展开（≥3 字符、去重、truncate(5)，同 build.rs:790-813）；orig_ascii 非空则 must_have 只用 orig_ascii（build.rs:1028-1050）；Cypher **逐字沿用 build.rs:1056-1066**（含 `project_filter` 与 `display_limit = if limit > 200 { limit } else { limit.max(50) }`）；行映射 SearchHit：`entity_type=type, title=name, snippet=snippet, source_ref=Some(source), source_world: "config", score: 0.0`，按 name 去重
 
-- [ ] **Step 5: dispatch 加 config 分支**
+- [x] **Step 5: dispatch 加 config 分支**
 
 `search_mcp.rs` Task 2 重写的 match 中，`"doc" | "vector"` 分支后插入：
 
@@ -501,12 +501,12 @@ pub(crate) mod rewrite {
 
 `context/mod.rs` 加 `pub mod search_config;`。
 
-- [ ] **Step 6: 运行测试确认通过 + 全量回归 + clippy**
+- [x] **Step 6: 运行测试确认通过 + 全量回归 + clippy**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3 && cargo clippy --all-targets 2>&1 | rg "^error" | head -3`
 Expected: 测试 PASS（基线不扩大）；clippy 无 error 输出
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/application/context/search_config.rs src/application/context/mod.rs src/application/context/search_mcp.rs src/shared/collections.rs
@@ -526,7 +526,7 @@ git commit -m "feat(unified-search): config world migrated into CrossWorldSearch
 - Consumes: `CrossWorldSearch::graph_ref()`（Task 3）、`GraphRepository::read_query`
 - Produces: `impl CrossWorldSearch { pub(crate) async fn search_memory(&self, query: &str, limit: usize) -> Vec<SearchHit> }`——graph 缺失返回空
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `search_memory.rs` `#[cfg(test)]`（MockGraph 捕获查询 + 返回固定行，模式同 search.rs:168-211，复制精简版并实现 GraphRepository 全部方法——read_query/write_query/health_check）：
 
@@ -581,12 +581,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test --lib application::context::search_memory 2>&1 | tail -3`
 Expected: FAIL（模块不存在）
 
-- [ ] **Step 3: 实现 search_memory.rs**
+- [x] **Step 3: 实现 search_memory.rs**
 
 ```rust
 //! memory 世界 — 事件节点关键词检索（自 cli/build.rs:1509-1516 迁入，补 elementId 定位）。
@@ -646,7 +646,7 @@ impl CrossWorldSearch {
 }
 ```
 
-- [ ] **Step 4: dispatch 加 memory 分支**
+- [x] **Step 4: dispatch 加 memory 分支**
 
 config 分支后插入：
 
@@ -656,12 +656,12 @@ config 分支后插入：
 
 `context/mod.rs` 加 `pub mod search_memory;`。
 
-- [ ] **Step 5: 运行测试确认通过 + 全量回归**
+- [x] **Step 5: 运行测试确认通过 + 全量回归**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3`
 Expected: 基线不扩大，新测试 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/application/context/search_memory.rs src/application/context/mod.rs src/application/context/search_mcp.rs
@@ -685,7 +685,7 @@ git commit -m "feat(unified-search): memory world (event labels) migrated into C
   - `pub fn render_json(result: &CrossWorldResult) -> String`
   - `pub async fn handle_search(query: String, world: String, limit: usize, json: bool, project: Option<String>, graph: Option<Arc<dyn GraphRepository>>, vector: Option<Arc<dyn VectorRepository>>) -> anyhow::Result<()>` —— **path 参数删除**（现行 path 仅打印不参与检索；spec §10 收尾补记此溢出修正）
 
-- [ ] **Step 1: 写失败测试 — 三行制渲染 + JSON**
+- [x] **Step 1: 写失败测试 — 三行制渲染 + JSON**
 
 `search_render.rs` `#[cfg(test)]`：
 
@@ -760,12 +760,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test --lib interfaces::cli::search_render 2>&1 | tail -3`
 Expected: FAIL（模块不存在）
 
-- [ ] **Step 3: 实现 search_render.rs**
+- [x] **Step 3: 实现 search_render.rs**
 
 ```rust
 //! 检索结果渲染 — 人类格式（类型感知三行制）与 JSON（MCP 消费）。
@@ -835,7 +835,7 @@ pub fn render_json(result: &CrossWorldResult) -> String {
 
 `interfaces/cli/mod.rs` 加 `pub mod search_render;`。
 
-- [ ] **Step 4: create_search_embed_client 重构提取 provider 配置**
+- [x] **Step 4: create_search_embed_client 重构提取 provider 配置**
 
 `build.rs:234-290`：将 ProviderConfig 组装逻辑提取为 `fn provider_config_from_pipeline() -> ProviderConfig`（含原有的 pipeline.yaml 加载失败回退 `ProviderConfig::default_siliconflow()` 逻辑），然后：
 
@@ -851,7 +851,7 @@ fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService
 }
 ```
 
-- [ ] **Step 5: handle_search 整体重写**
+- [x] **Step 5: handle_search 整体重写**
 
 `build.rs:767-1561` 全部替换为：
 
@@ -901,7 +901,7 @@ pub async fn handle_search(
 
 同时删除 `build.rs` 中已无引用的 `extract_ascii_words` 定义（:750-765）与 `get_keywords` 闭包、config 段、Cypher 段等全部死代码；`rg -n "extract_ascii_words|reciprocal_rank_fusion|RankedItem" src/interfaces/cli/build.rs` 确认清零。
 
-- [ ] **Step 6: main.rs Search 命令与 dispatch**
+- [x] **Step 6: main.rs Search 命令与 dispatch**
 
 命令定义（:243-262）替换为：
 
@@ -951,13 +951,13 @@ dispatch（:1575-1586）替换为：
         }
 ```
 
-- [ ] **Step 7: 运行测试 + 构建 + 人工冒烟**
+- [x] **Step 7: 运行测试 + 构建 + 人工冒烟**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3 && cargo build 2>&1 | tail -2`
 Expected: 测试基线不扩大；构建成功
 冒烟（需服务在线）：`./target/debug/dt search "createApp" --world code` 应输出三行制 Method 结果；`./target/debug/dt search "createApp" --json | python3 -m json.tool` 应为合法 JSON
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/interfaces/cli/search_render.rs src/interfaces/cli/mod.rs src/interfaces/cli/build.rs src/main.rs
@@ -976,20 +976,20 @@ git commit -m "feat(unified-search): CLI render shell — type-aware 3-line form
 - Consumes: Task 5 的 handle_search
 - Produces: `dt search-kg` 命令不存在——clap 原生报 `unrecognized subcommand`（exit=2）；无 stub、无引导
 
-- [ ] **Step 1: main.rs 整体删除 SearchKg**
+- [x] **Step 1: main.rs 整体删除 SearchKg**
 
 删除 `SearchKg` 命令变体（:264-274 整个，含 doc comment）与对应 dispatch 分支（:1588-1596 整个 `Some(Commands::SearchKg { .. })` 臂）。**不留 hidden stub、不留任何兼容代码。**
 
-- [ ] **Step 2: build.rs 删除 handle_search_kg 与死代码**
+- [x] **Step 2: build.rs 删除 handle_search_kg 与死代码**
 
 删除 `handle_search_kg` 全函数（:1583-1904）；删除 `print_config_chunk_results`（:1564 附近，已无调用方）；`rg -n "handle_search_kg|print_config_chunk_results|SearchKg" src/` 确认零引用。
 
-- [ ] **Step 3: 构建 + 行为验证**
+- [x] **Step 3: 构建 + 行为验证**
 
 Run: `cargo build 2>&1 | tail -2 && ./target/debug/dt search-kg "foo" 2>&1; echo "exit=$?"; ./target/debug/dt search --help 2>&1 | rg -c "search-kg" || true`
 Expected: 构建成功；stderr 含 `unrecognized subcommand` 且 `exit=2`；help 中 0 次出现 search-kg
 
-- [ ] **Step 4: 全量回归 + Commit**
+- [x] **Step 4: 全量回归 + Commit**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3 && cargo clippy --all-targets 2>&1 | rg "^error" | head -3`
 Expected: 基线不扩大；clippy 0 error
@@ -1010,7 +1010,7 @@ git commit -m "refactor(unified-search): remove dt search-kg entirely (U-D5, no 
 - Consumes: `dt search <query> --world W --json`（Task 5/6，query 为位置参数——修复 `--query` bug）
 - Produces: `dt_search`/`dt_search_kg` 输出为 CLI 透传的 JSON 文本；`dt_search_expand` 从注册与分发中移除
 
-- [ ] **Step 1: 执行分发改写（:731-756）**
+- [x] **Step 1: 执行分发改写（:731-756）**
 
 ```python
     # ===== 搜索 =====
@@ -1034,20 +1034,20 @@ git commit -m "refactor(unified-search): remove dt search-kg entirely (U-D5, no 
 
 （`dt_search_expand` 分支整段删除；`--path` 传参随 CLI 删除一并移除）
 
-- [ ] **Step 2: 注册块改写（:266-302）**
+- [x] **Step 2: 注册块改写（:266-302）**
 
 - 删除 `dt_search_expand` 的 Tool 注册（:277-289）
 - `dt_search_kg` 描述改为 `"搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源/hop）"`
 - `dt_search` 描述改为 `"统一检索（world: all|code|knowledge|doc|config|memory，默认 all），返回 JSON（Method 含 llm_analysis/file_path/start_line/end_line）"`，inputSchema 的 `world` default 改 `"all"`，新增可选 `project` 属性
 - 文件头工具列表注释（:92）移除 `dt_search_expand`
 
-- [ ] **Step 3: 验证**
+- [x] **Step 3: 验证**
 
 Run: `python3 -c "import ast; ast.parse(open('mcp/mcp-server.py').read()); print('syntax ok')" && rg -c "dt_search_expand" mcp/mcp-server.py || true`
 Expected: syntax ok；`dt_search_expand` 0 次出现
 人工冒烟（服务在线时）：`./target/debug/dt search "ifCode" --world knowledge --json | python3 -m json.tool | head -20`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add mcp/mcp-server.py
@@ -1066,7 +1066,7 @@ git commit -m "fix(unified-search): MCP tools positional query + --json passthro
 - Consumes: `CrossWorldSearch`（Task 1-4 全世界）；tonic-build 随 `cargo build` 自动再生成（build.rs:21）
 - Produces: proto `SearchRequest{world,max_hops,with_evidence,origin,doc_id}`；`SearchResult{entity_type,snippet,llm_analysis,end_line,hop,rerank_degraded,evidence,score_breakdown,relations}`；`fn hit_to_proto(hit: SearchHit) -> SearchResult`（纯函数，可单测）
 
-- [ ] **Step 1: 写失败测试 — hit_to_proto 映射**
+- [x] **Step 1: 写失败测试 — hit_to_proto 映射**
 
 `build_service.rs` `#[cfg(test)]`（若无 tests 模块则新建）：
 
@@ -1113,12 +1113,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cargo test --lib interfaces::grpc::services::build_service 2>&1 | tail -3`
 Expected: FAIL（hit_to_proto / proto 字段不存在）
 
-- [ ] **Step 3: proto 变更**
+- [x] **Step 3: proto 变更**
 
 `SearchRequest` 与 `SearchResult` 替换为（`expand`/`path` 保留字段位但标注 ignored，避免破坏 wire 兼容）：
 
@@ -1171,7 +1171,7 @@ message SearchResult {
 }
 ```
 
-- [ ] **Step 4: build_service 透传 + hit_to_proto**
+- [x] **Step 4: build_service 透传 + hit_to_proto**
 
 handle_search 中 `cws_req` 构造改为：
 
@@ -1233,12 +1233,12 @@ fn hit_to_proto(hit: crate::application::context::search_mcp::SearchHit) -> Sear
 
 同时**删除** `search_via_vector`（:186-292）与 `search_via_graph`（:296-350）两个 deprecated 函数；`rg -n "search_via_vector|search_via_graph" src/` 确认零引用。
 
-- [ ] **Step 5: 构建（tonic 再生成）+ 测试 + clippy**
+- [x] **Step 5: 构建（tonic 再生成）+ 测试 + clippy**
 
 Run: `cargo build 2>&1 | tail -2 && cargo test 2>&1 | rg "test result" | tail -3 && cargo clippy --all-targets 2>&1 | rg "^error" | head -3`
 Expected: proto 编译通过；hit_to_proto 测试 PASS；基线不扩大；clippy 0 error
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add proto/dt_core.proto src/interfaces/grpc/services/build_service.rs
@@ -1258,26 +1258,26 @@ git commit -m "feat(unified-search): gRPC Search world passthrough + full Search
 - Consumes: Task 2-8 已完成全部迁移
 - Produces: `rg -n "application::search|crate::application::search" src/ tests/` 零结果
 
-- [ ] **Step 1: 引用清零检查**
+- [x] **Step 1: 引用清零检查**
 
 Run: `rg -n "application::search|application:search" src/ tests/ | rg -v "search_mcp|search_config|search_memory|search_render"; rg -n "CollectionKind|collection_name" src/ tests/ | rg -v "shared::collections"`
 Expected: 第一组零结果（若有残留——如 context/stages/retriever.rs 引用 expand_nodes——先改引用方再走下一步）；第二组确认 CollectionKind 仅自引用+测试
 
-- [ ] **Step 2: 删除 search.rs + mod 声明**
+- [x] **Step 2: 删除 search.rs + mod 声明**
 
 `git rm src/application/search.rs`；`application/mod.rs` 移除 `pub mod search;` 行。
 若 Step 1 发现残留引用（如 `context/stages/retriever.rs` 使用 expansion/fusion），改引用方使用 `application::context::fusion` 同名函数（签名兼容，RankedItem 字段一致）。
 
-- [ ] **Step 3: CollectionKind 处理**
+- [x] **Step 3: CollectionKind 处理**
 
 若 Step 1 第二组确认仅 `infrastructure/qdrant/collection.rs` 自引用+其内测试：删除 `CollectionKind` 枚举、`collection_name` 函数及其测试；若存在外部引用（写入侧命名），保留并在文件头标注 `// legacy naming, 仅写入侧兼容` 不删。**以实际引用为准，不强行删。**
 
-- [ ] **Step 4: 全量验证**
+- [x] **Step 4: 全量验证**
 
 Run: `cargo test 2>&1 | rg "test result" | tail -3 && cargo clippy --all-targets 2>&1 | rg "^error" | head -3`
 Expected: 773+N passed / 2 failed（预存不变）；clippy 0 error
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A src/application src/infrastructure/qdrant
@@ -1298,7 +1298,7 @@ git commit -m "refactor(unified-search): retire legacy application/search.rs sta
 - Consumes: Task 1-9 全部；`CARGO_BIN_EXE_dt`（cargo 集成测试自动注入 bin 路径，bin 名 `dt`——Cargo.toml:7 已确认）
 - Produces: 6 个 #[ignore] live 测试全部通过；spec §12 实施记录
 
-- [ ] **Step 1: 写 live 测试**
+- [x] **Step 1: 写 live 测试**
 
 `tests/unified_search.rs`（全部 #[ignore]，需三服务在线）：
 
@@ -1391,12 +1391,12 @@ fn u_human_format_three_lines_for_method() {
 }
 ```
 
-- [ ] **Step 2: 运行 live 测试**
+- [x] **Step 2: 运行 live 测试**
 
 Run: `cargo test --test unified_search -- --ignored --nocapture 2>&1 | tail -12`
 Expected: 6 passed / 0 failed。失败时按 systematic-debugging 归因（服务在线？数据在位？JSON 污染？），修复后重跑，**不得放宽断言**
 
-- [ ] **Step 3: spec 追加 §12 实施记录**
+- [x] **Step 3: spec 追加 §12 实施记录**
 
 `2026-08-03-unified-search-design.md` 末尾追加：
 
@@ -1416,7 +1416,7 @@ Expected: 6 passed / 0 failed。失败时按 systematic-debugging 归因（服�
 - （执行中发现的其他偏差逐条记录）
 ```
 
-- [ ] **Step 4: 主文档 §13.1 加行**
+- [x] **Step 4: 主文档 §13.1 加行**
 
 `2026-07-31-universal-knowledge-pipeline-design.md` §13.1 表格 S5 行后加：
 
@@ -1424,7 +1424,7 @@ Expected: 6 passed / 0 failed。失败时按 systematic-debugging 归因（服�
 | **统一检索** | 检索面单栈化：CrossWorldSearch 全世界 + CLI/MCP/gRPC 全入口委托 + llm_analysis/定位字段 | ✅ 完成（2026-08-03） | 见 spec 2026-08-03 §12 | spec: 2026-08-03-unified-search-design.md |
 ```
 
-- [ ] **Step 5: 计划勾选 + 最终全量验证 + Commit**
+- [x] **Step 5: 计划勾选 + 最终全量验证 + Commit**
 
 本计划全部 `- [ ]` 勾选为 `- [x]`；Run: `cargo test 2>&1 | rg "test result" | tail -3 && cargo clippy --all-targets 2>&1 | rg -c "^error" || echo "clippy clean"`
 
