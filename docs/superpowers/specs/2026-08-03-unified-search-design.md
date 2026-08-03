@@ -59,7 +59,7 @@
 | U-D2 | `all` 世界构成 | **code + knowledge + doc** | config/memory 噪声大，显式指定才查 |
 | U-D3 | `dt search` 默认 world | **`all`** | "搜一次找到任何东西"的心智；RRF 处理跨世界分数不可比 |
 | U-D4 | MCP 输出 | **JSON**（CLI 新增 `--json` flag，MCP 透传） | AI 最小上下文消费；dt_search 当前本就报错，无兼容负担 |
-| U-D5 | `dt search-kg` | **直接删除**；main.rs 保留一个 hidden stub 子命令，打印"已合并入 `dt search --world knowledge`"引导信息后 exit(2) | 用户明确选择；不维护别名；MCP `dt_search_kg` 改调 `dt search --world knowledge --json` |
+| U-D5 | `dt search-kg` | **完全移除**（无 stub、无引导、不考虑旧版兼容）：main.rs 删除 SearchKg 变体与 dispatch 分支，clap 原生报 `unrecognized subcommand` | 用户明确选择（二次确认：不要兼容层）；MCP `dt_search_kg` 改调 `dt search --world knowledge --json` |
 | U-D6 | legacy `{project}_methods` 扫描 | **移除**（search_code 只查 `code_methods`） | 多年无写入方；现存 32 点全在 code_methods |
 | U-D7 | `dt_search_expand` MCP 工具 | **删除**，能力并入 `dt_search --world all` | 与 dt_search 重复 |
 
@@ -156,7 +156,7 @@
 | 入口 | 改动 |
 |------|------|
 | `dt search` | 默认 world `code`→`all`；删除全部内联检索逻辑（build.rs:767-1582），变纯渲染壳（人类格式/JSON 二选一）；**`--json` 时 stdout 仅含 JSON**（"Search: query=..."等 header 行一律抑制，日志走 stderr 不受影响） |
-| `dt search-kg` | **删除子命令**（U-D5）；main.rs Commands 移除 SearchKg，原地留 hidden stub 打印引导信息后 exit(2) |
+| `dt search-kg` | **完全移除子命令**（U-D5）：Commands 变体与 dispatch 分支整体删除，clap 原生报 `unrecognized subcommand` |
 | MCP `dt_search` | subprocess 改 `[DT_BIN, "search", query, "--world", w, "--json"]`（位置参数，修 `--query` bug），stdout 即 JSON 透传 |
 | MCP `dt_search_kg` | 改调 `dt search --world knowledge --json` |
 | MCP `dt_search_expand` | 删除（U-D7） |
@@ -184,7 +184,7 @@
 
 1. `dt search "createApp"`（默认 all）→ Method 命中，显示分析+`app.js:32-36`
 2. `dt search "云仓 支付" --world knowledge` → Entity 命中，显示摘要+来源
-3. `dt search-kg` → 报错并引导 `dt search --world knowledge`
+3. `dt search-kg` → clap 报 `unrecognized subcommand`（命令已不存在）
 4. MCP `dt_search` 返回合法 JSON，含 llm_analysis/file_path/start_line/end_line
 5. gRPC Search RPC 传 `world="knowledge"` 返回 ifCode 语义命中（S5 链路端到端）
 6. 全量 cargo test 与 clippy 达标（§10 基线）

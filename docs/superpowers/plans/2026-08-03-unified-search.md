@@ -966,52 +966,28 @@ git commit -m "feat(unified-search): CLI render shell — type-aware 3-line form
 
 ---
 
-### Task 6: search-kg 删除 + stub 引导（U-D5）
+### Task 6: search-kg 完全移除（U-D5）
 
 **Files:**
-- Modify: `src/main.rs`（SearchKg 变体 :264-274、dispatch :1588-1596）
+- Modify: `src/main.rs`（删除 SearchKg 变体 :264-274、dispatch 分支 :1588-1596）
 - Modify: `src/interfaces/cli/build.rs`（删除 handle_search_kg :1583-1904 与死代码 print_config_chunk_results :1564 附近）
 
 **Interfaces:**
 - Consumes: Task 5 的 handle_search
-- Produces: `dt search-kg` → stderr 引导 + exit(2)；`dt search --help` 不再显示 search-kg
+- Produces: `dt search-kg` 命令不存在——clap 原生报 `unrecognized subcommand`（exit=2）；无 stub、无引导
 
-- [ ] **Step 1: main.rs — SearchKg 隐藏 stub**
+- [ ] **Step 1: main.rs 整体删除 SearchKg**
 
-命令定义替换为：
-
-```rust
-    /// (已移除) dt search-kg — 合并入 dt search --world knowledge。
-    #[command(hide = true)]
-    SearchKg {
-        /// Search query string (positional).
-        query: String,
-
-        /// Limit results.
-        #[arg(long = "limit", default_value = "10")]
-        limit: usize,
-    },
-```
-
-dispatch 替换为：
-
-```rust
-        Some(Commands::SearchKg { .. }) => {
-            eprintln!(
-                "dt search-kg 已移除：请改用 dt search <query> --world knowledge（或默认 --world all）"
-            );
-            std::process::exit(2);
-        }
-```
+删除 `SearchKg` 命令变体（:264-274 整个，含 doc comment）与对应 dispatch 分支（:1588-1596 整个 `Some(Commands::SearchKg { .. })` 臂）。**不留 hidden stub、不留任何兼容代码。**
 
 - [ ] **Step 2: build.rs 删除 handle_search_kg 与死代码**
 
-删除 `handle_search_kg` 全函数（:1583-1904）；删除 `print_config_chunk_results`（:1564 附近，已无调用方）；`rg -n "handle_search_kg|print_config_chunk_results" src/` 确认零引用。
+删除 `handle_search_kg` 全函数（:1583-1904）；删除 `print_config_chunk_results`（:1564 附近，已无调用方）；`rg -n "handle_search_kg|print_config_chunk_results|SearchKg" src/` 确认零引用。
 
 - [ ] **Step 3: 构建 + 行为验证**
 
-Run: `cargo build 2>&1 | tail -2 && ./target/debug/dt search-kg "foo"; echo "exit=$?"; ./target/debug/dt search --help 2>&1 | rg -c "search-kg" || true`
-Expected: 构建成功；search-kg 输出引导信息且 `exit=2`；help 中 0 次出现 search-kg
+Run: `cargo build 2>&1 | tail -2 && ./target/debug/dt search-kg "foo" 2>&1; echo "exit=$?"; ./target/debug/dt search --help 2>&1 | rg -c "search-kg" || true`
+Expected: 构建成功；stderr 含 `unrecognized subcommand` 且 `exit=2`；help 中 0 次出现 search-kg
 
 - [ ] **Step 4: 全量回归 + Commit**
 
@@ -1020,7 +996,7 @@ Expected: 基线不扩大；clippy 0 error
 
 ```bash
 git add src/main.rs src/interfaces/cli/build.rs
-git commit -m "refactor(unified-search): remove dt search-kg (hidden stub with guidance, U-D5); delete legacy handle_search_kg"
+git commit -m "refactor(unified-search): remove dt search-kg entirely (U-D5, no compat shim)"
 ```
 
 ---
@@ -1398,10 +1374,10 @@ fn u_config_world_returns_valid_json() {
 
 #[test]
 #[ignore]
-fn u_search_kg_stub_exits_with_guidance() {
+fn u_search_kg_removed_clap_error() {
     let (_stdout, stderr, code) = dt(&["search-kg", "foo"]);
     assert_eq!(code, 2);
-    assert!(stderr.contains("dt search"), "guidance missing: {stderr}");
+    assert!(stderr.contains("unrecognized subcommand"), "{stderr}");
 }
 
 #[test]
@@ -1465,7 +1441,7 @@ git commit -m "docs(unified-search): implementation record + live verification (
 |---|--------|---------|
 | 1 | `dt search "createApp"`（默认 all）Method 命中+分析+`app.js:32-36` | Task 10 u_all_world / u_human_format |
 | 2 | `dt search "云仓 支付" --world knowledge` Entity 命中+摘要+来源 | Task 10 u_knowledge（同语义） |
-| 3 | `dt search-kg` 报错引导 | Task 10 u_search_kg_stub |
+| 3 | `dt search-kg` → clap `unrecognized subcommand` | Task 10 u_search_kg_removed |
 | 4 | MCP dt_search 返回合法 JSON 含 llm_analysis/路径/行号 | Task 7 + Task 10 JSON 纯净断言 |
 | 5 | gRPC world="knowledge" 语义命中 | Task 8 proto/透传 + 人工 grpcurl 冒烟（可选） |
 | 6 | cargo test / clippy 基线 | 每任务 Step + Task 9/10 全量 |
