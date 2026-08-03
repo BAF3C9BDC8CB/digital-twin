@@ -261,18 +261,6 @@ enum Commands {
         project: Option<String>,
     },
 
-    /// Semantic search of KG nodes via Qdrant vector store.
-    ///
-    /// Usage: dt search-kg <query> [--limit 10]
-    SearchKg {
-        /// Search query string (positional).
-        query: String,
-
-        /// Limit results.
-        #[arg(long = "limit", default_value = "10")]
-        limit: usize,
-    },
-
     /// Build aggregated six-world context for a task.
     ///
     /// Usage: dt context <task> [--worlds ...] [--max-tokens ...]
@@ -1582,16 +1570,6 @@ async fn main() -> anyhow::Result<()> {
                 query, world, limit, json, project, graph, vector,
             )
             .await?;
-            return Ok(());
-        }
-
-        // ---- CLI mode: dt search-kg ----
-        Some(Commands::SearchKg { query, limit }) => {
-            tracing::info!("dt-daemon CLI: search-kg \"{query}\" --limit {limit}");
-            let graph = connect_graph().await;
-            let vector = connect_vector().await;
-            dt_daemon::interfaces::cli::build::handle_search_kg(query, limit, graph, vector)
-                .await?;
             return Ok(());
         }
 
