@@ -1,19 +1,19 @@
-//! SQLite backup and restore operations.
+//! SQLite 备份与恢复操作。
 //!
-//! Copies the SQLite snapshot database file to the backup directory.
-//! Falls back to a placeholder when the database file is not found.
+//! 将 SQLite 快照数据库文件复制到备份目录。
+//! 未找到数据库文件时回退到占位符。
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-/// Known SQLite database paths (checked in order).
+/// 已知的 SQLite 数据库路径（按顺序检查）。
 const SQLITE_CANDIDATES: &[&str] = &[
     "/var/lib/digital-twin/snapshots.db",
     "./data/snapshots.db",
     "/tmp/digital-twin/snapshots.db",
 ];
 
-/// Locate the active SQLite database path.
+/// 定位当前使用的 SQLite 数据库路径。
 fn find_database() -> Option<PathBuf> {
     for candidate in SQLITE_CANDIDATES {
         let path = PathBuf::from(candidate);
@@ -24,12 +24,12 @@ fn find_database() -> Option<PathBuf> {
     None
 }
 
-/// Copy the SQLite database to `{backup_dir}/sqlite.copy`.
+/// 将 SQLite 数据库复制到 `{backup_dir}/sqlite.copy`。
 ///
-/// Tries known paths for the snapshot database.  On failure writes a
-/// placeholder to maintain the backup structure.
+/// 依次尝试快照数据库的已知路径。失败时写入占位符，
+/// 以维持备份结构。
 ///
-/// Returns `(success, size_bytes)`.
+/// 返回 `(success, size_bytes)`。
 pub async fn copy_database(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let start = Instant::now();
     let copy_path = backup_dir.join("sqlite.copy");
@@ -54,7 +54,7 @@ pub async fn copy_database(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
         }
     }
 
-    // Fallback: write placeholder
+    // 兜底：写入占位符
     let placeholder = format!(
         "-- SQLite backup placeholder\n\
          -- Generated: {}\n\
@@ -76,9 +76,9 @@ pub async fn copy_database(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     Ok((false, size))
 }
 
-/// Restore SQLite database from `{backup_dir}/sqlite.copy`.
+/// 从 `{backup_dir}/sqlite.copy` 恢复 SQLite 数据库。
 ///
-/// Copies the backup file to the known database path.
+/// 将备份文件复制到已知的数据库路径。
 pub async fn restore_database(backup_dir: &Path) -> anyhow::Result<()> {
     let copy_path = backup_dir.join("sqlite.copy");
 
@@ -87,7 +87,7 @@ pub async fn restore_database(backup_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Check for placeholder (starts with "--")
+    // 检查是否为占位符（以 "--" 开头）
     let peek = tokio::fs::read_to_string(&copy_path)
         .await
         .unwrap_or_default();
@@ -98,14 +98,14 @@ pub async fn restore_database(backup_dir: &Path) -> anyhow::Result<()> {
 
     tracing::info!("正在从 {} 恢复 SQLite 数据库", copy_path.display());
 
-    // Restore to the first candidate path
+    // 恢复到第一个候选路径
     let target = SQLITE_CANDIDATES
         .iter()
         .map(PathBuf::from)
         .next()
         .unwrap_or_else(|| PathBuf::from("./data/snapshots.db"));
 
-    // Ensure parent directory exists
+    // 确保父目录存在
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -136,8 +136,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (_ok, size) = copy_database(dir.path())
             .await
-            .expect("copy should succeed");
-        // ok may be false if no sqlite db found (placeholder written)
+            .expect("复制应成功");
+        // 若未找到 sqlite 数据库，ok 可能为 false（已写入占位符）
         assert!(size > 0);
 
         let copy = dir.path().join("sqlite.copy");
@@ -150,7 +150,7 @@ mod tests {
     async fn restore_database_skips_missing_file() {
         let dir = TempDir::new().unwrap();
         let result = restore_database(dir.path()).await;
-        assert!(result.is_ok(), "should skip missing copy gracefully");
+        assert!(result.is_ok(), "缺少复制文件时应优雅跳过");
     }
 
     #[tokio::test]
@@ -160,7 +160,7 @@ mod tests {
             .await
             .unwrap();
         let result = restore_database(dir.path()).await;
-        assert!(result.is_ok(), "should skip placeholder");
+        assert!(result.is_ok(), "应跳过占位符");
     }
 
     #[tokio::test]

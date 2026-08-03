@@ -1,7 +1,7 @@
-//! Build + Search gRPC handlers for the DtCore service.
+//! DtCore 服务的 Build + Search gRPC 处理器。
 //!
-//! These handlers delegate to [`BuildServiceImpl`] and the vector/graph
-//! repository respectively, converting gRPC messages to/from domain types.
+//! 这些处理器分别委托给 [`BuildServiceImpl`] 与向量/图谱仓库，
+//! 并负责 gRPC 消息与领域类型之间的转换。
 
 use crate::application::context::search_mcp::CrossWorldSearchTrait;
 use crate::domain::traits::{BuildService, EmbedService, GraphRepository, RerankService, VectorRepository};
@@ -15,7 +15,7 @@ use tonic::Status;
 // handle_build
 // ---------------------------------------------------------------------------
 
-/// Handler for `Build` RPC — index a project or file into the vector store.
+/// `Build` RPC 的处理器——将项目或文件索引到向量库。
 pub async fn handle_build(
     req: BuildRequest,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -24,7 +24,7 @@ pub async fn handle_build(
     let start = Instant::now();
 
     let project_name = if req.name.is_empty() {
-        // Derive project name from path
+        // 从路径派生项目名
         let path = std::path::Path::new(&req.path);
         path.file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -37,21 +37,21 @@ pub async fn handle_build(
 
     if !project_path.exists() {
         return Err(Status::not_found(format!(
-            "path does not exist: {}",
+            "路径不存在: {}",
             req.path
         )));
     }
 
-    // Build the application-layer service
+    // 构建应用层服务
     let parser_registry = Arc::new(crate::infrastructure::parser::ParserRegistry::new());
     let service = crate::application::build::service::BuildServiceImpl::new(
         parser_registry,
         graph,
         vector,
-        None,  // snapshot — not required for gRPC build
-        None,  // embed — using noop
-        None,  // siliconflow — not wired through gRPC yet
-        false, // gRPC builds default to incremental
+        None,  // snapshot——gRPC 构建不需要
+        None,  // embed——使用 noop
+        None,  // siliconflow——尚未通过 gRPC 接入
+        false, // gRPC 构建默认增量
         BatchConfig::default(),
         false, // skip_embed
     );
@@ -66,7 +66,7 @@ pub async fn handle_build(
                 elapsed_secs: elapsed,
             })
         }
-        Err(e) => Err(Status::internal(format!("Build failed: {e}"))),
+        Err(e) => Err(Status::internal(format!("构建失败: {e}"))),
     }
 }
 
@@ -74,10 +74,10 @@ pub async fn handle_build(
 // handle_search
 // ---------------------------------------------------------------------------
 
-/// Handler for `Search` RPC — semantic code search.
+/// `Search` RPC 的处理器——语义代码搜索。
 ///
-/// Delegates to [`CrossWorldSearch`] which searches the code world via
-/// vector store (Qdrant) with a fallback to the knowledge graph.
+/// 委托给 [`CrossWorldSearch`]，它通过向量库（Qdrant）搜索
+/// 代码世界，并以知识图谱作为兜底。
 pub async fn handle_search(
     req: SearchRequest,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -91,7 +91,7 @@ pub async fn handle_search(
         10
     };
 
-    // Build embed service from environment variables using the provider router
+    // 使用 provider 路由，从环境变量构建 embed 服务
     let embed_svc = crate::infrastructure::embedder::create_embed_router(
         crate::infrastructure::embedder::ProviderConfig {
             siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
@@ -152,7 +152,7 @@ pub async fn handle_search(
     let cws_result = cws
         .search(&cws_req)
         .await
-        .map_err(|e| Status::internal(format!("Search failed: {e}")))?;
+        .map_err(|e| Status::internal(format!("搜索失败: {e}")))?;
 
     let results: Vec<SearchResult> = cws_result.hits.into_iter().map(hit_to_proto).collect();
 
@@ -166,7 +166,7 @@ pub async fn handle_search(
     })
 }
 
-/// Map a unified-contract hit to the proto message（全量字段，spec §7.3）。
+/// 将统一契约的命中结果映射为 proto 消息（全量字段，spec §7.3）。
 fn hit_to_proto(hit: crate::application::context::search_mcp::SearchHit) -> SearchResult {
     SearchResult {
         score: hit.score as f32,
@@ -207,7 +207,7 @@ fn hit_to_proto(hit: crate::application::context::search_mcp::SearchHit) -> Sear
 
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
     use crate::domain::types::HealthStatus;
 
-    /// A minimal graph repo that returns empty results.
+    /// 返回空结果的最小化图谱仓库。
     struct MockGraphRepo;
     #[async_trait::async_trait]
     impl GraphRepository for MockGraphRepo {
@@ -254,7 +254,7 @@ mod tests {
         };
         let resp = handle_search(req, None, None)
             .await
-            .expect("should succeed");
+            .expect("应成功");
         assert_eq!(resp.total, 0);
         assert!(resp.results.is_empty());
     }
@@ -276,7 +276,7 @@ mod tests {
         };
         let resp = handle_search(req, Some(graph), None)
             .await
-            .expect("should succeed");
+            .expect("应成功");
         assert!(resp.results.is_empty());
     }
 

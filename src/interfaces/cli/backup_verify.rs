@@ -1,18 +1,18 @@
-//! Backup verification and checksum management.
+//! 备份校验与校验和管理。
 //!
-//! Generates and validates SHA256 checksums for backup files.
+//! 为备份文件生成并校验 SHA256 校验和。
 
 use crate::interfaces::cli::backup::{VerifyFileResult, VerifyReport};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Instant;
 
-/// Regular files in a backup directory that should be checksummed.
+/// 备份目录中应计算校验和的常规文件。
 const BACKUP_FILES: &[&str] = &["memgraph.dump", "qdrant.snapshot", "sqlite.copy"];
 
-/// Generate SHA256 checksums for all backup files in a directory.
+/// 为目录中的所有备份文件生成 SHA256 校验和。
 ///
-/// Returns a map of `filename → sha256_hex`.
+/// 返回 `filename → sha256_hex` 的映射。
 pub async fn generate_checksums(
     backup_dir: &Path,
 ) -> anyhow::Result<std::collections::HashMap<String, String>> {
@@ -30,7 +30,7 @@ pub async fn generate_checksums(
         checksums.insert(file_name.to_string(), hash);
     }
 
-    // Write checksums file
+    // 写入校验和文件
     let checksum_path = backup_dir.join("checksums.sha256");
     let mut lines = Vec::new();
     for (name, hash) in &checksums {
@@ -41,7 +41,7 @@ pub async fn generate_checksums(
     Ok(checksums)
 }
 
-/// Compute SHA256 hash of a file.
+/// 计算文件的 SHA256 哈希。
 async fn compute_sha256(path: &Path) -> anyhow::Result<String> {
     let content = tokio::fs::read(path).await?;
     let mut hasher = Sha256::new();
@@ -49,15 +49,14 @@ async fn compute_sha256(path: &Path) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Verify all files in a backup directory against their stored checksums.
+/// 对照存储的校验和，校验备份目录中的所有文件。
 ///
-/// Reads `checksums.sha256` from the backup directory and validates
-/// each listed file.
+/// 从备份目录读取 `checksums.sha256`，并校验其中列出的每个文件。
 pub async fn verify_backup(backup_dir: &Path) -> anyhow::Result<VerifyReport> {
     let start = Instant::now();
     let checksum_path = backup_dir.join("checksums.sha256");
 
-    // Parse stored checksums
+    // 解析存储的校验和
     let content = tokio::fs::read_to_string(&checksum_path).await?;
     let expected: std::collections::HashMap<String, String> = content
         .lines()
@@ -82,11 +81,11 @@ pub async fn verify_backup(backup_dir: &Path) -> anyhow::Result<VerifyReport> {
                 Ok(hash) => (hash == *expected_hash, hash),
                 Err(e) => {
                     tracing::error!("计算 {} 的哈希值失败: {}", file_name, e);
-                    (false, format!("error: {e}"))
+                    (false, format!("错误: {e}"))
                 }
             }
         } else {
-            (false, "file not found".to_string())
+            (false, "文件未找到".to_string())
         };
 
         if !valid {
@@ -101,7 +100,7 @@ pub async fn verify_backup(backup_dir: &Path) -> anyhow::Result<VerifyReport> {
         });
     }
 
-    // Also verify files that exist but aren't in checksums (warn only)
+    // 同时校验存在但不在校验和中的文件（仅警告）
     for file_name in BACKUP_FILES {
         if !expected.contains_key(*file_name) && backup_dir.join(file_name).exists() {
             tracing::warn!("文件 {} 存在但不在 checksums.sha256 中", file_name);
@@ -126,7 +125,7 @@ mod tests {
     async fn generate_checksums_for_existing_files() {
         let dir = TempDir::new().unwrap();
 
-        // Create a test file
+        // 创建测试文件
         tokio::fs::write(dir.path().join("memgraph.dump"), b"test memgraph data")
             .await
             .unwrap();
@@ -138,9 +137,9 @@ mod tests {
 
         assert!(checksums.contains_key("memgraph.dump"));
         assert!(checksums.contains_key("qdrant.snapshot"));
-        assert!(!checksums.contains_key("sqlite.copy")); // doesn't exist
+        assert!(!checksums.contains_key("sqlite.copy")); // 该文件不存在
 
-        // Verify checksums file was written
+        // 确认校验和文件已写入
         let checksum_file = dir.path().join("checksums.sha256");
         assert!(checksum_file.exists());
     }
@@ -149,7 +148,7 @@ mod tests {
     async fn verify_backup_all_valid() {
         let dir = TempDir::new().unwrap();
 
-        // Create test files + checksums
+        // 创建测试文件与校验和
         tokio::fs::write(dir.path().join("memgraph.dump"), b"test memgraph data")
             .await
             .unwrap();
@@ -176,7 +175,7 @@ mod tests {
         assert!(report.all_valid);
         assert_eq!(report.files.len(), 2);
         for f in &report.files {
-            assert!(f.valid, "file {} should be valid", f.file_name);
+            assert!(f.valid, "文件 {} 应校验通过", f.file_name);
         }
     }
 
@@ -192,13 +191,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Write checksum for original
+        // 写入原始内容的校验和
         let checksum_content = format!("{}  memgraph.dump\n", original_hash);
         tokio::fs::write(dir.path().join("checksums.sha256"), checksum_content)
             .await
             .unwrap();
 
-        // Tamper with the file
+        // 篡改文件内容
         tokio::fs::write(dir.path().join("memgraph.dump"), b"tampered data")
             .await
             .unwrap();
@@ -219,6 +218,6 @@ mod tests {
     #[tokio::test]
     async fn compute_sha256_length() {
         let hash = compute_sha256(Path::new("Cargo.toml")).await.unwrap();
-        assert_eq!(hash.len(), 64); // SHA256 hex is 64 chars
+        assert_eq!(hash.len(), 64); // SHA256 十六进制为 64 个字符
     }
 }

@@ -1,16 +1,14 @@
-//! Dependency injection (DI) assembly for the daemon.
+//! 守护进程的依赖注入（DI）装配。
 //!
-//! Creates and wires all service implementations together, wrapping them
-//! with [`WriteCoordinator`] locks to prevent concurrent-write conflicts
-//! across the three ingestion sources (OpenCode hooks, manual builds, cron
-//! syncs).
+//! 创建并装配所有服务实现，并用 [`WriteCoordinator`] 锁包裹，
+//! 以防止三个写入源（OpenCode hooks、手动构建、cron 同步）
+//! 之间的并发写入冲突。
 //!
-//! Backend connections (Memgraph, Qdrant) are created lazily at wire-time by
-//! reading `config.yaml`.  If either backend is unreachable, the
-//! corresponding field in [`AppComponents`] is set to `None` — callers
-//! (e.g. the gRPC server) must fall back to no-op implementations.
-//! The SiliconFlow API client is also connected here; if unavailable it falls
-//! back to [`NoopEmbedService`] (zero-vector embedding).
+//! 后端连接（Memgraph、Qdrant）在 wire 时读取 `config.yaml` 惰性创建。
+//! 若任一后端不可达，[`AppComponents`] 中对应的字段被置为 `None`——
+//! 调用方（例如 gRPC 服务器）必须回退到 no-op 实现。
+//! SiliconFlow API 客户端也在此连接；若不可用则回退到
+//! [`NoopEmbedService`]（零向量嵌入）。
 
 use crate::application::build::service::BuildServiceImpl;
 use crate::application::hooks::engine::HookEngine;
@@ -26,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// config.yaml layout (library-internal, mirrors main.rs)
+// config.yaml 布局（库内部，与 main.rs 一致）
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -102,55 +100,54 @@ fn default_embed_url() -> String {
 // AppComponents
 // ---------------------------------------------------------------------------
 
-/// All top-level application components assembled by the DI container.
+/// DI 容器装配的所有顶层应用组件。
 ///
-/// Owns the `Arc<WriteCoordinator>` so that all services share the same
-/// coordinator instance.
+/// 持有 `Arc<WriteCoordinator>`，使所有服务共享同一个
+/// 协调器实例。
 pub struct AppComponents {
-    /// The coordinated build service (file/entity/global locks applied).
+    /// 协调后的构建服务（应用了文件/实体/全局锁）。
     pub build: Arc<dyn BuildService>,
-    /// The shared write coordinator. Exposed for cron-like consumers that
-    /// need to call `has_active_writes()` before starting a sync.
+    /// 共享的写协调器。暴露给类似 cron 的消费者，它们
+    /// 在开始同步前需要调用 `has_active_writes()`。
     pub coordinator: Arc<WriteCoordinator>,
-    /// Memgraph graph repository (None if connection failed).
+    /// Memgraph 图谱仓库（连接失败时为 None）。
     pub graph: Option<Arc<dyn GraphRepository>>,
-    /// Qdrant vector repository (None if connection failed).
+    /// Qdrant 向量仓库（连接失败时为 None）。
     pub vector: Option<Arc<dyn VectorRepository>>,
-    /// SiliconFlow embed service (None if unavailable — callers fall back).
+    /// SiliconFlow embed 服务（不可用时为 None——调用方自行回退）。
     pub embed: Option<Arc<dyn EmbedService>>,
-    /// Hook engine for event-driven knowledge graph writes.
-    /// None if event-hooks.yaml is missing or malformed.
+    /// 事件驱动的知识图谱写入 hook 引擎。
+    /// 若 event-hooks.yaml 缺失或格式错误则为 None。
     pub hook_engine: Option<Arc<HookEngine>>,
 }
 
 // ---------------------------------------------------------------------------
-// DI assembly
+// DI 装配
 // ---------------------------------------------------------------------------
 
-/// Assemble all application components.
+/// 装配所有应用组件。
 ///
-/// Reads `config.yaml` (falling back through the usual search paths) and
-/// attempts to connect to Memgraph and Qdrant.  If either backend is
-/// unreachable the corresponding `AppComponents` field is left as `None`
-/// so callers can fall back to no-op implementations.
+/// 读取 `config.yaml`（通过常规搜索路径回退），并尝试连接
+/// Memgraph 与 Qdrant。若任一后端不可达，对应的 `AppComponents`
+/// 字段保持为 `None`，调用方可回退到 no-op 实现。
 pub async fn wire() -> AppComponents {
-    // ---- Write coordinator ----
-    // Use `with_global_lock()` so that full builds serialise against all
-    // file-level and entity-level writers.
+    // ---- 写协调器 ----
+    // 使用 `with_global_lock()`，使全量构建与所有
+    // 文件级、实体级写入方串行化。
     let coordinator = Arc::new(WriteCoordinator::with_global_lock());
 
-    // ---- Storage backends (real connections, fall back to None) ----
+    // ---- 存储后端（真实连接，失败回退为 None） ----
     let graph = connect_graph().await;
     let vector = connect_vector().await;
     let embed = connect_embed().await;
 
-    // Snapshot backend is optional; the pipeline adapts.
+    // 快照后端是可选的；流水线会自行适配。
     let snapshot: Option<Arc<dyn SnapshotRepository>> = None;
 
-    // ---- Parser registry (all language parsers) ----
+    // ---- 解析器注册表（所有语言解析器） ----
     let parser_registry = Arc::new(ParserRegistry::new());
 
-    // ---- Build service (inner, un-coordinated) ----
+    // ---- 构建服务（内部、未协调） ----
     let batch_config = BatchConfig::default();
     let build_inner = Arc::new(BuildServiceImpl::new(
         parser_registry,
@@ -158,36 +155,36 @@ pub async fn wire() -> AppComponents {
         vector.clone(),
         snapshot,
         embed.clone(),
-        None,  // siliconflow — not wired through gRPC yet
-        false, // gRPC builds default to incremental
+        None,  // siliconflow——尚未通过 gRPC 接入
+        false, // gRPC 构建默认增量
         batch_config,
         false, // skip_embed
     ));
 
-    // ---- Wrap with WriteCoordinator ----
+    // ---- 用 WriteCoordinator 包裹 ----
     let build = Arc::new(CoordinatedBuildService::new(
         build_inner,
         Arc::clone(&coordinator),
     )) as Arc<dyn BuildService>;
 
-    // ---- Hook engine (event-driven side effects) ----
+    // ---- Hook 引擎（事件驱动副作用） ----
     let hook_engine = graph.as_ref().and_then(|g| {
         let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
         match HookRegistry::from_file(&path) {
             Ok(registry) => {
-                tracing::info!("HookRegistry loaded from {}", path.display());
+                tracing::info!("从 {} 加载了 HookRegistry", path.display());
                 let registry = Arc::new(registry);
                 Some(Arc::new(HookEngine::new(registry, g.clone())))
             }
             Err(e) => {
-                tracing::warn!("failed to load {}: {e}", path.display());
+                tracing::warn!("加载 {} 失败: {e}", path.display());
                 None
             }
         }
     });
 
     tracing::info!(
-        "DI assembly complete: 1 service(s) wired (graph={}, vector={}, hooks={})",
+        "DI 装配完成: 已装配 1 个服务 (graph={}, vector={}, hooks={})",
         graph.is_some(),
         vector.is_some(),
         hook_engine.is_some(),
@@ -204,10 +201,10 @@ pub async fn wire() -> AppComponents {
 }
 
 // ---------------------------------------------------------------------------
-// config helpers (mirrors main.rs)
+// 配置辅助函数（与 main.rs 一致）
 // ---------------------------------------------------------------------------
 
-/// Load configuration from `~/.config/digital-twin/config.yaml`.
+/// 从 `~/.config/digital-twin/config.yaml` 加载配置。
 fn load_config() -> Option<DaemonConfig> {
     let path = dirs_like_home_config(".config/digital-twin/config.yaml")?;
     if !path.exists() {
@@ -216,32 +213,32 @@ fn load_config() -> Option<DaemonConfig> {
     match std::fs::read_to_string(&path) {
         Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
             Ok(cfg) => {
-                tracing::info!("loaded config from {}", path.display());
+                tracing::info!("从 {} 加载了配置", path.display());
                 Some(cfg)
             }
             Err(e) => {
-                tracing::warn!("failed to parse {}: {e}", path.display());
+                tracing::warn!("解析 {} 失败: {e}", path.display());
                 None
             }
         },
         Err(e) => {
-            tracing::warn!("failed to read {}: {e}", path.display());
+            tracing::warn!("读取 {} 失败: {e}", path.display());
             None
         }
     }
 }
 
-/// Resolve `~/.config/...` without pulling in the `dirs` crate.
+/// 解析 `~/.config/...` 路径，不引入 `dirs` crate。
 fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(suffix))
 }
 
-/// Resolve the Memgraph Bolt URI from config.yaml `services.graph`.
+/// 从 config.yaml `services.graph` 解析 Memgraph Bolt URI。
 ///
-/// If `url` is set but uses HTTP scheme (e.g. `http://localhost:7474`),
-/// converts it to Bolt (`bolt://localhost:7687`).  If no URL is configured,
-/// returns the default `bolt://localhost:7687`.
+/// 若 `url` 已设置但使用 HTTP 协议（例如 `http://localhost:7474`），
+/// 则转换为 Bolt（`bolt://localhost:7687`）。若未配置 URL，
+/// 返回默认值 `bolt://localhost:7687`。
 fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     match &cfg.url {
         Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
@@ -262,7 +259,7 @@ fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
     }
 }
 
-/// Connect to Memgraph using values from config.yaml (or sensible defaults).
+/// 使用 config.yaml（或合理默认值）中的值连接 Memgraph。
 async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
@@ -272,17 +269,17 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
     {
         Ok(client) => {
-            tracing::info!("Memgraph connected: {}", bolt_url);
+            tracing::info!("已连接 Memgraph: {}", bolt_url);
             Some(Arc::new(client) as Arc<dyn GraphRepository>)
         }
         Err(e) => {
-            tracing::warn!("Memgraph connection failed (will use noop): {}", e);
+            tracing::warn!("Memgraph 连接失败（将使用 noop）: {}", e);
             None
         }
     }
 }
 
-/// Connect to Qdrant vector store using config.yaml (or sensible defaults).
+/// 使用 config.yaml（或合理默认值）连接 Qdrant 向量库。
 async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     let cfg = load_config()?;
     let qdrant_uri = cfg
@@ -294,21 +291,21 @@ async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
 
     match crate::infrastructure::qdrant::QdrantClient::connect(qdrant_uri).await {
         Ok(client) => {
-            tracing::info!("Qdrant connected: {}", qdrant_uri);
+            tracing::info!("已连接 Qdrant: {}", qdrant_uri);
             let repo = crate::infrastructure::qdrant::QdrantRepo::new(client);
             Some(Arc::new(repo) as Arc<dyn VectorRepository>)
         }
         Err(e) => {
-            tracing::warn!("Qdrant connection failed (will use noop): {}", e);
+            tracing::warn!("Qdrant 连接失败（将使用 noop）: {}", e);
             None
         }
     }
 }
 
-/// Connect to the embedding service using the provider router.
+/// 使用 provider 路由连接嵌入服务。
 ///
-/// Reads config from env vars with sensible defaults, building a
-/// [`EmbedProviderRouter`] that supports both SiliconFlow and XInference.
+/// 从环境变量读取配置并带合理默认值，构建同时支持
+/// SiliconFlow 与 XInference 的 [`EmbedProviderRouter`]。
 async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     use crate::infrastructure::embedder::ProviderConfig;
 
@@ -332,12 +329,12 @@ async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     };
 
     let router = crate::infrastructure::embedder::create_embed_router(provider_cfg);
-    tracing::info!("Embed provider router created (siliconflow, from env)");
+    tracing::info!("已创建 Embed provider 路由（siliconflow，来自环境变量）");
     Some(router)
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -348,7 +345,7 @@ mod tests {
     async fn wire_creates_components() {
         let components = wire().await;
         assert!(!components.coordinator.has_active_writes());
-        // In CI / test environments without config.yaml, graph and vector
-        // will be None — but the struct itself should always be built.
+        // 在 CI / 无 config.yaml 的测试环境中，graph 和 vector
+        // 会是 None——但结构体本身始终应构建成功。
     }
 }

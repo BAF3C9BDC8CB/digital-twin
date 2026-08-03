@@ -1,29 +1,29 @@
-//! Memgraph backup and restore operations.
+//! Memgraph 备份与恢复操作。
 //!
-//! Uses `mg_backup` CLI tool (preferred), `mgconsole` (Cypher-based fallback),
-//! or Docker-based execution.  Attempts local `mg_backup` first, then local
-//! `mgconsole`, then `docker exec memgraph-mage mg_backup` as fallback.
+//! 使用 `mg_backup` CLI 工具（首选）、`mgconsole`（基于 Cypher 的兜底），
+//! 或基于 Docker 的执行方式。先尝试本机 `mg_backup`，然后本机
+//! `mgconsole`，最后回退到 `docker exec memgraph-mage mg_backup`。
 //!
-//! When none is available the dump/restore is a no-op that logs a warning —
-//! the system is designed to be tolerant of partial tooling.
+//! 当所有工具都不可用时，dump/restore 为 no-op 并记录警告——
+//! 系统设计为可容忍部分工具缺失。
 
 use std::path::Path;
 use std::time::Instant;
 
-/// Which Memgraph method was detected at backup time.
+/// 备份时检测到的 Memgraph 方式。
 #[derive(Debug, Clone)]
 enum MemgraphMethod {
-    /// Local `mg_backup` binary.
+    /// 本机 `mg_backup` 二进制。
     MgBackup,
-    /// Local `mgconsole` binary.
+    /// 本机 `mgconsole` 二进制。
     Mgconsole,
-    /// Docker-based: `docker exec memgraph-mage mg_backup`.
+    /// 基于 Docker：`docker exec memgraph-mage mg_backup`。
     Docker,
 }
 
-/// Detect the available Memgraph backup method.
+/// 检测可用的 Memgraph 备份方式。
 fn detect_method() -> Option<MemgraphMethod> {
-    // 1. Local mg_backup binary
+    // 1. 本机 mg_backup 二进制
     if std::process::Command::new("which")
         .arg("mg_backup")
         .output()
@@ -33,7 +33,7 @@ fn detect_method() -> Option<MemgraphMethod> {
         return Some(MemgraphMethod::MgBackup);
     }
 
-    // 2. Local mgconsole binary
+    // 2. 本机 mgconsole 二进制
     if std::process::Command::new("which")
         .arg("mgconsole")
         .output()
@@ -43,7 +43,7 @@ fn detect_method() -> Option<MemgraphMethod> {
         return Some(MemgraphMethod::Mgconsole);
     }
 
-    // 3. Docker container named memgraph or memgraph-mage
+    // 3. 名为 memgraph 或 memgraph-mage 的 Docker 容器
     if std::process::Command::new("docker")
         .args(["ps", "--filter", "name=memgraph", "--format", "{{.Names}}"])
         .output()
@@ -59,10 +59,10 @@ fn detect_method() -> Option<MemgraphMethod> {
     None
 }
 
-/// Resolve the actual Memgraph container name when running in Docker mode.
+/// 在 Docker 模式下解析实际的 Memgraph 容器名。
 ///
-/// Checks for `memgraph-mage` first (the common Memgraph MAGE image name),
-/// then falls back to `memgraph`.
+/// 先检查 `memgraph-mage`（常见的 Memgraph MAGE 镜像名），
+/// 然后回退到 `memgraph`。
 fn resolve_container_name() -> String {
     let output = std::process::Command::new("docker")
         .args([
@@ -83,13 +83,13 @@ fn resolve_container_name() -> String {
     "memgraph".to_string()
 }
 
-/// Dump Memgraph graph to `{backup_dir}/memgraph.dump`.
+/// 将 Memgraph 图谱导出到 `{backup_dir}/memgraph.dump`。
 ///
-/// Tries `mg_backup --output` (local or Docker) first, then falls back to
-/// `mgconsole --output-format cypherl` piped to a file.  On complete failure
-/// writes a placeholder + warning.
+/// 先尝试 `mg_backup --output`（本机或 Docker），然后回退到
+/// 将 `mgconsole --output-format cypherl` 输出写入文件。完全失败时
+/// 写入占位符并发出警告。
 ///
-/// Returns `(success, size_bytes)`.
+/// 返回 `(success, size_bytes)`。
 pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let start = Instant::now();
     let dump_path = backup_dir.join("memgraph.dump");
@@ -119,7 +119,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             tracing::warn!("mg_backup 导出失败: {stderr}");
         }
         Some(MemgraphMethod::Mgconsole) => {
-            // mgconsole can output Cypher queries for later replay
+            // mgconsole 可输出 Cypher 查询供日后重放
             let output = tokio::process::Command::new("mgconsole")
                 .args(["--output-format", "cypherl"])
                 .output()
@@ -142,7 +142,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
         Some(MemgraphMethod::Docker) => {
             let container = resolve_container_name();
 
-            // Try docker mg_backup first
+            // 先尝试 docker mg_backup
             let output = tokio::process::Command::new("docker")
                 .args([
                     "exec",
@@ -155,7 +155,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
                 .await?;
 
             if output.status.success() {
-                // Copy dump from container
+                // 从容器复制 dump
                 let copy = tokio::process::Command::new("docker")
                     .args([
                         "cp",
@@ -179,7 +179,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!("docker mg_backup 导出失败: {stderr}");
 
-            // Fallback: try docker mgconsole
+            // 兜底：尝试 docker mgconsole
             let console_output = tokio::process::Command::new("docker")
                 .args([
                     "exec",
@@ -213,7 +213,7 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
         }
     }
 
-    // Fallback: write a placeholder to maintain the backup structure
+    // 兜底：写入占位符以维持备份结构
     let placeholder = format!(
         "// Memgraph dump — placeholder\n\
          // Generated: {}\n\
@@ -233,29 +233,29 @@ pub async fn dump_graph(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     Ok((false, size))
 }
 
-/// Restore Memgraph graph from `{backup_dir}/memgraph.dump`.
+/// 从 `{backup_dir}/memgraph.dump` 恢复 Memgraph 图谱。
 ///
-/// Attempts restoration via `mg_backup --restore`, then `mgconsole -f` as
-/// fallback.  Skips if the dump file doesn't exist or is a placeholder.
+/// 先尝试通过 `mg_backup --restore` 恢复，然后以 `mgconsole -f` 作为
+/// 兜底。若 dump 文件不存在或是占位符则跳过。
 pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
     let dump_path = backup_dir.join("memgraph.dump");
 
     if !dump_path.exists() {
         tracing::warn!(
-            "Memgraph dump not found at {} — skipping",
+            "在 {} 未找到 Memgraph dump — 已跳过",
             dump_path.display()
         );
         return Ok(());
     }
 
-    // Check if file looks like a placeholder (starts with "//") — real
-    // mg_backup dumps are binary, mgconsole dumps start with Cypher.
+    // 检查文件是否像占位符（以 "//" 开头）——真实的
+    // mg_backup dump 是二进制，mgconsole dump 以 Cypher 开头。
     let peek = tokio::fs::read_to_string(&dump_path)
         .await
         .unwrap_or_default();
     if peek.starts_with("//") {
         tracing::info!(
-            "Memgraph dump is a placeholder, skipping restore: {}",
+            "Memgraph dump 是占位符，跳过恢复: {}",
             dump_path.display()
         );
         return Ok(());
@@ -281,7 +281,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
             }
         }
         Some(MemgraphMethod::Mgconsole) => {
-            // mgconsole reads Cypher commands from stdin
+            // mgconsole 从 stdin 读取 Cypher 命令
             let input = tokio::fs::read(&dump_path).await?;
 
             let mut child = tokio::process::Command::new("mgconsole")
@@ -293,7 +293,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
             use tokio::io::AsyncWriteExt;
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(&input).await?;
-                // Close stdin so mgconsole knows to exit
+                // 关闭 stdin，让 mgconsole 知道可以退出
                 drop(stdin);
             }
 
@@ -309,13 +309,13 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
         Some(MemgraphMethod::Docker) => {
             let container = resolve_container_name();
 
-            // Copy dump into container
+            // 将 dump 复制进容器
             let _ = tokio::process::Command::new("docker")
                 .args(["cp", dump_str, &format!("{container}:/tmp/memgraph.dump")])
                 .output()
                 .await?;
 
-            // Try mg_backup restore inside container
+            // 尝试在容器内执行 mg_backup 恢复
             let output = tokio::process::Command::new("docker")
                 .args([
                     "exec",
@@ -335,7 +335,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::warn!("docker mg_backup 恢复失败: {stderr}");
 
-            // Fallback: try mgconsole restore inside container
+            // 兜底：尝试在容器内执行 mgconsole 恢复
             let dump_data = tokio::fs::read(&dump_path).await?;
 
             let console_output = tokio::process::Command::new("docker")
@@ -381,8 +381,8 @@ mod tests {
     #[tokio::test]
     async fn dump_graph_writes_file() {
         let dir = TempDir::new().unwrap();
-        let (_ok, size) = dump_graph(dir.path()).await.expect("dump should succeed");
-        // ok may be false if no backup method is available (placeholder written)
+        let (_ok, size) = dump_graph(dir.path()).await.expect("dump 应成功");
+        // 若无可用备份方式，ok 可能为 false（已写入占位符）
         assert!(size > 0);
 
         let dump = dir.path().join("memgraph.dump");
@@ -395,24 +395,24 @@ mod tests {
     async fn restore_graph_skips_missing_file() {
         let dir = TempDir::new().unwrap();
         let result = restore_graph(dir.path()).await;
-        assert!(result.is_ok(), "should skip missing dump gracefully");
+        assert!(result.is_ok(), "缺少 dump 文件时应优雅跳过");
     }
 
     #[tokio::test]
     async fn restore_graph_skips_placeholder() {
         let dir = TempDir::new().unwrap();
-        // Write a placeholder dump
+        // 写入占位符 dump
         tokio::fs::write(dir.path().join("memgraph.dump"), "// placeholder dump\n")
             .await
             .unwrap();
         let result = restore_graph(dir.path()).await;
-        assert!(result.is_ok(), "should skip placeholder dump gracefully");
+        assert!(result.is_ok(), "应优雅跳过占位符 dump");
     }
 
     #[tokio::test]
     async fn restore_graph_reads_existing_file() {
         let dir = TempDir::new().unwrap();
-        // First dump, then restore
+        // 先导出，再恢复
         dump_graph(dir.path()).await.unwrap();
         let result = restore_graph(dir.path()).await;
         assert!(result.is_ok());

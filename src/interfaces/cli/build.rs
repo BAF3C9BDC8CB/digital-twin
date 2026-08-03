@@ -1,6 +1,6 @@
-//! CLI handlers for `dt build` and `dt search` commands.
+//! `dt build` 和 `dt search` 命令的 CLI 处理器。
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! 从 main.rs 抽取，保持入口文件精简。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,10 +23,10 @@ use crate::infrastructure::hanlp::HanlpClient;
 use crate::infrastructure::parser::ParserRegistry;
 use sha2::{Digest, Sha256};
 
-/// Handle `dt build` — index a project into the knowledge graph.
+/// 处理 `dt build`——将项目索引到知识图谱。
 ///
-/// All backend connections (Memgraph, Qdrant, embed, SQLite) must be established
-/// by the caller and passed as `Option<Arc<...>>`.
+/// 所有后端连接（Memgraph、Qdrant、embed、SQLite）必须由调用方
+/// 建立，并以 `Option<Arc<...>>` 传入。
 pub async fn handle_build(
     path: PathBuf,
     name: Option<String>,
@@ -40,7 +40,7 @@ pub async fn handle_build(
     batch_config: BatchConfig,
     hanlp: Option<Arc<HanlpClient>>,
 ) -> anyhow::Result<()> {
-    // Determine project name
+    // 确定项目名
     let project_name = name.unwrap_or_else(|| {
         path.file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -58,11 +58,11 @@ pub async fn handle_build(
         tracing::info!("构建: project={}, path={}", project_name, path.display(),);
     }
 
-    // Load pipeline config for embed settings
+    // 加载流水线配置以获取 embed 设置
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
     let skip_embed = !pipeline_config.processors.embed;
 
-    // Execute build via BuildCommand
+    // 通过 BuildCommand 执行构建
     let cmd = crate::application::build::builder::BuildCommand {
         project_path: path.clone(),
         project_name: project_name.clone(),
@@ -71,7 +71,7 @@ pub async fn handle_build(
         skip_embed,
     };
 
-    // Clone for pipeline use since BuildDependencies consumes the originals.
+    // 为流水线使用而克隆，因为 BuildDependencies 会消耗原始值。
     let pipeline_graph = graph
         .as_ref()
         .map(|g| Arc::clone(g) as Arc<dyn GraphRepository>);
@@ -82,14 +82,14 @@ pub async fn handle_build(
         .as_ref()
         .map(|e| Arc::clone(e) as Arc<dyn EmbedService>);
 
-    // Clone snapshots for pipeline use (consumed by BuildDependencies)
+    // 为流水线使用而克隆快照（会被 BuildDependencies 消耗）
     let pipeline_snapshot = snapshot
         .as_ref()
         .map(|s| Arc::clone(s) as Arc<dyn SnapshotRepository>);
 
-    // Create Phase 2 LLM client using the configured llm_provider.
-    // Resolves provider (XInference / SiliconFlow) and model name from
-    // pipeline.yaml, matching the same logic in run_pipeline_analysis.
+    // 使用配置的 llm_provider 创建第二阶段 LLM 客户端。
+    // 从 pipeline.yaml 解析 provider（XInference / SiliconFlow）与模型名，
+    // 与 run_pipeline_analysis 中的逻辑保持一致。
     let siliconflow = {
         use crate::infrastructure::siliconflow::SiliconFlowClient;
 
@@ -120,14 +120,14 @@ pub async fn handle_build(
                 let client = SiliconFlowClient::new(
                     base_url,
                     api_key,
-                    String::new(), // embed model — not needed for chat
-                    String::new(), // reranker model — not needed for chat
+                    String::new(), // embed 模型——聊天不需要
+                    String::new(), // reranker 模型——聊天不需要
                     llm_model,
                 );
                 Some(Arc::new(client))
             }
             _ => {
-                // Default: SiliconFlow
+                // 默认：SiliconFlow
                 let base_url = pipeline_config.inference_server.url.clone();
                 let api_key = load_siliconflow_api_key();
                 let llm_model = load_siliconflow_llm_model()
@@ -138,8 +138,8 @@ pub async fn handle_build(
                 let client = SiliconFlowClient::new(
                     base_url,
                     api_key,
-                    String::new(), // embed model — not needed for chat
-                    String::new(), // reranker model — not needed for chat
+                    String::new(), // embed 模型——聊天不需要
+                    String::new(), // reranker 模型——聊天不需要
                     llm_model,
                 );
                 Some(Arc::new(client))
@@ -159,7 +159,7 @@ pub async fn handle_build(
 
     cmd.run(deps).await?;
 
-    // ── Optional pipeline analysis (enhancement, not replacement) ────
+    // ── 可选的流水线分析（增强而非替代）────
     if pipeline {
         if let Err(e) = run_pipeline_analysis(
             &path,
@@ -179,11 +179,11 @@ pub async fn handle_build(
     Ok(())
 }
 
-/// Collect all text-bearing files from a directory recursively.
+/// 递归收集目录中所有含文本的文件。
 ///
-/// Skips hidden files/directories (names starting with `.`), binary files,
-/// and common non-text extensions.  Returns up to `MAX_PIPELINE_FILES`
-/// entries to avoid overwhelming the pipeline engine.
+/// 跳过隐藏文件/目录（以 `.` 开头的名称）、二进制文件
+/// 以及常见的非文本扩展名。最多返回 `MAX_PIPELINE_FILES`
+/// 个条目，以避免压垮流水线引擎。
 fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
     use walkdir::WalkDir;
 
@@ -194,7 +194,7 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
-            // Skip hidden files / directories.
+            // 跳过隐藏文件/目录。
             e.file_name()
                 .to_str()
                 .map(|s| !s.starts_with('.'))
@@ -209,7 +209,7 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
         if !entry.file_type().is_file() {
             continue;
         }
-        // Skip common binary / non-text extensions.
+        // 跳过常见的二进制/非文本扩展名。
         let skip_ext = [
             "png", "jpg", "jpeg", "gif", "svg", "ico", "woff2", "ttf", "eot", "pdf", "zip", "jar",
             "class", "o", "so", "dylib", "dll", "exe", "bin", "db", "sqlite",
@@ -228,8 +228,8 @@ fn collect_project_files(root: &Path) -> Vec<(PathBuf, String)> {
     files
 }
 
-/// Create an embed client for search, reading config from `config/pipeline.yaml`.
-/// Uses the provider router to support both SiliconFlow and XInference.
+/// 为搜索创建 embed 客户端，从 `config/pipeline.yaml` 读取配置。
+/// 使用 provider 路由同时支持 SiliconFlow 与 XInference。
 fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
     use crate::infrastructure::embedder::ProviderConfig;
 
@@ -290,7 +290,7 @@ fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService
     crate::infrastructure::embedder::create_rerank_router(provider_config_from_pipeline())
 }
 
-/// Read the SiliconFlow LLM model name from `config/pipeline.yaml`.
+/// 从 `config/pipeline.yaml` 读取 SiliconFlow LLM 模型名。
 fn load_siliconflow_llm_model() -> Option<String> {
     if let Ok(cfg) = PipelineConfig::load() {
         if let Some(providers) = cfg.providers {
@@ -304,16 +304,16 @@ fn load_siliconflow_llm_model() -> Option<String> {
     None
 }
 
-/// Read the SiliconFlow API key from `config/pipeline.yaml`,
-/// falling back to `SILICONFLOW_API_KEY` env var.
+/// 从 `config/pipeline.yaml` 读取 SiliconFlow API key，
+/// 未配置时回退到 `SILICONFLOW_API_KEY` 环境变量。
 fn load_siliconflow_api_key() -> String {
-    // Try env var first
+    // 优先尝试环境变量
     if let Ok(key) = std::env::var("SILICONFLOW_API_KEY") {
         if !key.is_empty() {
             return key;
         }
     }
-    // Try pipeline.yaml
+    // 再尝试 pipeline.yaml
     if let Ok(cfg) = PipelineConfig::load() {
         if let Some(providers) = cfg.providers {
             if let Some(sf) = providers.siliconflow {
@@ -326,10 +326,10 @@ fn load_siliconflow_api_key() -> String {
     String::new()
 }
 
-/// Run pipeline analysis on a project after the build completes.
+/// 构建完成后对项目运行流水线分析。
 ///
-/// This is a purely additive step — any error is logged as a warning and
-/// does **not** fail the overall build.
+/// 这是纯粹的附加步骤——任何错误仅记录为警告，
+/// **不会**导致整个构建失败。
 async fn run_pipeline_analysis(
     project_path: &Path,
     project_name: &str,
@@ -363,10 +363,10 @@ async fn run_pipeline_analysis(
         false
     };
 
-    // ── 3. Connect to inference server based on llm_provider config ───────
+    // ── 3. 根据 llm_provider 配置连接推理服务器 ────────────────
     let infer_max_concurrent = pipeline_config.inference_server.max_concurrent;
 
-    // Get the LLM provider from config
+    // 从配置中获取 LLM provider
     let llm_provider = pipeline_config
         .providers
         .as_ref()
@@ -406,8 +406,8 @@ async fn run_pipeline_analysis(
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "Qwen3-14B".to_string());
 
-            // R4: use the SiliconFlow provider URL — not the local
-            // inference_server.url. Empty falls back to the client's default.
+            // R4：使用 SiliconFlow provider 的 URL——而非本地的
+            // inference_server.url。为空时回退到客户端的默认值。
             let sf_url = pipeline_config
                 .providers
                 .as_ref()
@@ -435,7 +435,7 @@ async fn run_pipeline_analysis(
         }
     };
 
-    // ── 4. Build processor registry ───────────────────────────────
+    // ── 4. 构建处理器注册表 ───────────────────────────────
     let mut registry = ProcessorRegistry::new();
 
     if pipeline_config.processors.tree_sitter {
@@ -480,18 +480,18 @@ async fn run_pipeline_analysis(
         return Ok(());
     }
 
-    // ── 4. Run pipeline ───────────────────────────────────────────
+    // ── 4. 运行流水线 ───────────────────────────────────────────
     let registry = Arc::new(registry);
     let engine = ProcessorEngine::new(registry, pipeline_config.inference_server.max_concurrent);
 
     let all_files = collect_project_files(project_path);
     let total_count = all_files.len();
 
-    // ── Incremental skip: compute file hashes and build per-file, per-step skip map.
-    // Files where ALL steps are already done are excluded entirely.
-    // Files where SOME (but not all) steps are done get a skip map so the
-    // engine only executes the missing processors.
-    // Active step names correspond to the processors we registered above.
+    // ── 增量跳过：计算文件哈希并构建逐文件、逐步骤的跳过映射。
+    // 所有步骤都已完成的文件被完全排除。
+    // 部分（而非全部）步骤已完成的文件获得跳过映射，使
+    // 引擎只执行缺失的处理器。
+    // 活动步骤名与上面注册的处理器一一对应。
     let active_steps: Vec<&str> = {
         let mut steps = Vec::new();
         if pipeline_config.processors.tree_sitter {
@@ -512,7 +512,7 @@ async fn run_pipeline_analysis(
         steps
     };
 
-    // (path, text, rel_path, file_hash, steps_to_skip)
+    // (路径、文本、相对路径、文件哈希、待跳过步骤)
     type FileEntry = (PathBuf, String, String, String, HashSet<String>);
 
     let (files_to_process, skip_map, skipped_count): (Vec<FileEntry>, _, usize) =
@@ -547,15 +547,15 @@ async fn run_pipeline_analysis(
                             all_done = false;
                         }
                         Err(e) => {
-                            tracing::warn!("is_step_done failed for {}: {e}", rel_path);
+                            tracing::warn!("对 {} 的 is_step_done 检查失败: {e}", rel_path);
                             all_done = false;
                         }
                     }
                 }
 
-                // ── Dependency cascade: sink steps (store) depend on upstream producers.
-                // If a downstream step needs to run, its upstream producers must also run.
-                // Chain: store → {hanlp, llm} → chunk → tree_sitter
+                // ── 依赖级联：汇点步骤（store）依赖上游生产者。
+                // 若下游步骤需要运行，其上游生产者也必须运行。
+                // 链条：store → {hanlp, llm} → chunk → tree_sitter
                 {
                     let active_set: HashSet<&str> = active_steps.iter().copied().collect();
                     if active_set.contains("store") && !steps_to_skip.contains("store") {
@@ -576,9 +576,9 @@ async fn run_pipeline_analysis(
                 if all_done {
                     skipped += 1;
                 } else {
-                    // Only record non-empty skip sets in the map. Keys are
-                    // project-relative paths — the engine is fed relative
-                    // paths (see engine_input below).
+                    // 映射中只记录非空的跳过集合。键是
+                    // 项目相对路径——引擎接收的是相对
+                    // 路径（见下方的 engine_input）。
                     if !steps_to_skip.is_empty() {
                         skip.insert(PathBuf::from(&rel_path), steps_to_skip.clone());
                     }
@@ -587,7 +587,7 @@ async fn run_pipeline_analysis(
             }
             (pending, skip, skipped)
         } else {
-            // No snapshot → no incremental tracking; process all files
+            // 无快照 → 无增量跟踪；处理所有文件
             let pending: Vec<FileEntry> = all_files
                 .into_iter()
                 .map(|(p, t)| {
@@ -620,17 +620,17 @@ async fn run_pipeline_analysis(
         return Ok(());
     }
 
-    // Feed the engine (relative path, text) pairs. Relative paths are the
-    // canonical file identity in the pipeline: the chunk processor derives
-    // doc_id as `dt://doc/{project}/{rel_path}` (domain::id::make_document_id),
-    // matching the Document nodes written by earlier builds and the
-    // deleted_paths consumed by the build orchestration layer (§6.5).
+    // 向引擎输入（相对路径、文本）对。相对路径是流水线中
+    // 文件的规范标识：chunk 处理器以
+    // `dt://doc/{project}/{rel_path}` 派生 doc_id（domain::id::make_document_id），
+    // 与早期构建写入的 Document 节点以及构建编排层
+    // 消费的 deleted_paths（§6.5）保持一致。
     let engine_input: Vec<(PathBuf, String)> = files_to_process
         .iter()
         .map(|(_, t, rel, _, _)| (PathBuf::from(rel), t.clone()))
         .collect();
 
-    // Build skip map for the engine: only pass non-empty skip sets
+    // 为引擎构建跳过映射：仅传入非空的跳过集合
     let engine_skip: Option<Arc<HashMap<PathBuf, HashSet<String>>>> = if skip_map.is_empty() {
         None
     } else {
@@ -643,11 +643,10 @@ async fn run_pipeline_analysis(
     let success_count = analyses.iter().filter(|a| a.success).count();
     let error_count = analyses.len() - success_count;
 
-    // ── Mark successfully processed files' NEWLY EXECUTED steps as done.
-    // We only mark steps that were NOT in the per-file skip set (i.e. were
-    // actually executed by the engine), so that previously-skipped steps
-    // remain correctly recorded.
-    // Note: analyses carry relative paths (engine input contract above).
+    // ── 将成功处理文件的新执行步骤标记为完成。
+    // 我们只标记不在逐文件跳过集合中的步骤（即引擎实际
+    // 执行的步骤），从而让之前跳过的步骤保持正确记录。
+    // 注意：analyses 携带相对路径（上方 engine 输入约定）。
     if let Some(ref snap) = snapshot {
         for (_path, _text, rel_path, file_hash, steps_to_skip) in &files_to_process {
             let was_success = analyses
@@ -656,20 +655,20 @@ async fn run_pipeline_analysis(
             if was_success {
                 for step in &active_steps {
                     if steps_to_skip.contains(*step) {
-                        continue; // already marked from a previous run
+                        continue; // 之前运行时已标记
                     }
                     if let Err(e) = snap
                         .mark_step_done(project_name, rel_path, step, file_hash)
                         .await
                     {
-                        tracing::warn!("mark_step_done failed for {} step {}: {e}", rel_path, step,);
+                        tracing::warn!("对 {} 的 mark_step_done 失败, 步骤 {}: {e}", rel_path, step,);
                     }
                 }
             }
         }
     }
 
-    // Log per-file errors at debug level
+    // 在 debug 级别记录逐文件错误
     for analysis in &analyses {
         if !analysis.errors.is_empty() {
             let path_display = analysis.file_path.display();
@@ -691,11 +690,11 @@ async fn run_pipeline_analysis(
     Ok(())
 }
 
-/// Handle `dt build --all` — build multiple projects in sequence.
+/// 处理 `dt build --all`——按顺序构建多个项目。
 ///
-/// Iterates over a list of (project_name, project_path) tuples, calling
-/// `handle_build()` for each one. Errors are caught per-project and do
-/// not abort the batch. A summary is printed at the end.
+/// 遍历 (project_name, project_path) 元组列表，为每个项目调用
+/// `handle_build()`。错误按项目捕获，不会中断整个批次。
+/// 最后打印汇总。
 pub async fn handle_build_all(
     projects: Vec<(String, PathBuf)>,
     full: bool,
@@ -710,11 +709,11 @@ pub async fn handle_build_all(
     let mut succeeded = 0u32;
     let mut failed = 0u32;
 
-    println!("Building {} projects...", total);
+    println!("正在构建 {} 个项目...", total);
 
     for (i, (name, path)) in projects.into_iter().enumerate() {
-        let idx = i + 1; // 1-based display index
-        println!("[{idx}/{total}] Building {name} at {}", path.display());
+        let idx = i + 1; // 从 1 开始的显示序号
+        println!("[{idx}/{total}] 正在构建 {name}，路径 {}", path.display());
 
         match handle_build(
             path,
@@ -727,7 +726,7 @@ pub async fn handle_build_all(
             embed.clone(),
             snapshot.clone(),
             batch_config.clone(),
-            None, // hanlp — not passed in build-all context
+            None, // hanlp——build-all 场景下不传入
         )
         .await
         {
@@ -741,18 +740,18 @@ pub async fn handle_build_all(
             }
         }
 
-        // Brief pause between projects to let logs flush
+        // 项目之间短暂暂停，让日志落盘
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    println!("Done. {succeeded} succeeded, {failed} failed.");
+    println!("完成。{succeeded} 个成功, {failed} 个失败。");
 
     Ok(())
 }
 
-/// Extract embedded ASCII word sequences from a string that may mix
+/// 从可能混合的字符串中提取内嵌的 ASCII 单词序列
 
-/// Handle `dt search` — 统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
+/// 处理 `dt search`——统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
 pub async fn handle_search(
     query: String,
     world: String,
@@ -765,7 +764,7 @@ pub async fn handle_search(
     tracing::info!("搜索: query={query} world={world} limit={limit} json={json} project={project:?}");
 
     if !json {
-        println!("Search: query=\"{query}\" world={world} limit={limit}");
+        println!("搜索: query=\"{query}\" world={world} limit={limit}");
     }
 
     use crate::application::context::search_mcp::CrossWorldSearchTrait;

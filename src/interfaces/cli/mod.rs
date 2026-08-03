@@ -5,7 +5,7 @@ pub mod backup_sqlite;
 pub mod backup_verify;
 pub mod cleanup;
 
-// V3 architecture: extracted CLI command handlers
+// V3 架构：抽取的 CLI 命令处理器
 pub mod build;
 pub mod event;
 pub mod jcli;

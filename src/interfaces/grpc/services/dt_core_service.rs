@@ -1,9 +1,9 @@
-//! DtCoreServiceImpl — implements the generated `dt.core.DtCore` gRPC trait.
+//! DtCoreServiceImpl——实现生成的 `dt.core.DtCore` gRPC trait。
 //!
-//! This struct holds backend connections (graph, vector) and delegates each
-//! RPC method to the appropriate handler function in the sibling modules:
+//! 该结构持有后端连接（graph、vector），并将每个 RPC 方法
+//! 委托给兄弟模块中对应的处理函数：
 //!
-//! | RPC          | Handler module                |
+//! | RPC          | 处理器模块                     |
 //! |-------------|-------------------------------|
 //! | `Build`      | [`build_service::handle_build`] |
 //! | `Search`     | [`build_service::handle_search`] |
@@ -21,10 +21,10 @@ use tonic::{Request, Response, Status};
 
 use super::{build_service, knowledge_service, memory_service, sync_service};
 
-/// gRPC service implementation for `dt.core.DtCore`.
+/// `dt.core.DtCore` 的 gRPC 服务实现。
 ///
-/// Holds optional backend connections. When a backend is `None`, RPCs that
-/// require it will return `Status::UNAVAILABLE`.
+/// 持有可选的后端连接。当某后端为 `None` 时，依赖它的 RPC
+/// 将返回 `Status::UNAVAILABLE`。
 #[derive(Clone)]
 pub struct DtCoreServiceImpl {
     pub graph: Option<Arc<dyn GraphRepository>>,
@@ -34,7 +34,7 @@ pub struct DtCoreServiceImpl {
 }
 
 impl DtCoreServiceImpl {
-    /// Create a new service instance with the given backends.
+    /// 使用给定的后端创建新的服务实例。
     pub fn new(
         graph: Option<Arc<dyn GraphRepository>>,
         vector: Option<Arc<dyn VectorRepository>>,
@@ -106,7 +106,7 @@ impl DtCore for DtCoreServiceImpl {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

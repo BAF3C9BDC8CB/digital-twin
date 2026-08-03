@@ -1,10 +1,10 @@
-//! CLI handler for `dt kub` — Kubernetes operations (pods, logs, download, status).
+//! `dt kub` 的 CLI 处理器——Kubernetes 操作（pods、logs、download、status）。
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! 从 main.rs 抽取，保持入口文件精简。
 
-/// Handle `dt kub` — native K8s operations via kublog.
+/// 处理 `dt kub`——通过 kublog 进行原生 K8s 操作。
 ///
-/// `k8s_cfg` must be pre-resolved from config by the caller.
+/// `k8s_cfg` 必须由调用方从配置中预先解析。
 pub async fn handle_kub(
     action: String,
     namespace: String,
@@ -39,7 +39,7 @@ pub async fn handle_kub(
                 let p = match pod.as_deref() {
                     Some(p) => p,
                     None => {
-                        eprintln!("error: --pod is required for logs");
+                        eprintln!("错误：logs 需要 --pod 参数");
                         return Ok(());
                     }
                 };
@@ -56,14 +56,14 @@ pub async fn handle_kub(
                 let p = match pod.as_deref() {
                     Some(p) => p,
                     None => {
-                        eprintln!("error: --pod is required for download");
+                        eprintln!("错误：download 需要 --pod 参数");
                         return Ok(());
                     }
                 };
                 let out = match output.as_deref() {
                     Some(o) => o,
                     None => {
-                        eprintln!("error: -o/--output is required for download");
+                        eprintln!("错误：download 需要 -o/--output 参数");
                         return Ok(());
                     }
                 };
@@ -82,12 +82,12 @@ pub async fn handle_kub(
             },
             other => {
                 eprintln!(
-                    "Unknown kub action: {other}. \
-                         Supported: pods, deploy, svc, logs, download, status"
+                    "未知的 kub 操作: {other}. \
+                         支持的操作: pods、deploy、svc、logs、download、status"
                 );
             }
         },
-        Err(e) => eprintln!("K8s connection failed: {e}"),
+        Err(e) => eprintln!("K8s 连接失败: {e}"),
     }
 
     Ok(())

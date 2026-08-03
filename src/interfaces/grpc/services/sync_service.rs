@@ -1,7 +1,7 @@
-//! Sync gRPC handler for the DtCore service.
+//! DtCore 服务的 Sync gRPC 处理器。
 //!
-//! Delegates to [`KgBridge`] to synchronise knowledge-graph nodes into the
-//! Qdrant vector store for semantic search.
+//! 委托 [`KgBridge`] 将知识图谱节点同步到
+//! Qdrant 向量库，用于语义搜索。
 
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 use crate::proto::dt::core::*;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tonic::Status;
 
-/// Handler for `Sync` RPC — sync KG nodes to vector store.
+/// `Sync` RPC 的处理器——将 KG 节点同步到向量库。
 pub async fn handle_sync(
     req: SyncRequest,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -18,14 +18,14 @@ pub async fn handle_sync(
 ) -> Result<SyncResponse, Status> {
     let start = Instant::now();
 
-    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
+    let graph = graph.ok_or_else(|| Status::unavailable("图后端不可用"))?;
 
     let vector =
-        vector.ok_or_else(|| Status::unavailable("Qdrant vector backend not available"))?;
+        vector.ok_or_else(|| Status::unavailable("Qdrant 向量后端不可用"))?;
 
-    // Use real SiliconFlow embed API if available, fall back to zero-vector noop.
+    // 若可用则使用真实的 SiliconFlow embed API，否则回退到零向量 noop。
     let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {
-        tracing::warn!("SiliconFlow unavailable, sync will produce zero-vector embeddings");
+        tracing::warn!("SiliconFlow 不可用，同步将产生零向量嵌入");
         Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
     });
 
@@ -46,12 +46,12 @@ pub async fn handle_sync(
                 elapsed_secs: elapsed,
             })
         }
-        Err(e) => Err(Status::internal(format!("Sync failed: {e}"))),
+        Err(e) => Err(Status::internal(format!("同步失败: {e}"))),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

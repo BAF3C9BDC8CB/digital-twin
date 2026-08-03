@@ -1,21 +1,21 @@
-//! CLI handler for `dt event` — fire a named hook with a JSON context.
+//! `dt event` 的 CLI 处理器——以 JSON 上下文触发指定 hook。
 //!
-//! Calls `hook_engine.fire(hook_name, context)` directly instead of
-//! routing through the old MemoryService dispatcher.
+//! 直接调用 `hook_engine.fire(hook_name, context)`，不再经由
+//! 旧的 MemoryService 分发器路由。
 
 use std::sync::Arc;
 
 use crate::application::hooks::{HookContext, HookEngine};
 use crate::application::sync::kg_bridge::KgBridge;
 
-/// Handle `dt event` — fires a named hook.
+/// 处理 `dt event`——触发指定 hook。
 ///
-/// `hook_name` identifies the hook (e.g. `code_modified`,
-/// `jenkins_deploy_completed`). `context_json` is a JSON object with
-/// fields that the hook's side-effect templates can reference.
+/// `hook_name` 标识 hook（例如 `code_modified`、
+/// `jenkins_deploy_completed`）。`context_json` 是 JSON 对象，
+/// hook 副作用模板可引用其中的字段。
 ///
-/// `kg_bridge` triggers an incremental sync to Qdrant after the hook
-/// fires, picking up any nodes created/mutated by the event.
+/// hook 触发后，`kg_bridge` 会触发对 Qdrant 的增量同步，
+/// 拾取事件创建/修改的节点。
 pub async fn handle_event(
     hook_name: String,
     context_json: String,
@@ -27,7 +27,7 @@ pub async fn handle_event(
     let engine = match hook_engine {
         Some(e) => e,
         None => {
-            eprintln!("Hook engine not available — event cannot be fired");
+            eprintln!("Hook 引擎不可用——无法触发事件");
             return Ok(());
         }
     };
@@ -35,7 +35,7 @@ pub async fn handle_event(
     let ctx: HookContext = match serde_json::from_str(&context_json) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Failed to parse context JSON: {e}");
+            eprintln!("解析 context JSON 失败: {e}");
             return Ok(());
         }
     };
@@ -44,23 +44,23 @@ pub async fn handle_event(
     for r in &results {
         if !r.success {
             tracing::warn!(
-                "[hook] {hook_name} failed for label {}: {}",
+                "[hook] {hook_name} 对标签 {} 触发失败: {}",
                 r.label,
-                r.error.as_deref().unwrap_or("unknown"),
+                r.error.as_deref().unwrap_or("未知"),
             );
         }
     }
 
-    println!("Event fired: hook={hook_name} results={}", results.len());
+    println!("事件已触发: hook={hook_name} results={}", results.len());
 
-    // ── Auto-sync to Qdrant (background, non-blocking) ────────────
-    // HookEngine::fire writes nodes with _kg_synced_at = NULL, so an
-    // incremental sync picks them all up.  We spawn this on a background
-    // task so the CLI returns immediately.
+    // ── 自动同步到 Qdrant（后台、非阻塞）──────────────────────
+    // HookEngine::fire 写入节点时 _kg_synced_at 为 NULL，因此
+    // 增量同步会拾取全部节点。我们在后台任务中执行，
+    // 以便 CLI 立即返回。
     if let Some(bridge) = kg_bridge {
         tokio::spawn(async move {
             if let Err(e) = bridge.sync_incremental().await {
-                tracing::warn!("[auto-sync] bg incremental sync failed: {e}");
+                tracing::warn!("[auto-sync] 后台增量同步失败: {e}");
             }
         });
     }

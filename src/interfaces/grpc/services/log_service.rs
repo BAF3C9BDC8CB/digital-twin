@@ -1,15 +1,15 @@
-//! LogService gRPC implementation (stub — proto not yet compiled).
+//! LogService gRPC 实现（桩实现——proto 尚未编译）。
 //!
-//! Once `proto/log.proto` is compiled via tonic-build, the generated
-//! `LogService` trait will be implemented here.
+//! 当 `proto/log.proto` 通过 tonic-build 编译后，生成的
+//! `LogService` trait 将在此实现。
 //!
-//! Current approach: the Rust daemon's JSON-file writer handles all log
-//! aggregation directly. The gRPC `StreamLogs` endpoint will forward
-//! external (Python) log entries to the same tracing pipeline.
+//! 当前方案：Rust 守护进程的 JSON 文件写入器直接处理所有日志
+//! 聚合。gRPC `StreamLogs` 端点将把外部（Python）日志条目转发到
+//! 同一 tracing 管线。
 
-/// LogService handler.
+/// LogService 处理器。
 ///
-/// # Future (when proto compilation is enabled)
+/// # 未来（启用 proto 编译时）
 ///
 /// ```ignore
 /// #[tonic::async_trait]
@@ -28,11 +28,11 @@ impl LogServiceImpl {
         Self
     }
 
-    /// Write a log entry to the daemon's JSON-line file via the tracing pipeline.
+    /// 通过 tracing 管线将日志条目写入守护进程的 JSON 行文件。
     ///
-    /// This is used by the Python `GrpcLogHandler` to forward log entries.
-    /// The entry is re-emitted through `tracing` so it appears in the same
-    /// JSON file.
+    /// 供 Python 的 `GrpcLogHandler` 转发日志条目使用。
+    /// 该条目会通过 `tracing` 重新发出，从而出现在同一个
+    /// JSON 文件中。
     pub fn handle_entry(
         &self,
         level: &str,

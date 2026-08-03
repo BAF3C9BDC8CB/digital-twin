@@ -1,5 +1,5 @@
-//! CLI handler for `dt jc-sync` — synchronise Jenkins Views, Jobs, Builds
-//! into the knowledge graph.
+//! `dt jc-sync` 的 CLI 处理器——将 Jenkins Views、Jobs、Builds
+//! 同步到知识图谱。
 
 use std::sync::Arc;
 
@@ -8,10 +8,10 @@ use crate::application::sync::jenkins::JobSyncSource;
 use crate::application::sync::traits::SyncSource;
 use crate::domain::traits::GraphRepository;
 
-/// Handle `dt jc-sync` — synchronise Jenkins data into the KG.
+/// 处理 `dt jc-sync`——将 Jenkins 数据同步到 KG。
 ///
-/// `job` — optional job name filter. If set, only syncs that job.
-/// `graph` must be pre-connected.
+/// `job`——可选的作业名过滤器。设置后仅同步该作业。
+/// `graph` 必须已预先连接。
 pub async fn handle_jenkins_sync(
     job: Option<String>,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -24,7 +24,7 @@ pub async fn handle_jenkins_sync(
         jenkins_user,
         jenkins_token,
     ));
-    tracing::info!("jenkins-sync starting: job={job:?}");
+    tracing::info!("jenkins-sync 开始: job={job:?}");
 
     let source = JobSyncSource::new(client, job);
 
@@ -33,12 +33,12 @@ pub async fn handle_jenkins_sync(
             let report = match source.sync(g).await {
                 Ok(r) => r,
                 Err(e) => {
-                    tracing::error!("jenkins-sync failed: {e}");
+                    tracing::error!("jenkins-sync 失败: {e}");
                     return Err(e.into());
                 }
             };
             println!(
-                "  ✓ {} views, {} jobs linked, {} builds ({} total ops, {}ms)",
+                "  ✓ {} 个视图, {} 个作业已关联, {} 个构建 (共 {} 次操作, {}ms)",
                 report.namespaces,
                 report.configs,
                 report.items_created,
@@ -52,11 +52,11 @@ pub async fn handle_jenkins_sync(
             }
         }
         None => {
-            eprintln!("  ✗ Graph database unavailable — skipping");
+            eprintln!("  ✗ 图数据库不可用——已跳过");
         }
     }
 
-    println!("\n✓ Jenkins sync complete");
-    tracing::info!("jenkins-sync complete");
+    println!("\n✓ Jenkins 同步完成");
+    tracing::info!("jenkins-sync 完成");
     Ok(())
 }

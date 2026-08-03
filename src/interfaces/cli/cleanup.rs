@@ -1,13 +1,13 @@
-//! Schema validation and data cleanup CLI implementation.
+//! 模式校验与数据清理的 CLI 实现。
 //!
-//! Provides:
-//! - `dt schema init`    — idempotent schema initialization (constraints + indexes)
-//! - `dt clean --confirm` — wipe all data across Memgraph, Qdrant, and SQLite
-//! - `dt cleanup --targets reasoning` — clean stale Reasoning nodes (Observation/Analysis/Decision)
-//! - `dt cleanup --targets memory`    — archive Memory events beyond retention
-//! - `dt cleanup --targets snapshots` — remove orphaned SQLite snapshot rows
-//! - `dt cleanup --targets all`       — run all cleanup targets
-//! - `dt health`         — check health of all backend services
+//! 提供：
+//! - `dt schema init`    — 幂等的模式初始化（约束 + 索引）
+//! - `dt clean --confirm` — 清空 Memgraph、Qdrant 与 SQLite 中的所有数据
+//! - `dt cleanup --targets reasoning` — 清理陈旧的 Reasoning 节点（Observation/Analysis/Decision）
+//! - `dt cleanup --targets memory`    — 归档超出保留期的 Memory 事件
+//! - `dt cleanup --targets snapshots` — 删除孤立的 SQLite 快照行
+//! - `dt cleanup --targets all`       — 运行所有清理目标
+//! - `dt health`         — 检查所有后端服务的健康状态
 
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::HealthStatus;
@@ -19,11 +19,11 @@ use std::time::Instant;
 // dt schema init
 // ---------------------------------------------------------------------------
 
-/// Run `dt schema init` — creates all constraints and indexes via Memgraph.
+/// 运行 `dt schema init`——通过 Memgraph 创建所有约束和索引。
 ///
-/// When `graph` is `None`, falls back to `NoopGraphRepo` (no-op, for testing).
+/// 当 `graph` 为 `None` 时，回退到 `NoopGraphRepo`（no-op，供测试使用）。
 pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
-    println!("Initializing V2 schema...");
+    println!("正在初始化 V2 模式...");
     let report: SchemaInitReport = if let Some(g) = graph {
         init_schema(g).await?
     } else {
@@ -32,10 +32,10 @@ pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Res
     };
 
     println!();
-    println!("Schema initialization complete:");
-    println!("  Constraints created : {}", report.constraints_created);
-    println!("  Indexes created     : {}", report.indexes_created);
-    println!("  Elapsed             : {} ms", report.elapsed_ms);
+    println!("模式初始化完成:");
+    println!("  创建的约束        : {}", report.constraints_created);
+    println!("  创建的索引        : {}", report.indexes_created);
+    println!("  耗时              : {} ms", report.elapsed_ms);
 
     Ok(())
 }
@@ -44,25 +44,25 @@ pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Res
 // dt clean
 // ---------------------------------------------------------------------------
 
-/// Run `dt clean --confirm` — wipe all data from all backends.
+/// 运行 `dt clean --confirm`——清空所有后端的所有数据。
 ///
-/// Without `--confirm`, prints a warning and exits without making changes.
-/// With `--confirm`, proceeds to clean Memgraph, Qdrant, and SQLite.
+/// 未加 `--confirm` 时，打印警告并直接退出，不做任何修改。
+/// 加上 `--confirm` 后，将清理 Memgraph、Qdrant 与 SQLite。
 pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
     if !confirm {
-        eprintln!("DANGER: `dt clean` will delete ALL data from:");
-        eprintln!("  - Memgraph:  all nodes and relationships");
-        eprintln!("  - Qdrant: all vector collections");
-        eprintln!("  - SQLite: all file snapshots");
+        eprintln!("警告：`dt clean` 将删除以下所有数据：");
+        eprintln!("  - Memgraph：所有节点与关系");
+        eprintln!("  - Qdrant：所有向量集合");
+        eprintln!("  - SQLite：所有文件快照");
         eprintln!();
-        eprintln!("This operation is IRREVERSIBLE.");
-        eprintln!("Run with `--confirm` to proceed.");
+        eprintln!("此操作不可撤销。");
+        eprintln!("请使用 `--confirm` 参数继续。");
         return Ok(());
     }
 
     let total_start = Instant::now();
 
-    println!("Cleaning all data...");
+    println!("正在清理所有数据...");
     println!();
 
     // --- Memgraph ---
@@ -75,43 +75,43 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
 
     println!("Memgraph:");
     println!(
-        "  Nodes deleted         : {}",
+        "  删除的节点          : {}",
         memgraph_report.nodes_deleted
     );
     println!(
-        "  Relationships deleted : {}",
+        "  删除的关系          : {}",
         memgraph_report.relationships_deleted
     );
     println!(
-        "  Elapsed               : {} ms",
+        "  耗时                : {} ms",
         memgraph_report.elapsed_ms
     );
 
     // --- Qdrant ---
-    // NoopVectorRepo does not expose collection-management methods; in the
-    // real implementation this will call `QdrantClient::list_collections()`
-    // and delete each one.
+    // NoopVectorRepo 不暴露集合管理方法；在真实实现中，
+    // 这里会调用 `QdrantClient::list_collections()`
+    // 并逐个删除。
     let _vector = crate::infrastructure::qdrant::NoopVectorRepo;
     let qdrant_removed: usize = 0;
     println!();
     println!("Qdrant:");
     println!(
-        "  Collections removed   : {} (noop backend)",
+        "  移除的集合          : {} (noop 后端)",
         qdrant_removed
     );
 
     // --- SQLite ---
-    // No real SnapshotRepository wired yet; in the full implementation this
-    // will execute `DELETE FROM file_snapshots` via rusqlite.
+    // 尚未接入真实的 SnapshotRepository；在完整实现中，
+    // 这里将通过 rusqlite 执行 `DELETE FROM file_snapshots`。
     let snapshots_cleared = true;
     println!();
     println!("SQLite:");
     println!(
-        "  Snapshots cleared     : {} (noop backend)",
+        "  已清空的快照        : {} (noop 后端)",
         if snapshots_cleared { "yes" } else { "no" }
     );
 
-    // --- Combined report ---
+    // --- 汇总报告 ---
     let total_elapsed = total_start.elapsed().as_millis() as u64;
 
     let combined = CleanReport {
@@ -126,34 +126,34 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     };
 
     println!();
-    println!("Clean complete:");
-    println!("  Nodes deleted              : {}", combined.nodes_deleted);
+    println!("清理完成:");
+    println!("  删除的节点               : {}", combined.nodes_deleted);
     println!(
-        "  Relationships deleted      : {}",
+        "  删除的关系               : {}",
         combined.relationships_deleted
     );
     println!(
-        "  Qdrant collections removed : {}",
+        "  移除的 Qdrant 集合       : {}",
         combined.qdrant_collections_removed
     );
     println!(
-        "  Snapshots cleared          : {}",
+        "  已清空的快照             : {}",
         if combined.snapshots_cleared {
             "yes"
         } else {
             "no"
         }
     );
-    println!("  Total elapsed              : {} ms", combined.elapsed_ms);
+    println!("  总耗时                   : {} ms", combined.elapsed_ms);
 
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// check_health! macro — unified health check for any type with health_check()
+// check_health! 宏——对任何实现 health_check() 的类型做统一健康检查
 // ---------------------------------------------------------------------------
 
-/// Check health of any repository/service that exposes `health_check()`.
+/// 检查任何暴露 `health_check()` 方法的仓库/服务的健康状态。
 macro_rules! check_health {
     ($name:expr, $repo:expr) => {{
         let start = std::time::Instant::now();
@@ -162,25 +162,25 @@ macro_rules! check_health {
         match status {
             Ok(HealthStatus::Healthy) => (
                 true,
-                format!("✅ {:<8}: healthy ({} ms)", $name, latency_ms),
+                format!("✅ {:<8}: 健康 ({} ms)", $name, latency_ms),
             ),
             Ok(HealthStatus::Degraded(reason)) => (
                 false,
                 format!(
-                    "⚠️  {:<8}: degraded — {} ({} ms)",
+                    "⚠️  {:<8}: 降级 — {} ({} ms)",
                     $name, reason, latency_ms
                 ),
             ),
             Ok(HealthStatus::Unhealthy(reason)) => (
                 false,
                 format!(
-                    "❌ {:<8}: unhealthy — {} ({} ms)",
+                    "❌ {:<8}: 不健康 — {} ({} ms)",
                     $name, reason, latency_ms
                 ),
             ),
             Err(e) => (
                 false,
-                format!("❌ {:<8}: error — {} ({} ms)", $name, e, latency_ms),
+                format!("❌ {:<8}: 错误 — {} ({} ms)", $name, e, latency_ms),
             ),
         }
     }};
@@ -190,19 +190,19 @@ macro_rules! check_health {
 // dt health
 // ---------------------------------------------------------------------------
 
-/// Run `dt health` — check health of all backend services.
+/// 运行 `dt health`——检查所有后端服务的健康状态。
 ///
-/// Contacts Memgraph, Qdrant, SQLite
-/// availability and latency.
+/// 探测 Memgraph、Qdrant、SQLite 的
+/// 可用性与延迟。
 ///
-/// When a service is `None`, reports it as "no backend configured".
+/// 当某服务为 `None` 时，报告为"未配置后端"。
 pub async fn run_health(
     graph: Option<&dyn GraphRepository>,
     vector: Option<&dyn VectorRepository>,
     snapshot: Option<&dyn SnapshotRepository>,
     embed: Option<&dyn EmbedService>,
 ) -> anyhow::Result<()> {
-    println!("Checking backend health...");
+    println!("正在检查后端健康状态...");
     println!();
 
     let mut all_healthy = true;
@@ -211,7 +211,7 @@ pub async fn run_health(
     let (healthy, detail) = if let Some(g) = graph {
         check_health!("Memgraph", g)
     } else {
-        (false, "  ❌ Memgraph : no backend configured".to_string())
+        (false, "  ❌ Memgraph : 未配置后端".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -222,7 +222,7 @@ pub async fn run_health(
     let (healthy, detail) = if let Some(v) = vector {
         check_health!("Qdrant", v)
     } else {
-        (false, "  ❌ Qdrant   : no backend configured".to_string())
+        (false, "  ❌ Qdrant   : 未配置后端".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -233,7 +233,7 @@ pub async fn run_health(
     let (healthy, detail) = if let Some(s) = snapshot {
         check_health!("SQLite", s)
     } else {
-        (false, "  ❌ SQLite   : no backend configured".to_string())
+        (false, "  ❌ SQLite   : 未配置后端".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -246,7 +246,7 @@ pub async fn run_health(
     } else {
         (
             false,
-            "  ❌ SiliconFlow : no backend configured".to_string(),
+            "  ❌ SiliconFlow : 未配置后端".to_string(),
         )
     };
     println!("  {detail}");
@@ -256,16 +256,16 @@ pub async fn run_health(
 
     println!();
     if all_healthy {
-        println!("All backends healthy.");
+        println!("所有后端均健康。");
     } else {
-        println!("One or more backends are degraded or unhealthy.");
+        println!("有一个或多个后端降级或不健康。");
     }
 
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -276,16 +276,16 @@ mod tests {
     #[tokio::test]
     async fn run_schema_init_succeeds_with_noop() {
         let result = run_schema_init(None).await;
-        assert!(result.is_ok(), "schema init should succeed with noop repo");
+        assert!(result.is_ok(), "使用 noop 仓库时 schema init 应成功");
     }
 
     #[tokio::test]
     async fn run_clean_without_confirm_prints_warning() {
-        // Should not panic or error — it just warns and exits.
+        // 不应 panic 或报错——它只是警告并退出。
         let result = run_clean(false, None).await;
         assert!(
             result.is_ok(),
-            "clean without --confirm should succeed (just warns)"
+            "不带 --confirm 的 clean 应成功（仅警告）"
         );
     }
 
@@ -294,7 +294,7 @@ mod tests {
         let result = run_clean(true, None).await;
         assert!(
             result.is_ok(),
-            "clean --confirm should succeed with noop repo"
+            "使用 noop 仓库时 clean --confirm 应成功"
         );
     }
 
@@ -303,7 +303,7 @@ mod tests {
         let result = run_health(None, None, None, None).await;
         assert!(
             result.is_ok(),
-            "health check should succeed with noop repos"
+            "使用 noop 仓库时健康检查应成功"
         );
     }
 

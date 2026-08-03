@@ -1,7 +1,7 @@
-//! Knowledge (Memorize) gRPC handler for the DtCore service.
+//! DtCore 服务的 Knowledge（Memorize）gRPC 处理器。
 //!
-//! Delegates to [`DefaultKnowledgeService`] to persist Knowledge, Experience,
-//! Concept, Domain, and Playbook nodes into the knowledge graph.
+//! 委托 [`DefaultKnowledgeService`] 将 Knowledge、Experience、
+//! Concept、Domain、Playbook 节点持久化到知识图谱。
 
 use crate::application::knowledge::knowledge::service::{
     DefaultKnowledgeService, KnowledgeService,
@@ -12,12 +12,12 @@ use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::Status;
 
-/// Handler for `Memorize` RPC — write knowledge into the graph.
+/// `Memorize` RPC 的处理器——将知识写入图谱。
 pub async fn handle_memorize(
     req: MemorizeRequest,
     graph: Option<Arc<dyn GraphRepository>>,
 ) -> Result<common::Empty, Status> {
-    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
+    let graph = graph.ok_or_else(|| Status::unavailable("图后端不可用"))?;
 
     let svc = DefaultKnowledgeService::new(graph);
     let project = if req.project.is_empty() {
@@ -41,7 +41,7 @@ pub async fn handle_memorize(
             );
             svc.write_knowledge(&knowledge)
                 .await
-                .map_err(|e| Status::internal(format!("write_knowledge failed: {e}")))?;
+                .map_err(|e| Status::internal(format!("write_knowledge 失败: {e}")))?;
         }
         "experience" => {
             let experience = crate::application::knowledge::knowledge::experience_from_details(
@@ -51,7 +51,7 @@ pub async fn handle_memorize(
             );
             svc.write_experience(&experience)
                 .await
-                .map_err(|e| Status::internal(format!("write_experience failed: {e}")))?;
+                .map_err(|e| Status::internal(format!("write_experience 失败: {e}")))?;
         }
         "concept" => {
             let concept = crate::application::knowledge::knowledge::concept_from_details(
@@ -60,7 +60,7 @@ pub async fn handle_memorize(
             );
             svc.write_concept(&concept)
                 .await
-                .map_err(|e| Status::internal(format!("write_concept failed: {e}")))?;
+                .map_err(|e| Status::internal(format!("write_concept 失败: {e}")))?;
         }
         "domain" => {
             let domain = crate::application::knowledge::knowledge::domain_from_details(
@@ -69,7 +69,7 @@ pub async fn handle_memorize(
             );
             svc.write_domain(&domain)
                 .await
-                .map_err(|e| Status::internal(format!("write_domain failed: {e}")))?;
+                .map_err(|e| Status::internal(format!("write_domain 失败: {e}")))?;
         }
         "playbook" => {
             let playbook = crate::application::knowledge::knowledge::playbook_from_details(
@@ -79,13 +79,13 @@ pub async fn handle_memorize(
             );
             svc.write_playbook(&playbook)
                 .await
-                .map_err(|e| Status::internal(format!("write_playbook failed: {e}")))?;
+                .map_err(|e| Status::internal(format!("write_playbook 失败: {e}")))?;
         }
         other => {
             return Err(Status::invalid_argument(format!(
-                "unknown knowledge type: {other}. \
-                 Supported: decision, knowledgeadded, environment, dependencies, \
-                 experience, concept, domain, playbook"
+                "未知的知识类型: {other}. \
+                 支持的类型: decision、knowledgeadded、environment、dependencies、\
+                 experience、concept、domain、playbook"
             )));
         }
     }
@@ -94,7 +94,7 @@ pub async fn handle_memorize(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

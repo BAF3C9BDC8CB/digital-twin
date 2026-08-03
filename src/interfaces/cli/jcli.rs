@@ -1,15 +1,15 @@
-//! CLI handler for `dt jcli` — Jenkins CI/CD operations (list, params, history, log, build).
+//! `dt jcli` 的 CLI 处理器——Jenkins CI/CD 操作（list、params、history、log、build）。
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! 从 main.rs 抽取，保持入口文件精简。
 
 use std::sync::Arc;
 
 use crate::application::sync::jenkins::JobSyncSource;
 use crate::domain::traits::GraphRepository;
 
-/// Handle `dt jcli` — native Jenkins operations via jcli.
+/// 处理 `dt jcli`——通过 jcli 进行原生 Jenkins 操作。
 ///
-/// Jenkins credentials must be pre-resolved from config by the caller.
+/// Jenkins 凭据必须由调用方从配置中预先解析。
 pub async fn handle_jcli(
     action: String,
     job: Option<String>,
@@ -45,7 +45,7 @@ pub async fn handle_jcli(
             let j = match job.as_deref() {
                 Some(j) => j,
                 None => {
-                    eprintln!("error: --job is required for params");
+                    eprintln!("错误：params 需要 --job 参数");
                     return Ok(());
                 }
             };
@@ -58,7 +58,7 @@ pub async fn handle_jcli(
             let j = match job.as_deref() {
                 Some(j) => j,
                 None => {
-                    eprintln!("error: --job is required for history");
+                    eprintln!("错误：history 需要 --job 参数");
                     return Ok(());
                 }
             };
@@ -71,7 +71,7 @@ pub async fn handle_jcli(
             let j = match job.as_deref() {
                 Some(j) => j,
                 None => {
-                    eprintln!("error: --job is required for log");
+                    eprintln!("错误：log 需要 --job 参数");
                     return Ok(());
                 }
             };
@@ -84,11 +84,11 @@ pub async fn handle_jcli(
             let j = match job.as_deref() {
                 Some(j) => j,
                 None => {
-                    eprintln!("error: --job is required for build");
+                    eprintln!("错误：build 需要 --job 参数");
                     return Ok(());
                 }
             };
-            // Parse params string "k=v,k2=v2" → Vec<(&str, &str)>
+            // 解析 params 字符串 "k=v,k2=v2" → Vec<(&str, &str)>
             let parsed_params: Vec<(&str, &str)> = params
                 .as_deref()
                 .unwrap_or("")
@@ -96,14 +96,14 @@ pub async fn handle_jcli(
                 .filter(|s| !s.is_empty())
                 .filter_map(|s| s.split_once('='))
                 .collect();
-            // If env=production, add a comment
+            // 若 env=production，则添加提示
             if env == "production" {
-                println!("⚠️  Triggering production build for {j}");
+                println!("⚠️  正在为 {j} 触发生产构建");
             }
             match jenkins.trigger_build(j, &parsed_params).await {
                 Ok(out) => {
                     println!("{out}");
-                    // After successful build, incrementally sync this job
+                    // 构建成功后，对该作业进行增量同步
                     if let Some(ref job_name) = job {
                         if let Some(ref g) = graph {
                             let client =
@@ -117,15 +117,15 @@ pub async fn handle_jcli(
                             match source.sync_job(g.as_ref()).await {
                                 Ok(r) => {
                                     tracing::info!(
-                                        "jcli build: incremental sync for {job_name}: {} builds",
+                                        "jcli build: 对 {job_name} 进行增量同步: {} 个构建",
                                         r.items_created,
                                     );
                                     tracing::info!(
-                                        "jcli build: deploy event for {job_name} in {env} environment",
+                                        "jcli build: 记录 {job_name} 在 {env} 环境中的部署事件",
                                     );
                                 }
                                 Err(e) => tracing::warn!(
-                                    "jcli build: incremental sync failed for {job_name}: {e}",
+                                    "jcli build: 对 {job_name} 的增量同步失败: {e}",
                                 ),
                             }
                         }
@@ -136,8 +136,8 @@ pub async fn handle_jcli(
         }
         other => {
             eprintln!(
-                "Unknown jcli action: {other}. \
-                 Supported: list, params, history, log, build"
+                "未知的 jcli 操作: {other}. \
+                 支持的操作: list、params、history、log、build"
             );
         }
     }

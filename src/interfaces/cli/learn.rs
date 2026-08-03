@@ -1,6 +1,6 @@
-//! CLI handler for `dt learn` — learn from AI task execution.
+//! `dt learn` 的 CLI 处理器——从 AI 任务执行中学习。
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! 从 main.rs 抽取，保持入口文件精简。
 
 use std::sync::Arc;
 
@@ -9,10 +9,10 @@ use crate::application::knowledge::learn::{self, LearnRequest, LearnService, Lea
 use crate::application::sync::batch::SyncAccumulator;
 use crate::domain::traits::GraphRepository;
 
-/// Handle `dt learn` — synthesise Knowledge, Experience, and Playbook nodes from a task result.
+/// 处理 `dt learn`——从任务结果中综合出 Knowledge、Experience、Playbook 节点。
 ///
-/// `graph` must be pre-connected by the caller.
-/// `sync_acc` enqueues nodes for background (non-blocking) sync to Qdrant.
+/// `graph` 必须由调用方预先连接。
+/// `sync_acc` 将节点入队，供后台（非阻塞）同步到 Qdrant。
 pub async fn handle_learn(
     task: String,
     entities: Vec<String>,
@@ -31,12 +31,12 @@ pub async fn handle_learn(
         pitfalls,
     );
 
-    // Connect to Memgraph for real persistence (fallback to noop if unavailable).
-    // Both branches produce Arc<dyn GraphRepository>, so DefaultKnowledgeService is concrete.
+    // 连接 Memgraph 实现真实持久化（不可用时回退到 noop）。
+    // 两个分支都产生 Arc<dyn GraphRepository>，因此 DefaultKnowledgeService 是具体类型。
     let graph_for_knowledge: Arc<dyn GraphRepository> = match graph {
         Some(g) => g,
         None => {
-            tracing::warn!("Memgraph unavailable — using noop for learn");
+            tracing::warn!("Memgraph 不可用——learn 使用 noop");
             Arc::new(crate::infrastructure::memgraph::NoopGraphRepo)
         }
     };
@@ -58,18 +58,18 @@ pub async fn handle_learn(
         Ok(report) => {
             println!("{}", report.summary);
             tracing::info!(
-                "learn: k={} e={} pb={} summary={}",
+                "learn: 知识={} 经验={} 剧本={} 摘要={}",
                 report.knowledge_created,
                 report.experiences_created,
                 report.playbook_updated,
                 report.summary,
             );
 
-            // ── Auto-sync to Qdrant ──────────────────────────────
+            // ── 自动同步到 Qdrant ──────────────────────────────
             auto_sync_learn(&request, sync_acc).await;
         }
         Err(e) => {
-            eprintln!("learn failed: {e}");
+            eprintln!("learn 失败: {e}");
             return Err(e.into());
         }
     }
@@ -77,11 +77,11 @@ pub async fn handle_learn(
     Ok(())
 }
 
-/// Reconstruct the Knowledge / Experience IDs created by LearnServiceImpl
-/// and enqueue them for background sync to Qdrant.
+/// 重建 LearnServiceImpl 创建的 Knowledge / Experience ID，
+/// 并排队等待后台同步到 Qdrant。
 ///
-/// Flushes the queue before returning so the sync completes within the
-/// CLI process lifetime.
+/// 返回前会 flush 队列，确保同步在
+/// CLI 进程生命周期内完成。
 async fn auto_sync_learn(request: &LearnRequest, acc: Option<Arc<SyncAccumulator>>) {
     let acc = match acc {
         Some(a) => a,
@@ -91,13 +91,13 @@ async fn auto_sync_learn(request: &LearnRequest, acc: Option<Arc<SyncAccumulator
     let project = request.project.as_deref().unwrap_or("unknown");
     let domain = learn::extract_domain(&request.task);
 
-    // Enqueue Knowledge node (created when pattern is present).
+    // 将 Knowledge 节点入队（存在 pattern 时创建）。
     if request.pattern.is_some() {
         let kid = learn::format_knowledge_id(project, &domain, "pattern", &request.task);
         acc.enqueue("Knowledge", "knowledge_id", &kid);
     }
 
-    // Enqueue Experience nodes (one per pitfall).
+    // 将 Experience 节点入队（每个 pitfall 一个）。
     for (i, _) in request.pitfalls.iter().enumerate() {
         let eid = format!(
             "dt://experience/{}/{}/pitfall-{}-{}",

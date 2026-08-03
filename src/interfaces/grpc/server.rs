@@ -1,10 +1,9 @@
-//! gRPC server assembly — owns the tonic Router, registers all plugins,
-//! and starts the daemon listener.
+//! gRPC 服务器装配——持有 tonic Router，注册所有插件，
+//! 并启动守护进程监听器。
 //!
-//! Backend connections (Memgraph, Qdrant) are obtained via
-//! [`crate::interfaces::grpc::wiring::wire()`].  If either backend is
-//! unreachable the server falls back to no-op implementations and logs
-//! a warning — the daemon starts regardless.
+//! 后端连接（Memgraph、Qdrant）通过
+//! [`crate::interfaces::grpc::wiring::wire()`] 获取。若任一后端
+//! 不可达，服务器回退到 no-op 实现并记录警告——守护进程照常启动。
 
 use crate::application::plugins::registry::PluginRegistry;
 use crate::domain::types::{AppConfig, PluginContext, PluginLogger};
@@ -13,42 +12,42 @@ use crate::interfaces::grpc::wiring;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-/// Build and run the gRPC server.
+/// 构建并运行 gRPC 服务器。
 ///
-/// 1. Call [`wiring::wire()`] to assemble real backend connections
-/// 2. Create `PluginContext` (falling back to no-op repos if connections failed)
-/// 3. Register builtin plugins into `PluginRegistry`
-/// 4. Initialize each plugin
-/// 5. Create tonic Server, wire all plugins' gRPC services + DtCore
-/// 6. Add bootstrap health service to get the final Router
-/// 7. Bind and serve
+/// 1. 调用 [`wiring::wire()`] 组装真实后端连接
+/// 2. 创建 `PluginContext`（连接失败时回退到 no-op 仓库）
+/// 3. 将内置插件注册到 `PluginRegistry`
+/// 4. 初始化每个插件
+/// 5. 创建 tonic Server，接入所有插件的 gRPC 服务 + DtCore
+/// 6. 添加 bootstrap 健康服务以得到最终 Router
+/// 7. 绑定并对外服务
 pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = config.listen_addr.parse()?;
-    tracing::info!("dt-daemon binding to {}", addr);
+    tracing::info!("dt-daemon 正在绑定 {}", addr);
 
-    // ---- Assemble backend components via wiring ----
+    // ---- 通过 wiring 组装后端组件 ----
     let components = wiring::wire().await;
 
-    // ---- Plugin context ----
-    // If real backends are unavailable (None), fall back to no-op
-    // implementations so the server still starts.
+    // ---- 插件上下文 ----
+    // 若真实后端不可用（None），回退到 no-op
+    // 实现，使服务器仍能启动。
     let graph: Arc<dyn crate::domain::traits::GraphRepository> = match components.graph {
         Some(g) => {
-            tracing::info!("using real Memgraph backend for gRPC server");
+            tracing::info!("gRPC 服务器使用真实 Memgraph 后端");
             g
         }
         None => {
-            tracing::warn!("Memgraph unavailable — gRPC server will use NoopGraphRepo");
+            tracing::warn!("Memgraph 不可用——gRPC 服务器将使用 NoopGraphRepo");
             Arc::new(crate::infrastructure::memgraph::NoopGraphRepo)
         }
     };
     let vector: Arc<dyn crate::domain::traits::VectorRepository> = match components.vector {
         Some(v) => {
-            tracing::info!("using real Qdrant backend for gRPC server");
+            tracing::info!("gRPC 服务器使用真实 Qdrant 后端");
             v
         }
         None => {
-            tracing::warn!("Qdrant unavailable — gRPC server will use NoopVectorRepo");
+            tracing::warn!("Qdrant 不可用——gRPC 服务器将使用 NoopVectorRepo");
             Arc::new(crate::infrastructure::qdrant::NoopVectorRepo)
         }
     };
@@ -61,10 +60,10 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         data_dir: std::path::PathBuf::from("/var/lib/digital-twin"),
     };
 
-    // ---- Plugin registry ----
+    // ---- 插件注册表 ----
     let mut registry = PluginRegistry::new();
 
-    // Register builtin plugins (default stubs for server mode)
+    // 注册内置插件（服务器模式的默认桩实现）
     registry.register(Arc::new(
         crate::application::plugins::k8s::service::K8sPluginService::default(),
     ))?;
@@ -75,27 +74,26 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         crate::application::plugins::jenkins::service::JenkinsPluginService::default(),
     ))?;
 
-    tracing::info!("registered {} plugins", registry.len());
+    tracing::info!("已注册 {} 个插件", registry.len());
 
-    // Init all plugins
+    // 初始化所有插件
     let init_results = registry.init_all(&ctx).await;
     for (id, res) in &init_results {
         match res {
-            Ok(()) => tracing::info!("plugin [{}] initialized", id),
-            Err(e) => tracing::warn!("plugin [{}] init failed: {}", id, e),
+            Ok(()) => tracing::info!("插件 [{}] 已初始化", id),
+            Err(e) => tracing::warn!("插件 [{}] 初始化失败: {}", id, e),
         }
     }
 
-    // ---- Build gRPC router ----
+    // ---- 构建 gRPC router ----
     let mut server = tonic::transport::Server::builder();
 
-    // Wire all plugins (each calls server.add_service internally).
+    // 接入所有插件（每个插件内部都会调用 server.add_service）。
     registry.wire_grpc(&mut server)?;
 
-    // Register DtCore gRPC service — delegates dt build/search/context/
-    // event/memorize/sync to the same application-layer services used
-    // by the CLI.  Passes real backend Arc handles so the service can
-    // access Memgraph and Qdrant directly.
+    // 注册 DtCore gRPC 服务——将 dt build/search/context/
+    // event/memorize/sync 委托给 CLI 使用的同一批应用层服务。
+    // 传入真实后端的 Arc 句柄，使服务能直接访问 Memgraph 和 Qdrant。
     let dt_core_impl = crate::interfaces::grpc::services::dt_core_service::DtCoreServiceImpl::new(
         Some(graph.clone()),
         Some(vector.clone()),
@@ -106,21 +104,21 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
         dt_core_impl,
     ));
 
-    // Apply the auth interceptor layer so every request gets a Role injected
-    // into its extensions. tower::ServiceBuilder chains multiple layers
-    // together — currently just auth, but ready for rate-limiting etc.
+    // 应用认证拦截器层，使每个请求都被注入 Role 到其扩展中。
+    // tower::ServiceBuilder 将多个 layer 串联在一起——目前只有 auth，
+    // 但已为限流等做好准备。
     let auth_layer =
         tower::ServiceBuilder::new().layer(tonic::service::interceptor(auth_interceptor));
     let mut router = server.layer(auth_layer);
 
-    // Bootstrap: add tonic's built-in health service.
-    // The Router now includes the auth layer — all services (plugins + DtCore + health)
-    // are behind the interceptor.
+    // Bootstrap：添加 tonic 内置的健康检查服务。
+    // Router 现在包含 auth 层——所有服务（插件 + DtCore + health）
+    // 都在拦截器之后。
     let (_health_reporter, health_service) = tonic_health::server::health_reporter();
     let router = router.add_service(health_service);
 
-    // ---- Serve ----
-    tracing::info!("dt-daemon listening on {}", addr);
+    // ---- 对外服务 ----
+    tracing::info!("dt-daemon 正在监听 {}", addr);
     router.serve(addr).await?;
 
     Ok(())

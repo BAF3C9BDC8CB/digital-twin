@@ -1,30 +1,30 @@
-//! Qdrant backup and restore operations.
+//! Qdrant 备份与恢复操作。
 //!
-//! Uses Qdrant's REST API for snapshot creation and restoration.
-//! The HTTP API is typically available at `http://localhost:6333`.
+//! 使用 Qdrant 的 REST API 进行快照创建与恢复。
+//! HTTP API 通常位于 `http://localhost:6333`。
 //!
-//! When Qdrant is unavailable the snapshot is a no-op that logs a warning.
+//! 当 Qdrant 不可用时，快照为 no-op 并记录警告。
 
 use std::path::Path;
 use std::time::Instant;
 
-/// Qdrant HTTP API base URL.
+/// Qdrant HTTP API 基础 URL。
 const QDRANT_URL: &str = "http://localhost:6333";
 
-/// Snapshot Qdrant collections to `{backup_dir}/qdrant.snapshot`.
+/// 将 Qdrant 集合快照到 `{backup_dir}/qdrant.snapshot`。
 ///
-/// Collects metadata about all collections and their vector counts,
-/// then writes a JSON manifest.  Actual point data snapshots require
-/// the Qdrant snapshot API (POST /collections/{name}/snapshots).
+/// 收集所有集合的元数据及其向量数量，
+/// 然后写入 JSON 清单。实际的点数据快照需要
+/// Qdrant 快照 API（POST /collections/{name}/snapshots）。
 ///
-/// Returns `(success, size_bytes)`.
+/// 返回 `(success, size_bytes)`。
 pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u64)> {
     let start = Instant::now();
     let snapshot_path = backup_dir.join("qdrant.snapshot");
 
     tracing::info!("正在为 Qdrant 集合创建快照 {}", snapshot_path.display());
 
-    // Fetch collection list from Qdrant REST API
+    // 从 Qdrant REST API 获取集合列表
     let client = reqwest::Client::new();
     let collections: Vec<serde_json::Value> = match client
         .get(format!("{}/collections", QDRANT_URL))
@@ -45,7 +45,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
         }
     };
 
-    // Collect per-collection info
+    // 收集每个集合的信息
     let mut collection_details = Vec::new();
     let mut total_points: u64 = 0;
 
@@ -55,7 +55,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        // Try to get collection info
+        // 尝试获取集合信息
         if let Ok(resp) = client
             .get(format!("{}/collections/{name}", QDRANT_URL))
             .timeout(std::time::Duration::from_secs(5))
@@ -87,7 +87,7 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
         }
     }
 
-    // Build snapshot manifest
+    // 构建快照清单
     let metadata = serde_json::json!({
         "version": "2.0",
         "type": "qdrant_snapshot",
@@ -113,17 +113,17 @@ pub async fn snapshot_collections(backup_dir: &Path) -> anyhow::Result<(bool, u6
     Ok((success, size))
 }
 
-/// Restore Qdrant collections from `{backup_dir}/qdrant.snapshot`.
+/// 从 `{backup_dir}/qdrant.snapshot` 恢复 Qdrant 集合。
 ///
-/// Reads the snapshot manifest and attempts to recreate collections.
-/// Full point-level restore requires using Qdrant snapshot API
-/// (PUT /collections/{name}/snapshots/recover).
+/// 读取快照清单并尝试重建集合。
+/// 完整的点级恢复需要使用 Qdrant 快照 API
+/// （PUT /collections/{name}/snapshots/recover）。
 pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
     let snapshot_path = backup_dir.join("qdrant.snapshot");
 
     if !snapshot_path.exists() {
         tracing::warn!(
-            "Qdrant snapshot not found at {} — skipping",
+            "在 {} 未找到 Qdrant 快照 — 已跳过",
             snapshot_path.display()
         );
         return Ok(());
@@ -141,7 +141,7 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
         .unwrap_or_default();
 
     if collections.is_empty() {
-        tracing::info!("Qdrant snapshot contains no collections — nothing to restore");
+        tracing::info!("Qdrant 快照不包含集合——无需恢复");
         return Ok(());
     }
 
@@ -159,7 +159,7 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
-        // Check if collection already exists
+        // 检查集合是否已存在
         if let Ok(resp) = client
             .get(format!("{}/collections/{name}", QDRANT_URL))
             .send()
@@ -175,9 +175,9 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
             }
         }
 
-        // Attempt to restore via snapshot recovery
-        // Note: For full restore, the actual Qdrant snapshot files would need to be
-        // created during backup via POST /collections/{name}/snapshots and stored.
+        // 尝试通过快照恢复进行还原
+        // 注意：完整恢复需要在实际备份时通过
+        // POST /collections/{name}/snapshots 创建并存储 Qdrant 快照文件。
         tracing::info!(
             "Qdrant 恢复: 集合 '{name}' ({points_count} 个点) — \
              完整快照恢复需要 Qdrant 快照 API 文件. \
@@ -200,8 +200,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (_ok, size) = snapshot_collections(dir.path())
             .await
-            .expect("snapshot should succeed");
-        // ok may be false if Qdrant is unreachable (placeholder written)
+            .expect("快照应成功");
+        // 若 Qdrant 不可达，ok 可能为 false（已写入占位符）
         assert!(size > 0);
 
         let snap = dir.path().join("qdrant.snapshot");
@@ -215,7 +215,7 @@ mod tests {
     async fn restore_collections_skips_missing_file() {
         let dir = TempDir::new().unwrap();
         let result = restore_collections(dir.path()).await;
-        assert!(result.is_ok(), "should skip missing snapshot gracefully");
+        assert!(result.is_ok(), "缺少快照文件时应优雅跳过");
     }
 
     #[tokio::test]

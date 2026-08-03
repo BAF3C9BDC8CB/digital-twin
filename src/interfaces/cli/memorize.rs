@@ -1,6 +1,6 @@
-//! CLI handler for `dt memorize` — write structured knowledge into the KG.
+//! `dt memorize` 的 CLI 处理器——将结构化知识写入 KG。
 //!
-//! Extracted from main.rs to keep the entrypoint lean.
+//! 从 main.rs 抽取，保持入口文件精简。
 
 use std::sync::Arc;
 
@@ -10,10 +10,10 @@ use crate::application::knowledge::knowledge::service::{
 use crate::application::sync::batch::SyncAccumulator;
 use crate::domain::traits::GraphRepository;
 
-/// Handle `dt memorize` — write a knowledge entry (Knowledge, Experience, Concept, Domain, Playbook).
+/// 处理 `dt memorize`——写入知识条目（Knowledge、Experience、Concept、Domain、Playbook）。
 ///
-/// `graph` must be pre-connected by the caller.
-/// `sync_acc` enqueues nodes for background (non-blocking) sync to Qdrant.
+/// `graph` 必须由调用方预先连接。
+/// `sync_acc` 将节点入队，供后台（非阻塞）同步到 Qdrant。
 pub async fn handle_memorize(
     knowledge_type: String,
     entity_id: String,
@@ -34,7 +34,7 @@ pub async fn handle_memorize(
         .as_ref()
         .map(|g| DefaultKnowledgeService::new(Arc::clone(g)));
 
-    // Route based on knowledge_type to the correct entity constructor.
+    // 根据 knowledge_type 路由到正确的实体构造函数。
     match knowledge_type.to_lowercase().as_str() {
         "decision" | "knowledgeadded" | "environment" | "dependencies" => {
             let knowledge = crate::application::knowledge::knowledge::knowledge_from_details(
@@ -46,19 +46,19 @@ pub async fn handle_memorize(
             if let Some(ref svc) = svc {
                 match svc.write_knowledge(&knowledge).await {
                     Ok(()) => println!(
-                        "Knowledge written: id={} name={} title={} domain={} project={}",
+                        "知识已写入: id={} name={} title={} domain={} project={}",
                         knowledge.knowledge_id,
                         knowledge.name,
                         knowledge.title,
                         knowledge.domain,
                         knowledge.project,
                     ),
-                    Err(e) => eprintln!("Knowledge write failed: {e}"),
+                    Err(e) => eprintln!("知识写入失败: {e}"),
                 }
             } else {
-                tracing::warn!("Graph database unavailable — knowledge not persisted");
+                tracing::warn!("图数据库不可用——知识未持久化");
                 println!(
-                    "Knowledge (not persisted): id={} name={} title={} domain={} project={}",
+                    "知识（未持久化）: id={} name={} title={} domain={} project={}",
                     knowledge.knowledge_id,
                     knowledge.name,
                     knowledge.title,
@@ -76,18 +76,18 @@ pub async fn handle_memorize(
             if let Some(ref svc) = svc {
                 match svc.write_experience(&experience).await {
                     Ok(()) => println!(
-                        "Experience written: id={} title={} severity={} domain={}",
+                        "经验已写入: id={} title={} severity={} domain={}",
                         experience.experience_id,
                         experience.title,
                         experience.severity.as_str(),
                         experience.domain,
                     ),
-                    Err(e) => eprintln!("Experience write failed: {e}"),
+                    Err(e) => eprintln!("经验写入失败: {e}"),
                 }
             } else {
-                tracing::warn!("Graph database unavailable — experience not persisted");
+                tracing::warn!("图数据库不可用——经验未持久化");
                 println!(
-                    "Experience (not persisted): id={} title={} severity={} domain={}",
+                    "经验（未持久化）: id={} title={} severity={} domain={}",
                     experience.experience_id,
                     experience.title,
                     experience.severity.as_str(),
@@ -102,15 +102,15 @@ pub async fn handle_memorize(
             if let Some(ref svc) = svc {
                 match svc.write_concept(&concept).await {
                     Ok(()) => println!(
-                        "Concept written: id={} name={} domain={}",
+                        "概念已写入: id={} name={} domain={}",
                         concept.concept_id, concept.name, concept.domain,
                     ),
-                    Err(e) => eprintln!("Concept write failed: {e}"),
+                    Err(e) => eprintln!("概念写入失败: {e}"),
                 }
             } else {
-                tracing::warn!("Graph database unavailable — concept not persisted");
+                tracing::warn!("图数据库不可用——概念未持久化");
                 println!(
-                    "Concept (not persisted): id={} name={} domain={}",
+                    "概念（未持久化）: id={} name={} domain={}",
                     concept.concept_id, concept.name, concept.domain,
                 );
             }
@@ -121,15 +121,15 @@ pub async fn handle_memorize(
             if let Some(ref svc) = svc {
                 match svc.write_domain(&domain).await {
                     Ok(()) => println!(
-                        "Domain written: id={} name={}",
+                        "领域已写入: id={} name={}",
                         domain.domain_id, domain.name,
                     ),
-                    Err(e) => eprintln!("Domain write failed: {e}"),
+                    Err(e) => eprintln!("领域写入失败: {e}"),
                 }
             } else {
-                tracing::warn!("Graph database unavailable — domain not persisted");
+                tracing::warn!("图数据库不可用——领域未持久化");
                 println!(
-                    "Domain (not persisted): id={} name={}",
+                    "领域（未持久化）: id={} name={}",
                     domain.domain_id, domain.name,
                 );
             }
@@ -143,43 +143,43 @@ pub async fn handle_memorize(
             if let Some(ref svc) = svc {
                 match svc.write_playbook(&playbook).await {
                     Ok(()) => println!(
-                        "Playbook written: id={} name={} domain={}",
+                        "剧本已写入: id={} name={} domain={}",
                         playbook.playbook_id, playbook.name, playbook.domain,
                     ),
-                    Err(e) => eprintln!("Playbook write failed: {e}"),
+                    Err(e) => eprintln!("剧本写入失败: {e}"),
                 }
             } else {
-                tracing::warn!("Graph database unavailable — playbook not persisted");
+                tracing::warn!("图数据库不可用——剧本未持久化");
                 println!(
-                    "Playbook (not persisted): id={} name={} domain={}",
+                    "剧本（未持久化）: id={} name={} domain={}",
                     playbook.playbook_id, playbook.name, playbook.domain,
                 );
             }
         }
         other => {
             eprintln!(
-                "Unknown knowledge type: {other}. \
-                 Expected one of: Decision, KnowledgeAdded, Environment, \
-                 Dependencies, Experience, Concept, Domain, Playbook"
+                "未知的知识类型: {other}. \
+                 应为以下之一: Decision、KnowledgeAdded、Environment、\
+                 Dependencies、Experience、Concept、Domain、Playbook"
             );
             return Ok(());
         }
     }
 
-    // ── Auto-sync to Qdrant ──────────────────────────────────────────
+    // ── 自动同步到 Qdrant ──────────────────────────────────────────
     auto_sync_kg(&knowledge_type, &entity_id, sync_acc).await;
 
     Ok(())
 }
 
-/// Map a `knowledge_type` to its graph label + id-property key, then
-/// enqueue the newly-written node for background sync to Qdrant.
+/// 将 `knowledge_type` 映射到图谱标签 + id 属性键，然后把
+/// 新写入的节点排队，等待后台同步到 Qdrant。
 ///
-/// This returns immediately — the actual embed + upsert happens in a
-/// background worker that accumulates batches for GPU efficiency.
+/// 该函数立即返回——真正的 embed + upsert 在后台 worker 中
+/// 累积批次执行，以提高 GPU 效率。
 ///
-/// Flushes the queue before returning so the sync completes within the
-/// CLI process lifetime.
+/// 返回前会 flush 队列，确保同步在
+/// CLI 进程生命周期内完成。
 async fn auto_sync_kg(knowledge_type: &str, entity_id: &str, acc: Option<Arc<SyncAccumulator>>) {
     let acc = match acc {
         Some(a) => a,

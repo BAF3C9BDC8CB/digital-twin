@@ -48,7 +48,7 @@ fn render_hit(h: &SearchHit) -> String {
 pub fn render_human(result: &CrossWorldResult) -> String {
     let mut out = String::new();
     if result.hits.is_empty() {
-        out.push_str("  (no results)\n");
+        out.push_str("  (无结果)\n");
     }
     for h in &result.hits {
         out.push_str(&render_hit(h));

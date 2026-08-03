@@ -1,7 +1,6 @@
-//! Memory (RecordEvent) gRPC handler for the DtCore service.
+//! DtCore 服务的 Memory（RecordEvent）gRPC 处理器。
 //!
-//! Delegates to [`DefaultMemoryService`] to create Day → Session → Event
-//! chains in the knowledge graph.
+//! 委托 [`DefaultMemoryService`] 在知识图谱中创建 Day → Session → Event 链。
 
 use crate::application::hooks::HookEngine;
 use crate::application::knowledge::memory::entities::{EventType, MemoryEvent};
@@ -12,13 +11,13 @@ use crate::proto::dt::core::*;
 use std::sync::Arc;
 use tonic::Status;
 
-/// Handler for `RecordEvent` RPC — persist an event into the time dimension.
+/// `RecordEvent` RPC 的处理器——将事件持久化到时间维度。
 pub async fn handle_record_event(
     req: EventRequest,
     graph: Option<Arc<dyn GraphRepository>>,
     hook_engine: Option<Arc<HookEngine>>,
 ) -> Result<common::Empty, Status> {
-    let graph = graph.ok_or_else(|| Status::unavailable("Graph backend not available"))?;
+    let graph = graph.ok_or_else(|| Status::unavailable("图后端不可用"))?;
 
     let project = if req.project.is_empty() {
         "unknown"
@@ -28,8 +27,8 @@ pub async fn handle_record_event(
 
     let parsed_type = parse_event_type(&req.r#type).ok_or_else(|| {
         Status::invalid_argument(format!(
-            "unknown event type: {}. \
-             Supported: Modification, Deployment, ConfigChange, BugFix, Decision, Conversation",
+            "未知的事件类型: {}. \
+             支持的类型: Modification、Deployment、ConfigChange、BugFix、Decision、Conversation",
             req.r#type
         ))
     })?;
@@ -54,14 +53,14 @@ pub async fn handle_record_event(
     memory_svc
         .record_event(&event)
         .await
-        .map_err(|e| Status::internal(format!("record_event failed: {e}")))?;
+        .map_err(|e| Status::internal(format!("record_event 失败: {e}")))?;
 
     Ok(common::Empty {})
 }
 
-/// Parse an EventType from a string (case-insensitive).
+/// 从字符串解析 EventType（不区分大小写）。
 ///
-/// Matches the logic in `main.rs::parse_event_type`.
+/// 与 `main.rs::parse_event_type` 中的逻辑一致。
 fn parse_event_type(s: &str) -> Option<EventType> {
     match s.to_lowercase().as_str() {
         "modification" => Some(EventType::Modification),
@@ -75,7 +74,7 @@ fn parse_event_type(s: &str) -> Option<EventType> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -164,8 +163,8 @@ mod tests {
         };
         let result = handle_record_event(req, Some(graph), None).await;
         assert!(result.is_ok());
-        // Without hook_engine, the event is silently dropped (logged as warning).
-        // The hook system handles all event types now; old handlers are removed.
+        // 无 hook_engine 时，事件会被静默丢弃（记录为警告）。
+        // 现在由 hook 系统处理所有事件类型；旧处理器已移除。
         assert_eq!(write.load(Ordering::SeqCst), 0);
     }
 
