@@ -1,10 +1,10 @@
-//! Tree-sitter AST processor — wraps [`ParserRegistry`] to extract code
-//! entities (classes, methods, fields) from source files.
+//! Tree-sitter AST 处理器——包装 [`ParserRegistry`] 从源文件中提取代码
+//! 实体（classes、methods、fields）。
 //!
-//! Produces a [`ProcessorOutput`] with two keys:
-//! - `"entities"`   — JSON object containing `classes` and `methods` arrays
-//! - `"imports"`    — list of import/use statements (bare structure, may be
-//!   empty for languages without a full import-tree extractor)
+//! 产生一个带两个键的 [`ProcessorOutput`]：
+//! - `"entities"`   —— 包含 `classes` 与 `methods` 数组的 JSON 对象
+//! - `"imports"`    —— import/use 语句列表（裸结构，对没有完整导入树
+//!   提取器的语言可能为空）
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -16,17 +16,16 @@ use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::infrastructure::parser::ParserRegistry;
 
-/// AST‑based code parser using tree‑sitter grammars.
+/// 使用 tree-sitter 语法做基于 AST 的代码解析器。
 ///
-/// This processor handles source code file extensions (.java, .py, .rs,
-/// .go, .ts, .tsx, .js, .jsx, .php) and uses the shared
-/// `ParserRegistry` to produce structured entity data.
+/// 该处理器处理源代码文件扩展名（.java、.py、.rs、.go、.ts、.tsx、.js、
+/// .jsx、.php），并使用共享的 `ParserRegistry` 产生结构化实体数据。
 pub struct TreeSitterProcessor {
     registry: Arc<ParserRegistry>,
 }
 
 impl TreeSitterProcessor {
-    /// Create a new processor wrapping the given parser registry.
+    /// 创建包装给定解析器注册表的新处理器。
     pub fn new(registry: Arc<ParserRegistry>) -> Self {
         Self { registry }
     }
@@ -52,12 +51,12 @@ impl Processor for TreeSitterProcessor {
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
 
-        // Parse the file using the registry.
+        // 使用注册表解析文件。
         let parse_result =
             self.registry
                 .parse_file(&ctx.file_text, &ctx.file_path, &ctx.project_name)?;
 
-        // Store entities as a JSON object with "classes" and "methods".
+        // 将实体存储为带 "classes" 与 "methods" 的 JSON 对象。
         let entities = serde_json::json!({
             "classes": parse_result.classes.iter().map(|c| {
                 serde_json::json!({
@@ -90,8 +89,8 @@ impl Processor for TreeSitterProcessor {
         });
         output.set("entities", entities);
 
-        // Basic import extraction — collect unique package/module paths from
-        // the parsed classes as a simple list.
+        // 基础导入提取——从解析出的类中收集唯一的 package/module 路径，
+        // 作为简单列表。
         let import_paths: Vec<String> = {
             let mut paths: Vec<String> = parse_result
                 .classes
@@ -105,7 +104,7 @@ impl Processor for TreeSitterProcessor {
         };
         output.set("imports", import_paths);
 
-        // Also store the raw method count and class count for easy reference.
+        // 同时存储原始的 method 与 class 数量，便于引用。
         output.set("method_count", parse_result.methods.len());
         output.set("class_count", parse_result.classes.len());
 
@@ -114,7 +113,7 @@ impl Processor for TreeSitterProcessor {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

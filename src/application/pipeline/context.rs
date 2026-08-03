@@ -1,30 +1,28 @@
-//! Shared data container passed through all pipeline stages.
+//! 贯穿所有流水线阶段的共享数据容器。
 //!
-//! [`PipelineContext`] carries the file being processed, its raw text, the
-//! project name, and the accumulated outputs from every processor that has
-//! run so far.  The [`resolve`](PipelineContext::resolve) method supports
-//! simple variable interpolation for template strings.
+//! [`PipelineContext`] 携带正在处理的文件、其原始文本、项目名，
+//! 以及迄今为止每个已运行处理器累积的输出。`resolve` 方法支持对模板
+//! 字符串做简单的变量插值。
 
 use crate::application::pipeline::output::ProcessorOutput;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Shared context that flows through the entire pipeline for one file.
+/// 针对单个文件流过整个流水线的共享上下文。
 #[derive(Debug, Clone)]
 pub struct PipelineContext {
-    /// Absolute or relative path of the file being processed.
+    /// 正在处理的文件的绝对或相对路径。
     pub file_path: PathBuf,
-    /// Full text content of the file.
+    /// 文件的完整文本内容。
     pub file_text: String,
-    /// The project this file belongs to.
+    /// 该文件所属的项目。
     pub project_name: String,
-    /// Processor outputs keyed by processor name (e.g. `"tree_sitter"`,
-    /// `"hanlp"`).
+    /// 按处理器名索引的输出（例如 `"tree_sitter"`、`"hanlp"`）。
     pub outputs: HashMap<String, ProcessorOutput>,
 }
 
 impl PipelineContext {
-    /// Create a new pipeline context for the given file.
+    /// 为给定文件创建新的流水线上下文。
     pub fn new(file_path: impl Into<PathBuf>, file_text: String, project_name: String) -> Self {
         Self {
             file_path: file_path.into(),
@@ -34,27 +32,27 @@ impl PipelineContext {
         }
     }
 
-    /// Insert (or overwrite) the output produced by a processor.
+    /// 插入（或覆盖）某处理器产生的输出。
     pub fn add_output(&mut self, processor_name: &str, output: ProcessorOutput) {
         self.outputs.insert(processor_name.to_string(), output);
     }
 
-    /// Retrieve the output produced by a named processor.
+    /// 获取指定处理器产生的输出。
     pub fn get_output(&self, processor_name: &str) -> Option<&ProcessorOutput> {
         self.outputs.get(processor_name)
     }
 
-    /// Resolve template variables in a string against the current context.
+    /// 针对当前上下文将字符串中的模板变量解析出来。
     ///
-    /// # Syntax
+    /// # 语法
     ///
-    /// - `${processor_name.field}` — top-level field from a processor's
-    ///   output, resolved via `serde_json::Value::get`
-    /// - `${processor_name.field.subfield}` — nested subfield access
+    /// - `${processor_name.field}` —— 处理器输出的顶层字段，
+    ///   通过 `serde_json::Value::get` 解析
+    /// - `${processor_name.field.subfield}` —— 嵌套子字段访问
     ///
-    /// Unknown variables are left as-is in the output string.
+    /// 未知变量在输出字符串中原样保留。
     ///
-    /// # Examples
+    /// # 示例
     ///
     /// ```ignore
     /// ctx.resolve("Language: ${lang_detector.language}");
@@ -66,15 +64,14 @@ impl PipelineContext {
     pub fn resolve(&self, template: &str) -> String {
         let mut result = template.to_string();
 
-        // Match `${...}` placeholders.
+        // 匹配 `${...}` 占位符。
         let re = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
 
         for cap in re.captures_iter(template) {
             let full_match = cap.get(0).unwrap().as_str().to_string();
             let inner = cap.get(1).unwrap().as_str();
 
-            // Split on the FIRST dot to separate processor name from the
-            // remaining key path.
+            // 在第一个点处分割，将处理器名与其余键路径分开。
             if let Some(dot_pos) = inner.find('.') {
                 let processor_name = &inner[..dot_pos];
                 let key_path = &inner[dot_pos + 1..];
@@ -82,9 +79,9 @@ impl PipelineContext {
                 if let Some(output) = self.outputs.get(processor_name) {
                     let value = self.resolve_json_path(output.as_inner(), key_path);
                     if let Some(v) = value {
-                        // Convert the JSON value to its string representation.
-                        // Strings are returned without quotes; other types use
-                        // the default Display (which matches JSON serialization).
+                        // 将 JSON 值转换为其字符串表示。
+                        // 字符串不带引号返回；其他类型使用默认 Display
+                        //（与 JSON 序列化一致）。
                         let replacement = match v {
                             serde_json::Value::String(s) => s.clone(),
                             other => other.to_string(),
@@ -98,13 +95,13 @@ impl PipelineContext {
         result
     }
 
-    /// Walk a dotted / bracket-notation path into a JSON map.
+    /// 沿点分 / 括号记法的路径在 JSON map 中遍历。
     ///
-    /// Supports:
-    /// - `field` — simple key lookup
-    /// - `field.subfield` — nested object traversal
-    /// - `arr[0]` — array index access (only at the end of a segment)
-    /// - `field.subfield[1].name` — mixed nesting
+    /// 支持：
+    /// - `field` —— 简单键查找
+    /// - `field.subfield` —— 嵌套对象遍历
+    /// - `arr[0]` —— 数组索引访问（仅限段末尾）
+    /// - `field.subfield[1].name` —— 混合嵌套
     fn resolve_json_path<'a>(
         &'a self,
         root: &'a HashMap<String, serde_json::Value>,
@@ -132,8 +129,8 @@ impl PipelineContext {
     }
 }
 
-/// Split a dotted path like `"entities.methods[0].name"` into segments
-/// `["entities", "methods[0]", "name"]`.
+/// 将点分路径（如 `"entities.methods[0].name"`）分割为段
+/// `["entities", "methods[0]", "name"]`。
 fn split_path_segments(path: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = String::new();
@@ -168,12 +165,12 @@ fn split_path_segments(path: &str) -> Vec<String> {
     segments
 }
 
-/// Parse a segment like `"methods[0]"` into a key `"methods"` and an
-/// optional index `Some(0)`.
+/// 将类似 `"methods[0]"` 的段解析为键 `"methods"` 与
+/// 可选索引 `Some(0)`。
 fn parse_segment(seg: &str) -> (&str, Option<usize>) {
     if let Some(bracket_pos) = seg.find('[') {
         let key = &seg[..bracket_pos];
-        let idx_str = &seg[bracket_pos + 1..seg.len() - 1]; // strip ']'
+        let idx_str = &seg[bracket_pos + 1..seg.len() - 1]; // 去掉 ']'
         let idx = idx_str.parse::<usize>().ok();
         (key, idx)
     } else {
@@ -182,7 +179,7 @@ fn parse_segment(seg: &str) -> (&str, Option<usize>) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

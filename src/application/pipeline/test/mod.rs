@@ -1,16 +1,15 @@
-//! Pipeline test verification — standalone integration test for the Digital Twin
-//! build pipeline.
+//! 流水线测试验证——Digital Twin 构建流水线的独立集成测试。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! The [`verify_test_data`] function cleans old test-prefixed data, runs
-//! verification checks over every entity type (classes, methods, Nacos configs,
-//! pods, Jenkins jobs, knowledge entries), and returns a [`TestReport`].
+//! [`verify_test_data`] 函数清理旧的 test- 前缀数据，对每个实体类型
+//! （classes、methods、Nacos 配置、pods、Jenkins 任务、知识条目）执行
+//! 验证检查，并返回一个 [`TestReport`]。
 //!
 //! ```text
 //!     verify_test_data()
 //!     → cleanup_test_data()
-//!     → 10 Cypher queries + Qdrant checks
+//!     → 10 条 Cypher 查询 + Qdrant 检查
 //!     → TestReport
 //! ```
 

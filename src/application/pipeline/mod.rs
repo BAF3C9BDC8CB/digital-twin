@@ -1,13 +1,12 @@
-//! Pipeline engine — multi-stage file processing framework.
+//! 流水线引擎——多阶段文件处理框架。
 //!
-//! The pipeline module provides the core abstractions for building a
-//! configurable chain of file processors:
+//! 流水线模块为构建可配置的文件处理器链提供核心抽象：
 //!
-//! - [`Processor`](processor::Processor) — trait for each stage
-//! - [`ProcessorOutput`](output::ProcessorOutput) — flexible JSON output container
-//! - [`PipelineContext`](context::PipelineContext) — shared state passed between stages
+//! - [`Processor`](processor::Processor) —— 每个阶段的 trait
+//! - [`ProcessorOutput`](output::ProcessorOutput) —— 灵活的 JSON 输出容器
+//! - [`PipelineContext`](context::PipelineContext) —— 阶段间传递的共享状态
 //!
-//! # Architecture
+//! # 架构
 //!
 //! ```text
 //!                             PipelineContext
@@ -27,10 +26,9 @@
 //!     └────────────────────────────────────┘
 //! ```
 //!
-//! Processors declare a `priority` (lower runs first) and a `matches` guard
-//! so that the pipeline runner can cheaply skip irrelevant stages.  Each
-//! processor writes its results into a [`ProcessorOutput`] which is then
-//! inserted into the shared context under the processor's `name`.
+//! 处理器声明 `priority`（越低越先执行）与 `matches` 守卫，使流水线运行器
+//! 可以廉价地跳过无关阶段。每个处理器将其结果写入 [`ProcessorOutput`]，
+//! 随后按处理器 `name` 插入到共享上下文中。
 
 pub mod config;
 pub mod context;

@@ -1,11 +1,11 @@
-//! HTTP client for the SiliconFlow cloud API (OpenAI-compatible) and XInference.
+//! SiliconFlow 云 API（OpenAI 兼容）与 XInference 的 HTTP 客户端。
 //!
-//! All LLM chat and text-embedding requests flow through this client.
+//! 所有 LLM chat 与文本 embedding 请求都流经该客户端。
 //!
-//! # Concurrency
+//! # 并发
 //!
-//! An [`Arc<Semaphore>`] caps the number of in-flight HTTP requests so the
-//! pipeline never overwhelms the inference server.
+//! 一个 [`Arc<Semaphore>`] 限制在途 HTTP 请求数，使流水线永远不会压垮
+//! 推理服务器。
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-/// Default SiliconFlow API URL.
+/// 默认的 SiliconFlow API URL。
 const SILICONFLOW_DEFAULT_URL: &str = "https://api.siliconflow.cn/v1";
 
 // ---------------------------------------------------------------------------
-// Public response / DTO types
+// 公开响应 / DTO 类型
 // ---------------------------------------------------------------------------
 
-/// OpenAI-compatible chat completion response.
+/// OpenAI 兼容的 chat completion 响应。
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
     pub choices: Vec<Choice>,
@@ -37,7 +37,7 @@ pub struct Message {
 }
 
 // ---------------------------------------------------------------------------
-// Request bodies (private -- only used internally)
+// 请求体（私有——仅供内部使用）
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
@@ -72,10 +72,10 @@ struct EmbedDatum {
 }
 
 // ---------------------------------------------------------------------------
-// SiliconFlow Client
+// SiliconFlow 客户端
 // ---------------------------------------------------------------------------
 
-/// HTTP client for SiliconFlow's cloud API (OpenAI-compatible).
+/// SiliconFlow 云 API（OpenAI 兼容）的 HTTP 客户端。
 pub struct SiliconFlowChatClient {
     client: Client,
     base_url: String,
@@ -84,12 +84,12 @@ pub struct SiliconFlowChatClient {
 }
 
 impl SiliconFlowChatClient {
-    /// Build a new client that targets `base_url` with max concurrent requests.
+    /// 构建一个以 `base_url` 为目标、支持最大并发请求数的新客户端。
     pub fn new(base_url: String, max_concurrent: usize) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .expect("reqwest::Client::builder() should never fail");
+            .expect("reqwest::Client::builder() 不应失败");
 
         Self {
             client,
@@ -103,7 +103,7 @@ impl SiliconFlowChatClient {
         }
     }
 
-    /// Check whether the SiliconFlow API is reachable.
+    /// 检查 SiliconFlow API 是否可达。
     pub async fn health_check(&self) -> Result<bool, String> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
@@ -115,11 +115,11 @@ impl SiliconFlowChatClient {
             .await
         {
             Ok(resp) => Ok(resp.status().is_success()),
-            Err(e) => Err(format!("SiliconFlow health check failed: {e}")),
+            Err(e) => Err(format!("SiliconFlow 健康检查失败: {e}")),
         }
     }
 
-    /// Send a chat completion request to SiliconFlow (OpenAI-compatible).
+    /// 向 SiliconFlow 发送 chat completion 请求（OpenAI 兼容）。
     pub async fn chat(
         &self,
         model: &str,
@@ -132,7 +132,7 @@ impl SiliconFlowChatClient {
             .semaphore
             .acquire()
             .await
-            .map_err(|e| format!("semaphore acquire failed: {e}"))?;
+            .map_err(|e| format!("信号量获取失败: {e}"))?;
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
@@ -160,26 +160,26 @@ impl SiliconFlowChatClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("SiliconFlow chat request failed: {e}"))?;
+            .map_err(|e| format!("SiliconFlow 对话请求失败: {e}"))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("SiliconFlow chat returned HTTP {status}: {text}"));
+            return Err(format!("SiliconFlow 对话返回 HTTP {status}: {text}"));
         }
 
         resp.json::<ChatResponse>()
             .await
-            .map_err(|e| format!("chat response parse failed: {e}"))
+            .map_err(|e| format!("对话响应解析失败: {e}"))
     }
 
-    /// Embed a batch of texts via POST /v1/embeddings.
+    /// 通过 POST /v1/embeddings 嵌入一批文本。
     pub async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
         let _permit = self
             .semaphore
             .acquire()
             .await
-            .map_err(|e| format!("semaphore acquire failed: {e}"))?;
+            .map_err(|e| format!("信号量获取失败: {e}"))?;
 
         let url = format!("{}/v1/embeddings", self.base_url);
 
@@ -194,28 +194,28 @@ impl SiliconFlowChatClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| format!("embed request failed: {e}"))?;
+            .map_err(|e| format!("embed 请求失败: {e}"))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("embed returned HTTP {status}: {text}"));
+            return Err(format!("embed 返回 HTTP {status}: {text}"));
         }
 
         let embed_resp = resp
             .json::<EmbedResponse>()
             .await
-            .map_err(|e| format!("embed response parse failed: {e}"))?;
+            .map_err(|e| format!("embed 响应解析失败: {e}"))?;
 
         Ok(embed_resp.data.into_iter().map(|d| d.embedding).collect())
     }
 }
 
 // ---------------------------------------------------------------------------
-// XInference Chat Client
+// XInference 对话客户端
 // ---------------------------------------------------------------------------
 
-/// HTTP client for XInference's OpenAI-compatible local API (chat only).
+/// XInference 的 OpenAI 兼容本地 API（仅对话）的 HTTP 客户端。
 pub struct XInferenceChatClient {
     client: Client,
     base_url: String,
@@ -224,30 +224,30 @@ pub struct XInferenceChatClient {
 }
 
 impl XInferenceChatClient {
-    /// Build a new XInference chat client.
+    /// 构建一个新的 XInference 对话客户端。
     pub fn new(base_url: String, api_key: String, max_concurrent: usize) -> Self {
         Self {
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
-                .expect("reqwest::Client::builder() should never fail"),
+                .expect("reqwest::Client::builder() 不应失败"),
             base_url,
             api_key,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
         }
     }
 
-    /// Check whether the XInference server is reachable.
+    /// 检查 XInference 服务器是否可达。
     pub async fn health_check(&self) -> Result<bool, String> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
         match self.client.get(&url).send().await {
             Ok(resp) => Ok(resp.status().is_success()),
-            Err(e) => Err(format!("XInference health check failed: {e}")),
+            Err(e) => Err(format!("XInference 健康检查失败: {e}")),
         }
     }
 
-    /// Send a chat completion request to XInference.
+    /// 向 XInference 发送 chat completion 请求。
     pub async fn chat(
         &self,
         model: &str,
@@ -260,7 +260,7 @@ impl XInferenceChatClient {
             .semaphore
             .acquire()
             .await
-            .map_err(|e| format!("semaphore acquire failed: {e}"))?;
+            .map_err(|e| format!("信号量获取失败: {e}"))?;
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
@@ -283,25 +283,25 @@ impl XInferenceChatClient {
         let resp = req
             .send()
             .await
-            .map_err(|e| format!("XInference chat request failed: {e}"))?;
+            .map_err(|e| format!("XInference 对话请求失败: {e}"))?;
 
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("XInference chat returned HTTP {status}: {text}"));
+            return Err(format!("XInference 对话返回 HTTP {status}: {text}"));
         }
 
         resp.json::<ChatResponse>()
             .await
-            .map_err(|e| format!("chat response parse failed: {e}"))
+            .map_err(|e| format!("对话响应解析失败: {e}"))
     }
 }
 
 // ---------------------------------------------------------------------------
-// Unified Chat Client Trait
+// 统一对话客户端 trait
 // ---------------------------------------------------------------------------
 
-/// Unified chat client trait -- implemented by both SiliconFlow and XInference.
+/// 统一对话客户端 trait——由 SiliconFlow 与 XInference 共同实现。
 #[async_trait]
 pub trait ChatClient: Send + Sync {
     async fn chat(
@@ -366,7 +366,7 @@ impl ChatClient for XInferenceChatClient {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

@@ -1,27 +1,26 @@
-//! LLM analysis processor -- calls the inference server's
-//! `/v1/chat/completions` endpoint with a prompt selected according to
-//! which upstream processors have already run.
+//! LLM 分析处理器——调用推理服务器的 `/v1/chat/completions` 端点，
+//! 提示词根据哪些上游处理器已运行来选择。
 //!
-//! Prompt selection logic:
-//! - If the context contains `tree_sitter` output -> `"code_with_ast"`
-//!   (single call, unparsed response — legacy code path, unchanged)
-//! - If the context contains `chunk` output       -> `"document_with_nlp"`
-//!   (block-level extraction loop, 方案 §5.2: one LLM call per chunk,
-//!   HanLP candidates injected per aligned `block_index`)
-//! - Otherwise                                     -> `"raw_text"`
-//!   (single call, unparsed response — unchanged)
+//! 提示词选择逻辑：
+//! - 上下文包含 `tree_sitter` 输出 → `"code_with_ast"`
+//!   （单次调用、不解析响应——旧代码路径，保持不变）
+//! - 上下文包含 `chunk` 输出       → `"document_with_nlp"`
+//!   （块级提取循环，方案 §5.2：每个 chunk 一次 LLM 调用，
+//!   HanLP 候选按对齐的 `block_index` 注入）
+//! - 其他情况                     → `"raw_text"`
+//!   （单次调用、不解析响应——保持不变）
 //!
-//! Block-level extraction produces a [`ProcessorOutput`] with:
-//! - `"graphs"`         -- array of [`ExtractedGraph`], one per chunk
-//! - `"response"`       -- all blocks' raw responses joined with `"\n\n"`
-//!   (kept for the legacy store consumer; Task 2 removes it)
-//! - `"prompt_name"`    -- `"document_with_nlp"`
-//! - `"model"`          -- the model identifier string
-//! - `"degraded_count"` -- blocks whose JSON parse failed even after one retry
-//! - `"block_count"`    -- number of chunks processed
+//! 块级提取产生一个 [`ProcessorOutput`]，包含：
+//! - `"graphs"`         —— [`ExtractedGraph`] 数组，每个 chunk 一个
+//! - `"response"`       —— 所有块的原始响应以 `"\n\n"` 连接
+//!   （为旧 store 消费者保留；Task 2 会移除它）
+//! - `"prompt_name"`    —— `"document_with_nlp"`
+//! - `"model"`          —— 模型标识字符串
+//! - `"degraded_count"` —— 即使重试一次后 JSON 解析仍失败的块数
+//! - `"block_count"`    —— 已处理的 chunk 数
 //!
-//! Single-call paths keep the legacy output: `{"response", "prompt_name",
-//! "model"}` — byte-for-byte unchanged.
+//! 单次调用路径保留旧输出：`{"response", "prompt_name",
+//! "model"}`——逐字节不变。
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -39,16 +38,14 @@ use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::prompt::PromptRegistry;
 use crate::domain::error::DtError;
 
-/// Correction hint appended to the user prompt when retrying after a JSON
-/// parse failure (§5.5).
+/// JSON 解析失败后重试时附加到用户提示词中的修正提示（§5.5）。
 const JSON_CORRECTION: &str =
     "【修正】上一次回复不是合法 JSON。仅输出 JSON：不要 markdown 围栏，不要额外说明。";
 
-/// LLM-powered analysis processor.
+/// 基于 LLM 的分析处理器。
 ///
-/// Uses the configured [`ChatClient`] (SiliconFlow or XInference) to call
-/// the chat endpoint. The prompt template is selected dynamically based
-/// on which prior processors produced output.
+/// 使用配置的 [`ChatClient`]（SiliconFlow 或 XInference）调用对话端点。
+/// 提示词模板根据哪些前置处理器产生了输出而动态选择。
 pub struct LlmClientProcessor {
     client: Arc<dyn ChatClient>,
     model: String,
@@ -57,7 +54,7 @@ pub struct LlmClientProcessor {
 }
 
 impl LlmClientProcessor {
-    /// Create a new LLM analysis processor.
+    /// 创建新的 LLM 分析处理器。
     pub fn new(
         client: Arc<dyn ChatClient>,
         model: String,
@@ -106,10 +103,10 @@ impl Processor for LlmClientProcessor {
     }
 
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
-        // 1. Select the prompt based on which upstream outputs exist.
+        // 1. 根据存在哪些上游输出来选择提示词。
         let prompt_name = select_prompt(ctx);
 
-        // 2. Block-level extraction for documents; legacy single call otherwise.
+        // 2. 文档走块级提取；其他情况走旧式单次调用。
         if prompt_name == "document_with_nlp" {
             self.execute_block_extraction(ctx).await
         } else {
@@ -119,8 +116,8 @@ impl Processor for LlmClientProcessor {
 }
 
 impl LlmClientProcessor {
-    /// Legacy single-call path (`code_with_ast` / `raw_text`): render once,
-    /// call once, return the unparsed response. Output shape unchanged.
+    /// 旧式单次调用路径（`code_with_ast` / `raw_text`）：渲染一次、
+    /// 调用一次，返回未解析的响应。输出形状不变。
     async fn execute_single_call(
         &self,
         ctx: &PipelineContext,
@@ -132,12 +129,12 @@ impl LlmClientProcessor {
         let (system_prompt, user_prompt) = self
             .prompt_registry
             .render(prompt_name, &render_ctx)
-            .map_err(|e| DtError::General(format!("prompt render error: {e}")))?;
+            .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
         let response_text = self
             .chat_content(&system_prompt, &user_prompt)
             .await
-            .map_err(|e| DtError::General(format!("LLM chat error: {e}")))?;
+            .map_err(|e| DtError::General(format!("LLM 对话错误: {e}")))?;
 
         output.set("response", response_text);
         output.set("prompt_name", prompt_name);
@@ -146,13 +143,11 @@ impl LlmClientProcessor {
         Ok(output)
     }
 
-    /// Block-level extraction loop (§5.2): one LLM call per chunk, serial.
+    /// 块级提取循环（§5.2）：每个 chunk 一次 LLM 调用，串行执行。
     ///
-    /// Each block's prompt is rendered with the chunk text and the HanLP
-    /// candidates aligned by `block_index` (empty placeholders when HanLP is
-    /// absent). Each response is parsed into an [`ExtractedGraph`]; blocks
-    /// that fail parsing even after one retry degrade to an empty graph with
-    /// `degraded = true` (§5.5).
+    /// 每个块的提示词使用块文本与按 `block_index` 对齐的 HanLP 候选渲染
+    /// （HanLP 缺席时使用空占位符）。每个响应解析为 [`ExtractedGraph`]；
+    /// 即使重试一次后解析仍失败的块，降级为 `degraded = true` 的空图（§5.5）。
     async fn execute_block_extraction(
         &self,
         ctx: &PipelineContext,
@@ -161,7 +156,7 @@ impl LlmClientProcessor {
 
         let chunk_out = ctx
             .get_output("chunk")
-            .ok_or_else(|| DtError::General("chunk output missing".to_string()))?;
+            .ok_or_else(|| DtError::General("缺少 chunk 输出".to_string()))?;
         let doc_id = chunk_out
             .get("doc_id")
             .and_then(|v| v.as_str())
@@ -179,7 +174,7 @@ impl LlmClientProcessor {
             .and_then(|v| v.as_array())
             .unwrap_or(&empty_chunks);
 
-        // HanLP candidates keyed by block_index for per-block injection.
+        // 按 block_index 索引的 HanLP 候选，用于逐块注入。
         let hanlp_map: HashMap<u64, &serde_json::Value> = ctx
             .get_output("hanlp")
             .and_then(|o| o.get("hanlp_blocks"))
@@ -214,7 +209,7 @@ impl LlmClientProcessor {
             let (system_prompt, user_prompt) = self
                 .prompt_registry
                 .render("document_with_nlp", &render_ctx)
-                .map_err(|e| DtError::General(format!("prompt render error: {e}")))?;
+            .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
             let (raw, graph) = self
                 .extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32)
@@ -237,10 +232,9 @@ impl LlmClientProcessor {
         Ok(output)
     }
 
-    /// One block's LLM call + JSON parse. On parse failure retries once with
-    /// a JSON-correction hint; a second failure (or a chat error) degrades
-    /// the block (§5.5). Returns the final attempt's raw response (if any)
-    /// and the resulting graph.
+    /// 一个块的 LLM 调用 + JSON 解析。解析失败时带 JSON 修正提示重试一次；
+    /// 第二次失败（或对话错误）将该块降级（§5.5）。返回最终尝试的原始响应
+    /// （若有）与结果图。
     async fn extract_block(
         &self,
         system_prompt: &str,
@@ -277,7 +271,7 @@ impl LlmClientProcessor {
         }
     }
 
-    /// Call the chat endpoint and extract the first choice's content.
+    /// 调用对话端点并提取第一个 choice 的内容。
     async fn chat_content(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
         let resp = self
             .client
@@ -297,8 +291,7 @@ impl LlmClientProcessor {
     }
 }
 
-/// Select the most appropriate prompt name based on available upstream
-/// outputs in the pipeline context.
+/// 根据流水线上下文中可用的上游输出选择最合适的提示词名。
 fn select_prompt(ctx: &PipelineContext) -> String {
     if ctx.outputs.contains_key("tree_sitter") {
         "code_with_ast".to_string()
@@ -309,8 +302,7 @@ fn select_prompt(ctx: &PipelineContext) -> String {
     }
 }
 
-/// Build the render context for the legacy single-call paths
-/// (`code_with_ast` / `raw_text`).
+/// 为旧式单次调用路径（`code_with_ast` / `raw_text`）构建渲染上下文。
 fn build_render_context(ctx: &PipelineContext) -> serde_json::Value {
     serde_json::json!({
         "file_path": ctx.file_path.to_string_lossy(),
@@ -319,8 +311,8 @@ fn build_render_context(ctx: &PipelineContext) -> serde_json::Value {
     })
 }
 
-/// Build the render context for one block (§5.2): the flat keys
-/// `file_path` / `file_text` (block text) / `entities` / `keywords`.
+/// 为单个块（§5.2）构建渲染上下文：扁平键
+/// `file_path` / `file_text`（块文本）/ `entities` / `keywords`。
 fn build_block_render_context(
     ctx: &PipelineContext,
     block_text: &str,
@@ -336,9 +328,9 @@ fn build_block_render_context(
     })
 }
 
-/// Render one HanLP block's candidates into readable prompt strings
-/// (e.g. `- 支付网关 (NN, 频次3)`). Missing or empty candidates become
-/// `"（无）"` so no `${...}` placeholder survives rendering.
+/// 将一个 HanLP 块的候选渲染为可读的提示词字符串
+/// （例如 `- 支付网关 (NN, 频次3)`）。缺失或空候选变为
+/// `"（无）"`，使渲染后不会残留任何 `${...}` 占位符。
 fn format_hanlp_candidates(block: Option<&serde_json::Value>) -> (String, String) {
     let entities = block
         .and_then(|b| b.get("entities"))
@@ -373,7 +365,7 @@ fn format_hanlp_candidates(block: Option<&serde_json::Value>) -> (String, String
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -426,7 +418,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .pop_front()
-                .expect("mock script exhausted")?;
+                .expect("mock 脚本已耗尽")?;
             Ok(ChatResponse {
                 choices: vec![Choice {
                     message: Message { content },
@@ -439,11 +431,11 @@ mod tests {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────
+    // ── 辅助 ───────────────────────────────────────────────────────
 
     fn test_registry() -> Arc<PromptRegistry> {
         Arc::new(
-            PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts must load"),
+            PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts 必须能加载"),
         )
     }
 
@@ -500,7 +492,7 @@ mod tests {
     const VALID_JSON_0: &str = r#"{"block_summary":"块0概述","entities":[{"mention":"支付网关服务","canonical_name":"支付网关","type":"Service","summary":"处理支付路由","keywords":["支付"]}],"relations":[]}"#;
     const VALID_JSON_1: &str = r#"{"block_summary":"块1概述","entities":[],"relations":[]}"#;
 
-    // ── Prompt selection ──────────────────────────────────────────────
+    // ── 提示词选择 ──────────────────────────────────────────────
 
     #[test]
     fn selects_code_with_ast_when_tree_sitter_present() {
@@ -534,7 +526,7 @@ mod tests {
         assert_eq!(select_prompt(&ctx), "code_with_ast");
     }
 
-    // ── Render context ────────────────────────────────────────────────
+    // ── 渲染上下文 ────────────────────────────────────────────────
 
     #[test]
     fn build_render_context_contains_file_info() {
@@ -570,7 +562,7 @@ mod tests {
         );
     }
 
-    // ── Block extraction (document_with_nlp path) ─────────────────────
+    // ── 块级提取（document_with_nlp 路径） ─────────────────────
 
     #[tokio::test]
     async fn block_extraction_produces_graph_per_chunk() {
@@ -606,7 +598,7 @@ mod tests {
         assert!(!graphs[0].degraded);
         assert_eq!(graphs[1].block_index, 1);
 
-        // One serial LLM call per chunk.
+        // 每个 chunk 一次串行 LLM 调用。
         assert_eq!(mock.calls().len(), 2);
     }
 
@@ -635,17 +627,17 @@ mod tests {
         processor.execute(&ctx).await.unwrap();
         let calls = mock.calls();
 
-        // Block 0 gets its own candidates; block 1 gets the placeholder.
+        // 块 0 获得自己的候选；块 1 获得占位符。
         assert!(calls[0].1.contains("- 支付网关 (NN, 频次3)"));
         assert!(calls[0].1.contains("支付, 路由"));
         assert!(calls[1].1.contains("（无）"));
-        // Block text — not the whole file — is injected per block.
+        // 注入的是块文本——而非整个文件——逐块注入。
         assert!(calls[0].1.contains("块0文本"));
         assert!(!calls[0].1.contains("块1文本"));
         assert!(calls[1].1.contains("块1文本"));
-        // No unresolved template placeholder survives rendering.
+        // 渲染后不应残留未解析的模板占位符。
         for (_, user) in &calls {
-            assert!(!user.contains("${"), "template residue in: {user}");
+            assert!(!user.contains("${"), "模板残留: {user}");
         }
     }
 
@@ -676,7 +668,7 @@ mod tests {
         let out = processor.execute(&ctx).await.unwrap();
 
         assert_eq!(mock.calls().len(), 2);
-        // The retry carries the "JSON only" correction hint.
+        // 重试携带"仅输出 JSON"修正提示。
         assert!(mock.calls()[1].1.contains("仅输出 JSON"));
         assert_eq!(out.get("degraded_count").and_then(|v| v.as_u64()), Some(0));
         let graphs: Vec<ExtractedGraph> =
@@ -706,7 +698,7 @@ mod tests {
         assert!(graphs[0].entities.is_empty());
         assert!(graphs[0].relations.is_empty());
         assert_eq!(graphs[0].doc_id, "dt://doc/test/doc.md");
-        // The last raw response is kept in the legacy "response" field.
+        // 最后一次原始响应保留在旧的 "response" 字段中。
         assert_eq!(
             out.get("response").and_then(|v| v.as_str()),
             Some("garbage two")
@@ -732,7 +724,7 @@ mod tests {
         assert!(graphs[0].degraded);
     }
 
-    // ── Legacy single-call paths (unchanged) ──────────────────────────
+    // ── 旧式单次调用路径（不变） ──────────────────────────
 
     #[tokio::test]
     async fn raw_text_path_keeps_legacy_output() {

@@ -1,7 +1,6 @@
-//! Test report — structured check results with coloured terminal output.
+//! 测试报告——带彩色终端输出的结构化检查结果。
 //!
-//! Each verification step produces a [`CheckResult`] and the overall
-//! [`TestReport`] aggregates them for display.
+//! 每个验证步骤产生一个 [`CheckResult`]，整体 [`TestReport`] 聚合它们用于展示。
 
 use std::fmt;
 
@@ -9,25 +8,25 @@ use std::fmt;
 // CheckResult
 // ---------------------------------------------------------------------------
 
-/// The outcome of a single verification check.
+/// 单个验证检查的结果。
 #[derive(Debug, Clone)]
 pub struct CheckResult {
-    /// Human-readable check name (e.g. "Classes exist").
+    /// 人类可读的检查名称（例如 "Classes exist"）。
     pub name: String,
-    /// Category grouping for display: "Graph", "Vector", "Pipeline".
+    /// 用于展示的类别分组："Graph"、"Vector"、"Pipeline"。
     pub category: String,
-    /// Whether the check passed.
+    /// 检查是否通过。
     pub passed: bool,
-    /// Whether the check was skipped (e.g. because a service was unavailable).
+    /// 检查是否被跳过（例如因为某个服务不可用）。
     pub skipped: bool,
-    /// Expected outcome description.
+    /// 预期结果描述。
     pub expected: String,
-    /// Actual outcome description.
+    /// 实际结果描述。
     pub actual: String,
 }
 
 impl CheckResult {
-    /// Create a new passing check result.
+    /// 创建新的通过检查结果。
     pub fn passed(name: impl Into<String>, category: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -39,7 +38,7 @@ impl CheckResult {
         }
     }
 
-    /// Create a new failing check result.
+    /// 创建新的失败检查结果。
     pub fn failed(
         name: impl Into<String>,
         category: impl Into<String>,
@@ -56,7 +55,7 @@ impl CheckResult {
         }
     }
 
-    /// Create a new skipped check result.
+    /// 创建新的跳过检查结果。
     pub fn skipped(
         name: impl Into<String>,
         category: impl Into<String>,
@@ -86,10 +85,10 @@ impl fmt::Display for CheckResult {
         write!(f, "  {} [{}] {}", icon, self.category, self.name)?;
 
         if !self.passed && !self.skipped {
-            write!(f, "\n      expected: {}", self.expected)?;
-            write!(f, "\n      actual:   {}", self.actual)?;
+            write!(f, "\n      期望: {}", self.expected)?;
+            write!(f, "\n      实际:   {}", self.actual)?;
         } else if self.skipped {
-            write!(f, "\n      reason: {}", self.actual)?;
+            write!(f, "\n      原因: {}", self.actual)?;
         }
 
         Ok(())
@@ -100,25 +99,25 @@ impl fmt::Display for CheckResult {
 // TestReport
 // ---------------------------------------------------------------------------
 
-/// Aggregated test report containing all verification checks.
+/// 包含所有验证检查的聚合测试报告。
 #[derive(Debug)]
 pub struct TestReport {
-    /// Individual check results.
+    /// 单条检查结果。
     pub checks: Vec<CheckResult>,
-    /// Total number of checks.
+    /// 检查总数。
     pub total: usize,
-    /// Number of passed checks.
+    /// 通过的检查数。
     pub passed: usize,
-    /// Number of failed checks.
+    /// 失败的检查数。
     pub failed: usize,
-    /// Number of skipped checks.
+    /// 跳过的检查数。
     pub skipped: usize,
-    /// Total test duration in milliseconds.
+    /// 总测试时长（毫秒）。
     pub duration_ms: u64,
 }
 
 impl TestReport {
-    /// Create a new empty report.
+    /// 创建新的空报告。
     pub fn new() -> Self {
         Self {
             checks: Vec::new(),
@@ -130,7 +129,7 @@ impl TestReport {
         }
     }
 
-    /// Add a check result and update counters.
+    /// 添加一条检查结果并更新计数器。
     pub fn add(&mut self, check: CheckResult) {
         if check.skipped {
             self.skipped += 1;
@@ -143,25 +142,25 @@ impl TestReport {
         self.checks.push(check);
     }
 
-    /// Set the duration after all checks complete.
+    /// 在所有检查完成后设置时长。
     pub fn set_duration(&mut self, duration_ms: u64) {
         self.duration_ms = duration_ms;
     }
 
-    /// Print a coloured terminal report.
+    /// 打印彩色终端报告。
     ///
-    /// Uses ANSI colour codes:
-    /// - Green `✓` for pass
-    /// - Red `✗` for fail
-    /// - Yellow `-` for skip
+    /// 使用 ANSI 颜色代码：
+    /// - 绿色 `✓` 表示通过
+    /// - 红色 `✗` 表示失败
+    /// - 黄色 `-` 表示跳过
     pub fn print(&self) {
         println!();
         println!("{}", "=".repeat(60));
-        println!("  Digital Twin Build Pipeline Test Report");
+        println!("  数字孪生构建流水线测试报告");
         println!("{}", "=".repeat(60));
         println!();
 
-        // Group checks by category.
+        // 按类别分组检查。
         let mut categories: Vec<&str> = self
             .checks
             .iter()
@@ -180,30 +179,30 @@ impl TestReport {
 
             for check in &cat_checks {
                 let icon = if check.skipped {
-                    "\x1b[33m-\x1b[0m" // Yellow
+                    "\x1b[33m-\x1b[0m" // 黄色
                 } else if check.passed {
-                    "\x1b[32m✓\x1b[0m" // Green
+                    "\x1b[32m✓\x1b[0m" // 绿色
                 } else {
-                    "\x1b[31m✗\x1b[0m" // Red
+                    "\x1b[31m✗\x1b[0m" // 红色
                 };
 
                 println!("    {} {}", icon, check.name);
 
                 if !check.passed && !check.skipped {
-                    println!("      \x1b[2mexpected: {}\x1b[0m", check.expected);
-                    println!("      \x1b[2mactual:   {}\x1b[0m", check.actual);
+                    println!("      \x1b[2m期望: {}\x1b[0m", check.expected);
+                    println!("      \x1b[2m实际:   {}\x1b[0m", check.actual);
                 } else if check.skipped {
-                    println!("      \x1b[33mreason: {}\x1b[0m", check.actual);
+                    println!("      \x1b[33m原因: {}\x1b[0m", check.actual);
                 }
             }
 
             println!();
         }
 
-        // Summary line.
+        // 汇总行。
         println!("{}", "-".repeat(60));
         println!(
-            "  {} total  |  \x1b[32m{} passed\x1b[0m  |  \x1b[31m{} failed\x1b[0m  |  \x1b[33m{} skipped\x1b[0m  |  {} ms",
+            "  {} 总计  |  \x1b[32m{} 通过\x1b[0m  |  \x1b[31m{} 失败\x1b[0m  |  \x1b[33m{} 跳过\x1b[0m  |  {} ms",
             self.total, self.passed, self.failed, self.skipped, self.duration_ms,
         );
         println!("{}", "=".repeat(60));
@@ -218,7 +217,7 @@ impl Default for TestReport {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

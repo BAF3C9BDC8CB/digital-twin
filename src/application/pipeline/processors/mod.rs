@@ -1,18 +1,18 @@
-//! Pipeline processor implementations.
+//! 流水线处理器实现。
 //!
-//! Each module wraps an existing infrastructure component into a
-//! [`Processor`](super::processor::Processor) so that the pipeline engine
-//! can compose them into a configurable chain.
+//! 每个模块将一个既有基础设施组件包装为
+//! [`Processor`](super::processor::Processor)，使流水线引擎可以将其
+//! 组合成可配置的处理链。
 //!
-//! # Processing order (by priority)
+//! # 处理顺序（按优先级）
 //!
-//! | Priority | Processor        | Responsibility                |
-//! |----------|------------------|------------------------------|
-//! | 100      | `TreeSitter`     | AST parsing (code files)     |
-//! | 90       | `Chunk`          | Text chunking (doc files)    |
-//! | 80       | `HanlpClient`    | NLP analysis (placeholder)   |
-//! | 60       | `LlmClient`      | LLM analysis                  |
-//! | 10       | `Store`          | Persist to graph + vector DB  |
+//! | 优先级 | 处理器           | 职责                       |
+//! |--------|------------------|----------------------------|
+//! | 100    | `TreeSitter`     | AST 解析（代码文件）       |
+//! | 90     | `Chunk`          | 文本分块（文档文件）       |
+//! | 80     | `HanlpClient`    | NLP 分析（占位）           |
+//! | 60     | `LlmClient`      | LLM 分析                   |
+//! | 10     | `Store`          | 持久化到图 + 向量数据库    |
 
 pub mod chunk;
 pub mod hanlp_client;

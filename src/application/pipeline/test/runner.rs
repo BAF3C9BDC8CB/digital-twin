@@ -1,11 +1,10 @@
-//! Test verification — standalone verification function for the Digital Twin
-//! pipeline.
+//! 测试验证——Digital Twin 流水线的独立验证函数。
 //!
-//! This module provides [`verify_test_data`] which:
-//! 1. Loads `test/expected.json` (ground truth)
-//! 2. Queries Memgraph and Qdrant for actual build output
-//! 3. Compares actual vs expected — every method, class, module, and Qdrant
-//!    collection is checked. Any mismatch is reported in the [`TestReport`].
+//! 该模块提供 [`verify_test_data`]，它：
+//! 1. 加载 `test/expected.json`（基准数据）
+//! 2. 查询 Memgraph 与 Qdrant 获取实际构建输出
+//! 3. 对比实际与期望——每个方法、类、模块与 Qdrant 集合都会被检查。
+//!    任何不匹配都会在 [`TestReport`] 中报告。
 
 use crate::domain::traits::{GraphRepository, VectorRepository};
 use std::collections::{HashMap, HashSet};
@@ -14,18 +13,18 @@ use std::time::Instant;
 
 use super::report::{CheckResult, TestReport};
 
-/// Project name used for all test data (isolated via `project` property).
+/// 所有测试数据使用的项目名（通过 `project` 属性隔离）。
 const TEST_PROJECT: &str = "test-pipeline";
 
-/// Path to the ground-truth expected answer file (relative to project root).
+/// 基准答案文件路径（相对项目根目录）。
 const EXPECTED_PATH: &str = "test/expected.json";
 
-/// Run the full test verification pipeline:
-/// 1. Load expected.json ground truth
-/// 2. Query Memgraph for actual built entities
-/// 3. Compare per-file methods, classes, and modules
-/// 4. Verify Qdrant collections
-/// 5. Return a [`TestReport`] with detailed results
+/// 运行完整的测试验证流水线：
+/// 1. 加载 expected.json 基准数据
+/// 2. 查询 Memgraph 获取实际构建实体
+/// 3. 逐文件对比方法、类与模块
+/// 4. 验证 Qdrant 集合
+/// 5. 返回带详细结果的 [`TestReport`]
 pub async fn verify_test_data(
     graph: Arc<dyn GraphRepository>,
     vector: Arc<dyn VectorRepository>,
@@ -33,7 +32,7 @@ pub async fn verify_test_data(
     let start = Instant::now();
     let mut report = TestReport::new();
 
-    // ── Step 1: Load ground truth ───────────────────────────────────────
+    // ── 步骤 1：加载基准数据 ───────────────────────────────────────
     let expected: serde_json::Value = match load_expected() {
         Ok(v) => v,
         Err(e) => {
@@ -68,14 +67,14 @@ pub async fn verify_test_data(
     let expected_total_classes = summary["total_classes"].as_i64().unwrap_or(0);
     let expected_total_modules = summary["total_modules"].as_i64().unwrap_or(0);
 
-    // ── Step 2: Query actual graph data ─────────────────────────────────
+    // ── 步骤 2：查询实际图数据 ─────────────────────────────────
     let mut params = HashMap::new();
     params.insert(
         "p".into(),
         serde_json::Value::String(TEST_PROJECT.to_string()),
     );
 
-    // 2a. Query all methods
+    // 2a. 查询所有方法
     let methods_result = graph
         .read_query(
             "MATCH (m:Method {project: $p}) \
@@ -118,7 +117,7 @@ pub async fn verify_test_data(
         }
     }
 
-    // 2b. Query all classes
+    // 2b. 查询所有类
     let class_result = graph
         .read_query(
             "MATCH (c:Class {project: $p}) \
@@ -159,7 +158,7 @@ pub async fn verify_test_data(
         }
     }
 
-    // 2c. Query modules
+    // 2c. 查询模块
     let module_result = graph
         .read_query(
             "MATCH (m:Module {project: $p}) RETURN count(*) AS cnt",
@@ -186,7 +185,7 @@ pub async fn verify_test_data(
         }
     }
 
-    // 2d. Query CALLS relationships
+    // 2d. 查询 CALLS 关系
     let calls_result = graph
         .read_query(
             "MATCH (:Method {project: $p})-[r:CALLS]->(:Method {project: $p}) \
@@ -214,17 +213,17 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 3: Per-file method comparison ──────────────────────────────
-    // Helper: find actual file path by suffix (graph stores absolute paths,
-    // expected.json uses relative paths like "HelloService.java")
+    // ── 步骤 3：逐文件方法比较 ──────────────────────────────
+    // 辅助：按后缀查找实际文件路径（图存储绝对路径，
+    // expected.json 使用相对路径，如 "HelloService.java"）
     let find_actual_path = |expected_rel: &str,
                             actual_map: &HashMap<String, Vec<serde_json::Value>>|
      -> Option<String> {
-        // First try exact match
+        // 先尝试精确匹配
         if actual_map.contains_key(expected_rel) {
             return Some(expected_rel.to_string());
         }
-        // Then try suffix match
+        // 再尝试后缀匹配
         for key in actual_map.keys() {
             if key.ends_with(expected_rel) || key.ends_with(&format!("/{}", expected_rel)) {
                 return Some(key.clone());
@@ -233,7 +232,7 @@ pub async fn verify_test_data(
         None
     };
 
-    // Collect all expected file paths and check each one
+    // 收集所有期望文件路径并逐一检查
     let mut checked_files: HashSet<String> = HashSet::new();
 
     for (file_path, file_info) in expected_files {
@@ -248,7 +247,7 @@ pub async fn verify_test_data(
             .map(|a| a.iter().collect())
             .unwrap_or_default();
 
-        // Find the actual file path that matches this expected path
+        // 找到与该期望路径匹配的实际文件路径
         let actual_file_key = find_actual_path(expected_rel_path, &actual_methods_by_file);
         let actual_methods = actual_file_key
             .as_ref()
@@ -261,13 +260,13 @@ pub async fn verify_test_data(
             .cloned()
             .unwrap_or_default();
 
-        // Register all actual file paths from code files as checked
-        // (files with methods or classes in expected.json)
+        // 将来自代码文件的全部实际文件路径登记为已检查
+        //（expected.json 中带方法或类的文件）
         if let Some(ref actual_key) = actual_file_key {
             checked_files.insert(actual_key.clone());
         }
 
-        // Language check
+        // 语言检查
         if let Some(expected_lang) = file_info["language"].as_str() {
             if !expected_lang.is_empty() {
                 let actual_langs: HashSet<&str> = actual_methods
@@ -276,7 +275,7 @@ pub async fn verify_test_data(
                     .collect();
                 let expected_set: HashSet<&str> =
                     actual_langs.iter().map(|_| expected_lang).collect();
-                // Check at least one method has the right language
+                // 检查至少一个方法具有正确的语言
                 let lang_ok = actual_methods
                     .iter()
                     .any(|m| m.get("language").and_then(|v| v.as_str()) == Some(expected_lang));
@@ -302,7 +301,7 @@ pub async fn verify_test_data(
             }
         }
 
-        // Method count check
+        // 方法数量检查
         {
             let check_name = format!("[{}] Method count", expected_rel_path);
             let expected_count = expected_methods.len();
@@ -319,7 +318,7 @@ pub async fn verify_test_data(
             }
         }
 
-        // Per-method name check
+        // 逐方法名称检查
         let expected_method_names: Vec<&str> = expected_methods
             .iter()
             .filter_map(|m| m["name"].as_str())
@@ -343,7 +342,7 @@ pub async fn verify_test_data(
             }
         }
 
-        // Check for unexpected methods (in graph but not in expected)
+        // 检查意外方法（在图中但不在期望中）
         let expected_name_set: HashSet<&str> = expected_method_names.into_iter().collect();
         for actual_m in &actual_methods {
             if let Some(actual_name) = actual_m.get("name").and_then(|v| v.as_str()) {
@@ -362,7 +361,7 @@ pub async fn verify_test_data(
             }
         }
 
-        // Class count check
+        // 类数量检查
         {
             let check_name = format!("[{}] Class count", expected_rel_path);
             let expected_count = expected_classes.len();
@@ -379,7 +378,7 @@ pub async fn verify_test_data(
             }
         }
 
-        // Per-class name check
+        // 逐类名称检查
         let expected_class_names: Vec<&str> = expected_classes
             .iter()
             .filter_map(|c| c["name"].as_str())
@@ -404,8 +403,8 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 4: Check for source-code files in graph but not in expected ──
-    // All code files that produced entities should be listed in expected.json
+    // ── 步骤 4：检查图中但不在期望中的源代码文件 ──
+    // 产生实体的所有代码文件都应列在 expected.json 中
     let all_actual_files: HashSet<&str> = actual_methods_by_file
         .keys()
         .chain(actual_classes_by_file.keys())
@@ -424,8 +423,8 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 5: Summary-level checks ────────────────────────────────────
-    // Total methods
+    // ── 步骤 5：汇总级检查 ────────────────────────────────────
+    // 方法总数
     if actual_method_count == expected_total_methods {
         report.add(CheckResult::passed(
             &format!("Total methods = {}", expected_total_methods),
@@ -440,7 +439,7 @@ pub async fn verify_test_data(
         ));
     }
 
-    // Total classes
+    // 类总数
     if actual_class_count == expected_total_classes {
         report.add(CheckResult::passed(
             &format!("Total classes = {}", expected_total_classes),
@@ -455,7 +454,7 @@ pub async fn verify_test_data(
         ));
     }
 
-    // Module count
+    // 模块数量
     if actual_module_count >= expected_total_modules {
         report.add(CheckResult::passed(
             &format!("Module count >= {}", expected_total_modules),
@@ -470,7 +469,7 @@ pub async fn verify_test_data(
         ));
     }
 
-    // Project node
+    // 项目节点
     {
         let p_result = graph
             .read_query(
@@ -502,14 +501,14 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 6: Qdrant checks ───────────────────────────────────────────
-    // Phase 5+6: methods are now in the global code_methods collection
-    // (project is a payload tag, not part of the collection name).
+    // ── 步骤 6：Qdrant 检查 ───────────────────────────────────────────
+    // Phase 5+6：方法现在位于全局 code_methods 集合中
+    //（project 是 payload 标签，而非集合名的一部分）。
     let method_coll = crate::shared::collections::CODE_METHODS.to_string();
 
     match vector.list_collections().await {
         Ok(collections) => {
-            // Methods collection
+            // 方法集合
             let methods_exists = collections.iter().any(|c| c == &method_coll);
             let qdrant_methods_expected = summary["qdrant_methods_collection"]
                 .as_bool()
@@ -533,7 +532,8 @@ pub async fn verify_test_data(
                 match vector.collection_info(&method_coll).await {
                     Ok(info) => {
                         let cnt = info.points_count;
-                        // Use explicit qdrant_methods_vector_count if available, else fallback to total_methods
+                        // 若提供了显式的 qdrant_methods_vector_count 则使用之，
+                        // 否则回退到 total_methods
                         let expected_qdrant = summary["qdrant_methods_vector_count"]
                             .as_i64()
                             .unwrap_or(expected_total_methods);
@@ -560,7 +560,7 @@ pub async fn verify_test_data(
                 }
             }
 
-            // LLM content check: search one method point for llm_analysis field
+            // LLM 内容检查：搜索一个方法点以查找 llm_analysis 字段
             if methods_exists {
                 let llm_info = check_llm_content(&vector, &method_coll).await;
                 let llm_content_expected = summary["has_llm_analysis_on_methods"]
@@ -575,7 +575,7 @@ pub async fn verify_test_data(
                         ));
                         if !llm_info.sample_text.is_empty() {
                             let preview: String = llm_info.sample_text.chars().take(80).collect();
-                            tracing::info!("LLM content sample: {}", preview);
+                            tracing::info!("LLM 内容样本: {}", preview);
                         }
                     } else {
                         report.add(CheckResult::passed(
@@ -583,7 +583,7 @@ pub async fn verify_test_data(
                             "Vector",
                         ));
                         tracing::warn!(
-                            "llm_analysis field missing or empty in method points. Payload keys: {:?}",
+                            "方法点中 llm_analysis 字段缺失或为空。Payload 键: {:?}",
                             llm_info.payload_keys,
                         );
                     }
@@ -613,7 +613,7 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 7: Languages summary check ─────────────────────────────────
+    // ── 步骤 7：语言汇总检查 ─────────────────────────────────
     if let Some(expected_langs) = summary["languages"].as_array() {
         let actual_langs: HashSet<&str> = actual_methods_by_file
             .values()
@@ -640,10 +640,9 @@ pub async fn verify_test_data(
         }
     }
 
-    // ── Step 8: Knowledge-graph verification (Extract + Consolidate) ─────
-    // R11: LLM extraction is non-deterministic, so expectations are
-    // lower-bound counts (>=) plus sampled presence/field-shape checks — no
-    // exact equality. The old HanLP keyword-Entity check was removed (§10.1).
+    // ── 步骤 8：知识图谱验证（Extract + Consolidate） ─────
+    // R11：LLM 提取是非确定性的，因此期望值为下界计数（>=）加上抽样存在 /
+    // 字段形状检查——不做精确相等。旧的 HanLP 关键词-实体检查已移除（§10.1）。
     verify_knowledge_graph(&graph, &vector, &expected, &params, &mut report).await;
 
     report.set_duration(start.elapsed().as_millis() as u64);
@@ -652,25 +651,25 @@ pub async fn verify_test_data(
         passed = report.passed,
         failed = report.failed,
         skipped = report.skipped,
-        "verify complete"
+        "验证完成"
     );
     report
 }
 
-/// Load the expected.json ground truth file.
+/// 加载 expected.json 基准数据文件。
 fn load_expected() -> Result<serde_json::Value, String> {
     let content = std::fs::read_to_string(EXPECTED_PATH)
         .map_err(|e| format!("cannot read {}: {}", EXPECTED_PATH, e))?;
     serde_json::from_str(&content).map_err(|e| format!("cannot parse {}: {}", EXPECTED_PATH, e))
 }
 
-/// Verify the knowledge-graph output of the Extract + Consolidate chain
-/// (Entity nodes, RELATES edges, MENTIONED_IN provenance, and the dual-written
-/// kg_nodes / doc_chunks vector payloads).
+/// 验证 Extract + Consolidate 链的知识图谱输出
+///（Entity 节点、RELATES 边、MENTIONED_IN 溯源，以及双写的
+/// kg_nodes / doc_chunks 向量 payload）。
 ///
-/// R11: extraction is non-deterministic, so every count expectation in
-/// `expected.json` is a **lower bound** (`>=`), entity checks are **sampled
-/// presence**, and we only assert field *shapes*, never exact equality.
+/// R11：提取是非确定性的，因此 `expected.json` 中的每个计数期望都是
+/// **下界**（`>=`），实体检查是**抽样存在**，我们只断言字段*形状*，
+/// 从不做精确相等。
 async fn verify_knowledge_graph(
     graph: &Arc<dyn GraphRepository>,
     vector: &Arc<dyn VectorRepository>,
@@ -680,8 +679,8 @@ async fn verify_knowledge_graph(
 ) {
     let summary = &expected["summary"];
 
-    // Helper: run a count query, return Option<i64>. None on query error
-    // (error is reported by the caller once, here).
+    // 辅助：运行计数查询，返回 Option<i64>。查询出错时返回 None
+    //（错误由调用方在此处报告一次）。
     let count = |query: &str,
                  graph: &Arc<dyn GraphRepository>,
                  params: &HashMap<String, serde_json::Value>| {
@@ -700,7 +699,7 @@ async fn verify_knowledge_graph(
         }
     };
 
-    // ── Graph count checks (lower-bound) ────────────────────────────────
+    // ── 图计数检查（下界） ────────────────────────────────
     let checks: [(&str, &str, &str); 3] = [
         (
             "min_entities",
@@ -759,11 +758,11 @@ async fn verify_knowledge_graph(
         }
     }
     if any_query_failed {
-        return; // graph is unreachable — skip the deeper shape checks
+        return; // 图不可达——跳过更深的形状检查
     }
 
-    // ── Entity field shape ───────────────────────────────────────────────
-    // Sample one Entity and confirm it carries the §7.2 graph properties.
+    // ── 实体字段形状 ───────────────────────────────────────────────
+    // 抽样一个 Entity 并确认它携带 §7.2 的图属性。
     match graph
         .read_query(
             "MATCH (e:Entity {project: $p}) \
@@ -827,7 +826,7 @@ async fn verify_knowledge_graph(
         )),
     }
 
-    // ── RELATES edge field shape ─────────────────────────────────────────
+    // ── RELATES 边字段形状 ─────────────────────────────────────────
     match graph
         .read_query(
             "MATCH (:Entity {project: $p})-[r:RELATES]->(:Entity {project: $p}) \
@@ -848,8 +847,7 @@ async fn verify_knowledge_graph(
                     if r.get("doc_id").and_then(|x| x.as_str()).is_none() {
                         missing.push("doc_id");
                     }
-                    // evidence/confidence are allowed to be empty/default but the
-                    // keys must exist.
+                    // evidence/confidence 允许为空或默认，但键必须存在。
                     if r.get("evidence").is_none() {
                         missing.push("evidence");
                     }
@@ -886,9 +884,9 @@ async fn verify_knowledge_graph(
         )),
     }
 
-    // ── Sampled entity presence ──────────────────────────────────────────
-    // sample_entities: [{name, type}, ...] — case-insensitive canonical-name
-    // match, sampled so non-determinism cannot fail the run.
+    // ── 抽样实体存在性 ──────────────────────────────────────────
+    // sample_entities: [{name, type}, ...]——不区分大小写的规范名匹配，
+    // 抽样检查，使非确定性不会导致运行失败。
     if let Some(samples) = summary["sample_entities"].as_array() {
         for sample in samples {
             let name = sample["name"].as_str().unwrap_or_default();
@@ -956,18 +954,18 @@ async fn verify_knowledge_graph(
         }
     }
 
-    // ── Vector payload checks ────────────────────────────────────────────
+    // ── 向量 payload 检查 ────────────────────────────────────────────
     verify_vector_payloads(vector, summary, report).await;
 }
 
-/// Inspect a single point from `kg_nodes` and `doc_chunks` and assert the
-/// payload carries the fields mandated by §7.2 / §7.3.
+/// 检查 `kg_nodes` 与 `doc_chunks` 中的单个点，并断言 payload
+/// 携带 §7.2 / §7.3 规定的字段。
 async fn verify_vector_payloads(
     vector: &Arc<dyn VectorRepository>,
     summary: &serde_json::Value,
     report: &mut TestReport,
 ) {
-    // kg_nodes — §7.2 fields (business_id / origin=extracted / summary / labels).
+    // kg_nodes —— §7.2 字段（business_id / origin=extracted / summary / labels）。
     if summary["check_kg_nodes_payload"].as_bool().unwrap_or(true) {
         let kg = crate::shared::collections::KG_NODES;
         match point_payload(vector, kg).await {
@@ -1014,7 +1012,7 @@ async fn verify_vector_payloads(
         }
     }
 
-    // doc_chunks — §7.3 fields (doc_id / block_index / entity_ids / text).
+    // doc_chunks —— §7.3 字段（doc_id / block_index / entity_ids / text）。
     if summary["check_doc_chunks_payload"]
         .as_bool()
         .unwrap_or(true)
@@ -1055,16 +1053,15 @@ async fn verify_vector_payloads(
     }
 }
 
-/// Fetch one arbitrary point's payload from a collection (dummy vector
-/// search, limit 1), scoped to points written by THIS test build
-/// (`project = test-pipeline`). Returns None if the collection is
-/// missing/empty/error.
+/// 从集合中获取一个任意点的 payload（虚拟向量搜索，limit 1），
+/// 限定为本次测试构建写入的点（`project = test-pipeline`）。
+/// 若集合缺失 / 为空 / 出错则返回 None。
 ///
-/// The project filter is required because `kg_nodes` is a global collection:
-/// it also holds legacy kg-sync points whose payload shape (`elementId` /
-/// `description` / `source`) predates §7.2 (`business_id` / `summary` /
-/// `origin`). Sampling unfiltered would non-deterministically pick those and
-/// fail the shape assertion even though the Consolidate writer is correct.
+/// project 过滤是必需的，因为 `kg_nodes` 是全局集合：
+/// 它还保存着旧的 kg-sync 点，其 payload 形状（`elementId` /
+/// `description` / `source`）早于 §7.2（`business_id` / `summary` /
+/// `origin`）。不过滤的抽样会非确定性地选中这些点，
+/// 即使 Consolidate 写入器是正确的，也会使形状断言失败。
 async fn point_payload(
     vector: &Arc<dyn VectorRepository>,
     collection: &str,
@@ -1085,7 +1082,7 @@ async fn point_payload(
     Some(payload.clone())
 }
 
-/// Result of checking LLM content in the entities collection.
+/// 检查实体集合中 LLM 内容的结果。
 struct LlmContentInfo {
     has_points: bool,
     has_content: bool,
@@ -1093,8 +1090,8 @@ struct LlmContentInfo {
     payload_keys: Vec<String>,
 }
 
-/// Inspect one entity point from the Qdrant entities collection.
-/// Reports whether points exist and whether `llm_analysis` has content.
+/// 检查 Qdrant 实体集合中的一个实体点。
+/// 报告点是否存在以及 `llm_analysis` 是否有内容。
 async fn check_llm_content(vector: &Arc<dyn VectorRepository>, collection: &str) -> LlmContentInfo {
     let dummy_vec: Vec<f32> = vec![0.0; 1024];
     match vector.search(collection, dummy_vec, 1).await {
@@ -1135,7 +1132,7 @@ async fn check_llm_content(vector: &Arc<dyn VectorRepository>, collection: &str)
             }
         }
         Err(e) => {
-            tracing::warn!("check_llm_content: search error: {e}");
+            tracing::warn!("check_llm_content: 搜索错误: {e}");
             LlmContentInfo {
                 has_points: false,
                 has_content: false,

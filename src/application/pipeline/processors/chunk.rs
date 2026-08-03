@@ -1,14 +1,13 @@
-//! Text chunking processor — wraps the existing `chunker` to split
-//! document files (Markdown, plain text, YAML, Properties) into
-//! overlapping chunks suitable for embedding and search.
+//! 文本分块处理器——包装既有的 `chunker`，将文档文件（Markdown、纯文本、
+//! YAML、Properties）分割为适合 embedding 与搜索的重叠块。
 //!
-//! Produces a [`ProcessorOutput`] with:
-//! - `"chunks"` — JSON array of chunk objects, each containing
-//!   `chunk_id`, `text`, `chunk_index`, `prev_chunk_id`,
-//!   `next_chunk_id`, `start_char`, `end_char`
-//! - `"doc_type"` — the detected [`DocType`](crate::shared::chunker::DocType)
-//!   as a string
-//! - `"chunk_count"` — number of chunks produced
+//! 产生一个 [`ProcessorOutput`]，包含：
+//! - `"chunks"` —— chunk 对象数组，每个包含
+//!   `chunk_id`、`text`、`chunk_index`、`prev_chunk_id`、
+//!   `next_chunk_id`、`start_char`、`end_char`
+//! - `"doc_type"` —— 检测到的 [`DocType`](crate::shared::chunker::DocType)
+//!   字符串
+//! - `"chunk_count"` —— 产生的 chunk 数量
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -19,16 +18,16 @@ use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::shared::chunker::{chunk_by_type, ChunkConfig, DocType};
 
-/// Splits document files into semantic chunks.
+/// 将文档文件分割为语义块。
 ///
-/// Handles Markdown (.md), plain text (.txt), YAML (.yaml, .yml),
-/// and Properties (.properties) files.
+/// 处理 Markdown（.md）、纯文本（.txt）、YAML（.yaml、.yml）
+/// 与 Properties（.properties）文件。
 ///
-/// # Configuration
+/// # 配置
 ///
-/// Uses [`ChunkConfig::default()`] which targets ~512-token chunks
-/// with ~64-token overlap at paragraph boundaries.  Override via
-/// [`ChunkProcessor::with_config`] if custom sizing is needed.
+/// 使用 [`ChunkConfig::default()`]，目标为约 512-token 的块，在段落边界
+/// 处约有 64-token 重叠。若需要自定义尺寸，可通过
+/// [`ChunkProcessor::with_config`] 覆盖。
 pub struct ChunkProcessor {
     config: ChunkConfig,
 }
@@ -42,12 +41,12 @@ impl Default for ChunkProcessor {
 }
 
 impl ChunkProcessor {
-    /// Create a new processor with the default chunk configuration.
+    /// 使用默认块配置创建新处理器。
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a processor with a custom chunk configuration.
+    /// 使用自定义块配置创建处理器。
     pub fn with_config(config: ChunkConfig) -> Self {
         Self { config }
     }
@@ -73,23 +72,22 @@ impl Processor for ChunkProcessor {
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
 
-        // Detect document type from extension and first few lines.
+        // 从扩展名与前几行检测文档类型。
         let first_lines: Vec<&str> = ctx.file_text.lines().take(5).collect();
         let doc_type = DocType::detect(&ctx.file_path.to_string_lossy(), &first_lines);
 
-        // Generate the document ID from the project and relative path via
-        // the shared constructor (single source with the build orchestration
-        // layer's deleted-path purge, §6.5). The engine feeds project-relative
-        // paths, so doc_id is `dt://doc/{project}/{rel_path}`.
+        // 通过共享构造函数，根据项目与相对路径生成文档 ID
+        // （与构建编排层的已删除路径清理共用单一来源，§6.5）。引擎传入的
+        // 是项目相对路径，因此 doc_id 形如 `dt://doc/{project}/{rel_path}`。
         let doc_id = crate::domain::id::make_document_id(
             &ctx.project_name,
             &ctx.file_path.to_string_lossy(),
         );
 
-        // Split the text into chunks using the type-aware strategy.
+        // 使用类型感知策略将文本分割为块。
         let chunks = chunk_by_type(&ctx.file_text, &doc_id, doc_type, &self.config);
 
-        // Serialise chunks into a JSON array.
+        // 将块序列化为 JSON 数组。
         let chunk_values: Vec<serde_json::Value> = chunks
             .iter()
             .map(|c| {
@@ -114,7 +112,7 @@ impl Processor for ChunkProcessor {
     }
 }
 
-/// Human-readable name for each document type.
+/// 每种文档类型的人类可读名称。
 impl DocType {
     fn as_str(&self) -> &'static str {
         match self {
@@ -128,7 +126,7 @@ impl DocType {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

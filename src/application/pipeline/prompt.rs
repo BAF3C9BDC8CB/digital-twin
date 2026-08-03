@@ -1,11 +1,10 @@
-//! Prompt template system.
+//! 提示词模板系统。
 //!
-//! YAML‑based prompt templates stored under `config/prompts/` are loaded at
-//! startup into a [`PromptRegistry`].  Each template may contain
-//! `${variable}` placeholders that are substituted at render time from a
-//! JSON context value.
+//! 存放在 `config/prompts/` 下的基于 YAML 的提示词模板在启动时加载到
+//! [`PromptRegistry`] 中。每个模板可包含 `${variable}` 占位符，在渲染时
+//! 从 JSON 上下文值中替换。
 //!
-//! # Example
+//! # 示例
 //!
 //! ```ignore
 //! let registry = PromptRegistry::load("config/prompts")?;
@@ -24,22 +23,22 @@ use std::path::Path;
 // Prompt
 // ---------------------------------------------------------------------------
 
-/// A single named prompt template.
+/// 单个命名提示词模板。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prompt {
-    /// Machine‑friendly name (e.g. `"code_with_ast"`).
+    /// 机器友好名称（例如 `"code_with_ast"`）。
     pub name: String,
 
-    /// Human‑readable description of what this prompt does.
+    /// 该提示词用途的人类可读描述。
     pub description: String,
 
-    /// System‑level instruction (passed as the `system` role message).
+    /// 系统级指令（作为 `system` 角色的消息传入）。
     pub system: String,
 
-    /// User prompt template with optional `${variable}` placeholders.
+    /// 带可选 `${variable}` 占位符的用户提示词模板。
     pub prompt: String,
 
-    /// Optional JSON Schema describing the expected output structure.
+    /// 描述预期输出结构的可选 JSON Schema。
     #[serde(default)]
     pub output_schema: Option<serde_json::Value>,
 }
@@ -48,44 +47,42 @@ pub struct Prompt {
 // PromptRegistry
 // ---------------------------------------------------------------------------
 
-/// A registry of named prompt templates loaded from a directory of YAML
-/// files.
+/// 从 YAML 文件目录加载的命名提示词模板注册表。
 pub struct PromptRegistry {
     prompts: HashMap<String, Prompt>,
 }
 
 impl PromptRegistry {
-    /// Load all `*.yaml` / `*.yml` prompt files from `prompts_dir`.
+    /// 从 `prompts_dir` 加载所有 `*.yaml` / `*.yml` 提示词文件。
     ///
-    /// Each file must contain a single [`Prompt`] struct.  File names are
-    /// used as the key after stripping the extension, but the `name` field
-    /// inside the file takes precedence for lookups via [`get`](Self::get)
-    /// and [`render`](Self::render).
+    /// 每个文件必须包含一个 [`Prompt`] 结构。去掉扩展名后文件名用作键，
+    /// 但文件内部的 `name` 字段优先用于 [`get`](Self::get)
+    /// 与 [`render`](Self::render) 的查找。
     pub fn load(prompts_dir: &Path) -> Result<Self, String> {
         if !prompts_dir.is_dir() {
-            return Err(format!("prompts directory not found: {:?}", prompts_dir));
+            return Err(format!("提示词目录不存在: {:?}", prompts_dir));
         }
 
         let mut prompts = HashMap::new();
 
         let dir_entries =
-            std::fs::read_dir(prompts_dir).map_err(|e| format!("cannot read prompts dir: {e}"))?;
+            std::fs::read_dir(prompts_dir).map_err(|e| format!("无法读取提示词目录: {e}"))?;
 
         for entry in dir_entries {
-            let entry = entry.map_err(|e| format!("bad entry in prompts dir: {e}"))?;
+            let entry = entry.map_err(|e| format!("提示词目录中的条目异常: {e}"))?;
             let path = entry.path();
 
-            // Only accept .yaml / .yml files
+            // 仅接受 .yaml / .yml 文件
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if ext != "yaml" && ext != "yml" {
                 continue;
             }
 
             let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("cannot read {:?}: {e}", path))?;
+                .map_err(|e| format!("无法读取 {:?}: {e}", path))?;
 
             let prompt: Prompt = serde_yaml::from_str(&content)
-                .map_err(|e| format!("parse error in {:?}: {e}", path))?;
+                .map_err(|e| format!("解析 {:?} 时出错: {e}", path))?;
 
             let key = prompt.name.clone();
             prompts.insert(key, prompt);
@@ -94,25 +91,24 @@ impl PromptRegistry {
         Ok(Self { prompts })
     }
 
-    /// Retrieve a prompt by name.
+    /// 按名称获取提示词。
     pub fn get(&self, name: &str) -> Option<&Prompt> {
         self.prompts.get(name)
     }
 
-    /// Render a named prompt by substituting `${variable}` placeholders
-    /// with values from the JSON `context`.
+    /// 通过用 JSON `context` 中的值替换 `${variable}` 占位符来渲染
+    /// 命名提示词。
     ///
-    /// # Returns
+    /// # 返回值
     ///
-    /// A tuple `(system_prompt, rendered_user_prompt)`.
+    /// 元组 `(system_prompt, 渲染后的用户提示词)`。
     ///
-    /// # Errors
+    /// # 错误
     ///
-    /// Returns an error if `prompt_name` is not in the registry.
+    /// 如果 `prompt_name` 不在注册表中则返回错误。
     ///
-    /// Unknown variables (those not present in `context`) are left as-is
-    /// in the output — they are **not** silently removed so that callers
-    /// can detect missing keys.
+    /// 未知变量（`context` 中不存在的变量）在输出中原样保留——它们
+    /// **不会**被静默删除，以便调用方能够发现缺失的键。
     pub fn render(
         &self,
         prompt_name: &str,
@@ -121,7 +117,7 @@ impl PromptRegistry {
         let prompt = self
             .prompts
             .get(prompt_name)
-            .ok_or_else(|| format!("prompt not found: {prompt_name}"))?;
+            .ok_or_else(|| format!("提示词不存在: {prompt_name}"))?;
 
         let rendered = render_template(&prompt.prompt, context);
 
@@ -130,20 +126,18 @@ impl PromptRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Template rendering
+// 模板渲染
 // ---------------------------------------------------------------------------
 
-/// Replace `${variable}` or `${nested.key}` placeholders with values from
-/// `context`.
+/// 用 `context` 中的值替换 `${variable}` 或 `${nested.key}` 占位符。
 ///
-/// The lookup walks the JSON value tree: `"${file_path}"` becomes
-/// `context["file_path"]`, and `"${tree_sitter.entities}"` becomes
-/// `context["tree_sitter"]["entities"]`.
+/// 查找遍历 JSON 值树：`"${file_path}"` 变为 `context["file_path"]`，
+/// `"${tree_sitter.entities}"` 变为 `context["tree_sitter"]["entities"]`。
 ///
-/// Placeholders whose paths do not exist in `context` are left unchanged.
+/// 路径在 `context` 中不存在的占位符保持原样。
 fn render_template(template: &str, context: &serde_json::Value) -> String {
-    // Matches `${...}` but not `$${...}` (escaped).
-    let re = regex::Regex::new(r"\$\{([^}]+)\}").expect("hard-coded regex is valid");
+    // 匹配 `${...}` 但不匹配 `$${...}`（转义）。
+    let re = regex::Regex::new(r"\$\{([^}]+)\}").expect("硬编码的正则必须有效");
 
     re.replace_all(template, |caps: &regex::Captures<'_>| {
         let key_path = caps.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -153,15 +147,15 @@ fn render_template(template: &str, context: &serde_json::Value) -> String {
     .to_string()
 }
 
-/// Walk a dotted path (e.g. `"tree_sitter.entities"`) into a JSON value.
+/// 沿点分路径（例如 `"tree_sitter.entities"`）在 JSON 值中遍历。
 ///
-/// Returns `None` when any segment of the path does not exist.
+/// 当路径的任意段不存在时返回 `None`。
 fn resolve_json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<String> {
     let segments: Vec<&str> = path.split('.').collect();
     let mut current = value;
 
     for segment in &segments {
-        // Try object field first, then array index.
+        // 先尝试对象字段，再尝试数组索引。
         if let Some(obj) = current.as_object() {
             current = obj.get(*segment)?;
         } else if let Some(arr) = current.as_array() {
@@ -179,7 +173,7 @@ fn resolve_json_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<Str
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -265,7 +259,7 @@ output_schema:
 
     #[test]
     fn registry_roundtrip() {
-        // Write a temporary prompt file, load it, verify.
+        // 写一个临时提示词文件，加载并验证。
         let dir = std::env::temp_dir().join("dt_prompt_test");
         let _ = std::fs::create_dir_all(&dir);
 
@@ -287,7 +281,7 @@ prompt: "File: ${file_path}
         assert_eq!(system, "You are a test");
         assert!(user.contains("hello.rs"));
 
-        // Cleanup
+        // 清理
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

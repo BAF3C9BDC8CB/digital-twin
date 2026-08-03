@@ -1,45 +1,45 @@
-//! Pipeline configuration types.
+//! 流水线配置类型。
 //!
-//! The top-level [`PipelineConfig`] is loaded from `config/pipeline.yaml`
-//! and controls which processors are active, how they connect to the
-//! inference server, and what LLM presets to use.
+//! 顶层 [`PipelineConfig`] 从 `config/pipeline.yaml` 加载，
+//! 控制哪些处理器处于启用状态、它们如何连接推理服务器，
+//! 以及使用哪些 LLM 预设。
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
-// Top-level config
+// 顶层配置
 // ---------------------------------------------------------------------------
 
-/// Complete pipeline configuration.
+/// 完整的流水线配置。
 ///
-/// Deserialised from `config/pipeline.yaml` (or a custom path).  Every
-/// field has a sensible default so the file is entirely optional.
+/// 从 `config/pipeline.yaml`（或自定义路径）反序列化。每个字段都有合理的
+/// 默认值，因此该文件完全是可选的。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
-    /// Master enable / disable switch for the entire pipeline.
+    /// 整个流水线的主启用 / 禁用开关。
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
-    /// Connection settings for the `dt-inference-server` (Python).
+    /// `dt-inference-server`（Python）的连接设置。
     #[serde(default)]
     pub inference_server: InferenceServerConfig,
 
-    /// Per-processor feature flags.
+    /// 各处理器的功能开关。
     #[serde(default)]
     pub processors: ProcessorsConfig,
 
-    /// LLM inference parameters (temperature, max tokens, …).
+    /// LLM 推理参数（temperature、max tokens、…）。
     #[serde(default)]
     pub llm: Option<LlmConfig>,
 
-    /// Ecosystem-level settings that span multiple projects.
+    /// 跨越多个项目的生态系统级设置。
     #[serde(default)]
     pub ecosystem: Option<EcosystemConfig>,
 
-    /// Provider routing and model configuration.
-    /// Controls which provider handles embed / rerank / LLM capabilities
-    /// and which model to use for each.
+    /// 提供方路由与模型配置。
+    /// 控制哪个提供方处理 embed / rerank / LLM 能力，
+    /// 以及每项能力使用哪个模型。
     #[serde(default)]
     pub providers: Option<ProvidersConfig>,
 }
@@ -49,26 +49,25 @@ const fn default_enabled() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-configs
+// 子配置
 // ---------------------------------------------------------------------------
 
-/// Inference server connection parameters.
+/// 推理服务器连接参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceServerConfig {
-    /// HTTP(S) URL of the inference server.
+    /// 推理服务器的 HTTP(S) URL。
     ///
-    /// Default: `"https://api.siliconflow.cn/v1"`.
+    /// 默认值：`"https://api.siliconflow.cn/v1"`。
     #[serde(default = "default_infer_url")]
     pub url: String,
 
-    /// Optional gRPC URL.
+    /// 可选的 gRPC URL。
     ///
-    /// The inference server also exposes a gRPC endpoint (default port
-    /// 50051) that may be used in the future for streaming.
+    /// 推理服务器还暴露一个 gRPC 端点（默认端口 50051），未来可能用于流式传输。
     #[serde(default)]
     pub grpc_url: Option<String>,
 
-    /// Maximum number of concurrent HTTP requests to the inference server.
+    /// 到推理服务器的最大并发 HTTP 请求数。
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent: usize,
 }
@@ -91,39 +90,39 @@ impl Default for InferenceServerConfig {
     }
 }
 
-/// Feature flags that enable / disable individual pipeline processors.
+/// 启用 / 禁用单个流水线处理器的功能开关。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessorsConfig {
-    /// Tree‑sitter AST parser.
+    /// Tree-sitter AST 解析器。
     #[serde(default = "default_true")]
     pub tree_sitter: bool,
 
-    /// HanLP NLP analysis (Chinese NLP).
+    /// HanLP NLP 分析（中文 NLP）。
     #[serde(default = "default_true")]
     pub hanlp: bool,
 
-    /// LLM‑based analysis (chat completions).
+    /// 基于 LLM 的分析（chat completions）。
     #[serde(default = "default_true")]
     pub llm: bool,
 
-    /// Text chunking / splitting.
+    /// 文本分块 / 分割。
     #[serde(default = "default_true")]
     pub chunk: bool,
 
-    /// Raw text extraction (plain text, markdown, etc.).
+    /// 原始文本提取（纯文本、markdown 等）。
     #[serde(default = "default_true")]
     pub extract_text: bool,
 
-    /// OCR processing (off by default — requires additional dependencies).
+    /// OCR 处理（默认关闭——需要额外依赖）。
     #[serde(default)]
     pub ocr: bool,
 
-    /// Store results to graph + vector databases.
+    /// 将结果存储到图 + 向量数据库。
     #[serde(default = "default_true")]
     pub store: bool,
 
-    /// Skip embedding (向量生成). Set to false when you already have vectors
-    /// in Qdrant and want to avoid re-embedding (e.g., no bge-m3 model running).
+    /// 跳过 embedding（向量生成）。当你已经在 Qdrant 中拥有向量、希望避免
+    /// 重新嵌入时（例如没有运行 bge-m3 模型），可将其设为 false。
     #[serde(default = "default_true")]
     pub embed: bool,
 }
@@ -147,14 +146,14 @@ impl Default for ProcessorsConfig {
     }
 }
 
-/// LLM inference parameters.
+/// LLM 推理参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    /// Sampling temperature (0.0 = deterministic, 1.0 = creative).
+    /// 采样温度（0.0 = 确定性，1.0 = 创造性）。
     #[serde(default = "default_temperature")]
     pub temperature: f32,
 
-    /// Maximum number of tokens the model may generate in one response.
+    /// 模型单次回复最多生成的 token 数。
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
 }
@@ -176,20 +175,19 @@ impl Default for LlmConfig {
     }
 }
 
-/// Ecosystem-level settings.
+/// 生态系统级设置。
 ///
-/// When the ecosystem is enabled the pipeline processes every registered
-/// project in a single batch, which is useful for global re‑indexing or
-/// cross‑project dependency analysis.
+/// 当生态系统启用时，流水线在单一批次中处理每个已注册项目，
+/// 这对于全局重新索引或跨项目依赖分析很有用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EcosystemConfig {
-    /// Enable ecosystem (multi‑project) mode.
+    /// 启用生态系统（多项目）模式。
     #[serde(default)]
     pub enabled: bool,
 
-    /// An explicit list of project names to include.
+    /// 要包含的显式项目名列表。
     ///
-    /// When empty the pipeline falls back to *all* registered projects.
+    /// 为空时流水线回退到 *全部* 已注册项目。
     #[serde(default)]
     pub projects: Vec<String>,
 }
@@ -203,26 +201,26 @@ impl Default for EcosystemConfig {
     }
 }
 
-/// Provider routing and model configuration.
+/// 提供方路由与模型配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProvidersConfig {
-    /// Which provider handles embedding ("siliconflow" or "xinference").
+    /// 哪个提供方处理 embedding（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_embed_provider")]
     pub embed_provider: String,
 
-    /// Which provider handles reranking ("siliconflow" or "xinference").
+    /// 哪个提供方处理 reranking（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_rerank_provider")]
     pub rerank_provider: String,
 
-    /// Which provider handles LLM chat ("siliconflow" or "xinference").
+    /// 哪个提供方处理 LLM chat（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
 
-    /// SiliconFlow provider configuration.
+    /// SiliconFlow 提供方配置。
     #[serde(default)]
     pub siliconflow: Option<SiliconFlowProviderConfig>,
 
-    /// XInference provider configuration.
+    /// XInference 提供方配置。
     #[serde(default)]
     pub xinference: Option<XInferenceProviderConfig>,
 }
@@ -237,7 +235,7 @@ fn default_llm_provider() -> String {
     "siliconflow".to_string()
 }
 
-/// SiliconFlow provider configuration.
+/// SiliconFlow 提供方配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiliconFlowProviderConfig {
     #[serde(default = "default_sf_url")]
@@ -268,7 +266,7 @@ impl Default for SiliconFlowProviderConfig {
     }
 }
 
-/// XInference provider configuration.
+/// XInference 提供方配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XInferenceProviderConfig {
     #[serde(default = "default_xi_url")]
@@ -300,16 +298,15 @@ impl Default for XInferenceProviderConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Loading
+// 加载
 // ---------------------------------------------------------------------------
 
 impl PipelineConfig {
-    /// Load [`PipelineConfig`] from `config/pipeline.yaml` relative to the
-    /// current working directory.
+    /// 从当前工作目录相对路径 `config/pipeline.yaml` 加载
+    /// [`PipelineConfig`]。
     ///
-    /// If the file does not exist, a default configuration is returned
-    /// silently.  If the file exists but is malformed, an error string is
-    /// returned.
+    /// 如果文件不存在，则静默返回默认配置。如果文件存在但格式错误，
+    /// 则返回错误字符串。
     pub fn load() -> Result<Self, String> {
         let path = Path::new("config/pipeline.yaml");
         if !path.exists() {
@@ -317,9 +314,9 @@ impl PipelineConfig {
         }
 
         let content =
-            std::fs::read_to_string(path).map_err(|e| format!("cannot read {path:?}: {e}"))?;
+            std::fs::read_to_string(path).map_err(|e| format!("无法读取 {path:?}: {e}"))?;
 
-        serde_yaml::from_str(&content).map_err(|e| format!("pipeline config parse error: {e}"))
+        serde_yaml::from_str(&content).map_err(|e| format!("流水线配置解析错误: {e}"))
     }
 }
 
@@ -337,7 +334,7 @@ impl Default for PipelineConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -394,11 +391,11 @@ ecosystem:
 
     #[test]
     fn load_returns_default_when_file_missing() {
-        // This test runs from the workspace root — we make no assumptions
-        // about the cwd here, just verify the behaviour.
+        // 该测试从工作区根目录运行——这里不对 cwd 做任何假设，
+        // 仅验证行为。
         let cfg = PipelineConfig::load().unwrap_or_default();
-        // The config may or may not exist, but we should always get a valid
-        // object back without panicking.
+        // 配置文件可能存在也可能不存在，但我们总应得到一个有效的
+        // 对象且不会 panic。
         let _ = cfg.enabled;
     }
 }

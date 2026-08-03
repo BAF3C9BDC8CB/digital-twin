@@ -1,14 +1,12 @@
-//! Store processor — the Consolidate 整合层 entry point in the pipeline
-//! (方案 §6, Task 2/R8).
+//! Store 处理器——流水线中 Consolidate 整合层的入口（方案 §6, Task 2/R8）。
 //!
-//! Thin shell: consumes `outputs["llm"]["graphs"]` (`Vec<ExtractedGraph>`,
-//! Task 1) and `outputs["chunk"]` (block texts), then delegates to
-//! [`Consolidator`] for normalisation, two-level disambiguation, graph
-//! writes and dual vector writes. Files without a `graphs` output (code
-//! files, raw-text path) are skipped untouched.
+//! 薄外壳：消费 `outputs["llm"]["graphs"]`（`Vec<ExtractedGraph>`，
+//! Task 1）与 `outputs["chunk"]`（块文本），然后委托给 [`Consolidator`]
+//! 进行规范化、两级消歧、图写入与双写向量。没有 `graphs` 输出的文件
+//! （代码文件、raw-text 路径）原样跳过。
 //!
-//! All three backing stores are optional — without them the processor is a
-//! no-op so the pipeline still runs in degraded environments.
+//! 三个后端存储都是可选的——没有它们时处理器为 no-op，
+//! 流水线仍可在降级环境中运行。
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -22,12 +20,11 @@ use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
-/// Final pipeline stage that persists extracted knowledge.
+/// 持久化已提取知识的流水线最终阶段。
 ///
-/// # Dependency injection
+/// # 依赖注入
 ///
-/// All three repository fields are `Option` so the processor can be
-/// constructed even when the backing services are not available.
+/// 三个仓库字段都是 `Option`，即使后端服务不可用也能构造处理器。
 pub struct StoreProcessor {
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
@@ -35,7 +32,7 @@ pub struct StoreProcessor {
 }
 
 impl StoreProcessor {
-    /// Create a new store processor with optional backing stores.
+    /// 使用可选的后端存储创建新的 store 处理器。
     pub fn new(
         graph: Option<Arc<dyn GraphRepository>>,
         vector: Option<Arc<dyn VectorRepository>>,
@@ -48,7 +45,7 @@ impl StoreProcessor {
         }
     }
 
-    /// Build a `StoreProcessor` with only a graph repository.
+    /// 构建一个仅带图仓库的 `StoreProcessor`。
     pub fn with_graph(graph: Arc<dyn GraphRepository>) -> Self {
         Self {
             graph: Some(graph),
@@ -57,8 +54,7 @@ impl StoreProcessor {
         }
     }
 
-    /// Build a `StoreProcessor` with graph and vector repositories
-    /// and an embed service.
+    /// 构建一个带图与向量仓库及 embed 服务的 `StoreProcessor`。
     pub fn with_all(
         graph: Arc<dyn GraphRepository>,
         vector: Arc<dyn VectorRepository>,
@@ -83,14 +79,14 @@ impl Processor for StoreProcessor {
     }
 
     fn matches(&self, _file_path: &Path) -> bool {
-        // Always runs — last in the chain; skips files without graphs.
+        // 始终运行——链中的最后一环；跳过没有 graphs 的文件。
         true
     }
 
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
 
-        // ── R8: files without a graphs output are skipped untouched. ──
+        // ── R8：没有 graphs 输出的文件原样跳过。 ──
         let Some(llm_out) = ctx.outputs.get("llm") else {
             return Ok(output);
         };
@@ -99,24 +95,24 @@ impl Processor for StoreProcessor {
         };
         let graphs: Vec<ExtractedGraph> =
             serde_json::from_value(graphs_val.clone()).map_err(|e| {
-                DtError::General(format!("store: llm graphs output contract broken: {e}"))
+                DtError::General(format!("store: llm graphs 输出契约被破坏: {e}"))
             })?;
 
-        // All three backends are required for consolidation.
+        // 三个后端是整合所必需的。
         let (Some(graph), Some(vector), Some(embed)) = (&self.graph, &self.vector, &self.embed)
         else {
             tracing::warn!("store: 后端未齐备（graph/vector/embed），跳过 consolidate");
             return Ok(output);
         };
 
-        // ── Block texts + doc identity from the chunk processor output. ──
+        // ── 来自 chunk 处理器输出的块文本 + 文档标识。 ──
         let chunk_out = ctx.outputs.get("chunk").ok_or_else(|| {
-            DtError::General("store: graphs present without chunk output".to_string())
+            DtError::General("store: 存在 graphs 但缺少 chunk 输出".to_string())
         })?;
         let doc_id = chunk_out
             .get("doc_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| DtError::General("store: chunk output missing doc_id".to_string()))?
+            .ok_or_else(|| DtError::General("store: chunk 输出缺少 doc_id".to_string()))?
             .to_string();
         let doc_type = chunk_out
             .get("doc_type")
@@ -146,7 +142,7 @@ impl Processor for StoreProcessor {
             )
             .await?;
 
-        // ── R9: counters for the engine's build report. ──
+        // ── R9：供引擎构建报告使用的计数器。 ──
         output.set("entities_merged", stats.entities_merged);
         output.set("entities_created", stats.entities_created);
         output.set("relations_written", stats.relations_written);
@@ -160,7 +156,7 @@ impl Processor for StoreProcessor {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -210,7 +206,7 @@ mod tests {
         out
     }
 
-    // ── Minimal backend mocks for the happy path ─────────────────────
+    // ── 用于 happy path 的最小后端 mock ─────────────────────
 
     struct MockGraph {
         writes: Mutex<Vec<String>>,
@@ -303,7 +299,7 @@ mod tests {
         }
     }
 
-    // ── Tests ────────────────────────────────────────────────────────
+    // ── 测试 ────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn always_matches() {
@@ -330,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn skips_llm_output_without_graphs_key() {
-        // Code-file llm output ({response,prompt_name,model}) → skip.
+        // 代码文件的 llm 输出（{response,prompt_name,model}）→ 跳过。
         let processor = StoreProcessor::new(None, None, None);
         let mut llm_out = ProcessorOutput::new();
         llm_out.set(
@@ -395,7 +391,7 @@ mod tests {
             output.get("blocks_processed").and_then(|v| v.as_u64()),
             Some(1)
         );
-        // Entity MERGE went to the graph backend.
+        // 实体 MERGE 已发送到图后端。
         assert!(graph
             .writes
             .lock()

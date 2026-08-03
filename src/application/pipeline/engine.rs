@@ -1,21 +1,18 @@
-//! Pipeline orchestration engine.
+//! 流水线编排引擎。
 //!
-//! [`ProcessorEngine`] ties together the [`ProcessorRegistry`] and the
-//! [`Processor`] trait to analyse source files through a configurable
-//! processing pipeline.
+//! [`ProcessorEngine`] 将 [`ProcessorRegistry`] 与 [`Processor`] trait
+//! 结合起来，通过可配置的处理流水线分析源文件。
 //!
-//! # Execution model
+//! # 执行模型
 //!
-//! Processors are split into two categories:
+//! 处理器分为两类：
 //!
-//! * **CPU-bound stages** (priority ≥ [`CPU_PRIORITY_THRESHOLD`]) — cheap
-//!   operations such as language detection, tree‑sitter parsing, and text
-//!   chunking.  These run in full parallel across files.
+//! * **CPU 密集型阶段**（优先级 ≥ [`CPU_PRIORITY_THRESHOLD`]）——廉价
+//!   操作，如语言检测、tree-sitter 解析与文本分块。这些在文件间完全并行运行。
 //!
-//! * **GPU-bound stages** (priority < [`CPU_PRIORITY_THRESHOLD`]) —
-//!   operations that hit the inference server, such as LLM chat completions,
-//!   HanLP NLP analysis, and embedding.  Concurrency is capped by a
-//!   [`Semaphore`] to avoid overwhelming the GPU server.
+//! * **GPU 密集型阶段**（优先级 < [`CPU_PRIORITY_THRESHOLD`]）——命中
+//!   推理服务器的操作，如 LLM chat completions、HanLP NLP 分析与 embedding。
+//!   并发由 [`Semaphore`] 限制，以避免压垮 GPU 服务器。
 
 use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::infer_client::SiliconFlowChatClient;
@@ -28,110 +25,108 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
-/// Priority threshold separating CPU-bound stages from GPU-bound stages.
+/// 区分 CPU 密集型阶段与 GPU 密集型阶段的优先级阈值。
 ///
-/// Processors with priority **≥** this value are considered CPU-bound and can
-/// run with unrestricted parallelism.  Processors with priority **<** this
-/// value are GPU-bound and use a semaphore to cap concurrency.
+/// 优先级 **≥** 该值的处理器视为 CPU 密集型，可不受限制地并行运行。
+/// 优先级 **<** 该值的处理器为 GPU 密集型，使用信号量限制并发。
 ///
-/// Conventions in the existing codebase:
-/// - tree_sitter = 100, chunk = 90 — CPU-bound
-/// - hanlp = 80, llm = 60 — GPU-bound
+/// 现有代码库中的约定：
+/// - tree_sitter = 100, chunk = 90 —— CPU 密集型
+/// - hanlp = 80, llm = 60 —— GPU 密集型
 pub const CPU_PRIORITY_THRESHOLD: i32 = 85;
 
-/// Default parallelism for CPU stages when `std::thread::available_parallelism`
-/// cannot be determined.
+/// 当 `std::thread::available_parallelism` 无法确定时，
+/// CPU 阶段的默认并行度。
 const DEFAULT_CPU_CONCURRENCY: usize = 8;
 
 // ---------------------------------------------------------------------------
 // ProcessorEngine
 // ---------------------------------------------------------------------------
 
-/// Orchestrator that runs all matching processors against one or more files.
+/// 针对一个或多个文件运行所有匹配处理器的编排器。
 pub struct ProcessorEngine {
-    /// Shared processor registry.
+    /// 共享处理器注册表。
     registry: Arc<ProcessorRegistry>,
-    /// Maximum number of in-flight GPU-bound operations.
+    /// 最大在途 GPU 密集型操作数。
     max_concurrent: usize,
 }
 
-/// Aggregated result from processing a single file through the pipeline.
+/// 单个文件经流水线处理的聚合结果。
 #[derive(Debug)]
 pub struct FileAnalysis {
-    /// Path of the analysed file.
+    /// 被分析文件的路径。
     pub file_path: PathBuf,
-    /// Whether *all* processors completed without error for this file.
+    /// 该文件是否*所有*处理器都无错误完成。
     pub success: bool,
-    /// Per-processor error messages (if any).
+    /// 每个处理器的错误消息（若有）。
     pub errors: Vec<String>,
-    /// Accumulated pipeline context carrying every processor's output.
+    /// 携带每个处理器输出的累积流水线上下文。
     pub context: PipelineContext,
 }
 
 // ---------------------------------------------------------------------------
-// Project-level analysis types
+// 项目级分析类型
 // ---------------------------------------------------------------------------
 
-/// Aggregated summary of a single project.
+/// 单个项目的聚合摘要。
 #[derive(Debug)]
 pub struct ProjectAnalysis {
-    /// The project name.
+    /// 项目名。
     pub project_name: String,
-    /// Total number of files analysed.
+    /// 分析的文件总数。
     pub file_count: usize,
-    /// Number of files that completed without errors.
+    /// 无错误完成的文件数。
     pub success_count: usize,
-    /// Discovered service names extracted from entity names and LLM output.
+    /// 从实体名与 LLM 输出中发现的 service 名。
     pub services: Vec<String>,
-    /// Inter-service dependencies discovered from Feign/REST annotations and
-    /// method calls.
+    /// 从 Feign/REST 注解与方法调用中发现的 service 间依赖。
     pub dependencies: Vec<ServiceDependency>,
-    /// Human-readable architecture summary (LLM-generated when available).
+    /// 人类可读的架构摘要（可用时由 LLM 生成）。
     pub summary: String,
-    /// Errors accumulated across all files.
+    /// 所有文件累积的错误。
     pub errors: Vec<String>,
 }
 
-/// A directed dependency from one service to another.
+/// 从一个 service 到另一个 service 的有向依赖。
 #[derive(Debug, Clone)]
 pub struct ServiceDependency {
-    /// The source/caller service.
+    /// 源 / 调用方 service。
     pub from: String,
-    /// The target/callee service.
+    /// 目标 / 被调用方 service。
     pub to: String,
-    /// Communication protocol — `"HTTP"`, `"RPC"`, or `"MQ"`.
+    /// 通信协议——`"HTTP"`、`"RPC"` 或 `"MQ"`。
     pub protocol: String,
 }
 
 // ---------------------------------------------------------------------------
-// Ecosystem-level analysis types
+// 生态系统级分析类型
 // ---------------------------------------------------------------------------
 
-/// Cross-project ecosystem topology analysis.
+/// 跨项目生态系统拓扑分析。
 #[derive(Debug)]
 pub struct EcosystemAnalysis {
-    /// Name of this ecosystem (e.g. `"ecommerce"`, `"data-platform"`).
+    /// 该生态系统的名称（例如 `"ecommerce"`、`"data-platform"`）。
     pub name: String,
-    /// Projects participating in the ecosystem.
+    /// 参与生态系统的项目。
     pub projects: Vec<String>,
-    /// Cross-service dependencies across all projects.
+    /// 所有项目中的跨 service 依赖。
     pub service_mesh: Vec<ServiceDependency>,
-    /// Identified shared infrastructure (databases, caches, message queues).
+    /// 识别出的共享基础设施（数据库、缓存、消息队列）。
     pub shared_infrastructure: Vec<String>,
-    /// Detected risks (single points of failure, dependency cycles).
+    /// 检测到的风险（单点故障、依赖环）。
     pub risks: Vec<String>,
-    /// Human-readable topology summary (LLM-generated when available).
+    /// 人类可读的拓扑摘要（可用时由 LLM 生成）。
     pub topology_summary: String,
 }
 
 impl ProcessorEngine {
-    /// Create a new engine from a shared registry.
+    /// 从共享注册表创建新引擎。
     ///
-    /// `max_concurrent` controls the maximum number of GPU-bound processor
-    /// invocations that may run simultaneously (used by [`run_gpu_stages`]).
+    /// `max_concurrent` 控制可同时运行的 GPU 密集型处理器调用数上限
+    ///（由 [`run_gpu_stages`] 使用）。
     pub fn new(registry: Arc<ProcessorRegistry>, max_concurrent: usize) -> Self {
         Self {
             registry,
@@ -140,19 +135,17 @@ impl ProcessorEngine {
     }
 
     // ------------------------------------------------------------------
-    // Single-file analysis
+    // 单文件分析
     // ------------------------------------------------------------------
 
-    /// Process a single file through all matching processors.
+    /// 通过所有匹配的处理器处理单个文件。
     ///
-    /// CPU-bound processors (priority ≥ [`CPU_PRIORITY_THRESHOLD`]) run first
-    /// so their outputs are available to downstream GPU-bound stages.  Within
-    /// each group, processors execute in priority order (lowest first, most
-    /// important last).
+    /// CPU 密集型处理器（优先级 ≥ [`CPU_PRIORITY_THRESHOLD`]）先运行，
+    /// 使其输出可供下游 GPU 密集型阶段使用。在每个组内，处理器按优先级
+    /// 顺序执行（最低优先、最重要的最后）。
     ///
-    /// If a processor fails, a warning is logged and processing continues
-    /// with the next matching processor.  The returned [`FileAnalysis`]
-    /// contains all accumulated outputs and any error messages.
+    /// 若某个处理器失败，记录警告并继续处理下一个匹配的处理器。
+    /// 返回的 [`FileAnalysis`] 包含所有累积输出与任何错误消息。
     pub async fn analyze_file(
         &self,
         file_path: impl Into<PathBuf>,
@@ -165,7 +158,7 @@ impl ProcessorEngine {
         let matching = self.registry.matching(&file_path_buf);
         let mut errors: Vec<String> = Vec::new();
 
-        // Phase 1: CPU-bound stages (priority >= threshold).
+        // 阶段 1：CPU 密集型阶段（优先级 >= 阈值）。
         for &processor in matching
             .iter()
             .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD)
@@ -173,7 +166,7 @@ impl ProcessorEngine {
             Self::run_processor(processor, &mut ctx, &mut errors, &file_path_buf).await;
         }
 
-        // Phase 2: GPU-bound stages (priority < threshold).
+        // 阶段 2：GPU 密集型阶段（优先级 < 阈值）。
         for &processor in matching
             .iter()
             .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD)
@@ -190,44 +183,43 @@ impl ProcessorEngine {
     }
 
     // ------------------------------------------------------------------
-    // Batch analysis
+    // 批量分析
     // ------------------------------------------------------------------
 
-    /// Process multiple files in parallel.
+    /// 并行处理多个文件。
     ///
-    /// 1. **CPU stages** run first on all files with full parallelism
-    ///    (bounded by `available_parallelism`).
-    /// 2. **GPU stages** run on the resulting contexts with concurrency
-    ///    limited to `max_concurrent` via an internal semaphore.
+    /// 1. **CPU 阶段**先以完全并行度在所有文件上运行
+    ///    （受 `available_parallelism` 限制）。
+    /// 2. **GPU 阶段**在结果上下文上运行，通过内部信号量将并发限制为
+    ///    `max_concurrent`。
     ///
-    /// `skip_steps` is an optional per-file set of processor names to skip.
-    /// When a file's step is in the skip set, that processor is not executed
-    /// for that file — even though other processors may still run. This
-    /// enables incremental builds where only missing steps are executed.
+    /// `skip_steps` 是可选的要跳过的处理器名集合（按文件）。当文件的某个
+    /// 步骤在跳过集合中时，即使其他处理器仍可运行，该处理器也不会为该文件
+    /// 执行。这实现了仅执行缺失步骤的增量构建。
     pub async fn analyze_batch(
         &self,
         files: Vec<(PathBuf, String)>,
         project_name: String,
         skip_steps: Option<Arc<HashMap<PathBuf, HashSet<String>>>>,
     ) -> Vec<FileAnalysis> {
-        // Phase 1: CPU-bound processors on all files in parallel.
+        // 阶段 1：在所有文件上并行运行 CPU 密集型处理器。
         let cpu_results = self
             .run_cpu_stages(files, project_name, skip_steps.clone())
             .await;
 
-        // Phase 2: GPU-bound processors on the resulting analyses.
+        // 阶段 2：在结果分析上运行 GPU 密集型处理器。
         self.run_gpu_stages(cpu_results, skip_steps).await
     }
 
     // ------------------------------------------------------------------
-    // CPU stages
+    // CPU 阶段
     // ------------------------------------------------------------------
 
-    /// Run CPU-bound processors (priority ≥ [`CPU_PRIORITY_THRESHOLD`]) on
-    /// all files in parallel.
+    /// 在所有文件上并行运行 CPU 密集型处理器（优先级 ≥
+    /// [`CPU_PRIORITY_THRESHOLD`]）。
     ///
-    /// Concurrency is set to the number of available CPU cores so that
-    /// processor‑intensive work saturates all cores without over‑subscribing.
+    /// 并发度设为可用 CPU 核心数，使处理器密集型工作在不超额订阅的情况下
+    /// 占满所有核心。
     pub async fn run_cpu_stages(
         &self,
         files: Vec<(PathBuf, String)>,
@@ -251,7 +243,7 @@ impl ProcessorEngine {
                 let mut ctx = PipelineContext::new(path_clone, text, (*proj).clone());
                 let mut errors: Vec<String> = Vec::new();
 
-                // Collect CPU-bound processors that match this file.
+                // 收集匹配该文件的 CPU 密集型处理器。
                 let cpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
@@ -260,7 +252,7 @@ impl ProcessorEngine {
                     .collect();
 
                 for processor in &cpu_processors {
-                    // Skip this processor if it's in the per-file skip set
+                    // 若该处理器在此文件的跳过集合中则跳过
                     if let Some(ref skip_map) = skip {
                         if let Some(steps) = skip_map.get(&path) {
                             if steps.contains(processor.name()) {
@@ -277,7 +269,7 @@ impl ProcessorEngine {
                                 processor = processor.name(),
                                 path = %path.display(),
                                 error = %e,
-                                "CPU processor failed"
+                                "CPU 处理器执行失败"
                             );
                             errors.push(format!("{}: {}", processor.name(), e));
                         }
@@ -298,14 +290,14 @@ impl ProcessorEngine {
     }
 
     // ------------------------------------------------------------------
-    // GPU stages
+    // GPU 阶段
     // ------------------------------------------------------------------
 
-    /// Run GPU-bound processors (priority < [`CPU_PRIORITY_THRESHOLD`]) on
-    /// analyses produced by [`run_cpu_stages`].
+    /// 在 [`run_cpu_stages`] 产生的分析上运行 GPU 密集型处理器
+    ///（优先级 < [`CPU_PRIORITY_THRESHOLD`]）。
     ///
-    /// Concurrency is throttled by a [`Semaphore`] with `max_concurrent`
-    /// permits so the inference server is never overwhelmed.
+    /// 并发由带 `max_concurrent` 个许可的 [`Semaphore`] 节流，
+    /// 使推理服务器永远不会被压垮。
     pub async fn run_gpu_stages(
         &self,
         analyses: Vec<FileAnalysis>,
@@ -320,19 +312,19 @@ impl ProcessorEngine {
             let skip = skip_steps.clone();
 
             async move {
-                // Acquire a semaphore permit before touching the GPU server.
+                // 在触碰 GPU 服务器之前获取信号量许可。
                 let _permit = match sem.acquire().await {
                     Ok(p) => p,
                     Err(e) => {
                         analysis.success = false;
-                        analysis.errors.push(format!("semaphore error: {e}"));
+                        analysis.errors.push(format!("信号量错误: {e}"));
                         return analysis;
                     }
                 };
 
                 let path = analysis.file_path.clone();
 
-                // Collect GPU-bound processors that match this file.
+                // 收集匹配该文件的 GPU 密集型处理器。
                 let gpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
@@ -341,7 +333,7 @@ impl ProcessorEngine {
                     .collect();
 
                 for processor in &gpu_processors {
-                    // Skip this processor if it's in the per-file skip set
+                    // 若该处理器在此文件的跳过集合中则跳过
                     if let Some(ref skip_map) = skip {
                         if let Some(steps) = skip_map.get(&path) {
                             if steps.contains(processor.name()) {
@@ -358,7 +350,7 @@ impl ProcessorEngine {
                                 processor = processor.name(),
                                 path = %path.display(),
                                 error = %e,
-                                "GPU processor failed"
+                                "GPU 处理器执行失败"
                             );
                             analysis.success = false;
                             analysis.errors.push(format!("{}: {}", processor.name(), e));
@@ -375,18 +367,16 @@ impl ProcessorEngine {
     }
 
     // ------------------------------------------------------------------
-    // Project-level analysis
+    // 项目级分析
     // ------------------------------------------------------------------
 
-    /// Analyse all accumulated file analyses and produce a project-wide
-    /// summary.
+    /// 分析所有累积的文件分析，并产生项目级摘要。
     ///
-    /// This method:
-    /// 1. Aggregates entities (classes, methods) from tree‑sitter outputs
-    /// 2. Discovers service names from class‑name conventions
-    /// 3. Extracts inter‑service dependencies from method calls and imports
-    /// 4. Generates an architecture summary via LLM when `infer_client` is
-    ///    provided
+    /// 该方法：
+    /// 1. 聚合 tree-sitter 输出中的实体（classes、methods）
+    /// 2. 依据类名约定发现 service 名
+    /// 3. 从方法调用与导入中提取 service 间依赖
+    /// 4. 当提供 `infer_client` 时通过 LLM 生成架构摘要
     pub async fn analyze_project(
         &self,
         project_name: String,
@@ -401,7 +391,7 @@ impl ProcessorEngine {
             .flat_map(|a| a.errors.clone())
             .collect();
 
-        // ---- extract entities from tree‑sitter outputs ----
+        // ---- 从 tree-sitter 输出提取实体 ----
         let mut all_classes: Vec<String> = Vec::new();
         let mut all_methods: Vec<(String, Vec<String>)> = Vec::new(); // (class_name, calls)
         let mut all_imports: Vec<String> = Vec::new();
@@ -409,7 +399,7 @@ impl ProcessorEngine {
 
         for analysis in file_analyses {
             if let Some(ts_out) = analysis.context.get_output("tree_sitter") {
-                // Classes
+                // 类
                 if let Some(entities) = ts_out.get("entities") {
                     if let Some(classes) = entities.get("classes").and_then(|c| c.as_array()) {
                         for class in classes {
@@ -418,7 +408,7 @@ impl ProcessorEngine {
                             }
                         }
                     }
-                    // Methods + their calls
+                    // 方法及其调用
                     if let Some(methods) = entities.get("methods").and_then(|m| m.as_array()) {
                         for method in methods {
                             let class_name = method
@@ -440,7 +430,7 @@ impl ProcessorEngine {
                     }
                 }
 
-                // Imports
+                // 导入
                 if let Some(imports) = ts_out.get("imports").and_then(|i| i.as_array()) {
                     for imp in imports {
                         if let Some(path) = imp.as_str() {
@@ -450,7 +440,7 @@ impl ProcessorEngine {
                 }
             }
 
-            // Collect LLM responses for additional context
+            // 收集 LLM 响应作为额外上下文
             if let Some(llm_out) = analysis.context.get_output("llm") {
                 if let Some(response) = llm_out.get("response").and_then(|r| r.as_str()) {
                     llm_responses.push(response.to_string());
@@ -458,11 +448,11 @@ impl ProcessorEngine {
             }
         }
 
-        // ---- discover service names ----
+        // ---- 发现 service 名 ----
         let mut services: Vec<String> = Vec::new();
         services.push(project_name.clone());
 
-        // Classes whose names match typical service‑class suffixes
+        // 类名匹配典型 service 类后缀的类
         for class_name in &all_classes {
             for suffix in &["Application", "Service", "Controller", "Client", "Feign"] {
                 if let Some(stripped) = class_name.strip_suffix(suffix) {
@@ -473,7 +463,7 @@ impl ProcessorEngine {
             }
         }
 
-        // Heuristic: imports containing "feign" or "rest" hint at service clients
+        // 启发式：包含 "feign" 或 "rest" 的导入暗示 service 客户端
         let has_feign_imports = all_imports
             .iter()
             .any(|i| i.to_lowercase().contains("feign"));
@@ -481,7 +471,7 @@ impl ProcessorEngine {
             .iter()
             .any(|i| i.to_lowercase().contains("rest"));
 
-        // ---- extract service dependencies ----
+        // ---- 提取 service 依赖 ----
         let mut dependencies: Vec<ServiceDependency> = Vec::new();
         let mut seen_deps: HashSet<(String, String, String)> = HashSet::new();
 
@@ -502,7 +492,7 @@ impl ProcessorEngine {
             }
         }
 
-        // Also scan imports for Feign / REST client patterns
+        // 同时扫描导入中的 Feign / REST 客户端模式
         for imp in &all_imports {
             let lower = imp.to_lowercase();
             let (protocol, hint) = if lower.contains("feign") || lower.contains("resttemplate") {
@@ -533,7 +523,7 @@ impl ProcessorEngine {
         services.sort();
         services.dedup();
 
-        // ---- generate LLM summary ----
+        // ---- 生成 LLM 摘要 ----
         let summary = if let Some(ref client) = infer_client {
             let data_json = serde_json::json!({
                 "project_name": project_name,
@@ -556,9 +546,9 @@ impl ProcessorEngine {
             {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!(project = %project_name, error = %e, "LLM project summary failed");
+                    tracing::warn!(project = %project_name, error = %e, "LLM 项目摘要生成失败");
                     format!(
-                        "Project {}: {} files, {} services",
+                        "项目 {}：{} 个文件，{} 个服务",
                         project_name,
                         file_count,
                         services.len()
@@ -567,7 +557,7 @@ impl ProcessorEngine {
             }
         } else {
             format!(
-                "Project {}: {} files, {} services",
+                "项目 {}：{} 个文件，{} 个服务",
                 project_name,
                 file_count,
                 services.len()
@@ -579,7 +569,7 @@ impl ProcessorEngine {
             files = file_count,
             services = services.len(),
             dependencies = dependencies.len(),
-            "Project analysis complete"
+            "项目分析完成"
         );
 
         ProjectAnalysis {
@@ -594,17 +584,16 @@ impl ProcessorEngine {
     }
 
     // ------------------------------------------------------------------
-    // Ecosystem-level analysis
+    // 生态系统级分析
     // ------------------------------------------------------------------
 
-    /// Analyse the entire ecosystem of related projects (micro‑services).
+    /// 分析相关项目（微服务）的整个生态系统。
     ///
-    /// Merges individual [`ProjectAnalysis`] results to:
-    /// 1. Build a cross‑project service mesh
-    /// 2. Detect shared infrastructure (same DB / MQ / cache identifiers)
-    /// 3. Identify risks (cycles, single points of failure)
-    /// 4. Generate a topology summary via LLM when `infer_client` is
-    ///    provided
+    /// 合并单个 [`ProjectAnalysis`] 结果以：
+    /// 1. 构建跨项目 service mesh
+    /// 2. 检测共享基础设施（相同的 DB / MQ / 缓存标识）
+    /// 3. 识别风险（环、单点故障）
+    /// 4. 当提供 `infer_client` 时通过 LLM 生成拓扑摘要
     pub async fn analyze_ecosystem(
         &self,
         ecosystem_name: String,
@@ -616,7 +605,7 @@ impl ProcessorEngine {
             .map(|pa| pa.project_name.clone())
             .collect();
 
-        // ---- merge all service dependencies ----
+        // ---- 合并所有 service 依赖 ----
         let mut service_mesh: Vec<ServiceDependency> = Vec::new();
         let mut seen_mesh: HashSet<(String, String, String)> = HashSet::new();
 
@@ -629,13 +618,12 @@ impl ProcessorEngine {
             }
         }
 
-        // ---- detect shared infrastructure ----
-        // Group dependency targets that appear in multiple projects' imports
-        // or dependency `to` fields.
+        // ---- 检测共享基础设施 ----
+        // 将出现在多个项目导入或依赖 `to` 字段中的依赖目标分组。
         let mut infra_mentions: HashMap<String, Vec<String>> = HashMap::new();
 
         for pa in project_analyses {
-            // Check each dep's `to` field for infrastructure keywords
+            // 检查每个依赖的 `to` 字段是否含基础设施关键字
             for dep in &pa.dependencies {
                 let lower_to = dep.to.to_lowercase();
                 for keyword in &["mysql", "postgres", "redis", "kafka", "rabbitmq", "mongodb"] {
@@ -658,10 +646,10 @@ impl ProcessorEngine {
         }
         shared_infrastructure.sort();
 
-        // ---- detect risks ----
+        // ---- 检测风险 ----
         let mut risks: Vec<String> = Vec::new();
 
-        // Cycle detection via simple DFS on the service mesh
+        // 通过 service mesh 上的简单 DFS 检测环
         let mut service_set: HashSet<String> = HashSet::new();
         for dep in &service_mesh {
             service_set.insert(dep.from.clone());
@@ -669,13 +657,13 @@ impl ProcessorEngine {
         }
         let services_list: Vec<&String> = service_set.iter().collect();
 
-        // Build adjacency list for outgoing edges
+        // 为出边构建邻接表
         let mut adj: HashMap<&String, Vec<&String>> = HashMap::new();
         for dep in &service_mesh {
             adj.entry(&dep.from).or_default().push(&dep.to);
         }
 
-        // DFS cycle detection (simple per‑node visited‑set check)
+        // DFS 环检测（简单的逐节点 visited 集合检查）
         for start in &services_list {
             let mut visited: HashSet<&String> = HashSet::new();
             let mut stack: Vec<&String> = vec![start];
@@ -685,7 +673,7 @@ impl ProcessorEngine {
                 if let Some(neighbors) = adj.get(current) {
                     for &next in neighbors {
                         if next == *start {
-                            // Found a cycle back to the start node
+                            // 发现回到起始节点的环
                             risks.push(format!(
                                 "Potential circular dependency: {} → … → {}",
                                 start, start
@@ -700,7 +688,7 @@ impl ProcessorEngine {
             }
         }
 
-        // Single points of failure: services with many incoming dependencies
+        // 单点故障：入向依赖很多的 service
         let mut incoming_count: HashMap<&String, usize> = HashMap::new();
         for dep in &service_mesh {
             *incoming_count.entry(&dep.to).or_default() += 1;
@@ -714,11 +702,11 @@ impl ProcessorEngine {
             }
         }
 
-        // Deduplicate risks
+        // 对风险去重
         risks.sort();
         risks.dedup();
 
-        // ---- generate LLM topology summary ----
+        // ---- 生成 LLM 拓扑摘要 ----
         let topology_summary = if let Some(ref client) = infer_client {
             let data_json = serde_json::json!({
                 "ecosystem_name": ecosystem_name,
@@ -740,9 +728,9 @@ impl ProcessorEngine {
             {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!(ecosystem = %ecosystem_name, error = %e, "LLM ecosystem summary failed");
+                    tracing::warn!(ecosystem = %ecosystem_name, error = %e, "LLM 生态系统摘要生成失败");
                     format!(
-                        "Ecosystem {}: {} projects, {} mesh edges",
+                        "生态系统 {}：{} 个项目，{} 条网格边",
                         ecosystem_name,
                         projects.len(),
                         service_mesh.len()
@@ -751,7 +739,7 @@ impl ProcessorEngine {
             }
         } else {
             format!(
-                "Ecosystem {}: {} projects, {} mesh edges",
+                "生态系统 {}：{} 个项目，{} 条网格边",
                 ecosystem_name,
                 projects.len(),
                 service_mesh.len()
@@ -763,7 +751,7 @@ impl ProcessorEngine {
             projects = projects.len(),
             mesh_edges = service_mesh.len(),
             risks = risks.len(),
-            "Ecosystem analysis complete"
+            "生态系统分析完成"
         );
 
         EcosystemAnalysis {
@@ -776,7 +764,7 @@ impl ProcessorEngine {
         }
     }
 
-    /// Execute a single processor and record its output or error.
+    /// 执行单个处理器并记录其输出或错误。
     async fn run_processor(
         processor: &dyn Processor,
         ctx: &mut PipelineContext,
@@ -792,7 +780,7 @@ impl ProcessorEngine {
                     processor = processor.name(),
                     path = %file_path.display(),
                     error = %e,
-                    "Processor failed"
+                    "处理器执行失败"
                 );
                 errors.push(format!("{}: {}", processor.name(), e));
             }
@@ -801,15 +789,15 @@ impl ProcessorEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Helper functions
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Classify a method call into a `(target, protocol)` pair.
+/// 将方法调用分类为 `(target, protocol)` 对。
 ///
-/// Heuristics:
-/// - Calls containing `http`, `RestTemplate`, `Feign`, `HttpClient` → HTTP
-/// - Calls containing `Kafka`, `Rabbit`, `MQ`, `Jms` → MQ
-/// - Everything else → RPC (simple method call within the project)
+/// 启发式：
+/// - 调用包含 `http`、`RestTemplate`、`Feign`、`HttpClient` → HTTP
+/// - 调用包含 `Kafka`、`Rabbit`、`MQ`、`Jms` → MQ
+/// - 其他情况 → RPC（项目内的简单方法调用）
 fn classify_call(call: &str, has_feign: bool, has_rest: bool) -> (String, String) {
     let lower = call.to_lowercase();
 
@@ -821,12 +809,12 @@ fn classify_call(call: &str, has_feign: bool, has_rest: bool) -> (String, String
         || has_feign
         || has_rest
     {
-        // Extract a meaningful target name from the call
+        // 从调用中提取有意义的 target 名
         let target = if call.contains("::") {
-            // Rust-style: module::function or service::method
+            // Rust 风格：module::function 或 service::method
             call.split("::").next().unwrap_or(call).to_string()
         } else if call.contains('.') {
-            // Java-style: object.method or Class.method
+            // Java 风格：object.method 或 Class.method
             call.split('.').next().unwrap_or(call).to_string()
         } else {
             call.to_string()
@@ -845,11 +833,10 @@ fn classify_call(call: &str, has_feign: bool, has_rest: bool) -> (String, String
     }
 }
 
-/// Call the LLM to summarise structured data.
+/// 调用 LLM 总结结构化数据。
 ///
-/// Sends a `chat` request to the inference server with a low temperature
-/// (0.1) and capped at 2048 tokens.  Returns the model's text response
-/// or an error string.
+/// 以低温度（0.1）向推理服务器发送 `chat` 请求，并限制为 2048 token。
+/// 返回模型的文本响应或错误字符串。
 async fn summarize_via_llm(
     client: &SiliconFlowChatClient,
     system_prompt: &str,
@@ -862,7 +849,7 @@ async fn summarize_via_llm(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -873,7 +860,7 @@ mod tests {
     use async_trait::async_trait;
     use std::path::Path;
 
-    /// CPU-bound processor that handles `.rs` files (priority = 100).
+    /// 处理 `.rs` 文件的 CPU 密集型处理器（优先级 = 100）。
     struct RsCpuProcessor;
 
     #[async_trait]
@@ -898,7 +885,7 @@ mod tests {
         }
     }
 
-    /// GPU-bound processor that handles `.rs` files (priority = 60).
+    /// 处理 `.rs` 文件的 GPU 密集型处理器（优先级 = 60）。
     struct RsGpuProcessor;
 
     #[async_trait]
@@ -917,7 +904,7 @@ mod tests {
 
         async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
             let mut out = ProcessorOutput::new();
-            // GPU processor reads the CPU output to produce a summary.
+            // GPU 处理器读取 CPU 输出来生成摘要。
             let lines = ctx
                 .get_output("rs_cpu")
                 .and_then(|o| o.get("lines"))
@@ -928,7 +915,7 @@ mod tests {
         }
     }
 
-    /// A processor that always fails (for error-path tests).
+    /// 一个总是失败的处理器（用于错误路径测试）。
     struct FailingProcessor;
 
     #[async_trait]
@@ -946,7 +933,7 @@ mod tests {
         }
 
         async fn execute(&self, _ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
-            Err(DtError::General("intentional failure".into()))
+            Err(DtError::General("故意失败".into()))
         }
     }
 
@@ -971,16 +958,16 @@ mod tests {
 
         assert!(
             result.success,
-            "expected success, got errors: {:?}",
+            "应成功，但得到错误: {:?}",
             result.errors
         );
         assert_eq!(result.file_path.to_string_lossy(), "src/main.rs");
 
-        // Both processors should have produced output.
+        // 两个处理器都应产生输出。
         assert!(result.context.get_output("rs_cpu").is_some());
         assert!(result.context.get_output("rs_gpu").is_some());
 
-        // rs_gpu should have read rs_cpu's output.
+        // rs_gpu 应已读取 rs_cpu 的输出。
         let summary = result
             .context
             .get_output("rs_gpu")
@@ -992,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn analyze_file_skips_non_matching_processors() {
         let mut registry = ProcessorRegistry::new();
-        registry.register(Box::new(RsCpuProcessor)); // only matches .rs
+        registry.register(Box::new(RsCpuProcessor)); // 只匹配 .rs
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
         let result = engine
@@ -1007,14 +994,14 @@ mod tests {
     async fn analyze_file_continues_on_processor_failure() {
         let mut registry = ProcessorRegistry::new();
         registry.register(Box::new(RsCpuProcessor));
-        registry.register(Box::new(FailingProcessor)); // matches all files
+        registry.register(Box::new(FailingProcessor)); // 匹配所有文件
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
         let result = engine
             .analyze_file("test.rs", "fn main() {}".to_string(), "p".to_string())
             .await;
 
-        // Should have continued despite the failure.
+        // 尽管失败，处理仍应继续。
         assert!(!result.success);
         assert!(result.context.get_output("rs_cpu").is_some());
         assert_eq!(result.errors.len(), 1);
@@ -1028,8 +1015,8 @@ mod tests {
     #[tokio::test]
     async fn run_cpu_stages_only_runs_cpu_processors() {
         let mut registry = ProcessorRegistry::new();
-        registry.register(Box::new(RsCpuProcessor)); // priority 100 >= 85 → CPU
-        registry.register(Box::new(RsGpuProcessor)); // priority 60 < 85   → GPU
+        registry.register(Box::new(RsCpuProcessor)); // 优先级 100 >= 85 → CPU
+        registry.register(Box::new(RsGpuProcessor)); // 优先级 60 < 85   → GPU
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
         let files = vec![(PathBuf::from("a.rs"), "fn a() {}".to_string())];
@@ -1038,9 +1025,9 @@ mod tests {
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
-        // rs_cpu should have run (it is CPU-bound).
+        // rs_cpu 应已运行（它是 CPU 密集型）。
         assert!(r.context.get_output("rs_cpu").is_some());
-        // rs_gpu should NOT have run (it is GPU-bound).
+        // rs_gpu 不应运行（它是 GPU 密集型）。
         assert!(r.context.get_output("rs_gpu").is_none());
     }
 
@@ -1069,12 +1056,12 @@ mod tests {
     #[tokio::test]
     async fn run_gpu_stages_only_runs_gpu_processors() {
         let mut registry = ProcessorRegistry::new();
-        registry.register(Box::new(RsCpuProcessor)); // CPU-bound
-        registry.register(Box::new(RsGpuProcessor)); // GPU-bound
+        registry.register(Box::new(RsCpuProcessor)); // CPU 密集型
+        registry.register(Box::new(RsGpuProcessor)); // GPU 密集型
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
 
-        // Create a "CPU-stage result" that already has rs_cpu output.
+        // 创建一个已含 rs_cpu 输出的"CPU 阶段结果"。
         let mut ctx = PipelineContext::new(
             PathBuf::from("test.rs"),
             "fn x() {}".to_string(),
@@ -1096,7 +1083,7 @@ mod tests {
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
-        // rs_gpu should now have run.
+        // rs_gpu 现在应已运行。
         assert!(r.context.get_output("rs_gpu").is_some());
         let summary = r
             .context
@@ -1124,7 +1111,7 @@ mod tests {
 
         let r = &results[0];
         assert!(r.success);
-        // Both CPU and GPU processors should have produced output.
+        // CPU 与 GPU 处理器都应产生输出。
         assert!(r.context.get_output("rs_cpu").is_some());
         assert!(r.context.get_output("rs_gpu").is_some());
     }
@@ -1136,14 +1123,14 @@ mod tests {
         registry.register(Box::new(RsGpuProcessor));
 
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
-        // Send a .py file — no processor should match.
+        // 发送 .py 文件——不应有处理器匹配。
         let files = vec![(PathBuf::from("script.py"), "import sys".to_string())];
 
         let results = engine.analyze_batch(files, "p".to_string(), None).await;
         assert_eq!(results.len(), 1);
 
         let r = &results[0];
-        assert!(r.success); // no errors = success
+        assert!(r.success); // 无错误即成功
         assert!(r.context.get_output("rs_cpu").is_none());
         assert!(r.context.get_output("rs_gpu").is_none());
     }
@@ -1205,7 +1192,7 @@ mod tests {
     // analyze_project
     // ------------------------------------------------------------------
 
-    /// Build a fake FileAnalysis with tree‑sitter output.
+    /// 构建一个带 tree-sitter 输出的假 FileAnalysis。
     fn make_ts_analysis(
         file_path: &str,
         classes: Vec<(&str, &str)>, // (class_name, package)
@@ -1263,7 +1250,7 @@ mod tests {
 
         let mut errors = vec![];
         if !success {
-            errors.push("processing error".to_string());
+            errors.push("处理错误".to_string());
         }
 
         FileAnalysis {
@@ -1313,12 +1300,12 @@ mod tests {
         assert_eq!(result.project_name, "user-service");
         assert_eq!(result.file_count, 2);
         assert_eq!(result.success_count, 2);
-        // Should have discovered service names
+        // 应已发现 service 名
         assert!(result.services.contains(&"user-service".to_string()));
-        assert!(result.services.contains(&"User".to_string())); // from UserService/UserController
-                                                                // Should have extracted dependencies
+        assert!(result.services.contains(&"User".to_string())); // 来自 UserService/UserController
+                                                                // 应已提取依赖
         assert!(!result.dependencies.is_empty());
-        // Should have a default summary
+        // 应有默认摘要
         assert!(result.summary.contains("user-service"));
     }
 
@@ -1424,16 +1411,16 @@ mod tests {
 
         assert_eq!(result.name, "test-ecosystem");
         assert_eq!(result.projects.len(), 3);
-        // Should have merged all unique dependencies
+        // 应已合并所有唯一依赖
         assert!(result.projects.contains(&"service-a".to_string()));
         assert!(result.projects.contains(&"service-b".to_string()));
         assert!(result.projects.contains(&"service-c".to_string()));
-        // Should have detected shared infrastructure (mysql-db used by 2 services)
+        // 应已检测到共享基础设施（mysql-db 被 2 个 service 使用）
         assert!(result
             .shared_infrastructure
             .iter()
             .any(|s| s.to_lowercase().contains("mysql")));
-        // Should have a default summary
+        // 应有默认摘要
         assert!(result.topology_summary.contains("test-ecosystem"));
     }
 
@@ -1462,7 +1449,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Ecosystem risk detection
+    // 生态系统风险检测
     // ------------------------------------------------------------------
 
     #[tokio::test]
@@ -1470,7 +1457,7 @@ mod tests {
         let registry = ProcessorRegistry::new();
         let engine = ProcessorEngine::new(Arc::new(registry), 4);
 
-        // A → B → C → A creates a cycle
+        // A → B → C → A 构成一个环
         let pa = ProjectAnalysis {
             project_name: "proj-a".to_string(),
             file_count: 1,
@@ -1517,7 +1504,7 @@ mod tests {
             .analyze_ecosystem("cyclic".to_string(), &[pa, pb, pc], None)
             .await;
 
-        // Should detect at least one circular dependency
+        // 应至少检测到一个循环依赖
         let cycle_risks: Vec<&String> = result
             .risks
             .iter()
@@ -1525,7 +1512,7 @@ mod tests {
             .collect();
         assert!(
             !cycle_risks.is_empty(),
-            "Expected cycle detection, risks: {:?}",
+            "应检测到环，但风险为: {:?}",
             result.risks
         );
     }

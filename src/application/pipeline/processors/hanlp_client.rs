@@ -1,17 +1,15 @@
-//! HanLP NLP processor — calls a local HanLP REST API service for
-//! named-entity recognition and keyword extraction.
+//! HanLP NLP 处理器——调用本地 HanLP REST API 服务进行
+//! 命名实体识别与关键词提取。
 //!
-//! Block-level data flow (方案 §5.2 / R2): when the chunk processor has run,
-//! HanLP analyses each chunk so its candidates align with the chunks by
-//! `block_index` (= `chunk.chunk_index`). A single block's failure logs a
-//! warning and yields empty candidates for that block without interrupting
-//! the file. Without chunk output it falls back to analysing the whole text
-//! as a single block (block_index = 0, old behaviour).
+//! 块级数据流（方案 §5.2 / R2）：当 chunk 处理器已运行时，HanLP 分析每个
+//! chunk，使其候选与按 `block_index`（= `chunk.chunk_index`）对齐的块一致。
+//! 单个块的失败只记录警告并为该块产生空候选，不会中断整个文件。没有 chunk
+//! 输出时，回退为将全文作为一个块来分析（block_index = 0，旧行为）。
 //!
-//! Produces a [`ProcessorOutput`] with:
-//! - `"hanlp_blocks"` — array of `{block_index, entities[{text, tag,
-//!   frequency}], keywords}` aligned with chunks by `block_index`
-//! - `"status"`       — `"ok"` or `"empty"`
+//! 产生一个 [`ProcessorOutput`]，包含：
+//! - `"hanlp_blocks"` —— `{block_index, entities[{text, tag,
+//!   frequency}], keywords}` 数组，按 `block_index` 与块对齐
+//! - `"status"`       —— `"ok"` 或 `"empty"`
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -23,19 +21,19 @@ use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
 use crate::infrastructure::hanlp::{HanlpClient, HanlpResult};
 
-/// NLP processor that calls a local HanLP REST API for Chinese text analysis.
+/// 调用本地 HanLP REST API 进行中文文本分析的 NLP 处理器。
 pub struct HanlpClientProcessor {
     client: Arc<HanlpClient>,
 }
 
 impl HanlpClientProcessor {
-    /// Create a new processor backed by the given [`HanlpClient`].
+    /// 创建由给定 [`HanlpClient`] 支撑的新处理器。
     pub fn new(client: Arc<HanlpClient>) -> Self {
         Self { client }
     }
 
-    /// Map one block's HanLP result to its JSON output shape. A `None`
-    /// result (failed or empty block) yields empty candidate arrays.
+    /// 将一个块的 HanLP 结果映射为其 JSON 输出形状。`None` 结果
+    /// （失败或空块）产生空候选数组。
     fn block_to_json(block_index: u32, result: Option<&HanlpResult>) -> serde_json::Value {
         let (entities, keywords) = match result {
             Some(r) => (
@@ -60,9 +58,9 @@ impl HanlpClientProcessor {
         })
     }
 
-    /// Collect `(block_index, text)` pairs from the chunk processor output.
-    /// Falls back to the whole file as a single block when there is no chunk
-    /// output. Returns an empty Vec when there is nothing to analyse.
+    /// 从 chunk 处理器输出中收集 `(block_index, text)` 对。
+    /// 当没有 chunk 输出时，回退为将整个文件作为单块处理。
+    /// 当没有可分析内容时返回空的 Vec。
     fn collect_blocks(ctx: &PipelineContext) -> Vec<(u32, String)> {
         if let Some(chunk_out) = ctx.get_output("chunk") {
             return chunk_out
@@ -107,8 +105,8 @@ impl Processor for HanlpClientProcessor {
     }
 
     fn matches(&self, file_path: &Path) -> bool {
-        // HanLP is for document/text content — not structured code files.
-        // Aligned with the chunk processor's extension set.
+        // HanLP 面向文档 / 文本内容——而非结构化代码文件。
+        // 与 chunk 处理器的扩展名集合保持一致。
         matches!(
             file_path.extension().and_then(|e| e.to_str()),
             Some("md" | "txt" | "markdown" | "rst" | "adoc" | "yaml" | "yml" | "properties")
@@ -135,11 +133,10 @@ impl Processor for HanlpClientProcessor {
                     Ok(r) => Some(r),
                     Err(e) => {
                         if fallback {
-                            // Old behaviour: a failed full-text analysis errors.
-                            return Err(DtError::Repository(format!("HanLP analysis failed: {e}")));
+                            // 旧行为：全文分析失败即报错。
+                            return Err(DtError::Repository(format!("HanLP 分析失败: {e}")));
                         }
-                        // Single-block failure: warn and leave the block's
-                        // candidates empty — do not interrupt the file.
+                        // 单块失败：记录警告并让该块候选为空——不中断整个文件。
                         tracing::warn!("HanLP 块 {block_index} 分析失败, 该块候选为空: {e}");
                         None
                     }
@@ -156,7 +153,7 @@ impl Processor for HanlpClientProcessor {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -165,7 +162,7 @@ mod tests {
     use crate::infrastructure::hanlp::NamedEntity;
     use std::path::PathBuf;
 
-    /// Unreachable HanLP endpoint — connection refused fails fast.
+    /// 不可达的 HanLP 端点——连接被拒绝可快速失败。
     const UNREACHABLE: &str = "http://127.0.0.1:1";
 
     fn make_context(file_name: &str, text: &str) -> PipelineContext {
@@ -198,7 +195,7 @@ mod tests {
     async fn matches_doc_extensions_including_yaml() {
         let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
         let processor = HanlpClientProcessor::new(client);
-        // Doc formats match — aligned with the chunk processor.
+        // 文档格式匹配——与 chunk 处理器保持一致。
         assert!(processor.matches(Path::new("readme.md")));
         assert!(processor.matches(Path::new("notes.txt")));
         assert!(processor.matches(Path::new("docs.markdown")));
@@ -207,7 +204,7 @@ mod tests {
         assert!(processor.matches(Path::new("config.yaml")));
         assert!(processor.matches(Path::new("config.yml")));
         assert!(processor.matches(Path::new("app.properties")));
-        // Structured code files do NOT match
+        // 结构化代码文件不匹配
         assert!(!processor.matches(Path::new("Main.java")));
         assert!(!processor.matches(Path::new("app.py")));
         assert!(!processor.matches(Path::new("image.png")));
@@ -253,7 +250,7 @@ mod tests {
         let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
         let processor = HanlpClientProcessor::new(client);
         let mut ctx = make_context("doc.md", "第一段内容\n\n第二段内容");
-        // Non-contiguous indices prove we use chunk.chunk_index, not position.
+        // 非连续索引证明我们使用 chunk.chunk_index 而非位置。
         ctx.add_output(
             "chunk",
             make_chunk_output(&[(5, "第一段内容"), (7, "第二段内容")]),
@@ -265,12 +262,12 @@ mod tests {
         let blocks = output
             .get("hanlp_blocks")
             .and_then(|v| v.as_array())
-            .expect("hanlp_blocks must be an array");
+            .expect("hanlp_blocks 必须是数组");
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0]["block_index"], serde_json::json!(5));
         assert_eq!(blocks[1]["block_index"], serde_json::json!(7));
-        // Single-block failure (unreachable server) degrades to empty
-        // candidates without interrupting the file.
+        // 单块失败（服务器不可达）降级为空候选，
+        // 不中断整个文件。
         for b in blocks {
             assert_eq!(b["entities"], serde_json::json!([]));
             assert_eq!(b["keywords"], serde_json::json!([]));
@@ -282,7 +279,7 @@ mod tests {
         let client = Arc::new(HanlpClient::new(UNREACHABLE, ""));
         let processor = HanlpClientProcessor::new(client);
         let ctx = make_context("notes.markdown", "没有 chunk 输出时回退到全文单块");
-        // Old behaviour preserved: a failed full-text analysis is an error.
+        // 保留旧行为：全文分析失败即报错。
         assert!(processor.execute(&ctx).await.is_err());
     }
 

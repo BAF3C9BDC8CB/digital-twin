@@ -1,34 +1,32 @@
-//! Flexible output container for pipeline processor results.
+//! 流水线处理器结果的灵活输出容器。
 //!
-//! `ProcessorOutput` wraps a `HashMap<String, serde_json::Value>` and serves
-//! as the universal data exchange format between pipeline stages. Every
-//! processor writes its results into one of these, which are then merged into
-//! the shared [`PipelineContext`](super::context::PipelineContext).
+//! `ProcessorOutput` 包装一个 `HashMap<String, serde_json::Value>`，作为
+//! 流水线阶段间通用的数据交换格式。每个处理器将其结果写入其中一个实例，
+//! 然后合并到共享的 [`PipelineContext`](super::context::PipelineContext) 中。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// A flexible, JSON-compatible container for processor outputs.
+/// 一个灵活的、与 JSON 兼容的处理器输出容器。
 ///
-/// Supports arbitrary nested key-value access via the underlying
-/// `HashMap<String, serde_json::Value>`.  Values can be any JSON type
-/// (objects, arrays, strings, numbers, booleans, null).
+/// 通过底层的 `HashMap<String, serde_json::Value>` 支持任意嵌套的键值访问。
+/// 值可以是任意 JSON 类型（对象、数组、字符串、数字、布尔值、null）。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProcessorOutput {
     inner: HashMap<String, serde_json::Value>,
 }
 
 impl ProcessorOutput {
-    /// Create an empty output container.
+    /// 创建空的输出容器。
     pub fn new() -> Self {
         Self {
             inner: HashMap::new(),
         }
     }
 
-    /// Set a key to a serializable value.
+    /// 将键设置为一个可序列化的值。
     ///
-    /// Any type that implements `serde::Serialize` can be stored:
+    /// 任何实现了 `serde::Serialize` 的类型都可以存储：
     ///
     /// ```ignore
     /// let mut out = ProcessorOutput::new();
@@ -43,35 +41,35 @@ impl ProcessorOutput {
         );
     }
 
-    /// Get a reference to a value by key.
+    /// 按键获取值的引用。
     pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
         self.inner.get(key)
     }
 
-    /// Merge another `ProcessorOutput` into this one, overwriting existing
-    /// keys with the values from `other`.
+    /// 将另一个 `ProcessorOutput` 合并到当前容器中，用 `other` 中的值
+    /// 覆盖已有的键。
     pub fn merge(&mut self, other: ProcessorOutput) {
         self.inner.extend(other.inner);
     }
 
-    /// Returns `true` when the container holds no entries.
+    /// 当容器中没有任何条目时返回 `true`。
     pub fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
 
-    /// Consume the wrapper and return the underlying map.
+    /// 消费该包装器并返回底层的 map。
     pub fn into_inner(self) -> HashMap<String, serde_json::Value> {
         self.inner
     }
 
-    /// Borrow the underlying map.
+    /// 借用底层的 map。
     pub fn as_inner(&self) -> &HashMap<String, serde_json::Value> {
         &self.inner
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -123,7 +121,7 @@ mod tests {
 
         a.merge(b);
         assert_eq!(a.get("x"), Some(&json!(1)));
-        assert_eq!(a.get("y"), Some(&json!(99))); // overwritten
+        assert_eq!(a.get("y"), Some(&json!(99))); // 已被覆盖
         assert_eq!(a.get("z"), Some(&json!(3)));
     }
 

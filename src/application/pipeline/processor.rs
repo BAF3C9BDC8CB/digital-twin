@@ -1,10 +1,9 @@
-//! [`Processor`] trait — the contract every pipeline stage must implement.
+//! [`Processor`] trait —— 每个流水线阶段都必须实现的契约。
 //!
-//! A processor is responsible for one stage of file analysis (e.g. language
-//! detection, tree-sitter parsing, NLP analysis, embedding).  Processors
-//! declare what files they can handle via [`Processor::matches`] and produce
-//! a [`ProcessorOutput`] struct that gets merged into the shared
-//! [`PipelineContext`](super::context::PipelineContext).
+//! 一个处理器负责文件分析的一个阶段（例如语言检测、tree-sitter 解析、
+//! NLP 分析、embedding）。处理器通过 [`Processor::matches`] 声明自己能处理
+//! 哪些文件，并产生一个合并到共享 [`PipelineContext`](super::context::PipelineContext)
+//! 中的 [`ProcessorOutput`] 结构。
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -13,58 +12,53 @@ use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::domain::error::DtError;
 
-/// A single stage in the pipeline processing chain.
+/// 流水线处理链中的单个阶段。
 ///
-/// # Ordering
+/// # 排序
 ///
-/// Processors are sorted by [`priority`](Processor::priority) (lower values
-/// run first) so that cheap "gatekeeper" checks (language detection,
-/// file-type filtering) happen before expensive analysis.
+/// 处理器按 [`priority`](Processor::priority) 排序（数值越低越先执行），
+/// 使得廉价的"守门"检查（语言检测、文件类型过滤）先于昂贵的分析执行。
 ///
-/// # Thread safety
+/// # 线程安全
 ///
-/// All trait methods are `&self` and require `Send + Sync` so that a
-/// pipeline runner can execute independent processors in parallel when
-/// there are no data dependencies.
+/// 所有 trait 方法均为 `&self` 且要求 `Send + Sync`，这样在无数据依赖时
+/// 流水线运行器可以并行执行独立的处理器。
 #[async_trait]
 pub trait Processor: Send + Sync {
-    /// Human-readable name of this processor (e.g. `"tree_sitter"`,
-    /// `"hanlp"`, `"code_embedder"`).
+    /// 该处理器的人类可读名称（例如 `"tree_sitter"`、`"hanlp"`、
+    /// `"code_embedder"`）。
     ///
-    /// This name is used as the key under which the processor stores its
-    /// output in the [`PipelineContext`].
+    /// 该名称用作处理器在 [`PipelineContext`] 中存储其输出时的键。
     fn name(&self) -> &str;
 
-    /// Relative execution priority.  Lower values run first.
+    /// 相对执行优先级。数值越低越先执行。
     ///
-    /// Typical conventions:
-    /// - `0–99`   — file-type / language detection
-    /// - `100–199` — structural parsers (tree-sitter)
-    /// - `200–299` — NLP / semantic analyzers
-    /// - `300+`   — embedding / vectorization (often depends on prior stages)
+    /// 典型约定：
+    /// - `0–99`   —— 文件类型 / 语言检测
+    /// - `100–199` —— 结构解析器（tree-sitter）
+    /// - `200–299` —— NLP / 语义分析器
+    /// - `300+`   —— embedding / 向量化（通常依赖前置阶段）
     fn priority(&self) -> i32;
 
-    /// Return `true` if this processor can handle the given file.
+    /// 如果该处理器可以处理给定文件则返回 `true`。
     ///
-    /// This is checked *before* [`execute`](Processor::execute) so the
-    /// pipeline can skip unsuitable processors cheaply.
+    /// 该检查在 [`execute`](Processor::execute) **之前**进行，以便流水线
+    /// 廉价地跳过不合适的处理器。
     fn matches(&self, file_path: &Path) -> bool;
 
-    /// Execute the processor against the shared [`PipelineContext`].
+    /// 针对共享的 [`PipelineContext`] 执行该处理器。
     ///
-    /// The context carries the raw file content as well as outputs from
-    /// earlier stages, enabling downstream processors to build on upstream
-    /// results.
+    /// 上下文携带原始文件内容以及前置阶段的输出，使下游处理器能够构建在
+    /// 上游结果之上。
     ///
-    /// # Errors
+    /// # 错误
     ///
-    /// Returns [`DtError`] on failure.  The pipeline runner may decide to
-    /// skip or abort depending on the error severity.
+    /// 失败时返回 [`DtError`]。流水线运行器可根据错误严重程度决定跳过或中止。
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
