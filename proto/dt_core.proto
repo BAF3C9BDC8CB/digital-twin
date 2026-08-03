@@ -45,9 +45,31 @@ message BuildResponse {
 message SearchRequest {
   string query = 1;
   int32 limit = 2;
-  bool expand = 3;   // expand query with variants
-  string path = 4;   // scope to path
-  string project = 5; // scope to project
+  bool expand = 3;   // ignored (legacy)
+  string path = 4;   // ignored (legacy)
+  string project = 5;
+  string world = 6;        // all|code|knowledge|doc|config|memory；空=all
+  uint32 max_hops = 7;     // knowledge 世界图扩展跳数；0=默认1
+  bool with_evidence = 8;  // knowledge top-5 证据回填
+  string origin = 9;       // knowledge 召回 origin 过滤
+  string doc_id = 10;      // doc 世界单文档限定
+}
+
+message ScoreBreakdown {
+  double semantic = 1;
+  double rerank = 2;
+  double graph_boost = 3;
+  double final_score = 4;
+}
+
+message RelationSnippet {
+  string rel_type = 1;
+  string other_end_id = 2;
+  string other_end_name = 3;
+  string direction = 4;
+  double confidence = 5;
+  string evidence = 6;
+  int32 supplementary_count = 7;
 }
 
 message SearchResult {
@@ -56,6 +78,15 @@ message SearchResult {
   string file_path = 3;
   int32 start_line = 4;
   string signature = 5;
+  string entity_type = 6;
+  string snippet = 7;
+  string llm_analysis = 8;
+  int32 end_line = 9;
+  uint32 hop = 10;
+  bool rerank_degraded = 11;
+  repeated string evidence = 12;
+  ScoreBreakdown score_breakdown = 13;
+  repeated RelationSnippet relations = 14;
 }
 
 message SearchResponse {

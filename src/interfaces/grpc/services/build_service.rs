@@ -136,17 +136,17 @@ pub async fn handle_search(
     let cws = crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed, rerank);
     let cws_req = crate::application::context::search_mcp::SearchRequest {
         query: req.query,
-        world: Some("code".into()),
+        world: if req.world.is_empty() { None } else { Some(req.world) },
         limit: Some(limit),
         project: if req.project.is_empty() {
             None
         } else {
             Some(req.project)
         },
-        max_hops: None,
-        with_evidence: None,
-        origin: None,
-        doc_id: None,
+        max_hops: if req.max_hops == 0 { None } else { Some(req.max_hops) },
+        with_evidence: Some(req.with_evidence),
+        origin: if req.origin.is_empty() { None } else { Some(req.origin) },
+        doc_id: if req.doc_id.is_empty() { None } else { Some(req.doc_id) },
     };
 
     let cws_result = cws
@@ -154,19 +154,7 @@ pub async fn handle_search(
         .await
         .map_err(|e| Status::internal(format!("Search failed: {e}")))?;
 
-    // Convert CrossWorldSearch hits to gRPC SearchResults,
-    // reading start_line from the hit payload (no longer hardcoded 0).
-    let results: Vec<SearchResult> = cws_result
-        .hits
-        .into_iter()
-        .map(|hit| SearchResult {
-            score: hit.score as f32,
-            name: hit.title,
-            file_path: hit.file_path.unwrap_or_default(),
-            start_line: hit.start_line.map(|l| l as i32).unwrap_or(0),
-            signature: hit.signature.unwrap_or_default(),
-        })
-        .collect();
+    let results: Vec<SearchResult> = cws_result.hits.into_iter().map(hit_to_proto).collect();
 
     let total = results.len() as i32;
     let elapsed = start.elapsed().as_secs_f64();
@@ -178,176 +166,45 @@ pub async fn handle_search(
     })
 }
 
-/// Search using the Qdrant vector repository.
-///
-/// Embeds the query text, discovers all `*_methods` collections,
-/// searches each one, merges results by score, and returns the top matches.
-#[deprecated(note = "Use CrossWorldSearch instead")]
-async fn search_via_vector(
-    vec_repo: &dyn VectorRepository,
-    query: &str,
-    limit: u64,
-) -> Result<Vec<SearchResult>, Status> {
-    // 1. Connect to embed service via provider router
-    let embed_svc = crate::infrastructure::embedder::create_embed_router(
-        crate::infrastructure::embedder::ProviderConfig {
-            siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
-            siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
-            siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
-            siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(
-            ),
-            siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
-            xinference_url: String::new(),
-            xinference_api_key: String::new(),
-            xinference_model_embed: String::new(),
-            xinference_model_reranker: String::new(),
-            xinference_model_llm: String::new(),
-            embed_provider: "siliconflow".into(),
-            rerank_provider: "siliconflow".into(),
-            llm_provider: "siliconflow".into(),
-        },
-    );
-    let embed: Arc<dyn EmbedService> = embed_svc;
-
-    // 2. Generate query vector
-    let vectors = embed
-        .embed_batch(&[query.to_string()])
-        .await
-        .map_err(|e| Status::internal(format!("embed failed: {e}")))?;
-    if vectors.is_empty() {
-        return Ok(vec![]);
-    }
-    let query_vec = vectors[0].clone();
-
-    // 3. Discover method collections
-    let collections = vec_repo
-        .list_collections()
-        .await
-        .map_err(|e| Status::internal(format!("list collections: {e}")))?;
-    let method_cols: Vec<&str> = collections
-        .iter()
-        .filter(|c| {
-            c.as_str() == crate::shared::collections::CODE_METHODS || c.ends_with("_methods")
-        })
-        .map(|s| s.as_str())
-        .collect();
-
-    if method_cols.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // 4. Search across all method collections
-    let mut all_results: Vec<(f64, SearchResult)> = Vec::new();
-    for col in &method_cols {
-        match vec_repo.search(col, query_vec.clone(), limit * 3).await {
-            Ok(results) => {
-                for r in results {
-                    let score = r.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    if score < 0.3 {
-                        continue;
-                    }
-                    let payload = r.get("payload").or(r.get("result")).unwrap_or(&r);
-                    let name = payload
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty() && *s != "?")
-                        .unwrap_or("");
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let file_path = payload
-                        .get("file_path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let signature = payload
-                        .get("signature")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    all_results.push((
-                        score,
-                        SearchResult {
-                            score: score as f32,
-                            name: name.to_string(),
-                            file_path,
-                            start_line: 0,
-                            signature,
-                        },
-                    ));
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Qdrant search on {col}: {e}");
-            }
-        }
-    }
-
-    // 5. Sort by score descending, limit
-    all_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    all_results.truncate(limit as usize);
-
-    let results: Vec<SearchResult> = all_results.into_iter().map(|(_, r)| r).collect();
-    Ok(results)
-}
-
-/// Fallback search using the graph database (fulltext index).
-#[deprecated(note = "Use CrossWorldSearch instead")]
-async fn search_via_graph(
-    graph: &dyn GraphRepository,
-    query: &str,
-    limit: u64,
-) -> Result<Vec<SearchResult>, Status> {
-    let cypher = r#"
-        CALL db.index.fulltext.queryNodes('infra_search', $q)
-        YIELD node, score
-        WHERE any(lbl IN labels(node) WHERE lbl IN ['Method', 'Class', 'Interface', 'Module'])
-        RETURN coalesce(node.name, node.method_name, node.class_name, '') AS name,
-               coalesce(node.source_file, '') AS file_path,
-               coalesce(node.start_line, 0) AS start_line,
-               coalesce(node.signature, '') AS signature,
-               score
-        ORDER BY score DESC
-        LIMIT $limit
-    "#;
-
-    let mut params = std::collections::HashMap::new();
-    params.insert("q".into(), serde_json::Value::String(query.to_string()));
-    params.insert("limit".into(), serde_json::json!(limit as i64));
-
-    match graph.read_query(&cypher, params).await {
-        Ok(result) => {
-            let rows = result.as_array().cloned().unwrap_or_default();
-            let results: Vec<SearchResult> = rows
-                .iter()
-                .map(|row| SearchResult {
-                    score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32,
-                    name: row
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("?")
-                        .to_string(),
-                    file_path: row
-                        .get("file_path")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    start_line: row.get("start_line").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-                    signature: row
-                        .get("signature")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-                .collect();
-            Ok(results)
-        }
-        Err(e) => {
-            tracing::warn!("Graph search failed: {e}");
-            Ok(vec![])
-        }
+/// Map a unified-contract hit to the proto message（全量字段，spec §7.3）。
+fn hit_to_proto(hit: crate::application::context::search_mcp::SearchHit) -> SearchResult {
+    SearchResult {
+        score: hit.score as f32,
+        name: hit.title,
+        file_path: hit.file_path.unwrap_or_default(),
+        start_line: hit.start_line.map(|l| l as i32).unwrap_or(0),
+        signature: hit.signature.unwrap_or_default(),
+        entity_type: hit.entity_type,
+        snippet: hit.snippet,
+        llm_analysis: hit.llm_analysis.unwrap_or_default(),
+        end_line: hit.end_line.map(|l| l as i32).unwrap_or(0),
+        hop: hit.hop.unwrap_or(0),
+        rerank_degraded: hit.rerank_degraded.unwrap_or(false),
+        evidence: hit.evidence.unwrap_or_default(),
+        score_breakdown: hit.score_breakdown.map(|sb| ScoreBreakdown {
+            semantic: sb.semantic,
+            rerank: sb.rerank,
+            graph_boost: sb.graph_boost,
+            final_score: sb.final_score,
+        }),
+        relations: hit
+            .relations
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| RelationSnippet {
+                rel_type: r.rel_type,
+                other_end_id: r.other_end_id,
+                other_end_name: r.other_end_name,
+                direction: r.direction,
+                confidence: r.confidence,
+                evidence: r.evidence.unwrap_or_default(),
+                supplementary_count: r.supplementary_count as i32,
+            })
+            .collect(),
     }
 }
+
+
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -389,6 +246,11 @@ mod tests {
             expand: false,
             path: String::new(),
             project: String::new(),
+            world: String::new(),
+            max_hops: 0,
+            with_evidence: false,
+            origin: String::new(),
+            doc_id: String::new(),
         };
         let resp = handle_search(req, None, None)
             .await
@@ -406,6 +268,11 @@ mod tests {
             expand: false,
             path: String::new(),
             project: String::new(),
+            world: String::new(),
+            max_hops: 0,
+            with_evidence: false,
+            origin: String::new(),
+            doc_id: String::new(),
         };
         let resp = handle_search(req, Some(graph), None)
             .await
@@ -423,5 +290,44 @@ mod tests {
         assert_eq!(req.path, "/tmp/test");
         assert!(req.name.is_empty());
         assert!(!req.is_file);
+    }
+
+    #[test]
+    fn hit_to_proto_maps_all_new_fields() {
+        use crate::application::knowledge::extract::retrieve::{
+            RelationSnippet as RsRelationSnippet, ScoreBreakdown as RsScoreBreakdown,
+        };
+        use crate::application::context::search_mcp::SearchHit;
+
+        let hit = SearchHit {
+            id: "1".into(), title: "ifCode".into(), snippet: "支付渠道编码".into(),
+            source_world: "knowledge".into(), entity_type: "Entity".into(), score: 0.94,
+            source_ref: Some("dt://doc/pay.md".into()),
+            file_path: None, start_line: None, end_line: None,
+            signature: None, calls: vec![],
+            element_id: Some("4:0:1".into()),
+            llm_analysis: None,
+            score_breakdown: Some(RsScoreBreakdown {
+                semantic: 0.71, rerank: 0.92, graph_boost: 1.0, final_score: 0.83,
+            }),
+            hop: Some(1),
+            via_same_as: None,
+            relations: Some(vec![RsRelationSnippet {
+                rel_type: "relates".into(), other_end_id: "dt://entity/p/Config/waycode".into(),
+                other_end_name: "wayCode".into(), direction: "out".into(),
+                confidence: 0.9, evidence: None, supplementary_count: 0,
+            }]),
+            evidence: Some(vec!["证据段A".into()]),
+            rerank_degraded: Some(false),
+        };
+        let p = hit_to_proto(hit);
+        assert_eq!(p.entity_type, "Entity");
+        assert_eq!(p.snippet, "支付渠道编码");
+        assert_eq!(p.hop, 1);
+        assert_eq!(p.evidence, vec!["证据段A".to_string()]);
+        let sb = p.score_breakdown.expect("score_breakdown");
+        assert!((sb.final_score - 0.83).abs() < 1e-6);
+        assert_eq!(p.relations.len(), 1);
+        assert_eq!(p.relations[0].other_end_name, "wayCode");
     }
 }
