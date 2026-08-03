@@ -13,5 +13,5 @@ pub mod collection;
 pub mod repo;
 
 pub use client::QdrantClient;
-pub use collection::{collection_name, CollectionConfig, CollectionKind, Distance};
+pub use collection::{CollectionConfig, Distance};
 pub use repo::{NoopVectorRepo, QdrantRepo};
