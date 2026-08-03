@@ -64,7 +64,6 @@ cargo build --release
 | 命令 | 功能 |
 |------|------|
 | `dt search` | 跨世界语义搜索（CrossWorldSearch 统一入口） |
-| `dt search-kg` | KG 节点向量语义搜索 |
 
 ### 知识
 

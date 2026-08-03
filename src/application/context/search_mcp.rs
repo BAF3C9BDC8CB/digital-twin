@@ -239,11 +239,27 @@ impl CrossWorldSearch {
                             .unwrap_or_default();
 
                         all_hits.push(SearchHit {
-                            id: hit
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("?")
-                                .to_string(),
+                            // Qdrant point id 可能是数值或 UUID 字符串，均须保留；
+                            // 缺失时回退 payload 身份，保证 RRF 键唯一（防 "code:?" 坍缩）。
+                            id: match hit.get("id") {
+                                Some(serde_json::Value::String(s)) => s.clone(),
+                                Some(serde_json::Value::Number(n)) => n.to_string(),
+                                _ => payload
+                                    .get("entity_id")
+                                    .or(payload.get("method_id"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| {
+                                        format!(
+                                            "{}:{}",
+                                            payload
+                                                .get("file_path")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("?"),
+                                            name
+                                        )
+                                    }),
+                            },
                             title: name.to_string(),
                             snippet: {
                                 let fp = payload
@@ -763,6 +779,37 @@ mod tests {
         );
         assert_eq!(hit.file_path.as_deref(), Some("test/project/app.js"));
         assert_eq!(hit.start_line, Some(32));
+    }
+
+    #[tokio::test]
+    async fn code_world_handles_numeric_point_id_and_payload_fallback() {
+        // Qdrant 数值型 point id：as_str() 会失败——必须按 number 提取
+        let m1 = serde_json::json!({
+            "id": 123, "score": 0.9,
+            "payload": { "name": "m1", "file_path": "a.js",
+                         "start_line": 1, "end_line": 2, "project": "p" }
+        });
+        // id 缺失：回退 payload entity_id
+        let m2 = serde_json::json!({
+            "score": 0.8,
+            "payload": { "name": "m2", "file_path": "b.js", "entity_id": "dt://method/p/m2",
+                         "start_line": 1, "end_line": 2, "project": "p" }
+        });
+        let vector = std::sync::Arc::new(StubVector {
+            hits: vec![m1, m2],
+            captured_filter: std::sync::Mutex::new(None),
+        });
+        let cws = CrossWorldSearch::new(None, Some(vector), Some(std::sync::Arc::new(StubEmbed)), None);
+        let req = SearchRequest {
+            query: "q".into(), world: Some("code".into()), limit: Some(5),
+            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        assert_eq!(result.hits.len(), 2);
+        assert_eq!(result.hits[0].id, "123");
+        assert_eq!(result.hits[1].id, "dt://method/p/m2");
+        // RRF 键唯一性：两条 hit 的 id 不得相同（防 "code:?" 坍缩回归）
+        assert_ne!(result.hits[0].id, result.hits[1].id);
     }
 
     #[tokio::test]
