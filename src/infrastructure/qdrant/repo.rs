@@ -163,6 +163,53 @@ impl VectorRepository for QdrantRepo {
         scored_points_to_json(response.result)
     }
 
+    /// Scroll all payloads in a collection (no vectors), with optional JSON filter.
+    ///
+    /// Pages through `ScrollPoints` (256/page) until `max` payloads are collected
+    /// or the collection is exhausted. Payload prost maps serialize to plain
+    /// JSON the same way as in `scored_points_to_json`.
+    async fn scroll_payloads(
+        &self,
+        collection: &str,
+        filter: Option<serde_json::Value>,
+        max: usize,
+    ) -> Result<Vec<serde_json::Value>, DtError> {
+        use qdrant_client::qdrant::ScrollPointsBuilder;
+
+        let qdrant = self.client.inner();
+        let mut out = Vec::new();
+        let mut offset: Option<qdrant_client::qdrant::PointId> = None;
+        loop {
+            let mut builder = ScrollPointsBuilder::new(collection.to_string())
+                .limit(256)
+                .with_payload(true)
+                .with_vectors(false);
+            if let Some(f) = &filter {
+                builder = builder.filter(json_to_qdrant_filter(f)?);
+            }
+            if let Some(o) = offset {
+                builder = builder.offset(o);
+            }
+            let resp = qdrant
+                .scroll(builder)
+                .await
+                .map_err(|e| DtError::Repository(format!("Qdrant scroll_payloads: {e}")))?;
+            for point in resp.result {
+                let payload: serde_json::Value = serde_json::to_value(&point.payload)
+                    .unwrap_or_else(|_| serde_json::json!({}));
+                out.push(payload);
+                if out.len() >= max {
+                    return Ok(out);
+                }
+            }
+            match resp.next_page_offset {
+                Some(next) => offset = Some(next),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
     async fn upsert(
         &self,
         collection: &str,
@@ -504,5 +551,15 @@ mod tests {
             ))
             .unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn noop_scroll_payloads_returns_empty() {
+        let repo = NoopVectorRepo;
+        let out = repo
+            .scroll_payloads("code_methods", None, 100)
+            .await
+            .expect("default scroll impl");
+        assert!(out.is_empty());
     }
 }

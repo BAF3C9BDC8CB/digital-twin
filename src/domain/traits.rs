@@ -98,6 +98,21 @@ pub trait VectorRepository: Send + Sync + 'static {
 
     /// 检查连接健康状态。
     async fn health_check(&self) -> Result<HealthStatus, crate::domain::error::DtError>;
+
+    /// Scroll all point payloads in a collection (no vectors), optionally filtered.
+    ///
+    /// Returns raw payload JSON objects (e.g. each carrying `file_path`/`project`).
+    /// Default implementation returns empty — backends without scroll support
+    /// degrade gracefully.
+    async fn scroll_payloads(
+        &self,
+        collection: &str,
+        filter: Option<serde_json::Value>,
+        max: usize,
+    ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
+        let _ = (collection, filter, max);
+        Ok(Vec::new())
+    }
 }
 
 /// 对搜索结果命中的 payload 应用 Qdrant 风格过滤器 JSON 进行后置过滤。
