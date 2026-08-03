@@ -2255,7 +2255,7 @@ git commit -m "feat(s5): wire rerank into retrieval — sigmoid normalization, f
   - `async fn search_doc(&self, query: &str, project: Option<&str>, doc_id: Option<&str>, limit: usize) -> Result<Vec<SearchHit>, DtError>`
   - `world == "doc" | "vector" | "all` 分发到 `search_doc`；`per_world_counts` key = `"doc"`；`source_world = "doc"`（§5.7.2 / §8.7 别名保留）
 
-- [ ] **Step 1: 先写失败测试**
+- [x] **Step 1: 先写失败测试**
 
 search_mcp.rs tests mod 需要一个最小的 VectorRepository stub（本文件无 mock 基建；参照 `domain/traits.rs` tests 的 StubVectorRepo 写法）：
 
@@ -2361,12 +2361,12 @@ async fn doc_world_skips_nacos_shaped_points() {
 }
 ```
 
-- [ ] **Step 2: 确认失败**
+- [x] **Step 2: 确认失败**
 
 Run: `cargo test --lib search_mcp 2>&1 | tail -10`
 Expected: FAIL — `search_doc` 不存在、per_world key 为 `"vector"`。
 
-- [ ] **Step 3: 实现 search_doc（删除 search_vector）**
+- [x] **Step 3: 实现 search_doc（删除 search_vector）**
 
 `search_mcp.rs` 中删除整个 `search_vector`，替换为（`use` 追加 `use crate::application::knowledge::extract::retrieve::min_score; use crate::shared::collections::DOC_CHUNKS;`）：
 
@@ -2456,12 +2456,12 @@ Expected: FAIL — `search_doc` 不存在、per_world key 为 `"vector"`。
         }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cargo test --lib search_mcp 2>&1 | tail -6`
 Expected: 9 passed。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/application/context/search_mcp.rs
@@ -2483,7 +2483,7 @@ git commit -m "feat(s5): world=doc queries doc_chunks with source=doc hard filte
   - `pub async fn backfill_evidence(&self, query: &str, hits: &mut [SearchHit])`（best-effort，失败静默）
   - `fn group_evidence(results: &[serde_json::Value], ids: &[&str]) -> std::collections::HashMap<String, Vec<String>>`（每实体 ≤2 段，按分数降序）
 
-- [ ] **Step 1: 先写失败测试**
+- [x] **Step 1: 先写失败测试**
 
 ```rust
 #[test]
@@ -2537,12 +2537,12 @@ async fn backfill_evidence_builds_merged_should_filter() {
 }
 ```
 
-- [ ] **Step 2: 确认失败**
+- [x] **Step 2: 确认失败**
 
 Run: `cargo test --lib retrieve 2>&1 | tail -8`
 Expected: FAIL — `group_evidence`/`backfill_evidence` 不存在。
 
-- [ ] **Step 3: 实现证据回填**
+- [x] **Step 3: 实现证据回填**
 
 retrieve.rs 追加（`use` 区补充 `use crate::shared::collections::DOC_CHUNKS;`——若 Task 3 已引 KG_NODES，此处合并为一行 `use crate::shared::collections::{DOC_CHUNKS, KG_NODES};`）：
 
@@ -2636,12 +2636,12 @@ impl Retriever {
         }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cargo test --lib retrieve 2>&1 | tail -6 && cargo test --lib search_mcp 2>&1 | tail -4`
 Expected: retrieve 18 passed；search_mcp 9 passed。
 
-- [ ] **Step 5: S5c 实测（test-pipeline）**
+- [x] **Step 5: S5c 实测（test-pipeline）**
 
 ```text
 1. world=doc 查询 "给我 ifCode 的证据段落" → 返回含原文 text 的块，id 形如 {doc_id}:{block_index}
@@ -2650,7 +2650,12 @@ Expected: retrieve 18 passed；search_mcp 9 passed。
 4. doc_id 参数限定单文档生效
 ```
 
-- [ ] **Step 6: 提交**
+**S5c 实测记录（2026-08-02，tests/s5_knowledge_search.rs s5c_* 2 passed）**：
+- world=doc "ifCode 编码规则" → 5 块原文 text，id 均为 `{doc_id}:{block_index}` 形态 ✓；nacos 点被 source="doc" 硬过滤与 payload 解析双重排除 ✓。
+- with_evidence：top-5 实体全部回填 ≤2 段证据 ✓——ifCode 命中决策文档原段（"ifCode：支付渠道编码…决定路由到哪个支付平台"），证据质量直接覆盖规范查询的语义答案。
+- 插曲：首轮 S5c 运行时 xinference 未启动导致空结果（embed 失败 → 世界空），复跑通过；与降级设计一致。
+
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/application/knowledge/extract/retrieve.rs src/application/context/search_mcp.rs
