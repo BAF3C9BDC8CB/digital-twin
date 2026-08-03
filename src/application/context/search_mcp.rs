@@ -68,6 +68,9 @@ pub struct SearchHit {
     pub end_line: Option<u32>,
     /// Function/method signature (code world).
     pub signature: Option<String>,
+    /// 方法级 LLM 分析（code world，payload 直取；"用途：…\n逻辑：…"）。
+    #[serde(default)]
+    pub llm_analysis: Option<String>,
     /// Called function names (code world).
     pub calls: Vec<String>,
     /// Element ID from the knowledge graph.
@@ -176,17 +179,8 @@ impl CrossWorldSearch {
             return Ok(Vec::new());
         };
 
-        // Discover method collections – filter by project when given
-        let collections = vector.list_collections().await?;
-        let method_cols: Vec<String> = collections
-            .into_iter()
-            .filter(|c| c == crate::shared::collections::CODE_METHODS || c.ends_with("_methods"))
-            .filter(|c| {
-                project.map_or(true, |p| {
-                    c == crate::shared::collections::CODE_METHODS || c == &format!("{}_methods", p)
-                })
-            })
-            .collect();
+        // U-D6：只查全局 code_methods；project 过滤下沉 payload 级
+        let method_cols = vec![crate::shared::collections::CODE_METHODS.to_string()];
 
         if method_cols.is_empty() {
             return Ok(Vec::new());
@@ -211,6 +205,12 @@ impl CrossWorldSearch {
                         let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         if name.is_empty() || name == "?" {
                             continue;
+                        }
+                        if let Some(p) = project {
+                            let pp = payload.get("project").and_then(|v| v.as_str()).unwrap_or("");
+                            if pp != p {
+                                continue;
+                            }
                         }
 
                         let calls: Vec<String> = payload
@@ -267,6 +267,10 @@ impl CrossWorldSearch {
                                 .map(|v| v as u32),
                             signature: payload
                                 .get("signature")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string()),
+                            llm_analysis: payload
+                                .get("llm_analysis")
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string()),
                             calls,
@@ -388,6 +392,7 @@ impl CrossWorldSearch {
                     start_line: None,
                     end_line: None,
                     signature: None,
+                    llm_analysis: None,
                     calls: vec![],
                     element_id: None,
                     score_breakdown: None,
@@ -485,6 +490,7 @@ mod tests {
             start_line: Some(10),
             end_line: Some(45),
             signature: Some("pub fn process()".into()),
+            llm_analysis: None,
             calls: vec!["validate".into(), "save".into()],
             element_id: Some("4:xyz".into()),
             score_breakdown: Some(ScoreBreakdown {
@@ -563,6 +569,7 @@ mod tests {
                 start_line: None,
                 end_line: None,
                 signature: None,
+                llm_analysis: None,
                 calls: vec![],
                 element_id: None,
                 score_breakdown: None,
@@ -689,6 +696,38 @@ mod tests {
         async fn health_check(&self) -> Result<crate::domain::types::HealthStatus, DtError> {
             Ok(crate::domain::types::HealthStatus::Healthy)
         }
+    }
+
+    #[tokio::test]
+    async fn code_world_extracts_llm_analysis_and_uses_single_collection() {
+        let method = serde_json::json!({
+            "id": "pt-m1", "score": 0.9,
+            "payload": {
+                "name": "createApp", "file_path": "test/project/app.js",
+                "start_line": 32, "end_line": 36,
+                "signature": "function createApp(port)",
+                "llm_analysis": "用途：创建服务器实例。\n逻辑：实例化服务器对象。",
+                "project": "test-pipeline", "calls": []
+            }
+        });
+        let vector = std::sync::Arc::new(StubVector {
+            hits: vec![method],
+            captured_filter: std::sync::Mutex::new(None),
+        });
+        let cws = CrossWorldSearch::new(None, Some(vector), Some(std::sync::Arc::new(StubEmbed)), None);
+        let req = SearchRequest {
+            query: "createApp".into(), world: Some("code".into()), limit: Some(5),
+            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        assert_eq!(result.hits.len(), 1);
+        let hit = &result.hits[0];
+        assert_eq!(
+            hit.llm_analysis.as_deref(),
+            Some("用途：创建服务器实例。\n逻辑：实例化服务器对象。")
+        );
+        assert_eq!(hit.file_path.as_deref(), Some("test/project/app.js"));
+        assert_eq!(hit.start_line, Some(32));
     }
 
     #[tokio::test]
