@@ -45,7 +45,7 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 # ── 组2: /data/aflmProjects/warehouse (9 projects) ──
@@ -62,7 +62,7 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 # ── 组3: /data/aflmProjects/others (12 projects) ──
@@ -84,7 +84,7 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 # ── 组4: /data/aflmProjects/unimportant (9 projects) ──
@@ -103,7 +103,7 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 # ── 组5: /data/aflmProjects 根 (6 projects) ──
@@ -119,13 +119,13 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 # ── 组6: /data/aflmProjects/yijianbao (1 project) ──
 echo ">>> 组6: yijianbao"
 dt build --path "/data/aflmProjects/yijianbao/yingchao_web" --name "yingchao-web" \
-  || echo "  [FAIL] yingchao-web"
+  || echo "  [失败] yingchao-web"
 
 # ── 组7: /data/myProject (5 projects, 不含 digital-twin-v2 已构建) ──
 echo ">>> 组7: myProject"
@@ -139,7 +139,7 @@ for pair in \
   name="${pair%%:*}"
   path="${pair#*:}"
   echo "  [$name] $path"
-  dt build --path "$path" --name "$name" || echo "  [FAIL] $name"
+  dt build --path "$path" --name "$name" || echo "  [失败] $name"
 done
 
 echo ""

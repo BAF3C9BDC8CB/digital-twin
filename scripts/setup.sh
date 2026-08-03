@@ -13,7 +13,7 @@ err()  { echo -e "${RED}[✗]${NC} $1"; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "============================================"
-echo " Digital Twin — Setup"
+echo " Digital Twin — 部署"
 echo "============================================"
 echo ""
 

@@ -79,9 +79,9 @@ def _after_tool_execute(tool_name: str, arguments: dict, result: str):
       - kubectl describe               → Knowledge (Resource detail, 资源详情)
       - git log/diff                   → Knowledge (Change history)
 
-    :param tool_name: MCP tool name (e.g. "bash", "edit")
-    :param arguments: tool call arguments dict
-    :param result: tool result string
+    :param tool_name: MCP 工具名（例如 "bash"、"edit"）
+    :param arguments: 工具调用参数字典
+    :param result: 工具结果字符串
     """
 
     # ---- 黑名单：无长期价值的临时查询命令 ----
@@ -215,9 +215,9 @@ def _try_memorize_from_result(tool_name: str, arguments: dict, result: str):
             text=True,
             timeout=30,
         )
-        logging.info("[post-execute] memorized: entity_id=%s", entity_id)
+        logging.info("[post-execute] 已记忆: entity_id=%s", entity_id)
     except Exception as e:
-        logging.warning("[post-execute] memorize failed: %s", e)
+        logging.warning("[post-execute] 记忆失败: %s", e)
 
 
 def log_tool(name: str, args: dict, ts_start: datetime, ts_end: datetime, output: str):
@@ -246,7 +246,7 @@ def run_cmd(cmd: list, timeout: int = 120) -> str:
     """
     import shutil
     resolved = shutil.which(cmd[0]) or cmd[0]
-    print(f"[CMD] {' '.join(cmd)}  (resolved: {resolved})", file=sys.stderr, flush=True)
+    print(f"[CMD] {' '.join(cmd)}  (解析: {resolved})", file=sys.stderr, flush=True)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     output = (result.stdout + result.stderr).strip()
     # 清理 ANSI 颜色码
@@ -742,7 +742,7 @@ async def call_tool(name: str, arguments: dict):
     ts_end = datetime.now()
     log_tool(name, arguments, ts_start, ts_end, text)
 
-    # Post-execute: 自动判定是否沉淀为 Knowledge/Memory Event
+    # 执行后处理: 自动判定是否沉淀为 Knowledge/Memory Event
     _after_tool_execute(name, arguments, text)
 
     return [TextContent(type="text", text=text)]

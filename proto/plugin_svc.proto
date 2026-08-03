@@ -1,4 +1,4 @@
-// Local service plugin gRPC service — microservice lifecycle management.
+// 本地服务插件 gRPC 服务 — 微服务生命周期管理。
 syntax = "proto3";
 
 package dt.plugin.svc;
@@ -6,22 +6,22 @@ package dt.plugin.svc;
 import "common.proto";
 
 service SvcPlugin {
-  // List all tracked local microservices.
+  // 列出所有受管的本地微服务。
   rpc ListServices(dt.common.Empty) returns (ListServicesResponse);
 
-  // Get detailed status of a single service.
+  // 获取单个服务的详细状态。
   rpc GetStatus(GetStatusRequest) returns (ServiceStatus);
 
-  // Start a service (server-side streaming for build + startup output).
+  // 启动服务（服务端流式返回构建 + 启动输出）。
   rpc Start(StartRequest) returns (stream ServiceLogLine);
 
-  // Stop a service.
+  // 停止服务。
   rpc Stop(StopRequest) returns (ServiceStatus);
 
-  // Restart a service (server-side streaming as above).
+  // 重启服务（服务端流式，同上）。
   rpc Restart(RestartRequest) returns (stream ServiceLogLine);
 
-  // Stream service logs (tail -f style).
+  // 流式获取服务日志（类似 tail -f）。
   rpc GetLogs(GetLogsRequest) returns (stream ServiceLogLine);
 }
 
@@ -43,12 +43,12 @@ message RestartRequest {
 
 message GetLogsRequest {
   string name = 1;
-  int32 lines = 2;  // initial tail lines
+  int32 lines = 2;  // 初始尾部行数
 }
 
 message ServiceInfo {
   string name = 1;
-  string status = 2;   // running / stopped / error
+  string status = 2;   // 取值：running / stopped / error
   int32 pid = 3;
   string port = 4;
   string uptime = 5;

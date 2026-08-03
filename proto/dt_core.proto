@@ -4,30 +4,30 @@ package dt.core;
 
 import "common.proto";
 
-// Digital Twin Core gRPC service — dt CLI operations.
+// Digital Twin Core gRPC 服务 — dt CLI 操作。
 service DtCore {
-  // Build / index a project or file into the vector store.
+  // 构建 / 索引项目或文件到向量库。
   rpc Build(BuildRequest) returns (BuildResponse);
 
-  // Semantic code search.
+  // 语义代码搜索。
   rpc Search(SearchRequest) returns (SearchResponse);
 
-  // Record an event (deploy, install, config change, etc.).
+  // 记录事件（部署、安装、配置变更等）。
   rpc RecordEvent(EventRequest) returns (dt.common.Empty);
 
-  // Memorize knowledge (decision, note, dependency).
+  // 记忆知识（决策、笔记、依赖）。
   rpc Memorize(MemorizeRequest) returns (dt.common.Empty);
 
-  // Sync knowledge graph nodes to vector store.
+  // 同步知识图谱节点到向量库。
   rpc Sync(SyncRequest) returns (SyncResponse);
 }
 
-// ---- Build ----
+// ---- 构建 ----
 
 message BuildRequest {
   string path = 1;
-  string name = 2;   // optional project name
-  bool is_file = 3;  // true if path is a single file
+  string name = 2;   // 可选的项目名
+  bool is_file = 3;  // path 为单个文件时为 true
 }
 
 message BuildResponse {
@@ -37,13 +37,13 @@ message BuildResponse {
   double elapsed_secs = 4;
 }
 
-// ---- Search ----
+// ---- 搜索 ----
 
 message SearchRequest {
   string query = 1;
   int32 limit = 2;
-  bool expand = 3;   // ignored (legacy)
-  string path = 4;   // ignored (legacy)
+  bool expand = 3;   // 已忽略（历史遗留）
+  string path = 4;   // 已忽略（历史遗留）
   string project = 5;
   string world = 6;        // all|code|knowledge|doc|config|memory；空=all
   uint32 max_hops = 7;     // knowledge 世界图扩展跳数；0=默认1
@@ -92,27 +92,27 @@ message SearchResponse {
   double elapsed_secs = 3;
 }
 
-// ---- Event ----
+// ---- 事件 ----
 
 message EventRequest {
-  string type = 1;          // Deploy / SoftwareInstalled / ConfigChange / Conversation
+  string type = 1;          // 取值：Deploy / SoftwareInstalled / ConfigChange / Conversation
   string entity_id = 2;
   string entity_type = 3;
   string project = 4;
   string details = 5;
 }
 
-// ---- Memorize ----
+// ---- 记忆 ----
 
 message MemorizeRequest {
-  string type = 1;          // Decision / KnowledgeAdded / Environment / Dependencies
+  string type = 1;          // 取值：Decision / KnowledgeAdded / Environment / Dependencies
   string entity_id = 2;
   string entity_type = 3;
   string project = 4;
   string details = 5;
 }
 
-// ---- Sync ----
+// ---- 同步 ----
 
 message SyncRequest {
   bool incremental = 1;

@@ -1,4 +1,4 @@
-// Embedding service — text → vector conversion.
+// 向量化服务 — 文本 → 向量转换。
 syntax = "proto3";
 
 package dt.embed;
@@ -6,16 +6,16 @@ package dt.embed;
 import "common.proto";
 
 service EmbedService {
-  // Generate embeddings for one or more texts.
+  // 为一个或多个文本生成向量。
   rpc Embed(EmbedRequest) returns (EmbedResponse);
 
-  // Health check.
+  // 健康检查。
   rpc Health(dt.common.Empty) returns (dt.common.Empty);
 }
 
 message EmbedRequest {
   repeated string texts = 1;
-  string model = 2;  // optional model override
+  string model = 2;  // 可选的模型覆盖
 }
 
 message Embedding {

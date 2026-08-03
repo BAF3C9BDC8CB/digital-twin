@@ -2,25 +2,25 @@ syntax = "proto3";
 
 package dt.metrics;
 
-// MetricsService — internal metrics collection (no HTTP port).
+// MetricsService — 内部指标采集（无 HTTP 端口）。
 //
-// Exposes `GetMetrics` for point-in-time snapshots and `WatchMetrics` for
-// periodic polling (server-side streaming).
+// 通过 `GetMetrics` 提供时间点快照，通过 `WatchMetrics` 提供周期性
+// 轮询（服务端流式）。
 service MetricsService {
-    // Get a point-in-time snapshot of all registered metrics.
+    // 获取所有已注册指标的时间点快照。
     rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
 
-    // Watch receives metric snapshots at a regular interval (5s default).
+    // Watch 按固定间隔接收指标快照（默认 5 秒）。
     rpc WatchMetrics(MetricsRequest) returns (stream MetricSnapshot);
 }
 
-// Request parameters.
+// 请求参数。
 message MetricsRequest {
-    int32 interval_secs = 1;    // for WatchMetrics: snapshot interval (default 5)
-    string filter = 2;          // optional prefix filter for metric names
+    int32 interval_secs = 1;    // 用于 WatchMetrics：快照间隔（默认 5）
+    string filter = 2;          // 可选的指标名前缀过滤
 }
 
-// Response containing a full snapshot.
+// 包含完整快照的响应。
 message MetricsResponse {
     string timestamp = 1;
     map<string, double> gauges = 2;
@@ -28,7 +28,7 @@ message MetricsResponse {
     map<string, Histogram> histograms = 4;
 }
 
-// A single metric snapshot (also used for streaming).
+// 单个指标快照（也用于流式）。
 message MetricSnapshot {
     string timestamp = 1;
     map<string, double> gauges = 2;
@@ -36,10 +36,10 @@ message MetricSnapshot {
     map<string, Histogram> histograms = 4;
 }
 
-// Histogram bucket data.
+// Histogram 桶数据。
 message Histogram {
     uint64 count = 1;
     double sum = 2;
-    repeated double bounds = 3;     // bucket upper bounds
+    repeated double bounds = 3;     // 桶上界
     repeated uint64 bucket_counts = 4;
 }

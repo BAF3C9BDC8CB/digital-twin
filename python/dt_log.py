@@ -1,10 +1,10 @@
 """
-Python gRPC log handler for the Digital Twin unified logging system.
+Python gRPC 日志处理器，用于 Digital Twin 统一日志系统。
 
-Provides `GrpcLogHandler(logging.Handler)` — a Python `logging` handler that
-forwards log records to the dt-daemon's `LogService.StreamLogs` gRPC endpoint.
+提供 `GrpcLogHandler(logging.Handler)` — 一个 Python `logging` 处理器，
+将日志记录转发到 dt-daemon 的 `LogService.StreamLogs` gRPC 端点。
 
-Usage:
+用法:
     import logging
     from dt_log import GrpcLogHandler
 
@@ -13,18 +13,15 @@ Usage:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-    logger.info("embedding pipeline started", extra={"trace_id": "a1b2c3"})
+    logger.info("嵌入流水线已启动", extra={"trace_id": "a1b2c3"})
 
-# Design notes
-# ------------
-# - This handler is NON-BLOCKING: log records are queued and sent
-#   asynchronously via a background thread, so logging never blocks
-#   the main application.
-# - If the daemon is unreachable, records are silently dropped
-#   (with a warning to stderr after a cooldown period).
-# - The gRPC stub is generated from `proto/log.proto`. Until proto
-#   compilation is enabled, this module provides a local fallback that
-#   writes JSON lines to stdout (compatible with the daemon's format).
+# 设计说明
+# --------
+# - 该处理器是非阻塞的：日志记录先入队，再由后台线程异步发送，
+#   因此日志记录永远不会阻塞主应用。
+# - 若守护进程不可达，记录会被静默丢弃（冷却期后向 stderr 输出一条警告）。
+# - gRPC stub 由 `proto/log.proto` 生成。在启用 proto 编译之前，
+#   本模块提供一个本地回退实现：将 JSON 行写入 stdout（与守护进程格式兼容）。
 """
 
 from __future__ import annotations
@@ -41,11 +38,11 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
-# Local JSON fallback (used when gRPC is unavailable)
+# 本地 JSON 回退（在 gRPC 不可用时使用）
 # ---------------------------------------------------------------------------
 
 def _format_json(record: logging.LogRecord, plugin: str) -> str:
-    """Format a Python log record as a dt-log-compatible JSON line."""
+    """将 Python 日志记录格式化为与 dt-log 兼容的 JSON 行。"""
     ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     level = record.levelname
@@ -75,26 +72,25 @@ def _format_json(record: logging.LogRecord, plugin: str) -> str:
 
 class GrpcLogHandler(logging.Handler):
     """
-    A logging.Handler that sends log records to dt-daemon's LogService.
+    将日志记录发送到 dt-daemon 的 LogService 的 logging.Handler。
 
-    Features:
-    - Non-blocking: uses an internal queue + background thread.
-    - Graceful degradation: falls back to local JSON-line output if the
-      daemon is unreachable or gRPC is not installed.
-    - Automatic reconnection with backoff.
+    特性:
+    - 非阻塞：使用内部队列 + 后台线程。
+    - 优雅降级：守护进程不可达或未安装 gRPC 时，回退为本地 JSON 行输出。
+    - 带退避的自动重连。
 
-    Parameters
+    参数
     ----------
     daemon_addr : str
-        gRPC address of dt-daemon (e.g. "localhost:50051").
+        dt-daemon 的 gRPC 地址（例如 "localhost:50051"）。
     plugin : str
-        Plugin name to tag on all log records.
-    fallback_file : str or None
-        If set, write JSON lines to this file when the daemon is unreachable.
-        Defaults to stdout.
+        用于标记所有日志记录的插件名。
+    fallback_file : str 或 None
+        若设置，守护进程不可达时将 JSON 行写入该文件。
+        默认为 stdout。
     """
 
-    _FALLBACK_COOLDOWN_SECS = 30.0  # how long to wait before retrying gRPC
+    _FALLBACK_COOLDOWN_SECS = 30.0  # 重试 gRPC 前的冷却时长
 
     def __init__(
         self,
@@ -108,14 +104,14 @@ class GrpcLogHandler(logging.Handler):
         self.plugin = plugin
         self.fallback_file = fallback_file
 
-        # Internal queue + worker
+        # 内部队列 + 工作线程
         self._queue: queue.Queue[logging.LogRecord] = queue.Queue(maxsize=10000)
         self._worker: Optional[threading.Thread] = None
         self._running = False
         self._grpc_available = False
         self._last_attempt = 0.0
 
-        # Try to import grpc
+        # 尝试导入 grpc
         try:
             import grpc  # noqa: F401
             self._grpc_available = True
@@ -124,24 +120,24 @@ class GrpcLogHandler(logging.Handler):
 
         self._start_worker()
 
-    # ── Handler interface ──────────────────────────────────────────
+    # ── Handler 接口 ──────────────────────────────────────────
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Enqueue a log record. Never blocks."""
+        """将日志记录入队。永不阻塞。"""
         try:
             self._queue.put_nowait(record)
         except queue.Full:
-            # Drop silently — better than blocking the application
+            # 静默丢弃——比阻塞应用更好
             pass
 
     def close(self) -> None:
-        """Shut down the background worker."""
+        """关闭后台工作线程。"""
         self._running = False
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=5.0)
         super().close()
 
-    # ── Worker ─────────────────────────────────────────────────────
+    # ── 工作线程 ─────────────────────────────────────────────────────
 
     def _start_worker(self) -> None:
         self._running = True
@@ -149,18 +145,18 @@ class GrpcLogHandler(logging.Handler):
         self._worker.start()
 
     def _run(self) -> None:
-        """Background loop: drain queue → send to daemon or fallback."""
+        """后台循环：取出队列中的记录 → 发送到守护进程或回退输出。"""
         batch: list[logging.LogRecord] = []
         while self._running:
             try:
-                # Drain up to 100 records or 0.5 s, whichever comes first
+                # 最多取出 100 条记录，或等待 0.5 秒，以先到者为准
                 try:
                     record = self._queue.get(timeout=0.5)
                     batch.append(record)
                 except queue.Empty:
                     pass
 
-                # Also drain any additional queued records (non-blocking)
+                # 再非阻塞地取出其余排队记录
                 while len(batch) < 100:
                     try:
                         record = self._queue.get_nowait()
@@ -172,29 +168,29 @@ class GrpcLogHandler(logging.Handler):
                     self._send_batch(batch)
                     batch.clear()
             except Exception:
-                # Swallow — never crash the log worker
+                # 吞掉异常——绝不使日志工作线程崩溃
                 batch.clear()
 
     def _send_batch(self, records: list[logging.LogRecord]) -> None:
-        """Send a batch to the daemon, falling back to local output on failure."""
+        """发送一批记录到守护进程，失败时回退到本地输出。"""
         now = time.time()
 
         if self._grpc_available and (now - self._last_attempt > self._FALLBACK_COOLDOWN_SECS):
             if self._try_grpc_send(records):
                 return
 
-        # Fallback: write JSON lines locally
+        # 回退：在本地写 JSON 行
         self._write_fallback(records)
 
     def _try_grpc_send(self, records: list[logging.LogRecord]) -> bool:
-        """Attempt to send records via gRPC. Returns True on success."""
-        # gRPC client integration placeholder — will be implemented when
-        # proto/log.proto compilation is enabled and grpcio/grpclib is available.
+        """尝试通过 gRPC 发送记录，成功返回 True。"""
+        # gRPC 客户端集成占位——待 proto/log.proto 编译启用且
+        # grpcio/grpclib 可用后再实现。
         self._last_attempt = time.time()
         return False
 
     def _write_fallback(self, records: list[logging.LogRecord]) -> None:
-        """Write JSON lines to the fallback output."""
+        """将 JSON 行写入回退输出。"""
         out = sys.stdout
         if self.fallback_file:
             try:
@@ -215,7 +211,7 @@ class GrpcLogHandler(logging.Handler):
 
 
 # ---------------------------------------------------------------------------
-# Convenience: set up logging for a service
+# 便捷函数：为服务配置日志
 # ---------------------------------------------------------------------------
 
 def setup_logging(
@@ -225,18 +221,18 @@ def setup_logging(
     fallback_file: Optional[str] = None,
 ) -> GrpcLogHandler:
     """
-    Configure a Python service to use GrpcLogHandler.
+    配置 Python 服务使用 GrpcLogHandler。
 
-    Returns the handler so the caller can remove it or adjust the level later.
+    返回该 handler，以便调用方稍后移除它或调整日志级别。
 
-    Example:
+    示例:
         handler = setup_logging("embed", daemon_addr="localhost:50051")
-        logging.getLogger("dt_embed").info("ready")
+        logging.getLogger("dt_embed").info("就绪")
     """
     root = logging.getLogger()
     root.setLevel(level)
 
-    # Remove default handlers (e.g. basicConfig stderr handler)
+    # 移除默认 handler（例如 basicConfig 的 stderr handler）
     for h in list(root.handlers):
         root.removeHandler(h)
 
@@ -248,7 +244,7 @@ def setup_logging(
     )
     root.addHandler(handler)
 
-    # Also keep a stderr handler for development visibility
+    # 同时保留一个 stderr handler，便于开发时查看
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setLevel(logging.WARNING)
     stderr_handler.setFormatter(
@@ -260,11 +256,11 @@ def setup_logging(
 
 
 # ---------------------------------------------------------------------------
-# Self-test (run with `python dt_log.py`)
+# 自检（运行 `python dt_log.py`）
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("dt_log self-test: GrpcLogHandler", file=sys.stderr)
+    print("dt_log 自检: GrpcLogHandler", file=sys.stderr)
 
     handler = GrpcLogHandler(
         daemon_addr="localhost:50051",
@@ -276,12 +272,12 @@ if __name__ == "__main__":
     logger.setLevel(logging.DEBUG)
     logger.addHandler(handler)
 
-    logger.debug("debug message")
-    logger.info("info message with trace_id", extra={"trace_id": "test-1234"})
-    logger.warning("warning message")
-    logger.error("error message")
+    logger.debug("调试消息")
+    logger.info("信息消息，含 trace_id", extra={"trace_id": "test-1234"})
+    logger.warning("警告消息")
+    logger.error("错误消息")
 
     time.sleep(1.0)
     handler.close()
 
-    print("Self-test complete. Check /tmp/dt-log-test.jsonl for output.", file=sys.stderr)
+    print("自检完成。请检查 /tmp/dt-log-test.jsonl 的输出。", file=sys.stderr)

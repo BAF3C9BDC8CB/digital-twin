@@ -1,4 +1,4 @@
-// Jenkins plugin gRPC service — CI/CD operations.
+// Jenkins 插件 gRPC 服务 — CI/CD 操作。
 syntax = "proto3";
 
 package dt.plugin.jenkins;
@@ -6,26 +6,26 @@ package dt.plugin.jenkins;
 import "common.proto";
 
 service JenkinsPlugin {
-  // List all Jenkins jobs.
+  // 列出所有 Jenkins Job。
   rpc ListJobs(dt.common.Empty) returns (ListJobsResponse);
 
-  // Get parameter definitions for a job.
+  // 获取 Job 的参数定义。
   rpc GetParams(GetParamsRequest) returns (GetParamsResponse);
 
-  // Get build history for a job.
+  // 获取 Job 的构建历史。
   rpc GetHistory(GetHistoryRequest) returns (GetHistoryResponse);
 
-  // Trigger a build (server-side streaming for console output).
+  // 触发构建（服务端流式返回控制台输出）。
   rpc Build(BuildRequest) returns (stream BuildOutput);
 
-  // Get build log for a completed build.
+  // 获取已完成构建的构建日志。
   rpc GetBuildLog(GetBuildLogRequest) returns (GetBuildLogResponse);
 }
 
 message JobInfo {
   string name = 1;
   string url = 2;
-  string color = 3;  // Jenkins job status color
+  string color = 3;  // Jenkins Job 状态颜色
 }
 
 message ListJobsResponse {
@@ -66,18 +66,18 @@ message GetHistoryResponse {
 message BuildRequest {
   string job = 1;
   repeated dt.common.KeyValue params = 2;
-  string env = 3;  // "test" or "production"
+  string env = 3;  // "test" 或 "production"
 }
 
 message BuildOutput {
-  string stream = 1;   // e.g. "stdout", "stderr", "status"
+  string stream = 1;   // 例如 "stdout"、"stderr"、"status"
   string content = 2;
   string timestamp = 3;
 }
 
 message GetBuildLogRequest {
   string job = 1;
-  int32 build = 2;  // build number; latest if omitted
+  int32 build = 2;  // 构建编号；省略时取最新
 }
 
 message GetBuildLogResponse {
