@@ -1,7 +1,6 @@
-//! Java parser — regex-based extraction of methods and classes.
+//! Java 解析器——基于正则抽取方法与类。
 //!
-//! Parses `.java` files to extract method declarations, constructors,
-//! and class/interface/enum definitions.
+//! 解析 `.java` 文件，抽取方法声明、构造函数以及类/接口/枚举定义。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -10,11 +9,11 @@ use crate::domain::types::{ClassBlock, ClassKind, Language, MethodBlock, ParseRe
 use regex::Regex;
 use std::path::Path;
 
-/// Java source code parser.
+/// Java 源码解析器。
 pub struct JavaParser;
 
 impl JavaParser {
-    /// Extract the package name from a Java source file.
+    /// 从 Java 源文件中提取包名。
     fn extract_package(source: &str) -> String {
         let re = Regex::new(r"package\s+([a-zA-Z_][\w.]*)\s*;").unwrap();
         re.captures(source)
@@ -22,14 +21,14 @@ impl JavaParser {
             .unwrap_or_default()
     }
 
-    /// Extract method calls from source body text.
+    /// 从源码正文文本中抽取方法调用。
     fn extract_calls(body: &str) -> Vec<String> {
         let re = Regex::new(r"\b([a-zA-Z_]\w*)\s*\(").unwrap();
         let mut calls: Vec<String> = re
             .captures_iter(body)
             .filter_map(|c| {
                 let name = c[1].to_string();
-                // Skip keywords and common control flow
+                // 跳过关键字与常见控制流
                 if matches!(
                     name.as_str(),
                     "if" | "for"
@@ -55,14 +54,14 @@ impl JavaParser {
         calls
     }
 
-    /// Find Javadoc comment before a method.
+    /// 查找方法之前的 Javadoc 注释。
     fn find_comment(lines: &[&str], method_line: usize) -> String {
         if method_line == 0 {
             return String::new();
         }
         let mut comments = Vec::new();
         let mut idx = method_line.saturating_sub(1);
-        // Walk backwards from the line before the method
+        // 从方法上一行开始向前回溯
         loop {
             let line = lines.get(idx).map(|s| s.trim()).unwrap_or("");
             if line.starts_with("*/") || line.starts_with("*") || line.starts_with("//") {
@@ -106,18 +105,18 @@ impl ParseStrategy for JavaParser {
         let mut methods = Vec::new();
         let mut classes = Vec::new();
 
-        // Regex for method declarations (including constructors and interface methods).
-        // `[;\{]` matches both interface methods (;) and concrete methods ({).
+        // 方法声明正则（包括构造函数与接口方法）。
+        // `[;\{]` 同时匹配接口方法（;）与具体方法（{）。
         let method_re = Regex::new(
             r"(?m)^\s*(public|private|protected|static|\s)*\s*([\w<>\[\],\s]+)\s+(\w+)\s*\(([^)]*)\)\s*(throws\s+[\w\s,]+)?\s*[;\{]"
         ).unwrap();
 
-        // Regex for class declarations (also handles generics like Foo<E>)
+        // 类声明正则（也处理 Foo<E> 这类泛型）
         let class_re = Regex::new(
             r"(?m)^\s*(public\s+)?(abstract\s+)?(class|interface|enum)\s+(\w+)\s*(<[^>]+>)?\s*(extends\s+[\w\s,<>]+)?\s*(implements\s+[\w\s,<>.,]+)?\s*\{"
         ).unwrap();
 
-        // Find classes first
+        // 先找类
         for caps in class_re.captures_iter(source) {
             let class_name = caps[4].to_string();
             let kind_str = caps[3].to_string();
@@ -130,7 +129,7 @@ impl ParseStrategy for JavaParser {
             let class_match = caps.get(0).unwrap();
             let start_byte = class_match.start();
             let start_line = source[..start_byte].lines().count() + 1;
-            let end_line = 0; // Will be estimated later
+            let end_line = 0; // 稍后估算
 
             let class_id = make_class_id(project, &package, &class_name);
             classes.push(ClassBlock {
@@ -146,7 +145,7 @@ impl ParseStrategy for JavaParser {
             });
         }
 
-        // Find methods
+        // 找方法
         let mut current_class: String = String::new();
         for caps in method_re.captures_iter(source) {
             let modifiers = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
@@ -154,7 +153,7 @@ impl ParseStrategy for JavaParser {
             let method_name = caps[3].to_string();
             let params = caps[4].to_string();
 
-            // Skip if it's a keyword
+            // 如果是关键字则跳过
             if method_name == "class" || method_name == "interface" || method_name == "enum" {
                 continue;
             }
@@ -162,11 +161,11 @@ impl ParseStrategy for JavaParser {
             let full_match = caps.get(0).unwrap();
             let start_byte = full_match.start();
             let start_line = {
-                // Compute line from byte position
+                // 从字节位置计算行号
                 let raw_line = source[..start_byte].lines().count() + 1;
-                // Skip blank lines: when a method is preceded by a blank line, `(?m)^`
-                // matches at the blank line's start, inflating start_line by 1.
-                // Walk forward to the first non-blank line.
+                // 跳过空行：当方法前面有空行时，`(?m)^`
+                // 会在空行开头匹配，使 start_line 多算 1。
+                // 向前走到第一个非空行。
                 let mut adjusted = raw_line;
                 while adjusted <= lines.len() && lines[adjusted - 1].trim().is_empty() {
                     adjusted += 1;
@@ -174,7 +173,7 @@ impl ParseStrategy for JavaParser {
                 adjusted
             };
 
-            // Determine which class contains this method (crude heuristic)
+            // 判断哪个类包含该方法（粗略启发式）
             if current_class.is_empty() {
                 for c in &classes {
                     if c.start_line < start_line {
@@ -182,7 +181,7 @@ impl ParseStrategy for JavaParser {
                     }
                 }
             } else {
-                // Check if we've passed a class boundary
+                // 检查是否已越过类边界
                 for c in &classes {
                     if c.start_line < start_line && c.start_line > start_line.saturating_sub(50) {
                         current_class = c.name.clone();
@@ -201,8 +200,8 @@ impl ParseStrategy for JavaParser {
                 start_line,
             );
 
-            // Extract the method body for calls and source text.
-            // Interface methods end with `;` — skip body extraction.
+            // 抽取方法体用于调用与源码文本。
+            // 接口方法以 `;` 结尾——跳过方法体抽取。
             let body = if full_match.as_str().trim_end().ends_with('{') {
                 let body_start = full_match.end();
                 find_matching_brace(source, body_start.saturating_sub(1))
@@ -221,7 +220,7 @@ impl ParseStrategy for JavaParser {
             let end_line = if body.is_empty() {
                 start_line
             } else {
-                // Count newlines in body text (from { to }) to get actual end line
+                // 统计方法体文本中的换行数（从 { 到 }）以得到实际结束行
                 start_line + body.chars().filter(|&c| c == '\n').count()
             };
 
@@ -246,22 +245,22 @@ impl ParseStrategy for JavaParser {
             current_class.clear();
         }
 
-        // Filter out phantom methods caused by regex matching method body calls.
-        // Build ranges for all methods that actually have a body ({ ... }), i.e. end_line > start_line.
+        // 过滤掉正则匹配方法体调用产生的幻影方法。
+        // 为所有实际拥有方法体（{ ... }）的方法（即 end_line > start_line）构建区间。
         let concrete_ranges: Vec<(usize, usize)> = methods
             .iter()
             .filter(|m| m.end_line > m.start_line)
             .map(|m| (m.start_line, m.end_line))
             .collect();
         methods.retain(|m| {
-            // A method that falls entirely within another method's body is a false positive
-            // (e.g. `saveToDb(request);` matched as a `;`-terminated "method").
+            // 完全落在另一个方法体内的方法属于误报
+            // （例如 `saveToDb(request);` 被匹配成以 `;` 结尾的"方法"）。
             !concrete_ranges.iter().any(|&(outer_start, outer_end)| {
                 outer_start < m.start_line && outer_end >= m.end_line
             })
         });
 
-        // Populate class method_ids by matching method.class_name to class.name
+        // 通过将 method.class_name 与 class.name 匹配来填充类 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {
@@ -270,12 +269,12 @@ impl ParseStrategy for JavaParser {
             }
         }
 
-        // Update class end lines
-        // Collect start lines before mutating to avoid borrow conflict
+        // 更新类结束行
+        // 在修改前收集起始行，避免借用冲突
         let class_start_lines: Vec<usize> = classes.iter().map(|c| c.start_line).collect();
         let total_lines = source.lines().count();
         for c in &mut classes {
-            // End line is the line before the next class, or the end of file
+            // 结束行是下一个类的前一行，或文件末尾
             let next_class_line = class_start_lines
                 .iter()
                 .filter(|&&l| l > c.start_line)
@@ -292,12 +291,12 @@ impl ParseStrategy for JavaParser {
     }
 }
 
-/// Get the last part of a type (e.g., "java.util.List" -> "List")
+/// 取类型的最后一段（如 "java.util.List" -> "List"）
 fn get_last_type_part(ty: &str) -> String {
     ty.rsplit('.').next().unwrap_or(ty).to_string()
 }
 
-/// Find the matching closing brace for an opening brace.
+/// 为左花括号找到匹配的右花括号。
 fn find_matching_brace(source: &str, open_pos: usize) -> Option<&str> {
     let bytes = source.as_bytes();
     if open_pos >= bytes.len() || bytes[open_pos] != b'{' {
@@ -320,7 +319,7 @@ fn find_matching_brace(source: &str, open_pos: usize) -> Option<&str> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -354,7 +353,7 @@ public class HelloWorld {
 
         assert!(result.methods.len() >= 1);
         assert_eq!(result.methods[0].name, "greet");
-        // Direct method calls extracted: `info` from `log.info("hello")`
+        // 抽取出直接方法调用：`log.info("hello")` 中的 `info`
         assert!(result.methods[0].calls.contains(&"info".to_string()));
     }
 
@@ -386,18 +385,18 @@ public interface DaoBase {
             .unwrap();
         assert!(result.classes.len() >= 1);
         assert_eq!(result.classes[0].kind, ClassKind::Interface);
-        // interface methods should be parsed
+        // 接口方法应被解析
         assert!(
             result.methods.len() >= 3,
-            "Expected >= 3 methods, got {}",
+            "期望 >= 3 个方法，实际为 {}",
             result.methods.len()
         );
         assert!(result.methods.iter().any(|m| m.name == "insert"));
         assert!(result.methods.iter().any(|m| m.name == "selectList"));
-        // class method_ids should be populated
+        // 类 method_ids 应被填充
         assert!(
             !result.classes[0].method_ids.is_empty(),
-            "Class method_ids should be populated"
+            "类 method_ids 应被填充"
         );
     }
 

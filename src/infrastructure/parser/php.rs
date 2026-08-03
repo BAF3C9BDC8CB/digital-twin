@@ -1,4 +1,4 @@
-//! PHP parser — regex-based extraction of functions, methods, and classes.
+//! PHP 解析器——基于正则抽取函数、方法与类。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -164,7 +164,7 @@ impl ParseStrategy for PhpParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {

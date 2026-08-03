@@ -1,10 +1,9 @@
-//! SiliconFlow OpenAI-compatible HTTP client.
+//! SiliconFlow OpenAI 兼容 HTTP 客户端。
 //!
-//! Communicates with SiliconFlow's cloud API for text embeddings, document
-//! reranking, and chat completions. The API surface is fully compatible
-//! with the OpenAI format.
+//! 与 SiliconFlow 的云 API 通信，用于文本 embedding、文档
+//! rerank 与 chat completion。该 API 表面与 OpenAI 格式完全兼容。
 //!
-//! # Endpoints
+//! # 端点
 //!
 //! | Method   | Endpoint                     | Purpose        |
 //! |----------|------------------------------|----------------|
@@ -13,10 +12,10 @@
 //! | `POST`   | `/v1/chat/completions`       | Chat completion|
 //! | `GET`    | `/v1/models`                 | Health check   |
 //!
-//! # Rate Limiting
+//! # 速率限制
 //!
-//! SiliconFlow enforces TPM (tokens per minute) limits. HTTP 429 and 503
-//! responses are retried automatically with exponential backoff.
+//! SiliconFlow 强制执行 TPM（每分钟 token 数）限制。HTTP 429 与 503
+//! 响应会以指数退避自动重试。
 
 use async_trait::async_trait;
 use std::time::Duration;
@@ -25,21 +24,21 @@ use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
-/// Maximum number of retry attempts for rate-limited requests.
+/// 受速率限制请求的最大重试次数。
 const MAX_RETRIES: u32 = 3;
 
-/// Base delay in ms for exponential backoff (1s, 2s, 4s).
+/// 指数退避的基础延迟（毫秒）（1s、2s、4s）。
 const RETRY_BASE_DELAY_MS: u64 = 1000;
 
-/// Default model names (overridable via environment variables).
+/// 默认模型名（可通过环境变量覆盖）。
 const DEFAULT_EMBED_MODEL: &str = "BAAI/bge-m3";
 const DEFAULT_RERANKER_MODEL: &str = "BAAI/bge-reranker-v2-m3";
 
-/// Detect proxy from environment variables.
+/// 从环境变量检测代理。
 ///
-/// Priority:
-/// 1. `SILICONFLOW_PROXY` env var
-/// 2. Standard `HTTPS_PROXY` / `HTTP_PROXY` env vars
+/// 优先级：
+/// 1. `SILICONFLOW_PROXY` 环境变量
+/// 2. 标准的 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量
 fn build_http_client() -> reqwest::Client {
     let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(120));
 
@@ -54,16 +53,16 @@ fn build_http_client() -> reqwest::Client {
     builder.build().unwrap_or_default()
 }
 
-/// Detect proxy URL from environment variables.
+/// 从环境变量检测代理 URL。
 fn detect_proxy() -> Option<String> {
-    // Priority 1: explicit env var
+    // 优先级 1：显式环境变量
     if let Ok(url) = std::env::var("SILICONFLOW_PROXY") {
         if !url.is_empty() {
             return Some(url);
         }
     }
 
-    // Priority 2: standard proxy env vars
+    // 优先级 2：标准代理环境变量
     std::env::var("HTTPS_PROXY")
         .or_else(|_| std::env::var("https_proxy"))
         .or_else(|_| std::env::var("HTTP_PROXY"))
@@ -72,28 +71,28 @@ fn detect_proxy() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Return the embed model name from env `SILICONFLOW_EMBED_MODEL` or default.
+/// 从环境变量 `SILICONFLOW_EMBED_MODEL` 或默认值返回 embed 模型名。
 pub fn embed_model_from_env() -> String {
     std::env::var("SILICONFLOW_EMBED_MODEL").unwrap_or_else(|_| DEFAULT_EMBED_MODEL.to_string())
 }
 
-/// Return the reranker model name from env `SILICONFLOW_RERANKER_MODEL` or default.
+/// 从环境变量 `SILICONFLOW_RERANKER_MODEL` 或默认值返回 reranker 模型名。
 pub fn reranker_model_from_env() -> String {
     std::env::var("SILICONFLOW_RERANKER_MODEL")
         .unwrap_or_else(|_| DEFAULT_RERANKER_MODEL.to_string())
 }
 
-/// Return the LLM model name from env `SILICONFLOW_LLM_MODEL` or empty.
+/// 从环境变量 `SILICONFLOW_LLM_MODEL` 或空串返回 LLM 模型名。
 pub fn llm_model_from_env() -> String {
     std::env::var("SILICONFLOW_LLM_MODEL").unwrap_or_default()
 }
 
-/// Return the API key from env `SILICONFLOW_API_KEY` or empty.
+/// 从环境变量 `SILICONFLOW_API_KEY` 或空串返回 API key。
 pub fn api_key_from_env() -> String {
     std::env::var("SILICONFLOW_API_KEY").unwrap_or_default()
 }
 
-/// Return the base URL from env `SILICONFLOW_BASE_URL` or default.
+/// 从环境变量 `SILICONFLOW_BASE_URL` 或默认值返回基础 URL。
 pub fn base_url_from_env() -> String {
     std::env::var("SILICONFLOW_BASE_URL")
         .unwrap_or_else(|_| "https://api.siliconflow.cn/v1".to_string())
@@ -103,32 +102,32 @@ pub fn base_url_from_env() -> String {
 // SiliconFlowClient
 // ---------------------------------------------------------------------------
 
-/// HTTP client for SiliconFlow's OpenAI-compatible cloud API.
+/// SiliconFlow OpenAI 兼容云 API 的 HTTP 客户端。
 ///
-/// Provides typed methods for embeddings, reranking, and chat completions.
-/// All requests include `Authorization: Bearer <api_key>` for authentication.
+/// 为 embedding、rerank 与 chat completion 提供类型化方法。
+/// 所有请求都携带 `Authorization: Bearer <api_key>` 以完成认证。
 ///
-/// # Concurrency
+/// # 并发
 ///
-/// Unlike the local inference server, SiliconFlow's cloud API handles
-/// concurrent requests natively — no semaphore is needed.
+/// 与本地推理服务器不同，SiliconFlow 的云 API 原生支持
+/// 并发请求——无需信号量。
 pub struct SiliconFlowClient {
-    /// Shared reqwest HTTP client with keep-alive connection pool.
+    /// 带 keep-alive 连接池的共享 reqwest HTTP 客户端。
     http: reqwest::Client,
-    /// Base URL of the SiliconFlow API (e.g. `https://api.siliconflow.cn/v1`).
+    /// SiliconFlow API 的基础 URL（如 `https://api.siliconflow.cn/v1`）。
     base_url: String,
-    /// API key for Bearer authentication.
+    /// 用于 Bearer 认证的 API key。
     api_key: String,
-    /// Embedding model name (e.g. `"BAAI/bge-m3"`).
+    /// Embedding 模型名（如 `"BAAI/bge-m3"`）。
     model_embed: String,
-    /// Reranker model name (e.g. `"BAAI/bge-reranker-v2-m3"`).
+    /// Reranker 模型名（如 `"BAAI/bge-reranker-v2-m3"`）。
     model_reranker: String,
-    /// Chat / LLM model name (e.g. `"Qwen/Qwen3-8B"`).
+    /// Chat / LLM 模型名（如 `"Qwen/Qwen3-8B"`）。
     model_llm: String,
 }
 
 impl SiliconFlowClient {
-    /// Create a new `SiliconFlowClient`.
+    /// 创建新的 `SiliconFlowClient`。
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -147,10 +146,10 @@ impl SiliconFlowClient {
     }
 
     // -----------------------------------------------------------------------
-    // Internal helpers
+    // 内部辅助函数
     // -----------------------------------------------------------------------
 
-    /// Build an authenticated POST request for the given path.
+    /// 为给定路径构建一个带认证的 POST 请求。
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         self.http
@@ -159,7 +158,7 @@ impl SiliconFlowClient {
             .header("Content-Type", "application/json")
     }
 
-    /// Execute a request with retry logic for rate limiting.
+    /// 带速率限制重试逻辑地执行一个请求。
     async fn request_with_retry(
         &self,
         req: reqwest::RequestBuilder,
@@ -181,31 +180,31 @@ impl SiliconFlowClient {
                 tokio::time::sleep(delay).await;
             }
 
-            // Build a fresh request each time (reqwest::RequestBuilder is not Clone)
+            // 每次构建一个全新的请求（reqwest::RequestBuilder 不可 Clone）
             let req_built = req.try_clone().ok_or_else(|| {
-                DtError::Repository("SiliconFlow: failed to clone request".into())
+                DtError::Repository("SiliconFlow: 请求克隆失败".into())
             })?;
 
             match req_built.send().await {
                 Ok(resp) => {
                     let status = resp.status();
 
-                    // Success
+                    // 成功
                     if status.is_success() {
                         return Ok(resp);
                     }
 
                     let body = resp.text().await.unwrap_or_default();
 
-                    // Rate limited — retryable
+                    // 速率受限——可重试
                     if status.as_u16() == 429 || status.as_u16() == 503 {
                         last_error = format!("HTTP {}: {}", status, &body[..body.len().min(200)]);
                         continue;
                     }
 
-                    // Other errors — not retryable
+                    // 其他错误——不可重试
                     return Err(DtError::Repository(format!(
-                        "SiliconFlow {} error ({}): {}",
+                        "SiliconFlow {} 错误 ({}): {}",
                         operation, status, body
                     )));
                 }
@@ -215,7 +214,7 @@ impl SiliconFlowClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "SiliconFlow {} request failed: {}",
+                        "SiliconFlow {} 请求失败: {}",
                         operation, e
                     )));
                 }
@@ -223,19 +222,19 @@ impl SiliconFlowClient {
         }
 
         Err(DtError::Repository(format!(
-            "SiliconFlow {} failed after {} retries: {}",
+            "SiliconFlow {} 重试 {} 次后仍失败: {}",
             operation, MAX_RETRIES, last_error
         )))
     }
 
     // -----------------------------------------------------------------------
-    // Rerank
+    // Rerank 重排序
     // -----------------------------------------------------------------------
 
-    /// Rerank `documents` against `query` using the configured reranker model.
+    /// 使用配置的 reranker 模型对 `query` 重新排序 `documents`。
     ///
-    /// Returns a relevance score for each document, in the original input order.
-    /// Scores are typically in `[0, 1]` where higher means more relevant.
+    /// 按原始输入顺序返回每个文档的相关性得分。
+    /// 得分通常在 `[0, 1]`，越高表示越相关。
     pub async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, DtError> {
         let body = serde_json::json!({
             "model": self.model_reranker,
@@ -254,7 +253,7 @@ impl SiliconFlowClient {
             .map_err(|e| DtError::Repository(format!("SiliconFlow rerank parse: {e}")))?;
 
         let results = json["results"].as_array().ok_or_else(|| {
-            DtError::Repository("SiliconFlow: missing 'results' in rerank response".into())
+            DtError::Repository("SiliconFlow: rerank 响应中缺少 'results'".into())
         })?;
 
         let mut scores: Vec<(usize, f32)> = Vec::with_capacity(results.len());
@@ -269,12 +268,12 @@ impl SiliconFlowClient {
     }
 
     // -----------------------------------------------------------------------
-    // Chat
+    // Chat 对话
     // -----------------------------------------------------------------------
 
-    /// Send a chat completion request with standard system/user prompts.
+    /// 发送带有标准 system/user 提示词的 chat completion 请求。
     ///
-    /// Returns the text content of the first choice.
+    /// 返回第一个 choice 的文本内容。
     pub async fn chat(
         &self,
         system_prompt: &str,
@@ -300,20 +299,20 @@ impl SiliconFlowClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("SiliconFlow chat parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("SiliconFlow chat 解析: {e}")))?;
 
         let msg = &json["choices"][0]["message"];
 
-        // Some reasoning models (e.g. Qwen3.5-9B) put the actual response in
-        // `reasoning_content` and leave `content` empty.  Try `content` first,
-        // then fall back to `reasoning_content`.
+        // 某些推理模型（如 Qwen3.5-9B）把实际响应放在
+        // `reasoning_content` 里，而 `content` 为空。先尝试 `content`，
+        // 再回退到 `reasoning_content`。
         let content = msg["content"]
             .as_str()
             .filter(|s| !s.is_empty())
             .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
             .ok_or_else(|| {
                 DtError::Repository(
-                    "SiliconFlow: missing content/reasoning_content in chat response".into(),
+                    "SiliconFlow: chat 响应中缺少 content/reasoning_content".into(),
                 )
             })?;
 
@@ -322,12 +321,12 @@ impl SiliconFlowClient {
 }
 
 // ---------------------------------------------------------------------------
-// EmbedService trait implementation
+// EmbedService trait 实现
 // ---------------------------------------------------------------------------
 
 #[async_trait]
 impl EmbedService for SiliconFlowClient {
-    /// Generate embeddings for a batch of texts via `POST /v1/embeddings`.
+    /// 通过 `POST /v1/embeddings` 为一批文本生成 embedding。
     async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
         if texts.is_empty() {
             return Ok(vec![]);
@@ -346,10 +345,10 @@ impl EmbedService for SiliconFlowClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("SiliconFlow embed parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("SiliconFlow embed 解析: {e}")))?;
 
         let data = json["data"].as_array().ok_or_else(|| {
-            DtError::Repository("SiliconFlow: missing 'data' in embed response".into())
+            DtError::Repository("SiliconFlow: embed 响应中缺少 'data'".into())
         })?;
 
         let mut embeddings: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
@@ -358,7 +357,7 @@ impl EmbedService for SiliconFlowClient {
             let embedding: Vec<f32> = item["embedding"]
                 .as_array()
                 .ok_or_else(|| {
-                    DtError::Repository("SiliconFlow: missing 'embedding' in response".into())
+                    DtError::Repository("SiliconFlow: 响应中缺少 'embedding'".into())
                 })?
                 .iter()
                 .map(|v| v.as_f64().unwrap_or(0.0) as f32)
@@ -370,7 +369,7 @@ impl EmbedService for SiliconFlowClient {
         Ok(embeddings.into_iter().map(|(_, v)| v).collect())
     }
 
-    /// Check service health by listing models via `GET /v1/models`.
+    /// 通过 `GET /v1/models` 列出模型以检查服务健康。
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
         let url = format!("{}/models", self.base_url.trim_end_matches('/'));
 
@@ -383,16 +382,16 @@ impl EmbedService for SiliconFlowClient {
         {
             Ok(resp) if resp.status().is_success() => Ok(HealthStatus::Healthy),
             Ok(resp) => Ok(HealthStatus::Unhealthy(format!(
-                "SiliconFlow health: HTTP {}",
+                "SiliconFlow 健康检查: HTTP {}",
                 resp.status()
             ))),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!("SiliconFlow health: {e}"))),
+            Err(e) => Ok(HealthStatus::Unhealthy(format!("SiliconFlow 健康检查: {e}"))),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// LlmService / RerankService trait implementations
+// LlmService / RerankService trait 实现
 // ---------------------------------------------------------------------------
 
 #[async_trait]
@@ -404,12 +403,12 @@ impl LlmService for SiliconFlowClient {
         temperature: f32,
         max_tokens: u32,
     ) -> Result<String, DtError> {
-        // Delegate to existing chat() method
+        // 委托给已有的 chat() 方法
         SiliconFlowClient::chat(self, system_prompt, user_prompt, temperature, max_tokens).await
     }
 
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
-        // Delegate to existing EmbedService::health_check
+        // 委托给已有的 EmbedService::health_check
         <Self as EmbedService>::health_check(self).await
     }
 
@@ -426,7 +425,7 @@ impl LlmService for SiliconFlowClient {
 #[async_trait]
 impl RerankService for SiliconFlowClient {
     async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, DtError> {
-        // Delegate to existing rerank() method
+        // 委托给已有的 rerank() 方法
         SiliconFlowClient::rerank(self, query, documents).await
     }
 
@@ -436,7 +435,7 @@ impl RerankService for SiliconFlowClient {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -484,7 +483,7 @@ mod tests {
             "reranker",
             "llm",
         );
-        // Check the URL construction via the internal method
+        // 通过内部方法检查 URL 构造
         let req = client.post("/embeddings");
         let built = req.build().unwrap();
         assert_eq!(

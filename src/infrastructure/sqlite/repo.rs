@@ -1,7 +1,7 @@
-//! SQLite snapshot storage for change detection.
+//! 用于变更检测的 SQLite 快照存储。
 //!
-//! Implements `SnapshotRepository` using a local SQLite database.
-//! Stores SHA1 hashes of indexed files to detect changes between builds.
+//! 使用本地 SQLite 数据库实现 `SnapshotRepository`。
+//! 存储已索引文件的 SHA1 哈希，以检测构建之间的变化。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::SnapshotRepository;
@@ -12,24 +12,23 @@ use rusqlite::{params, Connection};
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-/// SQLite-backed snapshot repository.
+/// 基于 SQLite 的快照仓库。
 ///
-/// Uses a local `lazy.db` file for tracking file hashes,
-/// enabling incremental builds by comparing current file contents
-/// against previously indexed snapshots.
+/// 使用本地 `lazy.db` 文件跟踪文件哈希，
+/// 通过比较当前文件内容与先前索引的快照实现增量构建。
 pub struct SqliteRepo {
     conn: Mutex<Connection>,
 }
 
 impl SqliteRepo {
-    /// Open or create the SQLite database at the given path.
+    /// 在给定路径打开或创建 SQLite 数据库。
     pub fn open(db_path: &str) -> Result<Self, DtError> {
         let conn = Connection::open(db_path)
-            .map_err(|e| DtError::Repository(format!("SQLite open failed: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("SQLite 打开失败: {e}")))?;
 
-        // Enable WAL mode for better concurrent reads
+        // 启用 WAL 模式以获得更好的并发读取
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")
-            .map_err(|e| DtError::Repository(format!("SQLite pragma failed: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("SQLite pragma 失败: {e}")))?;
 
         let repo = Self {
             conn: Mutex::new(conn),
@@ -38,7 +37,7 @@ impl SqliteRepo {
         Ok(repo)
     }
 
-    /// Create the snapshots table if it doesn't exist.
+    /// 在表不存在时创建 snapshots 表。
     fn ensure_schema(&self) -> Result<(), DtError> {
         let conn = self
             .conn
@@ -139,7 +138,7 @@ impl SnapshotRepository for SqliteRepo {
             for snap in snapshots {
                 stmt.execute(params![
                     snap.file_path,
-                    project, // Use the project parameter for consistency
+                    project, // 使用 project 参数保持一致
                     snap.file_sha1,
                     snap.file_mtime,
                     snap.method_count,
@@ -150,7 +149,7 @@ impl SnapshotRepository for SqliteRepo {
         }
 
         tx.commit()
-            .map_err(|e| DtError::Repository(format!("SQLite commit: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("SQLite 提交: {e}")))?;
 
         Ok(())
     }
@@ -203,7 +202,7 @@ impl SnapshotRepository for SqliteRepo {
     }
 
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
-        // Test that we can read from the DB
+        // 测试能否从数据库读取
         let conn = self
             .conn
             .lock()
@@ -359,16 +358,16 @@ impl SnapshotRepository for SqliteRepo {
     }
 }
 
-/// In-memory snapshot repository for testing.
+/// 用于测试的内存快照仓库。
 pub struct MemorySnapshotRepo {
     snapshots: Mutex<Vec<FileSnapshot>>,
     progress: Mutex<HashSet<(String, String, String)>>,
-    /// Pipeline step progress: (project, file_path, step, file_hash)
+    /// 流水线步骤进度：(project, file_path, step, file_hash)
     step_progress: Mutex<HashSet<(String, String, String, String)>>,
 }
 
 impl MemorySnapshotRepo {
-    /// Create a new in-memory snapshot repo (for testing).
+    /// 创建新的内存快照仓库（用于测试）。
     pub fn new() -> Self {
         Self {
             snapshots: Mutex::new(Vec::new()),
@@ -560,7 +559,7 @@ impl SnapshotRepository for MemorySnapshotRepo {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -585,11 +584,11 @@ mod tests {
 
         let repo = SqliteRepo::open(&db_path).unwrap();
 
-        // Save a snapshot
+        // 保存一个快照
         let snap = make_snapshot("test-proj", "src/main.rs", "abc123");
         repo.save_snapshots("test-proj", &[snap]).await.unwrap();
 
-        // Get it back
+        // 取回来
         let retrieved = repo.get_snapshot("test-proj", "src/main.rs").await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().file_sha1, "abc123");
@@ -671,10 +670,10 @@ mod tests {
             .delete_file_progress("proj", &["docs/a.md".to_string()])
             .await
             .unwrap();
-        // 1 file_snapshots row + 1 pipeline_progress row.
+        // 1 行 file_snapshots + 1 行 pipeline_progress。
         assert_eq!(removed, 2);
 
-        // The deleted path is gone from both tables…
+        // 被删除的路径在两个表中都已消失……
         assert!(repo
             .get_snapshot("proj", "docs/a.md")
             .await
@@ -684,7 +683,7 @@ mod tests {
             .is_step_done("proj", "docs/a.md", "store", "h1")
             .await
             .unwrap());
-        // …while the untouched path survives in both.
+        // ……而未动的路径在两个表中都保留。
         assert!(repo
             .get_snapshot("proj", "docs/b.md")
             .await
@@ -695,7 +694,7 @@ mod tests {
             .await
             .unwrap());
 
-        // Empty input is a no-op.
+        // 空输入是 no-op。
         assert_eq!(repo.delete_file_progress("proj", &[]).await.unwrap(), 0);
     }
 

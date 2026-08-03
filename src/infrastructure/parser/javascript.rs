@@ -1,5 +1,5 @@
-//! JavaScript parser — regex-based extraction of functions, methods, and classes.
-//! Uses patterns similar to TypeScript but without type annotations.
+//! JavaScript 解析器——基于正则抽取函数、方法与类。
+//! 使用与 TypeScript 类似的模式，但没有类型注解。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -125,7 +125,7 @@ impl ParseStrategy for JavaScriptParser {
             }
         }
 
-        // Top-level functions
+        // 顶层函数
         for caps in func_re.captures_iter(source) {
             let name = caps[3].to_string();
             let params = caps[4].to_string();
@@ -161,7 +161,7 @@ impl ParseStrategy for JavaScriptParser {
             });
         }
 
-        // Arrow functions
+        // 箭头函数
         for caps in arrow_re.captures_iter(source) {
             let name = caps[3].to_string();
             let start_byte = caps.get(0).unwrap().start();
@@ -196,7 +196,7 @@ impl ParseStrategy for JavaScriptParser {
             });
         }
 
-        // Class methods
+        // 类方法
         for caps in method_re.captures_iter(source) {
             let method_name = caps[3].to_string();
             let params = caps[4].to_string();
@@ -206,8 +206,8 @@ impl ParseStrategy for JavaScriptParser {
             let start_byte = caps.get(0).unwrap().start();
             let start_line = {
                 let raw = source[..start_byte].lines().count() + 1;
-                // Skip blank lines: `(?m)^\s*(\w+)` can match starting from a blank line
-                // because `\s*` greedily consumes blank-line newlines.
+                // 跳过空行：`(?m)^\s*(\w+)` 可能从空行开始匹配，
+                // 因为 `\s*` 会贪婪地吞掉空行的换行符。
                 let src_lines: Vec<&str> = source.lines().collect();
                 let mut adj = raw;
                 while adj <= src_lines.len() && src_lines[adj - 1].trim().is_empty() {
@@ -257,7 +257,7 @@ impl ParseStrategy for JavaScriptParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {

@@ -1,4 +1,4 @@
-//! Rust parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 Rust 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -12,7 +12,7 @@ use super::tree_sitter_utils;
 pub struct TsRustParser;
 
 impl TsRustParser {
-    /// Recursively collect struct/enum/trait as classes from any level (handles nesting in mod).
+    /// 从任意层级递归收集 struct/enum/trait 作为类（处理 mod 中的嵌套）。
     fn collect_classes_recursive(
         source: &str,
         node: &tree_sitter::Node,
@@ -43,22 +43,22 @@ impl TsRustParser {
                 });
             }
         }
-        // Recurse into children to handle nested items (e.g. inside mod_item)
+        // 递归进入子节点以处理嵌套项（如 mod_item 内部）
         let mut c = node.walk();
         for ch in node.children(&mut c) {
             Self::collect_classes_recursive(source, &ch, project, file_path, module, classes);
         }
     }
 
-    /// Walk up from a function_item to find the type name of the enclosing impl_item (if any).
+    /// 从 function_item 向上查找所在 impl_item 的类型名（如果有）。
     fn find_impl_type(source: &str, node: &tree_sitter::Node) -> Option<String> {
         let mut parent = node.parent();
         while let Some(p) = parent {
             if p.kind() == "impl_item" {
-                // Extract the type from the impl_item's "type" field
+                // 从 impl_item 的 "type" 字段抽取类型
                 if let Some(ty) = p.child_by_field_name("type") {
                     let text = tree_sitter_utils::node_text(source, &ty);
-                    // Handle generics like Result<T> — take the base name
+                    // 处理 Result<T> 这类泛型——取基础名
                     let base = text.split('<').next().unwrap_or(text).trim().to_string();
                     if !base.is_empty() {
                         return Some(base);
@@ -71,7 +71,7 @@ impl TsRustParser {
         None
     }
 
-    /// Recursively collect function_item nodes at any nesting level (handles impl_item, mod_item).
+    /// 在任意嵌套层级递归收集 function_item 节点（处理 impl_item、mod_item）。
     fn collect_funcs_recursive(
         source: &str,
         node: &tree_sitter::Node,
@@ -109,7 +109,7 @@ impl TsRustParser {
                     .unwrap_or_default();
                 let calls = tree_sitter_utils::extract_calls_from_body(source, node);
 
-                // Determine class: check for enclosing impl_item, then fall back to line range
+                // 判断类：先检查是否有外层 impl_item，然后回退到行区间
                 let class_name = Self::find_impl_type(source, node)
                     .and_then(|impl_type| {
                         classes
@@ -150,7 +150,7 @@ impl TsRustParser {
                 });
             }
         }
-        // Recurse into children to handle nested items
+        // 递归进入子节点以处理嵌套项
         let mut c = node.walk();
         for ch in node.children(&mut c) {
             Self::collect_funcs_recursive(
@@ -188,11 +188,11 @@ impl ParseStrategy for TsRustParser {
         let root = tree.root_node();
 
         let mut classes = Vec::new();
-        // Recursively collect classes (walks into mod_item etc.)
+        // 递归收集类（会进入 mod_item 等）
         Self::collect_classes_recursive(source, &root, project, &file_path, &module, &mut classes);
 
         let mut methods = Vec::new();
-        // Recursively collect functions (walks into impl_item, mod_item etc.)
+        // 递归收集函数（会进入 impl_item、mod_item 等）
         Self::collect_funcs_recursive(
             source,
             &root,

@@ -1,4 +1,4 @@
-//! JavaScript parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 JavaScript 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -57,7 +57,7 @@ impl TsJavaScriptParser {
                         .unwrap_or(false));
             if is_method {
                 if let Some(nn) = ch.child_by_field_name("name").or_else(|| {
-                    // Arrow functions assigned to variables: the name is on the parent
+                    // 赋给变量的箭头函数：名字在父节点上
                     ch.parent().and_then(|p| p.child_by_field_name("name"))
                 }) {
                     let name = tree_sitter_utils::node_text(source, &nn).to_string();
@@ -122,7 +122,7 @@ impl TsJavaScriptParser {
     }
 }
 
-// Temporary dummy functions - will be set properly in parse()
+// 临时占位函数——将在 parse() 中正确设置
 static mut CUR_PROJECT: String = String::new();
 static mut CUR_FILE: String = String::new();
 static mut CUR_MODULE: String = String::new();
@@ -162,7 +162,7 @@ impl ParseStrategy for TsJavaScriptParser {
             .unwrap_or_default();
         let root = tree.root_node();
 
-        // Set globals
+        // 设置全局变量
         unsafe {
             CUR_PROJECT = project.to_string();
         }
@@ -181,13 +181,13 @@ impl ParseStrategy for TsJavaScriptParser {
             }
         }
 
-        // Collect class methods
+        // 收集类方法
         let mut methods = Vec::new();
         for cls in &classes {
             unsafe {
                 CUR_CLASS = cls.name.clone();
             }
-            // Walk tree to find class body
+            // 遍历树以查找类方法体
             let mut c = root.walk();
             find_class_methods_js(
                 source,
@@ -201,7 +201,7 @@ impl ParseStrategy for TsJavaScriptParser {
             );
         }
 
-        // Module-level functions
+        // 模块级函数
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {
@@ -237,7 +237,7 @@ impl ParseStrategy for TsJavaScriptParser {
                         });
                     }
                 }
-                // Arrow functions at module level
+                // 模块级箭头函数
                 if ch.kind() == "lexical_declaration" || ch.kind() == "variable_declaration" {
                     let mut cc = ch.walk();
                     for decl in ch.children(&mut cc) {
@@ -282,7 +282,7 @@ impl ParseStrategy for TsJavaScriptParser {
             }
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name {

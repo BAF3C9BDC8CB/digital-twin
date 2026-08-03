@@ -1,4 +1,4 @@
-//! Python parser — regex-based extraction of functions and classes.
+//! Python 解析器——基于正则抽取函数与类。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -77,13 +77,13 @@ impl ParseStrategy for PythonParser {
         let mut methods = Vec::new();
         let mut classes = Vec::new();
 
-        // Python class definition
+        // Python 类定义
         let class_re = Regex::new(r"(?m)^\s*class\s+(\w+)\s*(\([^)]*\))?\s*:").unwrap();
-        // Python function/method definition
+        // Python 函数/方法定义
         let func_re =
             Regex::new(r"(?m)^\s*def\s+(\w+)\s*\(([^)]*)\)\s*(->\s*[\w\[\],\s]+)?\s*:").unwrap();
 
-        // Find classes first
+        // 先找类
         for caps in class_re.captures_iter(source) {
             let class_name = caps[1].to_string();
             let start_byte = caps.get(0).unwrap().start();
@@ -103,7 +103,7 @@ impl ParseStrategy for PythonParser {
             });
         }
 
-        // Update class end lines
+        // 更新类结束行
         let mut class_end_lines: Vec<usize> = classes.iter().map(|c| c.start_line).collect();
         class_end_lines.sort();
         let total_lines = source.lines().count();
@@ -121,7 +121,7 @@ impl ParseStrategy for PythonParser {
             }
         }
 
-        // Find functions
+        // 找函数
         for caps in func_re.captures_iter(source) {
             let func_name = caps[1].to_string();
             let params = caps
@@ -146,7 +146,7 @@ impl ParseStrategy for PythonParser {
             let start_byte = full_match.start();
             let start_line = {
                 let raw_line = source[..start_byte].lines().count() + 1;
-                // Skip blank lines that `(?m)^\s*` ambiguously matched before the def
+                // 跳过 `(?m)^\s*` 在 def 之前可能歧义匹配到的空行
                 let src_lines: Vec<&str> = source.lines().collect();
                 let mut adjusted = raw_line;
                 while adjusted <= src_lines.len() && src_lines[adjusted - 1].trim().is_empty() {
@@ -155,7 +155,7 @@ impl ParseStrategy for PythonParser {
                 adjusted
             };
 
-            // Find which class contains this function
+            // 找出包含该函数的类
             let current_class = classes
                 .iter()
                 .filter(|c| c.start_line < start_line && c.end_line >= start_line)
@@ -166,7 +166,7 @@ impl ParseStrategy for PythonParser {
             let method_id =
                 make_method_id(project, &file_path, &current_class, &func_name, start_line);
 
-            // Extract body
+            // 抽取函数体
             let indent = source
                 .lines()
                 .nth(start_line - 1)
@@ -202,7 +202,7 @@ impl ParseStrategy for PythonParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {
@@ -215,20 +215,20 @@ impl ParseStrategy for PythonParser {
     }
 }
 
-/// Extract body of a Python function given start line index (0-based) and expected indent.
+/// 给定函数定义起始行索引（0 起始）与预期缩进，抽取 Python 函数体。
 fn extract_python_body(source: &str, def_line_idx: usize, indent: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     let mut body_lines: Vec<String> = Vec::new();
     for line in lines.iter().skip(def_line_idx) {
         let leading = line.len().saturating_sub(line.trim_start().len());
-        // Include the def line itself, empty lines, or indented lines
+        // 包含 def 行本身、空行或缩进行
         if body_lines.is_empty() || line.trim().is_empty() || leading >= indent {
             body_lines.push(line.to_string());
         } else {
             break;
         }
     }
-    // Trim trailing blank lines so end_line points to the last actual code/comment line
+    // 去掉末尾空行，使 end_line 指向最后一个实际代码/注释行
     while body_lines
         .last()
         .map(|l| l.trim().is_empty())
@@ -240,7 +240,7 @@ fn extract_python_body(source: &str, def_line_idx: usize, indent: usize) -> Stri
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -269,28 +269,28 @@ mod tests {
     fn check_payment_line_numbers() {
         let source =
             std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
-                .expect("read payment.py");
+                .expect("读取 payment.py");
         let result = PythonParser
             .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
-            .expect("parse");
+            .expect("解析");
         let methods: Vec<String> = result
             .methods
             .iter()
             .map(|m| format!("{} L{}-{}", m.name, m.start_line, m.end_line))
             .collect();
-        println!("Python methods: {:?}", methods);
-        assert_eq!(result.methods.len(), 3, "Expected 3 methods");
+        println!("Python 方法: {:?}", methods);
+        assert_eq!(result.methods.len(), 3, "期望有 3 个方法");
         let pm = &result.methods[0];
         assert_eq!(pm.name, "process_payment");
-        assert_eq!(pm.start_line, 9, "process_payment should start at line 9");
-        assert_eq!(pm.end_line, 12, "process_payment should end at line 12");
+        assert_eq!(pm.start_line, 9, "process_payment 应从第 9 行开始");
+        assert_eq!(pm.end_line, 12, "process_payment 应在第 12 行结束");
         let cm = &result.methods[1];
         assert_eq!(cm.name, "_call_provider");
-        assert_eq!(cm.start_line, 15, "_call_provider should start at line 15");
-        assert_eq!(cm.end_line, 17, "_call_provider should end at line 17");
+        assert_eq!(cm.start_line, 15, "_call_provider 应从第 15 行开始");
+        assert_eq!(cm.end_line, 17, "_call_provider 应在第 17 行结束");
         let rm = &result.methods[2];
         assert_eq!(rm.name, "refund_payment");
-        assert_eq!(rm.start_line, 20, "refund_payment should start at line 20");
-        assert_eq!(rm.end_line, 22, "refund_payment should end at line 22");
+        assert_eq!(rm.start_line, 20, "refund_payment 应从第 20 行开始");
+        assert_eq!(rm.end_line, 22, "refund_payment 应在第 22 行结束");
     }
 }

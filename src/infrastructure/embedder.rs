@@ -1,8 +1,8 @@
-//! Embedding service implementations — text → vector conversion.
+//! Embedding 服务实现——文本到向量的转换。
 //!
-//! Provides [`NoopEmbedService`] for testing/failover, and a factory
-//! function [`create_embed_router`] that builds a provider router from
-//! configuration (SiliconFlow + XInference).
+//! 提供用于测试/故障切换的 [`NoopEmbedService`]，以及一个工厂
+//! 函数 [`create_embed_router`]，它根据配置（SiliconFlow + XInference）
+//! 构建 provider 路由器。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, RerankService};
@@ -11,20 +11,20 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// NoopEmbedService — zero-vectors for testing / offline development
+// NoopEmbedService——测试/离线开发使用的零向量服务
 // ---------------------------------------------------------------------------
 
-/// No-op embed service returning zero-vectors.
+/// 返回零向量的 no-op 向量化服务。
 ///
-/// Used when SiliconFlow API is unavailable.
-/// Configurable dimension for test environments.
+/// 在 SiliconFlow API 不可用时使用。
+/// 维度可配置，用于测试环境。
 pub struct NoopEmbedService {
     dim: u32,
 }
 
 impl NoopEmbedService {
-    /// Create a no-op service returning `dim`-dimensional zero vectors
-    /// (default 1024 for BGE-M3 compatibility).
+    /// 创建返回 `dim` 维零向量的 no-op 服务
+    /// （默认 1024，以兼容 BGE-M3）。
     pub fn new(dim: u32) -> Self {
         Self { dim }
     }
@@ -51,33 +51,33 @@ impl EmbedService for NoopEmbedService {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function — build EmbedProviderRouter from config
+// 工厂函数——根据配置构建 EmbedProviderRouter
 // ---------------------------------------------------------------------------
 
-/// Provider configuration for creating an [`EmbedProviderRouter`].
+/// 用于创建 [`EmbedProviderRouter`] 的 provider 配置。
 ///
-/// Each provider is optional — only the configured one needs to be present.
+/// 每个 provider 都是可选的——只需配置所需的那一个。
 pub struct ProviderConfig {
-    /// SiliconFlow client configuration.
+    /// SiliconFlow 客户端配置。
     pub siliconflow_url: String,
     pub siliconflow_api_key: String,
     pub siliconflow_model_embed: String,
     pub siliconflow_model_reranker: String,
     pub siliconflow_model_llm: String,
-    /// XInference client configuration.
+    /// XInference 客户端配置。
     pub xinference_url: String,
     pub xinference_api_key: String,
     pub xinference_model_embed: String,
     pub xinference_model_reranker: String,
     pub xinference_model_llm: String,
-    /// Routing configuration.
+    /// 路由配置。
     pub embed_provider: String,
     pub rerank_provider: String,
     pub llm_provider: String,
 }
 
 impl ProviderConfig {
-    /// Return a default SiliconFlow-only config (for fallback when pipeline.yaml is unavailable).
+    /// 返回默认的仅 SiliconFlow 配置（用于 pipeline.yaml 不可用时的回退）。
     pub fn default_siliconflow() -> Self {
         Self {
             siliconflow_url: "https://api.siliconflow.cn/v1".into(),
@@ -97,7 +97,7 @@ impl ProviderConfig {
     }
 }
 
-/// Build the router with configured clients (shared by embed/rerank constructors).
+/// 用配置好的客户端构建路由器（embed/rerank 构造函数共用）。
 fn build_provider_router(
     cfg: ProviderConfig,
 ) -> crate::infrastructure::provider_router::EmbedProviderRouter {
@@ -140,21 +140,21 @@ fn build_provider_router(
     EmbedProviderRouter::new(siliconflow, xinference, router_config)
 }
 
-/// Build an [`EmbedProviderRouter`] from provider configuration.
+/// 根据 provider 配置构建 [`EmbedProviderRouter`]。
 ///
-/// Creates `SiliconFlowClient` and `XInferenceClient` as configured,
-/// then wraps them in a router with the specified routing rules.
+/// 按配置创建 `SiliconFlowClient` 与 `XInferenceClient`，
+/// 然后用指定的路由规则将它们包装进路由器。
 pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
     Arc::new(build_provider_router(cfg))
 }
 
-/// Build an [`EmbedProviderRouter`] as a [`RerankService`] (S5 首个业务调用点)。
+/// 构建一个作为 [`RerankService`] 使用的 [`EmbedProviderRouter`]（S5 首个业务调用点）。
 pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService> {
     Arc::new(build_provider_router(cfg))
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

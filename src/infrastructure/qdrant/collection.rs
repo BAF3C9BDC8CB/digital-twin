@@ -1,13 +1,13 @@
-//! Collection creation parameters for Qdrant.
+//! Qdrant 的集合创建参数。
 //!
 //! （CollectionKind / model_version 命名体系已随统一检索退役——U 系列清理；
 //! 现役集合名常量见 shared/collections.rs。）
 
 // ---------------------------------------------------------------------------
-// Collection creation parameters
+// 集合创建参数
 // ---------------------------------------------------------------------------
 
-/// Distance metric used for vector similarity.
+/// 用于向量相似度的距离度量。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Distance {
     Cosine,
@@ -25,17 +25,17 @@ impl Distance {
     }
 }
 
-/// Configuration for creating a Qdrant collection.
+/// 创建 Qdrant 集合的配置。
 pub struct CollectionConfig {
-    /// Vector dimension (1024 for BGE-M3).
+    /// 向量维度（BGE-M3 为 1024）。
     pub vector_dim: u32,
-    /// Distance metric (default: Cosine).
+    /// 距离度量（默认：Cosine）。
     pub distance: Distance,
-    /// HNSW M parameter — max edges per node in the graph (default: 16).
+    /// HNSW M 参数——图中每个节点的最大边数（默认：16）。
     pub hnsw_m: u32,
-    /// HNSW ef_construct — search depth during index build (default: 100).
+    /// HNSW ef_construct——索引构建期间的搜索深度（默认：100）。
     pub hnsw_ef_construct: u32,
-    /// Threshold after which automatic indexing is triggered (default: 10000).
+    /// 触发自动索引的阈值（默认：10000）。
     pub indexing_threshold: u32,
 }
 
@@ -52,7 +52,7 @@ impl Default for CollectionConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -60,7 +60,7 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // CollectionConfig tests
+    // CollectionConfig 测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -74,7 +74,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Distance tests
+    // Distance 测试
     // -----------------------------------------------------------------------
 
     #[test]

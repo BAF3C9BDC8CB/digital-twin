@@ -1,18 +1,18 @@
-//! XInference client — OpenAI-compatible local inference server.
+//! XInference 客户端——OpenAI 兼容的本地推理服务器。
 //!
-//! XInference is a local model serving framework that exposes an
-//! OpenAI-compatible API. This client reuses the same HTTP protocol
-//! as SiliconFlowClient but is configured for local deployment.
+//! XInference 是一个本地模型服务框架，暴露 OpenAI 兼容 API。
+//! 该客户端复用与 SiliconFlowClient 相同的 HTTP 协议，
+//! 但配置为本地部署。
 //!
-//! # Capabilities
+//! # 能力
 //!
-//! XInference typically supports:
-//! - Embedding (BAAI/bge-m3) ✅
-//! - Reranking (BAAI/bge-reranker-v2-m3) ✅
-//! - LLM chat (Qwen3-14B) — optional, depends on local deployment
+//! XInference 通常支持：
+//! - Embedding（BAAI/bge-m3）✅
+//! - Reranking（BAAI/bge-reranker-v2-m3）✅
+//! - LLM chat（Qwen3-14B）——可选，取决于本地部署
 //!
-//! When LLM is not available, `capabilities().chat = false` and
-//! LLM analysis is gracefully skipped.
+//! 当 LLM 不可用时，`capabilities().chat = false`，
+//! LLM 分析会被优雅跳过。
 
 use async_trait::async_trait;
 use std::time::Duration;
@@ -21,10 +21,10 @@ use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
-/// HTTP client for XInference's OpenAI-compatible local API.
+/// XInference OpenAI 兼容本地 API 的 HTTP 客户端。
 ///
-/// Structurally identical to SiliconFlowClient but configured for
-/// local deployment (no API key, configurable model names).
+/// 结构与 SiliconFlowClient 相同，但配置为
+/// 本地部署（无 API key，模型名可配置）。
 pub struct XInferenceClient {
     http: reqwest::Client,
     base_url: String,
@@ -35,7 +35,7 @@ pub struct XInferenceClient {
 }
 
 impl XInferenceClient {
-    /// Create a new XInferenceClient.
+    /// 创建新的 XInferenceClient。
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -56,7 +56,7 @@ impl XInferenceClient {
         }
     }
 
-    /// Build an authenticated POST request (api_key optional for local).
+    /// 构建带认证的 POST 请求（api_key 对本地可选）。
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let mut req = self
@@ -69,7 +69,7 @@ impl XInferenceClient {
         req
     }
 
-    /// Execute a request with retry logic.
+    /// 带重试逻辑地执行一个请求。
     async fn request_with_retry(
         &self,
         req: reqwest::RequestBuilder,
@@ -94,7 +94,7 @@ impl XInferenceClient {
 
             let req_built = req
                 .try_clone()
-                .ok_or_else(|| DtError::Repository("XInference: failed to clone request".into()))?;
+                .ok_or_else(|| DtError::Repository("XInference: 请求克隆失败".into()))?;
 
             match req_built.send().await {
                 Ok(resp) => {
@@ -108,7 +108,7 @@ impl XInferenceClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "XInference {} error ({}): {}",
+                        "XInference {} 错误 ({}): {}",
                         operation, status, body
                     )));
                 }
@@ -118,7 +118,7 @@ impl XInferenceClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "XInference {} request failed: {}",
+                        "XInference {} 请求失败: {}",
                         operation, e
                     )));
                 }
@@ -126,12 +126,12 @@ impl XInferenceClient {
         }
 
         Err(DtError::Repository(format!(
-            "XInference {} failed after {} retries: {}",
+            "XInference {} 重试 {} 次后仍失败: {}",
             operation, max_retries, last_error
         )))
     }
 
-    /// Chat completion (delegates to same OpenAI format as SiliconFlow).
+    /// Chat completion（委托给与 SiliconFlow 相同的 OpenAI 格式）。
     pub async fn chat(
         &self,
         system_prompt: &str,
@@ -157,7 +157,7 @@ impl XInferenceClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("XInference chat parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("XInference chat 解析: {e}")))?;
 
         let msg = &json["choices"][0]["message"];
         let content = msg["content"]
@@ -165,13 +165,13 @@ impl XInferenceClient {
             .filter(|s| !s.is_empty())
             .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
             .ok_or_else(|| {
-                DtError::Repository("XInference: missing content in chat response".into())
+                DtError::Repository("XInference: chat 响应中缺少 content".into())
             })?;
 
         Ok(content.to_string())
     }
 
-    /// Rerank documents against a query.
+    /// 对查询重新排序文档。
     pub async fn rerank(&self, query: &str, documents: &[String]) -> Result<Vec<f32>, DtError> {
         let body = serde_json::json!({
             "model": self.model_reranker,
@@ -187,10 +187,10 @@ impl XInferenceClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("XInference rerank parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("XInference rerank 解析: {e}")))?;
 
         let results = json["results"].as_array().ok_or_else(|| {
-            DtError::Repository("XInference: missing 'results' in rerank response".into())
+            DtError::Repository("XInference: rerank 响应中缺少 'results'".into())
         })?;
 
         let mut scores: Vec<(usize, f32)> = Vec::with_capacity(results.len());
@@ -225,10 +225,10 @@ impl EmbedService for XInferenceClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("XInference embed parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("XInference embed 解析: {e}")))?;
 
         let data = json["data"].as_array().ok_or_else(|| {
-            DtError::Repository("XInference: missing 'data' in embed response".into())
+            DtError::Repository("XInference: embed 响应中缺少 'data'".into())
         })?;
 
         let mut embeddings: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
@@ -237,7 +237,7 @@ impl EmbedService for XInferenceClient {
             let embedding: Vec<f32> = item["embedding"]
                 .as_array()
                 .ok_or_else(|| {
-                    DtError::Repository("XInference: missing 'embedding' in response".into())
+                    DtError::Repository("XInference: 响应中缺少 'embedding'".into())
                 })?
                 .iter()
                 .map(|v| v.as_f64().unwrap_or(0.0) as f32)
@@ -254,10 +254,10 @@ impl EmbedService for XInferenceClient {
         match self.http.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => Ok(HealthStatus::Healthy),
             Ok(resp) => Ok(HealthStatus::Unhealthy(format!(
-                "XInference health: HTTP {}",
+                "XInference 健康检查: HTTP {}",
                 resp.status()
             ))),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!("XInference health: {e}"))),
+            Err(e) => Ok(HealthStatus::Unhealthy(format!("XInference 健康检查: {e}"))),
         }
     }
 }
@@ -310,7 +310,7 @@ mod tests {
             "",
             "BAAI/bge-m3",
             "BAAI/bge-reranker-v2-m3",
-            "", // no LLM
+            "", // 无 LLM
         );
         assert_eq!(client.base_url, "http://localhost:9997/v1");
         assert_eq!(client.model_embed, "BAAI/bge-m3");
@@ -331,7 +331,7 @@ mod tests {
         let caps = no_llm.capabilities();
         assert!(caps.embed);
         assert!(caps.rerank);
-        assert!(!caps.chat); // LLM disabled
+        assert!(!caps.chat); // LLM 已禁用
     }
 
     #[test]

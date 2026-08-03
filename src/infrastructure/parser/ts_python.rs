@@ -1,4 +1,4 @@
-//! Python parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 Python 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -124,7 +124,7 @@ impl TsPythonParser {
         }
     }
 
-    /// Build a MethodBlock from a module-level function_definition node directly.
+    /// 直接从模块级 function_definition 节点构建 MethodBlock。
     fn build_module_fn(
         source: &str,
         node: &tree_sitter::Node,
@@ -198,7 +198,7 @@ impl ParseStrategy for TsPythonParser {
             .unwrap_or_default();
         let root = tree.root_node();
 
-        // Collect classes
+        // 收集类
         let mut classes = Vec::new();
         {
             let mut cursor = root.walk();
@@ -207,12 +207,12 @@ impl ParseStrategy for TsPythonParser {
             }
         }
 
-        // Collect methods from class bodies + top-level
+        // 收集类方法体 + 顶层函数
         let mut methods = Vec::new();
 
-        // Methods from class bodies
+        // 类方法体中的方法
         for cls in &classes {
-            // We need to re-find the class node in the tree
+            // 需要在树中重新找到类节点
             let mut cursor = root.walk();
             find_class_methods(
                 source,
@@ -226,7 +226,7 @@ impl ParseStrategy for TsPythonParser {
             );
         }
 
-        // Module-level (top-level) functions
+        // 模块级（顶层）函数
         {
             let mut cursor = root.walk();
             for child in root.children(&mut cursor) {
@@ -243,7 +243,7 @@ impl ParseStrategy for TsPythonParser {
             }
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name {
@@ -307,14 +307,18 @@ mod tests {
     fn parses_payment_py() {
         let source =
             std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
-                .expect("read payment.py");
+                .expect("读取 payment.py");
         let parser = TsPythonParser;
         let result = parser
             .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
-            .expect("parse");
+            .expect("解析");
 
-        assert_eq!(result.methods.len(), 3, "Expected 3 methods");
-        assert_eq!(result.classes.len(), 1, "Expected 1 class (PaymentGateway)");
+        assert_eq!(result.methods.len(), 3, "期望有 3 个方法");
+        assert_eq!(
+            result.classes.len(),
+            1,
+            "期望有 1 个类（PaymentGateway）"
+        );
 
         let pp = result
             .methods

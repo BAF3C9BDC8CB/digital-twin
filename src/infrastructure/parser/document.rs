@@ -1,41 +1,41 @@
-//! Document parser — extracts structured information from document files.
+//! 文档解析器——从文档文件中抽取结构化信息。
 //!
-//! Handles:
-//! - Markdown (`.md`): extracts title from first H1, strips formatting for plain text
-//! - Text (`.txt`): raw text, uses filename as title
-//! - PDF (`.pdf`): stub — returns filename-based metadata only (full PDF parsing
-//!   requires external dependencies like `pdf-extract` or `lopdf`)
+//! 处理：
+//! - Markdown（`.md`）：从首个 H1 提取标题，剥离格式得到纯文本
+//! - Text（`.txt`）：原始文本，用文件名作为标题
+//! - PDF（`.pdf`）：桩实现——仅返回基于文件名的元数据（完整 PDF 解析
+//!   需要 `pdf-extract` 或 `lopdf` 等外部依赖）
 
 use std::path::{Path, PathBuf};
 
-/// Parsed document content.
+/// 解析出的文档内容。
 #[derive(Debug, Clone)]
 pub struct ParsedDocument {
-    /// Document identifier: `dt://doc/{project}/{rel_path}`
+    /// 文档标识符：`dt://doc/{project}/{rel_path}`
     pub doc_id: String,
-    /// File name (without path).
+    /// 文件名（不含路径）。
     pub name: String,
-    /// Document title (from H1, filename, or first line).
+    /// 文档标题（来自 H1、文件名或首行）。
     pub title: String,
-    /// Full plain-text content (markdown stripped).
+    /// 完整纯文本内容（已剥离 markdown）。
     pub content: String,
-    /// Brief summary (first 200 characters of content).
+    /// 简短摘要（内容的前 200 个字符）。
     pub summary: String,
-    /// Absolute file path on disk.
+    /// 磁盘上的绝对文件路径。
     pub file_path: PathBuf,
-    /// Relative path from project root.
+    /// 相对项目根目录的路径。
     pub rel_path: String,
-    /// Project name.
+    /// 项目名。
     pub project: String,
-    /// Document type: "markdown", "text", "pdf".
+    /// 文档类型："markdown"、"text"、"pdf"。
     pub doc_type: String,
-    /// File size in bytes.
+    /// 文件大小（字节）。
     pub size: u64,
-    /// File modification time (RFC 3339).
+    /// 文件修改时间（RFC 3339）。
     pub modified: String,
 }
 
-/// Parse a document file, returning structured document metadata.
+/// 解析文档文件，返回结构化的文档元数据。
 pub fn parse_document(path: &Path, project: &str, root: &Path) -> Result<ParsedDocument, String> {
     let rel_path = crate::infrastructure::scanner::rel_path(root, path);
     let doc_id = crate::domain::id::make_document_id(project, &rel_path);
@@ -65,8 +65,8 @@ pub fn parse_document(path: &Path, project: &str, root: &Path) -> Result<ParsedD
             .unwrap_or_default()
     };
 
-    // Attempt to read as text. Binary documents (PDF, DOCX, etc.) will fail
-    // UTF-8 decoding — fall back to metadata-only stub instead of erroring.
+    // 尝试按文本读取。二进制文档（PDF、DOCX 等）会解码 UTF-8 失败——
+    // 此时回退到仅元数据的桩结果，而不是报错。
     let raw_content = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(_) => {
@@ -104,8 +104,8 @@ pub fn parse_document(path: &Path, project: &str, root: &Path) -> Result<ParsedD
     })
 }
 
-/// Parse a markdown document: extract title from first H1 (`# Title`),
-/// strip common formatting for plain text content.
+/// 解析 markdown 文档：从首个 H1（`# Title`）提取标题，
+/// 剥离常见格式以得到纯文本内容。
 fn parse_markdown(raw: &str, filename: &str) -> (String, String, String) {
     let doc_type = "markdown".to_string();
 
@@ -119,7 +119,7 @@ fn parse_markdown(raw: &str, filename: &str) -> (String, String, String) {
                 .to_string()
         })
         .unwrap_or_else(|| {
-            // Try first non-empty line as fallback title
+            // 尝试用首个非空行作为回退标题
             raw.lines()
                 .find(|l| !l.trim().is_empty())
                 .map(|l| l.trim().to_string())
@@ -131,8 +131,8 @@ fn parse_markdown(raw: &str, filename: &str) -> (String, String, String) {
     (doc_type, title, content)
 }
 
-/// Basic markdown stripping: remove ATX headers (`#`), bold/italic markers,
-/// inline code, links (keeping text), blockquotes, and horizontal rules.
+/// 基础 markdown 剥离：移除 ATX 标题（`#`）、粗体/斜体标记、
+/// 行内代码、链接（保留文本）、引用块与水平分割线。
 fn strip_markdown(raw: &str) -> String {
     let mut result = String::with_capacity(raw.len());
     let lines: Vec<&str> = raw.lines().collect();
@@ -140,19 +140,19 @@ fn strip_markdown(raw: &str) -> String {
     for line in &lines {
         let trimmed = line.trim();
 
-        // Skip horizontal rules
+        // 跳过水平分割线
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             continue;
         }
 
-        // Skip HTML comments
+        // 跳过 HTML 注释
         if trimmed.starts_with("<!--") {
             continue;
         }
 
         let mut processed = line.to_string();
 
-        // Strip ATX headers: "## " or "# " → keep text
+        // 剥离 ATX 标题："## " 或 "# " → 保留文本
         if let Some(stripped) = processed.trim_start().strip_prefix("# ") {
             processed = stripped.to_string();
         } else if let Some(stripped) = processed.trim_start().strip_prefix("## ") {
@@ -167,30 +167,30 @@ fn strip_markdown(raw: &str) -> String {
             processed = stripped.to_string();
         }
 
-        // Strip bold/italic: **text**, *text*, __text__, _text_
+        // 剥离粗体/斜体：**text**、*text*、__text__、_text_
         processed = strip_markers(&processed, "**");
         processed = strip_markers(&processed, "__");
         processed = strip_markers(&processed, "*");
         processed = strip_markers(&processed, "_");
 
-        // Strip inline code: `text`
+        // 剥离行内代码：`text`
         processed = strip_markers(&processed, "`");
 
-        // Strip blockquote prefix "> "
+        // 剥离引用块前缀 "> "
         if processed.trim_start().starts_with("> ") {
             processed = processed.trim_start().replacen("> ", "", 1);
         }
 
-        // Strip image syntax: ![alt](url) → alt
+        // 剥离图片语法：![alt](url) → alt
         processed = strip_markdown_images(&processed);
 
-        // Strip link syntax: [text](url) → text
+        // 剥离链接语法：[text](url) → text
         processed = strip_markdown_links(&processed);
 
-        // Skip empty lines after processing
+        // 处理后跳过空行
         let trimmed_processed = processed.trim();
         if trimmed_processed.is_empty() {
-            // Don't add multiple consecutive empty lines
+            // 不添加多个连续空行
             if !result.ends_with('\n') {
                 result.push('\n');
             }
@@ -205,7 +205,7 @@ fn strip_markdown(raw: &str) -> String {
     result.trim().to_string()
 }
 
-/// Strip paired markers (e.g., `**bold**` → `bold`).
+/// 剥离成对标记（如 `**bold**` → `bold`）。
 fn strip_markers(text: &str, marker: &str) -> String {
     let mut result = text.to_string();
     while let Some(start) = result.find(marker) {
@@ -229,22 +229,22 @@ fn strip_markers(text: &str, marker: &str) -> String {
     result
 }
 
-/// Strip markdown image syntax: `![alt](url)` → `alt`
+/// 剥离 markdown 图片语法：`![alt](url)` → `alt`
 fn strip_markdown_images(text: &str) -> String {
     let re = regex::Regex::new(r"!\[([^\]]*)\]\([^)]*\)").unwrap();
     re.replace_all(text, "$1").to_string()
 }
 
-/// Strip markdown link syntax: `[text](url)` → `text`
+/// 剥离 markdown 链接语法：`[text](url)` → `text`
 fn strip_markdown_links(text: &str) -> String {
     let re = regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap();
     re.replace_all(text, "$1").to_string()
 }
 
-/// Stub parser for binary documents: metadata-only, no content extraction.
+/// 二进制文档的桩解析器：仅元数据，不抽取内容。
 ///
-/// Called when `read_to_string` fails on a binary file (PDF, DOCX, etc.).
-/// Records filename, size, and modification time without attempting content parsing.
+/// 当 `read_to_string` 在二进制文件（PDF、DOCX 等）上失败时调用。
+/// 记录文件名、大小与修改时间，不尝试内容解析。
 fn parse_binary_stub(
     path: &Path,
     project: &str,
@@ -276,7 +276,7 @@ fn parse_binary_stub(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -333,10 +333,10 @@ mod tests {
     fn strip_markdown_skips_horizontal_rules() {
         let md = "Before\n\n---\n\nAfter";
         let result = strip_markdown(md);
-        // Horizontal rule is removed; surrounding blank lines are collapsed
+        // 水平分割线被移除；周围空行被折叠
         assert!(result.starts_with("Before"));
         assert!(result.ends_with("After"));
-        // Ensure Before and After are present, separated appropriately
-        assert!(!result.contains("---"), "horizontal rule should be removed");
+        // 确保 Before 与 After 均存在，且被适当分隔
+        assert!(!result.contains("---"), "水平分割线应被移除");
     }
 }

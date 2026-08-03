@@ -1,4 +1,4 @@
-//! PHP parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 PHP 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -36,7 +36,7 @@ impl ParseStrategy for TsPhpParser {
         let mut classes = Vec::new();
         let mut methods = Vec::new();
 
-        // Collect classes
+        // 收集类
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {
@@ -127,10 +127,10 @@ impl ParseStrategy for TsPhpParser {
             methods
         }
 
-        // Module-level namespace
+        // 模块级命名空间
         let ns = Self::extract_namespace(&root, source);
 
-        // Collect class methods + module-level functions
+        // 收集类方法 + 模块级函数
         for cls in &classes {
             let mut c = root.walk();
             let _ = find_php_class_methods(
@@ -145,7 +145,7 @@ impl ParseStrategy for TsPhpParser {
             );
         }
 
-        // Module-level function declarations (not inside a class)
+        // 模块级函数声明（不在类内部）
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {

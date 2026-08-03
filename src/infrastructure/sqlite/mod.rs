@@ -1,6 +1,6 @@
-//! SQLite snapshot storage backend.
+//! SQLite 快照存储后端。
 //!
-//! Stores SHA1 file hashes for incremental change detection.
+//! 存储 SHA1 文件哈希，用于增量变更检测。
 
 pub mod repo;
 

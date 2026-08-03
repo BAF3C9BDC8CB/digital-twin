@@ -1,7 +1,7 @@
-//! Java parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 Java 解析器。
 //!
-//! Walks the CST to extract class/interface/enum declarations and
-//! method/constructor declarations with accurate line numbers.
+//! 遍历 CST 抽取类/接口/枚举声明以及方法/构造函数声明，
+//! 并给出准确的行号。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -12,7 +12,7 @@ use tree_sitter::Parser;
 
 use super::tree_sitter_utils;
 
-/// Java parser backed by tree-sitter AST.
+/// 由 tree-sitter AST 支撑的 Java 解析器。
 pub struct TsJavaParser;
 
 impl TsJavaParser {
@@ -28,7 +28,7 @@ impl TsJavaParser {
         String::new()
     }
 
-    /// Recursively collect class/interface/enum declarations.
+    /// 递归收集类/接口/枚举声明。
     fn collect_classes(
         source: &str,
         node: &tree_sitter::Node,
@@ -65,14 +65,14 @@ impl TsJavaParser {
                 });
             }
         }
-        // Recurse into children for nested types
+        // 为嵌套类型递归进入子节点
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             Self::collect_classes(source, &child, project, file_path, pkg, classes);
         }
     }
 
-    /// Collect method declarations from a class/interface body.
+    /// 从类/接口方法体收集方法声明。
     fn collect_methods(
         source: &str,
         node: &tree_sitter::Node,
@@ -188,7 +188,7 @@ impl ParseStrategy for TsJavaParser {
         let root = tree.root_node();
         let pkg = Self::extract_package_from_tree(source, &root);
 
-        // ---- Collect classes ----
+        // ---- 收集类 ----
         let mut classes = Vec::new();
         {
             let mut cursor = root.walk();
@@ -197,7 +197,7 @@ impl ParseStrategy for TsJavaParser {
             }
         }
 
-        // ---- Collect methods from each class body ----
+        // ---- 从每个类的方法体收集方法 ----
         let mut methods = Vec::new();
         {
             let mut cursor = root.walk();
@@ -226,7 +226,7 @@ impl ParseStrategy for TsJavaParser {
             }
         }
 
-        // ---- Populate class method_ids ----
+        // ---- 填充类的 method_ids ----
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {
@@ -249,7 +249,7 @@ mod tests {
         let source = std::fs::read_to_string(
             "/data/myProject/digital-twin-v2/test/project/HelloService.java",
         )
-        .expect("read HelloService.java");
+        .expect("读取 HelloService.java");
         let parser = TsJavaParser;
         let result = parser
             .parse(
@@ -257,56 +257,56 @@ mod tests {
                 &PathBuf::from("HelloService.java"),
                 "test-pipeline",
             )
-            .expect("parse");
-        // Should have 3 methods: createOrder, saveToDb, sendNotification (no phantoms)
+            .expect("解析");
+        // 应有 3 个方法：createOrder、saveToDb、sendNotification（无幻影方法）
         assert_eq!(
             result.methods.len(),
             3,
-            "Expected 3 methods, got {}",
+            "期望有 3 个方法，实际为 {}",
             result.methods.len()
         );
-        // Should have 2 classes: HelloService, OrderRequest
-        assert_eq!(result.classes.len(), 2, "Expected 2 classes");
+        // 应有 2 个类：HelloService、OrderRequest
+        assert_eq!(result.classes.len(), 2, "期望有 2 个类");
 
-        // Verify createOrder
+        // 验证 createOrder
         let co = result
             .methods
             .iter()
             .find(|m| m.name == "createOrder")
-            .expect("createOrder method");
+            .expect("createOrder 方法");
         assert_eq!(co.start_line, 11);
         assert_eq!(co.end_line, 15);
-        eprintln!("createOrder calls: {:?}", co.calls);
+        eprintln!("createOrder 调用: {:?}", co.calls);
         assert!(
             co.calls.contains(&"saveToDb".to_string()),
-            "calls should contain saveToDb, got {:?}",
+            "调用中应包含 saveToDb，实际为 {:?}",
             co.calls
         );
         assert!(
             co.calls.contains(&"sendNotification".to_string()),
-            "calls should contain sendNotification, got {:?}",
+            "调用中应包含 sendNotification，实际为 {:?}",
             co.calls
         );
 
-        // Verify saveToDb
+        // 验证 saveToDb
         let sd = result
             .methods
             .iter()
             .find(|m| m.name == "saveToDb")
-            .expect("saveToDb method");
+            .expect("saveToDb 方法");
         assert_eq!(sd.start_line, 17);
         assert_eq!(sd.end_line, 19);
 
-        // Verify sendNotification
+        // 验证 sendNotification
         let sn = result
             .methods
             .iter()
             .find(|m| m.name == "sendNotification")
-            .expect("sendNotification method");
+            .expect("sendNotification 方法");
         assert_eq!(sn.start_line, 21);
         assert_eq!(sn.end_line, 23);
 
-        // Verify classes
+        // 验证类
         let hs = result
             .classes
             .iter()

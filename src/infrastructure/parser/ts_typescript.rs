@@ -1,4 +1,4 @@
-//! TypeScript parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 TypeScript 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -20,7 +20,7 @@ impl TsTypeScriptParser {
         module: &str,
         classes: &mut Vec<ClassBlock>,
     ) {
-        // Also look inside export_statement for class/interface/enum declarations
+        // 也在 export_statement 内部查找类/接口/枚举声明
         let target = if matches!(
             node.kind(),
             "class_declaration" | "interface_declaration" | "enum_declaration"
@@ -56,7 +56,7 @@ impl TsTypeScriptParser {
                 method_ids: Vec::new(),
             });
         }
-        // Recurse into children (for export_statement, this finds the inner declaration)
+        // 递归进入子节点（对 export_statement，这会找到内部声明）
         let mut c = node.walk();
         for ch in node.children(&mut c) {
             Self::collect_classes(source, &ch, project, file_path, module, classes);
@@ -97,7 +97,7 @@ impl TsTypeScriptParser {
         }
     }
 
-    /// Extract a function from a node that may be function_declaration or export_statement wrapping one.
+    /// 从可能是 function_declaration 或其包装的 export_statement 的节点中抽取函数。
     fn extract_fn(
         source: &str,
         node: &tree_sitter::Node,
@@ -140,7 +140,7 @@ impl ParseStrategy for TsTypeScriptParser {
     }
     fn parse(&self, source: &str, path: &Path, project: &str) -> Result<ParseResult, DtError> {
         let mut parser = Parser::new();
-        // Use TSX language for .tsx files, TypeScript for .ts files
+        // .tsx 文件使用 TSX 语言，.ts 文件使用 TypeScript
         let is_tsx = path
             .extension()
             .and_then(|e| e.to_str())
@@ -175,11 +175,11 @@ impl ParseStrategy for TsTypeScriptParser {
 
         let mut methods = Vec::new();
 
-        // Top-level functions (including those inside export_statement)
+        // 顶层函数（包括 export_statement 内部的）
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {
-                // Handle function_declaration either directly or inside export_statement
+                // 处理直接或位于 export_statement 内部的 function_declaration
                 if let Some((name, sl, el, params, sig, body, calls)) =
                     Self::extract_fn(source, &ch)
                 {
@@ -189,7 +189,7 @@ impl ParseStrategy for TsTypeScriptParser {
                     ));
                 }
 
-                // Arrow functions (including those inside export_statement)
+                // 箭头函数（包括 export_statement 内部的）
                 if ch.kind() == "export_statement" {
                     let mut tmp_c = ch.walk();
                     let container = ch.children(&mut tmp_c).find(|c| {
@@ -229,7 +229,7 @@ impl ParseStrategy for TsTypeScriptParser {
             }
         }
 
-        // Class methods
+        // 类方法
         for cls in &classes {
             let mut c = root.walk();
             find_ts_class_methods(

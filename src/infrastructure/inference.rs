@@ -1,1 +1,1 @@
-//! Inference service client.
+//! 推理服务客户端。

@@ -1,7 +1,7 @@
-//! Vector repository implementations for Qdrant.
+//! Qdrant 的向量仓库实现。
 //!
-//! - `NoopVectorRepo`: no-op implementation for compile-time validation.
-//! - `QdrantRepo`: real Qdrant gRPC repository.
+//! - `NoopVectorRepo`：用于编译期校验的 no-op 实现。
+//! - `QdrantRepo`：真实的 Qdrant gRPC 仓库。
 
 use std::hash::{Hash, Hasher};
 
@@ -18,11 +18,11 @@ use qdrant_client::qdrant::{
 };
 
 // ---------------------------------------------------------------------------
-// Noop — compile-time placeholder (all methods return empty/default)
+// Noop——编译期占位（所有方法返回空/默认值）
 // ---------------------------------------------------------------------------
 
-/// No-op vector repository — returns empty/default for all queries.
-/// Enables compile-check of the full stack before real Qdrant integration.
+/// No-op 向量仓库——所有查询都返回空/默认值。
+/// 在真正接入 Qdrant 之前，可用于对完整技术栈做编译期检查。
 pub struct NoopVectorRepo;
 
 #[async_trait]
@@ -79,13 +79,13 @@ impl VectorRepository for NoopVectorRepo {
 }
 
 // ---------------------------------------------------------------------------
-// QdrantRepo — real implementation using qdrant-client crate
+// QdrantRepo——使用 qdrant-client crate 的真实实现
 // ---------------------------------------------------------------------------
 
-/// Real Qdrant gRPC repository.
+/// 真实的 Qdrant gRPC 仓库。
 ///
-/// Wraps a [`QdrantClient`] and manages collection lifecycle,
-/// point upsert, and vector search over the Qdrant gRPC API.
+/// 包装 [`QdrantClient`]，并通过 Qdrant gRPC API 管理集合生命周期、
+/// 点 upsert 与向量搜索。
 pub struct QdrantRepo {
     client: QdrantClient,
 }
@@ -101,14 +101,14 @@ impl VectorRepository for QdrantRepo {
     async fn ensure_collection(&self, collection: &str, vector_dim: u32) -> Result<(), DtError> {
         let qdrant = self.client.inner();
 
-        // Check if collection already exists
+        // 检查集合是否已存在
         let exists = qdrant
             .collection_exists(collection.to_string())
             .await
             .map_err(|e| DtError::Repository(format!("Qdrant collection_exists: {}", e)))?;
 
         if !exists {
-            // Create the collection with Cosine distance and HNSW index
+            // 使用 Cosine 距离与 HNSW 索引创建集合
             qdrant
                 .create_collection(
                     CreateCollectionBuilder::new(collection.to_string()).vectors_config(
@@ -140,8 +140,8 @@ impl VectorRepository for QdrantRepo {
         scored_points_to_json(response.result)
     }
 
-    /// Native filtered search (R7 override): translates the JSON filter into
-    /// a server-side Qdrant `Filter` instead of post-filtering client-side.
+    /// 原生带过滤的搜索（R7 覆写）：将 JSON 过滤条件翻译成
+    /// 服务端的 Qdrant `Filter`，而不是在客户端做后置过滤。
     async fn search_with_filter(
         &self,
         collection: &str,
@@ -174,14 +174,14 @@ impl VectorRepository for QdrantRepo {
             .iter()
             .enumerate()
             .map(|(idx, p)| {
-                // Compute a stable numeric ID from the point ID.
-                // Method IDs are strings like "dt://entity/...", which must be
-                // hashed to a u64 since Qdrant only accepts numeric or standard-UUID IDs.
+                // 从点 ID 计算稳定的数值 ID。
+                // 方法 ID 是 "dt://entity/..." 这类字符串，由于 Qdrant 只接受
+                // 数值或标准 UUID ID，因此必须哈希成 u64。
                 let id_num: u64 = p
                     .get("id")
-                    .and_then(|v| v.as_u64()) // already numeric → use directly
+                    .and_then(|v| v.as_u64()) // 已是数值→直接使用
                     .unwrap_or_else(|| {
-                        // Hash the string representation to a u64
+                        // 将字符串表示哈希成 u64
                         let s = p
                             .get("id")
                             .and_then(|v| v.as_str())
@@ -233,9 +233,9 @@ impl VectorRepository for QdrantRepo {
     ) -> Result<(), DtError> {
         let qdrant = self.client.inner();
 
-        // Translate the JSON filter into a native Qdrant filter. An empty
-        // filter matches all points (Qdrant semantics) — callers that need
-        // selective deletion must pass a non-empty `must` clause.
+        // 将 JSON 过滤条件翻译成原生 Qdrant filter。空
+        // filter 匹配所有点（Qdrant 语义）——需要选择性删除的
+        // 调用方必须传入非空的 `must` 子句。
         qdrant
             .delete_points(
                 DeletePointsBuilder::new(collection.to_string())
@@ -322,7 +322,7 @@ impl VectorRepository for QdrantRepo {
             Err(e) => {
                 tracing::error!("Qdrant 健康检查失败: {}", e);
                 Ok(HealthStatus::Unhealthy(format!(
-                    "Qdrant health check: {}",
+                    "Qdrant 健康检查: {}",
                     e
                 )))
             }
@@ -331,11 +331,11 @@ impl VectorRepository for QdrantRepo {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Convert scored points into the repo's JSON hit shape
-/// (`[{"id": ..., "score": ..., "payload": {...}}]`).
+/// 将评分后的点转换为仓库的 JSON 命中形状
+/// （`[{"id": ..., "score": ..., "payload": {...}}]`）。
 fn scored_points_to_json(
     points: Vec<qdrant_client::qdrant::ScoredPoint>,
 ) -> Result<Vec<serde_json::Value>, DtError> {
@@ -365,12 +365,12 @@ fn scored_points_to_json(
     Ok(results)
 }
 
-/// Translate a Qdrant-style filter JSON
-/// (`{"must": [...], "should": [...], "must_not": [...]}` of
-/// `{"key": ..., "match": {"value": ...}}` conditions) into a native
-/// [`qdrant_client::qdrant::Filter`]. Supported match values: string
-/// (keyword), bool, integer. Anything else is rejected with an error so a
-/// malformed filter never silently degrades into "match everything".
+/// 将 Qdrant 风格的过滤器 JSON
+/// （`{"must": [...], "should": [...], "must_not": [...]}`，其中每个条件为
+/// `{"key": ..., "match": {"value": ...}}`）翻译成原生
+/// [`qdrant_client::qdrant::Filter`]。支持的匹配值：字符串
+/// （keyword）、布尔、整数。其他任何值都会报错，
+/// 这样畸形过滤器就不会悄悄退化为"匹配所有"。
 fn json_to_qdrant_filter(
     filter: &serde_json::Value,
 ) -> Result<qdrant_client::qdrant::Filter, DtError> {
@@ -390,19 +390,19 @@ fn json_to_qdrant_filter(
     })
 }
 
-/// Translate one `{"key": ..., "match": {"value": ...}}` condition.
+/// 翻译一个 `{"key": ..., "match": {"value": ...}}` 条件。
 fn json_to_condition(
     cond: &serde_json::Value,
 ) -> Result<qdrant_client::qdrant::Condition, DtError> {
     let key = cond
         .get("key")
         .and_then(|k| k.as_str())
-        .ok_or_else(|| DtError::General(format!("filter condition missing 'key': {cond}")))?;
+        .ok_or_else(|| DtError::General(format!("过滤条件缺少 'key': {cond}")))?;
     let value = cond
         .get("match")
         .and_then(|m| m.get("value"))
         .ok_or_else(|| {
-            DtError::General(format!("filter condition missing 'match.value': {cond}"))
+            DtError::General(format!("过滤条件缺少 'match.value': {cond}"))
         })?;
 
     match value {
@@ -412,18 +412,18 @@ fn json_to_condition(
         serde_json::Value::Bool(b) => Ok(qdrant_client::qdrant::Condition::matches(key, *b)),
         serde_json::Value::Number(n) => {
             let i = n.as_i64().ok_or_else(|| {
-                DtError::General(format!("filter match value not an integer: {n}"))
+                DtError::General(format!("过滤匹配值不是整数: {n}"))
             })?;
             Ok(qdrant_client::qdrant::Condition::matches(key, i))
         }
         other => Err(DtError::General(format!(
-            "unsupported filter match value (string/bool/integer only): {other}"
+            "不支持的过滤匹配值（仅支持 string/bool/integer）: {other}"
         ))),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -444,11 +444,11 @@ mod tests {
         assert!(f.should.is_empty());
         assert!(f.must_not.is_empty());
 
-        // Spot-check the first condition: Field(project matches keyword).
+        // 抽查第一个条件：Field(project matches keyword)。
         let qdrant_client::qdrant::condition::ConditionOneOf::Field(field) =
             f.must[0].condition_one_of.clone().unwrap()
         else {
-            panic!("expected field condition");
+            panic!("预期 field 条件");
         };
         assert_eq!(field.key, "project");
         let m = field.r#match.unwrap().match_value.unwrap();
@@ -491,8 +491,8 @@ mod tests {
 
     #[test]
     fn noop_uses_default_search_with_filter() {
-        // NoopVectorRepo does not override `search_with_filter` — the trait
-        // default (search + post-filter) applies and returns empty.
+        // NoopVectorRepo 未覆写 `search_with_filter`——trait
+        // 默认实现（search + 后置过滤）生效并返回空。
         let repo = NoopVectorRepo;
         let rt = tokio::runtime::Runtime::new().unwrap();
         let hits = rt

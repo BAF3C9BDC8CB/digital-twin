@@ -1,4 +1,4 @@
-//! TypeScript/TSX parser — regex-based extraction of functions, methods, and classes.
+//! TypeScript/TSX 解析器——基于正则抽取函数、方法与类。
 
 use crate::domain::error::DtError;
 use crate::domain::id::make_class_id;
@@ -73,19 +73,19 @@ impl ParseStrategy for TypeScriptParser {
         let mut methods = Vec::new();
         let mut classes = Vec::new();
 
-        // Class declarations
+        // 类声明
         let class_re = Regex::new(
             r"(?m)^\s*(export\s+)?(abstract\s+)?(class|interface|enum)\s+(\w+)\s*[^{]*\{",
         )
         .unwrap();
-        // Function declarations (including methods)
+        // 函数声明（包括方法）
         let func_re = Regex::new(
             r"(?m)^\s*(export\s+)?(async\s+)?function\s+(\w+)\s*\(([^)]*)\)\s*[:\w\s<>]*\s*\{",
         )
         .unwrap();
-        // Arrow functions assigned to const/let
+        // 赋给 const/let 的箭头函数
         let arrow_re = Regex::new(r"(?m)^\s*(export\s+)?(const|let|var)\s+(\w+)\s*=\s*(async\s+)?\([^)]*\)\s*[:\w\s<>]*\s*=>\s*\{").unwrap();
-        // Method definitions inside class bodies
+        // 类方法体内部的方法定义
         let method_re = Regex::new(r"(?m)^\s*(public|private|protected|static|async|\s)*(\w+)\s*\(([^)]*)\)\s*[:\w\s<>]*\s*\{").unwrap();
 
         for caps in class_re.captures_iter(source) {
@@ -112,7 +112,7 @@ impl ParseStrategy for TypeScriptParser {
             });
         }
 
-        // Update class end lines
+        // 更新类结束行
         let mut class_starts: Vec<usize> = classes.iter().map(|c| c.start_line).collect();
         class_starts.sort();
         let total = source.lines().count();
@@ -129,7 +129,7 @@ impl ParseStrategy for TypeScriptParser {
             }
         }
 
-        // Top-level functions
+        // 顶层函数
         for caps in func_re.captures_iter(source) {
             let name = caps[3].to_string();
             let params = caps[4].to_string();
@@ -165,7 +165,7 @@ impl ParseStrategy for TypeScriptParser {
             });
         }
 
-        // Arrow functions
+        // 箭头函数
         for caps in arrow_re.captures_iter(source) {
             let name = caps[3].to_string();
             let start_byte = caps.get(0).unwrap().start();
@@ -200,7 +200,7 @@ impl ParseStrategy for TypeScriptParser {
             });
         }
 
-        // Class methods
+        // 类方法
         for caps in method_re.captures_iter(source) {
             let method_name = caps[2].to_string();
             let params = caps[3].to_string();
@@ -214,7 +214,7 @@ impl ParseStrategy for TypeScriptParser {
             let start_byte = caps.get(0).unwrap().start();
             let start_line = {
                 let raw = source[..start_byte].lines().count() + 1;
-                // Skip blank lines: `\s*(\w+)` can match starting from a blank line
+                // 跳过空行：`\s*(\w+)` 可能从空行开始匹配
                 let src_lines: Vec<&str> = source.lines().collect();
                 let mut adj = raw;
                 while adj <= src_lines.len() && src_lines[adj - 1].trim().is_empty() {
@@ -264,7 +264,7 @@ impl ParseStrategy for TypeScriptParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {

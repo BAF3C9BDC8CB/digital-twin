@@ -1,4 +1,4 @@
-//! Go parser — regex-based extraction of functions, methods, and types.
+//! Go 解析器——基于正则抽取函数、方法与类型。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -72,10 +72,10 @@ impl ParseStrategy for GoParser {
         let mut methods = Vec::new();
         let mut classes = Vec::new();
 
-        // Struct definitions (classes in our schema)
+        // 结构体定义（对应我们 schema 中的类）
         let struct_re = Regex::new(r"(?m)^\s*type\s+(\w+)\s+struct\s*\{").unwrap();
         let interface_re = Regex::new(r"(?m)^\s*type\s+(\w+)\s+interface\s*\{").unwrap();
-        // Function declarations
+        // 函数声明
         let func_re = Regex::new(r"(?m)^\s*func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)\s*\(([^)]*)\)(\s*[\w\[\]*.,\s]+)?\s*\{").unwrap();
 
         for caps in struct_re.captures_iter(source) {
@@ -201,7 +201,7 @@ impl ParseStrategy for GoParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {

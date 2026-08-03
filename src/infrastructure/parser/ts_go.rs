@@ -1,4 +1,4 @@
-//! Go parser using tree-sitter AST.
+//! 使用 tree-sitter AST 的 Go 解析器。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -41,7 +41,7 @@ impl ParseStrategy for TsGoParser {
         let mut classes = Vec::new();
         let mut methods = Vec::new();
 
-        // Collect struct types as classes
+        // 将结构体类型收集为类
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {
@@ -75,7 +75,7 @@ impl ParseStrategy for TsGoParser {
             }
         }
 
-        // Collect functions and methods
+        // 收集函数与方法
         {
             let mut c = root.walk();
             for ch in root.children(&mut c) {
@@ -105,12 +105,12 @@ impl ParseStrategy for TsGoParser {
                         .unwrap_or_default();
                     let calls = tree_sitter_utils::extract_calls_from_body(source, &ch);
 
-                    // Find class name for methods
+                    // 为方法找类名
                     let class_name = if ch.kind() == "method_declaration" {
                         ch.child_by_field_name("receiver")
                             .and_then(|r| {
                                 let text = tree_sitter_utils::node_text(source, &r);
-                                // Extract type name after `(recv Type)` or `(recv *Type)`
+                                // 抽取 `(recv Type)` 或 `(recv *Type)` 中的类型名
                                 let trimmed =
                                     text.trim().trim_start_matches('(').trim_end_matches(')');
                                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -118,7 +118,7 @@ impl ParseStrategy for TsGoParser {
                             })
                             .unwrap_or_else(|| "_module_".to_string())
                     } else {
-                        // For regular functions (constructors), check if return type matches a struct
+                        // 对常规函数（构造函数），检查返回类型是否匹配某个结构体
                         let ret_trimmed = ret.trim().trim_start_matches('*');
                         classes
                             .iter()

@@ -1,8 +1,8 @@
-//! Parser registry — Strategy pattern for multi-language AST parsing.
+//! 解析器注册表——多语言 AST 解析的策略模式。
 //!
-//! `ParserRegistry` holds a collection of language-specific parsers,
-//! each implementing the `ParseStrategy` trait. When a file is submitted,
-//! the registry iterates through its parsers to find one that can handle it.
+//! `ParserRegistry` 持有一组语言特定的解析器，每个解析器都实现了
+//! `ParseStrategy` trait。当提交一个文件时，注册表会遍历其解析器
+//! 以找到能处理该文件的那个。
 
 pub mod document;
 pub mod go;
@@ -34,13 +34,13 @@ use self::php::PhpParser;
 use self::python::PythonParser;
 use self::rust_parser::RustParser;
 
-/// Find the closing brace that matches the opening brace at `open_byte`.
-/// Returns the 1-based line number of the closing brace.
-/// `source` is the full file source text, `open_byte` is the byte offset of `{`.
+/// 找到与 `open_byte` 处左花括号匹配的右花括号。
+/// 返回右花括号的 1 起始行号。
+/// `source` 是完整的文件源码文本，`open_byte` 是 `{` 的字节偏移。
 pub fn find_brace_end_line(source: &str, open_byte: usize) -> usize {
     let bytes = source.as_bytes();
     if open_byte >= bytes.len() || bytes[open_byte] != b'{' {
-        // No brace found — fall back to counting lines from open_byte
+        // 未找到花括号——回退为从 open_byte 起统计行数
         return source[open_byte..].lines().count();
     }
     let mut depth = 1u32;
@@ -58,7 +58,7 @@ pub fn find_brace_end_line(source: &str, open_byte: usize) -> usize {
             _ => {}
         }
     }
-    // Count newlines from the opening brace to the closing brace
+    // 统计从左花括号到右花括号之间的换行数
     source[open_byte..=end_byte]
         .chars()
         .filter(|&c| c == '\n')
@@ -66,17 +66,17 @@ pub fn find_brace_end_line(source: &str, open_byte: usize) -> usize {
 }
 use self::typescript::TypeScriptParser;
 
-/// Registry that dispatches file parsing to the appropriate language parser.
+/// 将文件解析分派给相应语言解析器的注册表。
 pub struct ParserRegistry {
     parsers: Vec<Box<dyn ParseStrategy>>,
 }
 
 impl ParserRegistry {
-    /// Create a new registry with all 7 supported language parsers.
+    /// 创建包含全部 7 种受支持语言解析器的新注册表。
     pub fn new() -> Self {
         Self {
             parsers: vec![
-                // Tree-sitter backed parsers (priority)
+                // Tree-sitter 支撑的解析器（优先）
                 Box::new(self::ts_java::TsJavaParser),
                 Box::new(self::ts_python::TsPythonParser),
                 Box::new(self::ts_javascript::TsJavaScriptParser),
@@ -84,7 +84,7 @@ impl ParserRegistry {
                 Box::new(self::ts_go::TsGoParser),
                 Box::new(self::ts_rust::TsRustParser),
                 Box::new(self::ts_php::TsPhpParser),
-                // Regex fallback parsers
+                // 正则回退解析器
                 Box::new(JavaParser),
                 Box::new(TypeScriptParser),
                 Box::new(PythonParser),
@@ -96,10 +96,10 @@ impl ParserRegistry {
         }
     }
 
-    /// Parse a single file using the first matching language parser.
+    /// 使用第一个匹配的语言解析器解析单个文件。
     ///
-    /// Returns `ParseResult` with extracted methods and classes, or an
-    /// error if no parser could handle the file or parsing failed.
+    /// 返回带有已抽取方法与类的 `ParseResult`，如果没有任何解析器
+    /// 能处理该文件或解析失败则返回错误。
     pub fn parse_file(
         &self,
         source: &str,
@@ -112,12 +112,12 @@ impl ParserRegistry {
             }
         }
         Err(DtError::General(format!(
-            "no parser available for: {}",
+            "没有可用的解析器: {}",
             path.display()
         )))
     }
 
-    /// Create a registry suitable for use with `Arc`.
+    /// 创建适合与 `Arc` 一起使用的注册表。
     pub fn into_arc(self) -> Arc<Self> {
         Arc::new(self)
     }
@@ -130,7 +130,7 @@ impl Default for ParserRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

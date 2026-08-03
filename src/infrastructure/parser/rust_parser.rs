@@ -1,4 +1,4 @@
-//! Rust parser — regex-based extraction of functions, structs, traits, and enums.
+//! Rust 解析器——基于正则抽取函数、结构体、trait 与枚举。
 
 use crate::domain::error::DtError;
 use crate::domain::id::{make_class_id, make_method_id};
@@ -82,7 +82,7 @@ impl ParseStrategy for RustParser {
         let enum_re = Regex::new(r"(?m)^\s*(pub\s+)?enum\s+(\w+)\s*\{").unwrap();
         let fn_re = Regex::new(r"(?m)^\s*(pub(?:\s*\(\s*crate\s*\))?\s+)?(async\s+)?fn\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)\s*(->\s*[\w<>\[\]*\s+()]+)?\s*(where\s+[^{]+)?\s*\{").unwrap();
 
-        // Extract struct/enum/trait as "classes"
+        // 将 struct/enum/trait 作为"类"抽取
         for caps in struct_re.captures_iter(source) {
             let name = caps[2].to_string();
             let start_byte = caps.get(0).unwrap().start();
@@ -151,7 +151,7 @@ impl ParseStrategy for RustParser {
             }
         }
 
-        // Functions
+        // 函数
         for caps in fn_re.captures_iter(source) {
             let name = caps[3].to_string();
             let params = caps
@@ -201,7 +201,7 @@ impl ParseStrategy for RustParser {
             });
         }
 
-        // Populate class method_ids
+        // 填充类的 method_ids
         for c in &mut classes {
             for m in &methods {
                 if m.class_name == c.name && m.package_or_module == c.package_or_module {

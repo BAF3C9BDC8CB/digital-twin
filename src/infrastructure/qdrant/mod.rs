@@ -1,12 +1,12 @@
-//! Qdrant storage backend (gRPC protocol).
+//! Qdrant 存储后端（gRPC 协议）。
 //!
-//! Uses `qdrant-client` crate for async gRPC communication.
+//! 使用 `qdrant-client` crate 进行异步 gRPC 通信。
 //!
-//! ## Module overview
+//! ## 模块概览
 //!
-//! - `client` — low-level gRPC client wrapper
-//! - `collection` — naming, configuration, and model-versioning
-//! - `repo` — [`VectorRepository`] trait implementations
+//! - `client` —— 底层 gRPC 客户端包装
+//! - `collection` —— 命名、配置与模型版本管理
+//! - `repo` —— [`VectorRepository`] trait 实现
 
 pub mod client;
 pub mod collection;

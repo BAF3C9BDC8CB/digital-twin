@@ -1,16 +1,16 @@
-//! HanLP REST API client — local NLP service for Chinese text processing.
+//! HanLP REST API 客户端——用于中文文本处理的本地 NLP 服务。
 //!
-//! Provides named-entity recognition, keyword extraction, and text summarization
-//! via a locally deployed HanLP HTTP server.
+//! 通过本地部署的 HanLP HTTP 服务器提供命名实体识别、关键词提取
+//! 与文本摘要能力。
 //!
-//! # Endpoints
+//! # 端点
 //!
 //! | Method | Endpoint          | Purpose        |
 //! |--------|-------------------|----------------|
 //! | `POST` | `/analyze`        | Full NLP analysis |
 //! | `GET`  | `/health`         | Health check   |
 //!
-//! # Configuration
+//! # 配置
 //!
 //! ```yaml
 //! services:
@@ -26,39 +26,39 @@ use std::time::Duration;
 use crate::domain::error::DtError;
 use crate::domain::types::HealthStatus;
 
-/// Maximum retry attempts for transient errors.
+/// 瞬时错误的最大重试次数。
 const MAX_RETRIES: u32 = 2;
 
-/// Base delay in ms for retry backoff.
+/// 重试退避的基础延迟（毫秒）。
 const RETRY_BASE_DELAY_MS: u64 = 500;
 
 // ---------------------------------------------------------------------------
-// Public types
+// 公开类型
 // ---------------------------------------------------------------------------
 
-/// Result of a HanLP NLP analysis.
+/// 一次 HanLP NLP 分析的结果。
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct HanlpResult {
-    /// Named entities extracted from the text.
+    /// 从文本中抽取的命名实体。
     #[serde(default)]
     pub entities: Vec<NamedEntity>,
-    /// Keywords extracted from the text.
+    /// 从文本中抽取的关键词。
     #[serde(default)]
     pub keywords: Vec<String>,
-    /// Summary/snippet of the text.
+    /// 文本的摘要/片段。
     #[serde(default)]
     pub summary: String,
 }
 
-/// A single named entity from HanLP.
+/// 来自 HanLP 的单个命名实体。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NamedEntity {
-    /// The entity text.
+    /// 实体文本。
     pub text: String,
-    /// Entity type tag (e.g. "NS" for place, "NT" for time, "ORG" for organization).
+    /// 实体类型标签（如 "NS" 表示地点、"NT" 表示时间、"ORG" 表示机构）。
     #[serde(default)]
     pub tag: String,
-    /// Frequency of occurrence in the text.
+    /// 在文本中出现的频次。
     #[serde(default)]
     pub frequency: usize,
 }
@@ -67,7 +67,7 @@ pub struct NamedEntity {
 // HanlpClient
 // ---------------------------------------------------------------------------
 
-/// HTTP client for a local HanLP REST API server.
+/// 本地 HanLP REST API 服务器的 HTTP 客户端。
 pub struct HanlpClient {
     http: reqwest::Client,
     base_url: String,
@@ -75,7 +75,7 @@ pub struct HanlpClient {
 }
 
 impl HanlpClient {
-    /// Create a new HanLP client.
+    /// 创建新的 HanLP 客户端。
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             http: reqwest::Client::builder()
@@ -87,7 +87,7 @@ impl HanlpClient {
         }
     }
 
-    /// Build a POST request to the given path.
+    /// 向给定路径构建一个 POST 请求。
     fn post(&self, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let mut req = self
@@ -100,7 +100,7 @@ impl HanlpClient {
         req
     }
 
-    /// Execute a request with retry logic.
+    /// 带重试逻辑地执行一个请求。
     async fn request_with_retry(
         &self,
         req: reqwest::RequestBuilder,
@@ -124,7 +124,7 @@ impl HanlpClient {
 
             let req_built = req
                 .try_clone()
-                .ok_or_else(|| DtError::Repository("HanLP: failed to clone request".into()))?;
+                .ok_or_else(|| DtError::Repository("HanLP: 请求克隆失败".into()))?;
 
             match req_built.send().await {
                 Ok(resp) => {
@@ -138,7 +138,7 @@ impl HanlpClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "HanLP {} error ({}): {}",
+                        "HanLP {} 错误 ({}): {}",
                         operation, status, body
                     )));
                 }
@@ -148,7 +148,7 @@ impl HanlpClient {
                         continue;
                     }
                     return Err(DtError::Repository(format!(
-                        "HanLP {} request failed: {}",
+                        "HanLP {} 请求失败: {}",
                         operation, e
                     )));
                 }
@@ -156,14 +156,14 @@ impl HanlpClient {
         }
 
         Err(DtError::Repository(format!(
-            "HanLP {} failed after {} retries: {}",
+            "HanLP {} 重试 {} 次后仍失败: {}",
             operation, MAX_RETRIES, last_error
         )))
     }
 
-    /// Perform full NLP analysis on the given text.
+    /// 对给定文本执行完整 NLP 分析。
     ///
-    /// Returns extracted entities, keywords, and summary.
+    /// 返回抽取出的实体、关键词与摘要。
     pub async fn analyze(&self, text: &str) -> Result<HanlpResult, DtError> {
         if text.trim().is_empty() {
             return Ok(HanlpResult {
@@ -185,13 +185,13 @@ impl HanlpClient {
         let json: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| DtError::Repository(format!("HanLP analyze parse: {e}")))?;
+            .map_err(|e| DtError::Repository(format!("HanLP analyze 解析: {e}")))?;
 
-        // Parse entities from NER results
+        // 从 NER 结果中解析实体
         let mut entities: Vec<NamedEntity> = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        // Try different NER task keys
+        // 尝试不同的 NER 任务键
         for task_key in &["ner/ms", "ner/pku", "ner/ontonotes"] {
             if let Some(ner_list) = json.get(*task_key).and_then(|v| v.as_array()) {
                 for item in ner_list {
@@ -207,7 +207,7 @@ impl HanlpClient {
                                 frequency: 1,
                             });
                         } else {
-                            // Increment frequency for duplicates
+                            // 对重复实体累加频次
                             if let Some(e) = entities
                                 .iter_mut()
                                 .find(|e| e.text == text_val && e.tag == tag_val)
@@ -220,7 +220,7 @@ impl HanlpClient {
             }
         }
 
-        // Parse keywords
+        // 解析关键词
         let keywords: Vec<String> = json
             .get("keywords")
             .and_then(|v| v.as_array())
@@ -231,7 +231,7 @@ impl HanlpClient {
             })
             .unwrap_or_default();
 
-        // Parse summary
+        // 解析摘要
         let summary = json
             .get("summary")
             .and_then(|v| v.as_str())
@@ -245,22 +245,22 @@ impl HanlpClient {
         })
     }
 
-    /// Check service health.
+    /// 检查服务健康状态。
     pub async fn health_check(&self) -> Result<HealthStatus, DtError> {
         let url = format!("{}/health", self.base_url.trim_end_matches('/'));
         match self.http.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => Ok(HealthStatus::Healthy),
             Ok(resp) => Ok(HealthStatus::Unhealthy(format!(
-                "HanLP health: HTTP {}",
+                "HanLP 健康检查: HTTP {}",
                 resp.status()
             ))),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!("HanLP health: {e}"))),
+            Err(e) => Ok(HealthStatus::Unhealthy(format!("HanLP 健康检查: {e}"))),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

@@ -1,14 +1,14 @@
-//! Embed provider router — routes embed/rerank/llm requests to the
-//! configured provider (SiliconFlow or XInference) per capability.
+//! Embed provider 路由器——按能力将 embed/rerank/llm 请求路由到
+//! 配置的 provider（SiliconFlow 或 XInference）。
 //!
-//! # Usage
+//! # 用法
 //!
 //! ```ignore
 //! let router = EmbedProviderRouter::new(siliconflow, xinference, config);
 //! let embed: Arc<dyn EmbedService> = Arc::new(router);
 //! ```
 //!
-//! Configuration determines which provider handles each capability:
+//! 配置决定每个能力由哪个 provider 处理：
 //! - `embed_provider`: "siliconflow" | "xinference"
 //! - `rerank_provider`: "siliconflow" | "xinference"
 //! - `llm_provider`: "siliconflow" | "xinference"
@@ -20,16 +20,16 @@ use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 
-/// Provider routing configuration.
+/// Provider 路由配置。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProviderRouterConfig {
-    /// Which provider handles embedding ("siliconflow" or "xinference").
+    /// 处理 embedding 的 provider（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_embed_provider")]
     pub embed_provider: String,
-    /// Which provider handles reranking ("siliconflow" or "xinference").
+    /// 处理 reranking 的 provider（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_rerank_provider")]
     pub rerank_provider: String,
-    /// Which provider handles LLM chat ("siliconflow" or "xinference").
+    /// 处理 LLM 对话的 provider（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_llm_provider")]
     pub llm_provider: String,
 }
@@ -54,11 +54,10 @@ fn default_llm_provider() -> String {
     "siliconflow".to_string()
 }
 
-/// Routes embed/rerank/llm requests to the appropriate provider.
+/// 将 embed/rerank/llm 请求路由到相应的 provider。
 ///
-/// Each provider is optional — if a capability's configured provider is
-/// `None`, that capability falls back to the other provider, or returns
-/// an error if both are unavailable.
+/// 每个 provider 都是可选的——如果某个能力配置的 provider 为
+/// `None`，该能力会回退到另一个 provider，若两者都不可用则返回错误。
 pub struct EmbedProviderRouter {
     siliconflow: Option<Arc<super::siliconflow::SiliconFlowClient>>,
     xinference: Option<Arc<super::xinference::XInferenceClient>>,
@@ -66,7 +65,7 @@ pub struct EmbedProviderRouter {
 }
 
 impl EmbedProviderRouter {
-    /// Create a new router with both providers and routing config.
+    /// 用两个 provider 与路由配置创建新路由器。
     pub fn new(
         siliconflow: Option<Arc<super::siliconflow::SiliconFlowClient>>,
         xinference: Option<Arc<super::xinference::XInferenceClient>>,
@@ -79,7 +78,7 @@ impl EmbedProviderRouter {
         }
     }
 
-    /// Create a new router with only a SiliconFlow client (backwards-compatible).
+    /// 用仅一个 SiliconFlow 客户端创建新路由器（向后兼容）。
     pub fn from_siliconflow(client: Arc<super::siliconflow::SiliconFlowClient>) -> Self {
         Self {
             siliconflow: Some(client),
@@ -88,12 +87,12 @@ impl EmbedProviderRouter {
         }
     }
 
-    /// Get the provider for a given capability name.
+    /// 获取给定能力名称对应的 provider。
     ///
-    /// NOTE: This function was removed because the original return type
-    /// `Option<&Arc<SiliconFlowClient>>` cannot express XInference providers.
-    /// All routing is handled by embed_provider(), rerank_provider(), and
-    /// llm_provider() which correctly use `EmbedProviderRef` enum.
+    /// 注意：此函数已被移除，因为原始返回类型
+    /// `Option<&Arc<SiliconFlowClient>>` 无法表达 XInference provider。
+    /// 所有路由都由 embed_provider()、rerank_provider() 与
+    /// llm_provider() 处理，它们正确使用 `EmbedProviderRef` 枚举。
     #[allow(dead_code)]
     fn provider_for(
         &self,
@@ -108,75 +107,75 @@ impl EmbedProviderRouter {
 
         match provider_name.as_str() {
             "siliconflow" => self.siliconflow.as_ref(),
-            "xinference" => None, // XInference needs EmbedProviderRef, not this
+            "xinference" => None, // XInference 需要 EmbedProviderRef，而非此函数
             _ => self.siliconflow.as_ref(),
         }
     }
 
-    /// Get the siliconflow provider.
+    /// 获取 siliconflow provider。
     fn sf(&self) -> Option<&Arc<super::siliconflow::SiliconFlowClient>> {
         self.siliconflow.as_ref()
     }
 
-    /// Get the xinference provider.
+    /// 获取 xinference provider。
     fn xi(&self) -> Option<&Arc<super::xinference::XInferenceClient>> {
         self.xinference.as_ref()
     }
 
-    /// Pick the embed provider based on config.
+    /// 根据配置选择 embed provider。
     fn embed_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.embed_provider.as_str() {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("siliconflow provider not configured for embed".into())
+                    DtError::Repository("embed 未配置 siliconflow provider".into())
                 }),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("xinference provider not configured for embed".into())
+                    DtError::Repository("embed 未配置 xinference provider".into())
                 }),
-            other => Err(DtError::Config(format!("unknown embed provider: {other}"))),
+            other => Err(DtError::Config(format!("未知的 embed provider: {other}"))),
         }
     }
 
-    /// Pick the rerank provider based on config.
+    /// 根据配置选择 rerank provider。
     fn rerank_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.rerank_provider.as_str() {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("siliconflow provider not configured for rerank".into())
+                    DtError::Repository("rerank 未配置 siliconflow provider".into())
                 }),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("xinference provider not configured for rerank".into())
+                    DtError::Repository("rerank 未配置 xinference provider".into())
                 }),
-            other => Err(DtError::Config(format!("unknown rerank provider: {other}"))),
+            other => Err(DtError::Config(format!("未知的 rerank provider: {other}"))),
         }
     }
 
-    /// Pick the LLM provider based on config.
+    /// 根据配置选择 LLM provider。
     fn llm_provider(&self) -> Result<EmbedProviderRef<'_>, DtError> {
         match self.config.llm_provider.as_str() {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("siliconflow provider not configured for llm".into())
+                    DtError::Repository("llm 未配置 siliconflow provider".into())
                 }),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
                 .ok_or_else(|| {
-                    DtError::Repository("xinference provider not configured for llm".into())
+                    DtError::Repository("llm 未配置 xinference provider".into())
                 }),
-            other => Err(DtError::Config(format!("unknown llm provider: {other}"))),
+            other => Err(DtError::Config(format!("未知的 llm provider: {other}"))),
         }
     }
 }
@@ -198,23 +197,23 @@ impl EmbedService for EmbedProviderRouter {
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
         use crate::domain::traits::EmbedService;
 
-        // Check the configured embed provider; fall back to any available provider
+        // 检查配置的 embed provider；回退到任何可用的 provider
         let result = match self.embed_provider() {
             Ok(EmbedProviderRef::SiliconFlow(c)) => EmbedService::health_check(c).await,
             Ok(EmbedProviderRef::XInference(c)) => EmbedService::health_check(c).await,
             Err(_) => {
-                // If embed provider is not configured, try any available provider
+                // 如果未配置 embed provider，尝试任何可用 provider
                 if let Some(c) = self.sf() {
                     EmbedService::health_check(c.as_ref()).await
                 } else if let Some(c) = self.xi() {
                     EmbedService::health_check(c.as_ref()).await
                 } else {
-                    return Ok(HealthStatus::Unhealthy("no provider configured".into()));
+                    return Ok(HealthStatus::Unhealthy("未配置任何 provider".into()));
                 }
             }
         };
 
-        // Also check the other provider if configured, but don't fail if it's down
+        // 若配置了另一个 provider 也一并检查，但宕机时不视为失败
         match self.config.embed_provider.as_str() {
             "siliconflow" => {
                 if let Some(c) = self.xi() {
@@ -253,7 +252,7 @@ impl RerankService for EmbedProviderRouter {
                 } else if let Some(c) = self.xi() {
                     RerankService::health_check(c.as_ref()).await
                 } else {
-                    Ok(HealthStatus::Unhealthy("no provider configured".into()))
+                    Ok(HealthStatus::Unhealthy("未配置任何 provider".into()))
                 }
             }
         }
@@ -292,7 +291,7 @@ impl LlmService for EmbedProviderRouter {
                 } else if let Some(c) = self.xi() {
                     LlmService::health_check(c.as_ref()).await
                 } else {
-                    Ok(HealthStatus::Unhealthy("no provider configured".into()))
+                    Ok(HealthStatus::Unhealthy("未配置任何 provider".into()))
                 }
             }
         }
@@ -306,7 +305,7 @@ impl LlmService for EmbedProviderRouter {
             max_tokens: 4096,
         };
 
-        // Check LLM provider
+        // 检查 LLM provider
         match self.llm_provider() {
             Ok(EmbedProviderRef::SiliconFlow(c)) => {
                 let inner = c.capabilities();
@@ -324,7 +323,7 @@ impl LlmService for EmbedProviderRouter {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -380,16 +379,16 @@ mod tests {
         assert!(router.siliconflow.is_some());
         assert!(router.xinference.is_some());
 
-        // embed should route to xinference
+        // embed 应路由到 xinference
         match router.embed_provider().unwrap() {
-            EmbedProviderRef::XInference(_) => {} // expected
-            _ => panic!("expected xinference for embed"),
+            EmbedProviderRef::XInference(_) => {} // 预期
+            _ => panic!("预期 embed 使用 xinference"),
         }
 
-        // rerank should route to siliconflow
+        // rerank 应路由到 siliconflow
         match router.rerank_provider().unwrap() {
-            EmbedProviderRef::SiliconFlow(_) => {} // expected
-            _ => panic!("expected siliconflow for rerank"),
+            EmbedProviderRef::SiliconFlow(_) => {} // 预期
+            _ => panic!("预期 rerank 使用 siliconflow"),
         }
     }
 
@@ -409,7 +408,7 @@ mod tests {
         let router = EmbedProviderRouter::new(Some(client), None, config);
         let texts = vec!["test".to_string()];
         let result = router.embed_batch(&texts);
-        // Should fail at embed_provider() before making any HTTP call
+        // 应在发起任何 HTTP 调用之前于 embed_provider() 处失败
         assert!(result.await.is_err());
     }
 }
