@@ -4,4 +4,5 @@ pub mod hooks;
 pub mod knowledge;
 pub mod pipeline;
 pub mod plugins;
+pub mod sense;
 pub mod sync;
