@@ -43,7 +43,7 @@
 - Consumes: 无
 - Produces: 本任务的基线结论供后续所有任务使用
 
-- [ ] **Step 1: 确认编译基线**
+- [x] **Step 1: 确认编译基线**
 
 运行：
 ```bash
@@ -52,11 +52,11 @@ cargo test --lib 2>&1 | tail -5
 ```
 Expected: check 通过；`test result: FAILED. 675 passed; 2 failed`（失败项为 ts_java::parses_hello_service 与 backup_sqlite::copy_database_writes_file）。若基线不同，在 commit 消息中记录实际数字。
 
-- [ ] **Step 2: 盘点测试中需同步的英文提示语**
+- [x] **Step 2: 盘点测试中需同步的英文提示语**
 
 用 `rg -n '"(.*[A-Za-z]{2,}.*)+"|expect\(|assert!\(|assert_eq!\('` 扫描 `tests/*.rs` 与 `src/application/pipeline/test/`，列出所有英文 `expect()`/`assert!` 消息，判断哪些是「内部提示语」（可译为中文）、哪些是「功能性字符串」（如 Cypher/命令，禁止翻译）。将结论写入 `docs/superpowers/specs/2026-08-03-comments-chinese-design.md` 的附录「测试断言清单」。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add docs/superpowers/specs/2026-08-03-comments-chinese-design.md
@@ -75,26 +75,26 @@ git commit -m "docs(comments-chinese): 记录测试断言中文化清单与基�
 - Consumes: Task 1 的翻译规范与基线
 - Produces: domain 层全部注释/日志字符串中文化；`///` 文档注释转中文（类型/方法名不变）
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 按 Global Constraints 规则翻译上述 6 个文件：约 240 行英文注释（types.rs 94、traits.rs 84、config.rs 18、error.rs 11、id.rs 10、mod.rs 少量）。文件内 `#[cfg(test)]` 模块中的英文 `expect()`/`assert!` 提示语同步译为中文（内部提示语；功能性字符串除外）。
 
-- [ ] **Step 2: 编译验证**
+- [x] **Step 2: 编译验证**
 
 运行：`cargo check`
 Expected: 编译通过，无错误。
 
-- [ ] **Step 3: Clippy 验证**
+- [x] **Step 3: Clippy 验证**
 
 运行：`cargo clippy --all-targets 2>&1 | tail -3`
 Expected: 无新增告警。
 
-- [ ] **Step 4: 单元测试验证**
+- [x] **Step 4: 单元测试验证**
 
 运行：`cargo test --lib`
 Expected: 仍为 675 passed / 2 failed（既有失败不变，无新增失败）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/domain/
@@ -112,15 +112,15 @@ git commit -m "i18n(domain): 注释与日志消息中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: shared 层注释与日志字符串中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 380 行英文注释（chunker.rs 191、coordinator.rs 101 为主要）。注意 `logging/formatter.rs` 与 `metrics.rs` 中的格式化字段名、指标名保持原样。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
 `cargo check` → 通过；`cargo clippy --all-targets` → 无新增告警；`cargo test --lib` → 675/2 不变。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/shared/
@@ -139,15 +139,15 @@ git commit -m "i18n(shared): 注释与日志消息中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: CLI 与 gRPC 层注释与日志字符串中文化（本层日志字符串最多）
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 400 行英文注释 + 大量日志字符串（backup_memgraph.rs 38、build.rs 61、grpc/wiring.rs 46 等）。CLI 命令帮助文本、用户可见提示、错误消息均译为中文。注意：`search_render.rs` 中用于渲染搜索结果的**功能性字段/标签**若被测试或下游消费则保留，纯展示文本可译。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
 `cargo check` → 通过；`cargo clippy --all-targets` → 无新增告警；`cargo test --lib` → 675/2 不变（backup_sqlite 既有失败仍是同一失败）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/interfaces/
@@ -166,13 +166,13 @@ git commit -m "i18n(interfaces): CLI 与 gRPC 注释及日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: knowledge 子模块注释与日志中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 700 行英文注释（kg_bridge 属于 sync 不在本任务；本任务含 consolidate.rs 95、knowledge/entities.rs 92、knowledge/service.rs 86、reasoning/service.rs 80、learn.rs 76 等）。`extract/model.rs` 中与 JSON 字段对应的方法名/字段保持原样。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/application/knowledge/
@@ -191,13 +191,13 @@ git commit -m "i18n(knowledge): 知识子模块注释与日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: build/context/hooks 子模块注释与日志中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 500 行英文注释（watcher.rs 73、pipeline.rs 73、updater.rs 58、engine.rs 20 等）。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/application/build/ src/application/context/ src/application/hooks/ src/application/mod.rs
@@ -216,13 +216,13 @@ git commit -m "i18n(build-context-hooks): 注释与日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: pipeline 子模块注释与日志中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 600 行英文注释（engine.rs 148、config.rs 62、test/runner.rs 57 等）。**重点注意**：`pipeline/test/runner.rs` 中的 `"Query methods from graph"`、`"Query classes from graph"`、`"Query CALLS relationships"` 等是**功能性 Cypher 查询标记，禁止翻译**；`prompt.rs` 中的提示词模板若含英文说明文字可译，但模板内的占位符 `{...}` 与指令关键字保持原样。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/application/pipeline/
@@ -241,13 +241,13 @@ git commit -m "i18n(pipeline): 流水线注释与日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: plugins/sync 子模块注释与日志中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 600 行英文注释（kg_bridge.rs 177、nacos/config_sync.rs 78、sync/queue.rs 72、k8s/types.rs 42 等）。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/application/plugins/ src/application/sync/
@@ -266,15 +266,15 @@ git commit -m "i18n(plugins-sync): 插件与同步模块注释及日志中文化
 - Consumes: Task 1 的翻译规范与基线
 - Produces: infrastructure 层注释与日志中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 600 行英文注释（siliconflow.rs 57、memgraph/schema.rs 51、parser/document.rs 42、hanlp.rs 33、parser/java.rs 36 等）。**重点注意**：parser 各 ts_*.rs 与 xxx.rs 中与 tree-sitter 查询/语法相关的字符串（如 query 片段、node 类型名）保持原样。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
 `cargo test --lib` 中 ts_java::parses_hello_service 仍为既有失败（仅提示语已译）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/infrastructure/
@@ -292,13 +292,13 @@ git commit -m "i18n(infrastructure): 基础设施注释与日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: 入口文件注释与日志字符串中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 180 行英文注释 + main.rs 的 64 处日志宏（main.rs 162 行注释为主）。注意 `build.rs` 与 `src/proto.rs` 中的生成代码相关注释可译，但 `include!`/`tonic::include_proto!` 等生成代码文件保持原样。
 
-- [ ] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
+- [x] **Step 2-4: 验证（同 Task 2 的 Step 2-4）**
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/main.rs src/lib.rs src/proto.rs build.rs
@@ -317,11 +317,11 @@ git commit -m "i18n(entry): 入口文件注释与日志中文化"
 - Consumes: Task 1 的翻译规范与基线
 - Produces: 脚本与协议文件注释中文化
 
-- [ ] **Step 1: 翻译全部英文注释与日志字符串**
+- [x] **Step 1: 翻译全部英文注释与日志字符串**
 
 约 82 行英文注释（`#`、`//`）。`*.proto` 文件中 `package`、`option`、`rpc` 方法名、字段名、`google.protobuf.*` 类型保持原样，仅注释与描述转中文。
 
-- [ ] **Step 2: 语法验证**
+- [x] **Step 2: 语法验证**
 
 运行：
 ```bash
@@ -331,7 +331,7 @@ protoc --version 2>/dev/null && echo "protoc 可用(如需可再验证 proto)"
 ```
 Expected: py_compile 无错误；bash -n 无错误。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add python/ proto/ mcp/ scripts/
@@ -349,21 +349,21 @@ git commit -m "i18n(scripts): Python/proto/shell 注释中文化"
 - Consumes: Task 1 生成的测试断言清单
 - Produces: 集成测试内部提示语中文化
 
-- [ ] **Step 1: 翻译测试内部提示语**
+- [x] **Step 1: 翻译测试内部提示语**
 
 将 3 个测试文件中英文 `expect()`/`assert!` 消息译为中文（如 `"search must succeed"` → `"搜索必须成功"`）。**功能性字符串禁止翻译**：常量 URL（`bolt://localhost:7688` 等）、Cypher 查询、`XINFERENCE_URL` 环境变量名。
 
-- [ ] **Step 2: 编译验证**
+- [x] **Step 2: 编译验证**
 
 运行：`cargo check --all-targets`
 Expected: 编译通过。
 
-- [ ] **Step 3: 集成测试（环境可用时）**
+- [x] **Step 3: 集成测试（环境可用时）**
 
 运行：`cargo test --test extract_real_docs --test s5_knowledge_search --test unified_search`
 Expected: 若 Memgraph/Qdrant/Xinference 可用则通过；不可用则记录跳过。
 
-- [ ] **Step 4: 提交**
+- [x] **Step 4: 提交**
 
 ```bash
 git add tests/
@@ -381,15 +381,15 @@ git commit -m "i18n(tests): 集成测试断言提示语中文化"
 - Consumes: Task 1 的翻译规范
 - Produces: 全部文档中文版
 
-- [ ] **Step 1: CLAUDE.md 全文中译**
+- [x] **Step 1: CLAUDE.md 全文中译**
 
 翻译全部英文正文为中文，保留代码块、命令、路径、文件名、格式符号（`**bold**`、列表、代码 fence）不变。
 
-- [ ] **Step 2: docs/ 与 README 残留清理**
+- [x] **Step 2: docs/ 与 README 残留清理**
 
 对 9 个 docs 文件与 README 执行 `rg -n "^[A-Za-z][A-Za-z0-9 ,.'\"()\-]{10,}$"` 扫描，将残留英文行（每个文件 0-2 行）译为中文；确认无英文正文残留。
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add CLAUDE.md README.md docs/
@@ -407,7 +407,7 @@ git commit -m "docs(i18n): CLAUDE.md 中译及文档残留英文清理"
 - Consumes: 所有前序任务的产物
 - Produces: 最终回归结论
 
-- [ ] **Step 1: 全量编译与静态检查**
+- [x] **Step 1: 全量编译与静态检查**
 
 运行：
 ```bash
@@ -417,7 +417,7 @@ cargo test --lib 2>&1 | tail -5
 ```
 Expected: build 通过；clippy 无新增告警；`675 passed / 2 failed`（既有 2 失败不变）。
 
-- [ ] **Step 2: 英文残留扫描**
+- [x] **Step 2: 英文残留扫描**
 
 运行：
 ```bash
@@ -426,7 +426,7 @@ rg -n "^[A-Za-z][A-Za-z0-9 ,.'\"()\-]{10,}$" README.md CLAUDE.md 2>/dev/null
 ```
 Expected: 源码中无可翻译的英文注释残留（允许 1-2 个技术性例外并注明）；README/CLAUDE 无英文正文。
 
-- [ ] **Step 3: 提交（若有修正）**
+- [x] **Step 3: 提交（若有修正）**
 
 ```bash
 git add -u
