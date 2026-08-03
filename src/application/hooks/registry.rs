@@ -69,7 +69,7 @@ impl HookRegistry {
 
         let mut subscribers: HashMap<String, Vec<EventTypeConfig>> = HashMap::new();
 
-        // Take ownership of event_types, mutate each, then rebuild config
+        // 取得 event_types 的所有权，逐个修改后再重建 config
         let event_types = std::mem::take(&mut config.event_types);
         let mut processed: Vec<EventTypeConfig> = Vec::with_capacity(event_types.len());
 
@@ -141,7 +141,7 @@ event_types:
         required: true
 "#;
 
-        let config: HookConfig = serde_yaml::from_str(yaml).expect("parse yaml");
+        let config: HookConfig = serde_yaml::from_str(yaml).expect("解析 yaml");
         assert_eq!(config.hooks.len(), 1);
         assert_eq!(config.event_types.len(), 1);
         assert_eq!(config.event_types[0].label, "Modification");
@@ -173,7 +173,7 @@ event_types:
     id_field: log_id
 "#;
 
-        let config: HookConfig = serde_yaml::from_str(yaml).expect("parse");
+        let config: HookConfig = serde_yaml::from_str(yaml).expect("解析");
         let mut subscribers: HashMap<String, Vec<EventTypeConfig>> = HashMap::new();
         for et in &config.event_types {
             subscribers

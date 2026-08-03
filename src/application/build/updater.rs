@@ -1,24 +1,23 @@
-//! Update command — single-file real-time incremental update.
+//! Update 命令 — 单文件实时增量更新。
 //!
-//! Implements `dt update --file <path>`: deletes old entities for a file,
-//! re-parses it, writes new entities to the graph database, and rebuilds call edges.
+//! 实现 `dt update --file <path>`：删除文件旧的实体，
+//! 重新解析它，向图数据库写入新实体，并重建调用边。
 //!
-//! # Idempotency
+//! # 幂等性
 //!
-//! The update is idempotent: old Method/Class nodes for the file are deleted
-//! first (via DETACH DELETE), then new nodes are upserted via MERGE on their
-//! unique `method_id` / `class_id`. Running the same update twice produces
-//! the same graph state.
+//! 更新是幂等的：文件旧的 Method/Class 节点先被删除（通过 DETACH DELETE），
+//! 然后通过唯一 `method_id` / `class_id` 上的 MERGE upsert 新节点。
+//! 对同一更新执行两次会产生相同的图谱状态。
 //!
-//! # Flow
+//! # 流程
 //!
-//! 1. Acquire file lock via `WriteCoordinator`
-//! 2. Delete old Method + Class nodes for this file
-//! 3. Parse file via `ParserRegistry` → MethodBlock + ClassBlock
-//! 4. Write new Method + Class nodes (MERGE)
-//! 5. Write CONTAINS relationships
-//! 6. Rebuild CALLS relationships for affected methods
-//! 7. Release lock → return `UpdateReport`
+//! 1. 通过 `WriteCoordinator` 获取文件锁
+//! 2. 删除该文件的旧 Method + Class 节点
+//! 3. 通过 `ParserRegistry` 解析文件 → MethodBlock + ClassBlock
+//! 4. 写入新 Method + Class 节点（MERGE）
+//! 5. 写入 CONTAINS 关系
+//! 6. 为受影响的方法重建 CALLS 关系
+//! 7. 释放锁 → 返回 `UpdateReport`
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
@@ -33,10 +32,10 @@ use crate::infrastructure::scanner;
 use crate::shared::coordinator::WriteCoordinator;
 
 // ---------------------------------------------------------------------------
-// UpdateCommand — CLI struct
+// UpdateCommand — CLI 结构体
 // ---------------------------------------------------------------------------
 
-/// Single file incremental update command.
+/// 单文件增量更新命令。
 ///
 /// ```bash
 /// dt update --file /path/to/PayService.java --project my-project
@@ -45,18 +44,18 @@ use crate::shared::coordinator::WriteCoordinator;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "update",
-    about = "Single-file incremental update into the knowledge graph"
+    about = "将单文件增量更新到知识图谱"
 )]
 pub struct UpdateCommand {
-    /// Absolute path to the file to update.
+    /// 待更新文件的绝对路径。
     #[arg(long = "file")]
     pub file_path: PathBuf,
 
-    /// Project name (required).
+    /// 项目名称（必填）。
     #[arg(long = "project", short = 'p')]
     pub project_name: String,
 
-    /// Operation type: create, modify, or delete.
+    /// 操作类型：create、modify 或 delete。
     #[arg(long = "type", default_value = "modify")]
     pub op_type: String,
 }
@@ -65,28 +64,28 @@ pub struct UpdateCommand {
 // UpdateReport
 // ---------------------------------------------------------------------------
 
-/// Report produced by a single-file update operation.
+/// 单文件更新操作产生的报告。
 #[derive(Debug, Clone)]
 pub struct UpdateReport {
-    /// Absolute file path that was updated.
+    /// 被更新的文件绝对路径。
     pub file: String,
-    /// Project name.
+    /// 项目名称。
     pub project: String,
-    /// Number of methods written.
+    /// 写入的方法数。
     pub methods_updated: usize,
-    /// Number of classes written.
+    /// 写入的类数。
     pub classes_updated: usize,
-    /// Number of CALLS relationships rebuilt.
+    /// 重建的 CALLS 关系数。
     pub calls_rebuilt: usize,
-    /// Wall-clock duration in milliseconds.
+    /// 墙钟耗时（毫秒）。
     pub elapsed_ms: u64,
 }
 
 // ---------------------------------------------------------------------------
-// UpdateRunner — core logic
+// UpdateRunner — 核心逻辑
 // ---------------------------------------------------------------------------
 
-/// Dependencies needed to execute a single-file update.
+/// 执行单文件更新所需的依赖。
 pub struct UpdateDependencies {
     pub graph: Option<Arc<dyn GraphRepository>>,
     pub vector: Option<Arc<dyn VectorRepository>>,
@@ -95,27 +94,27 @@ pub struct UpdateDependencies {
     pub coordinator: Option<Arc<WriteCoordinator>>,
 }
 
-/// Executes the single-file update pipeline.
+/// 执行单文件更新流水线。
 ///
-/// This is the core logic used by both the CLI `dt update` command and
-/// the daemon's `update_file` gRPC endpoint.
+/// 这是 CLI `dt update` 命令与守护进程的 `update_file` gRPC
+/// 端点共用的核心逻辑。
 pub struct UpdateRunner {
     parser_registry: Arc<ParserRegistry>,
 }
 
 impl UpdateRunner {
-    /// Create a new runner with the given parser registry.
+    /// 使用给定的解析器注册表创建新的 runner。
     pub fn new(parser_registry: Arc<ParserRegistry>) -> Self {
         Self { parser_registry }
     }
 
-    /// Execute the update for a single file.
+    /// 为单个文件执行更新。
     ///
-    /// # Arguments
-    /// - `project`: project name.
-    /// - `root`: project root directory (for computing relative paths).
-    /// - `file_path`: absolute path to the file.
-    /// - `deps`: storage backends and write coordinator.
+    /// # 参数
+    /// - `project`：项目名称。
+    /// - `root`：项目根目录（用于计算相对路径）。
+    /// - `file_path`：文件的绝对路径。
+    /// - `deps`：存储后端与写协调器。
     pub async fn run(
         &self,
         project: &str,
@@ -126,22 +125,22 @@ impl UpdateRunner {
     ) -> Result<UpdateReport, DtError> {
         let start = Instant::now();
 
-        // ---- Step 1: Acquire file lock ----
+        // ---- 步骤 1：获取文件锁 ----
         let _guard = if let Some(coord) = &deps.coordinator {
             Some(coord.acquire_file(file_path).await)
         } else {
             None
         };
 
-        // ---- Step 2: Delete old entities for this file ----
+        // ---- 步骤 2：删除该文件的旧实体 ----
         let rel_path = scanner::rel_path(root, file_path);
         if let Some(graph) = &deps.graph {
             delete_by_file_path(graph, project, &rel_path).await;
         }
 
-        // ---- Handle "delete" type: skip re-insertion ----
+        // ---- 处理 "delete" 类型：跳过重新插入 ----
         if is_delete_type(&rel_path) {
-            // Delete-only: remove old data and return.
+            // 仅删除：清除旧数据并返回。
             let elapsed_ms = start.elapsed().as_millis() as u64;
             return Ok(UpdateReport {
                 file: file_path.to_string_lossy().to_string(),
@@ -153,13 +152,13 @@ impl UpdateRunner {
             });
         }
 
-        // ---- Step 3: Read and parse the file ----
+        // ---- 步骤 3：读取并解析文件 ----
         let source = std::fs::read_to_string(file_path).map_err(DtError::Io)?;
         let parse_result = self
             .parser_registry
             .parse_file(&source, file_path, project)?;
 
-        // ---- Step 4: Update snapshot (if available) ----
+        // ---- 步骤 4：更新快照（若可用） ----
         if let Some(snapshot_repo) = &deps.snapshot {
             let (file_hash, file_mtime) = scanner::compute_file_hash(file_path).unwrap_or_default();
             let fs_snapshot = crate::domain::types::FileSnapshot {
@@ -176,18 +175,18 @@ impl UpdateRunner {
         let methods_count = parse_result.methods.len();
         let classes_count = parse_result.classes.len();
 
-        // ---- Step 5: Write graph (methods, classes, relationships) ----
+        // ---- 步骤 5：写入图谱（方法、类、关系） ----
         if let Some(graph) = &deps.graph {
-            // 5a. Write methods
+            // 5a. 写入方法
             write_methods(graph, &parse_result.methods, batch).await;
 
-            // 5b. Write classes
+            // 5b. 写入类
             write_classes(graph, &parse_result.classes, batch).await;
 
-            // 5c. Write CONTAINS relationships
+            // 5c. 写入 CONTAINS 关系
             write_contains_relationships(graph, &parse_result.classes).await;
 
-            // 5d. Write module nodes
+            // 5d. 写入模块节点
             write_modules_for_file(
                 graph,
                 project,
@@ -198,7 +197,7 @@ impl UpdateRunner {
             .await;
         }
 
-        // ---- Step 6: Rebuild CALLS relationships ----
+        // ---- 步骤 6：重建 CALLS 关系 ----
         let calls_rebuilt = if let Some(graph) = &deps.graph {
             rebuild_calls_for_file(graph, project, &parse_result.methods, &rel_path).await
         } else {
@@ -219,28 +218,28 @@ impl UpdateRunner {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: decide if this is a "delete" operation
+// 辅助函数：判断是否为 "delete" 操作
 // ---------------------------------------------------------------------------
 
-/// The `--type` flag drives whether we re-insert after deletion.
-/// For `delete`, we only clear old data.
-/// For `create` and `modify`, we parse and re-write.
+/// `--type` 标志决定删除后是否重新插入。
+/// 对 `delete`，仅清除旧数据。
+/// 对 `create` 和 `modify`，解析并重新写入。
 fn is_delete_type(op_type: &str) -> bool {
     op_type.eq_ignore_ascii_case("delete")
 }
 
 // ---------------------------------------------------------------------------
-// Helper: delete old entities for a single file
+// 辅助函数：删除单个文件的旧实体
 // ---------------------------------------------------------------------------
 
-/// Delete Method and Class nodes that belong to the given `file_path`.
+/// 删除属于给定 `file_path` 的 Method 与 Class 节点。
 ///
-/// We use `DETACH DELETE` so that incoming/outgoing relationships (CALLS,
-/// CONTAINS) are automatically removed without leaving orphans.
+/// 使用 `DETACH DELETE`，使入/出向关系（CALLS、CONTAINS）
+/// 被自动移除而不会留下孤儿节点。
 async fn delete_by_file_path(graph: &Arc<dyn GraphRepository>, project: &str, rel_path: &str) {
     use std::collections::HashMap;
 
-    // Delete Method nodes
+    // 删除 Method 节点
     {
         let mut params = HashMap::new();
         params.insert(
@@ -259,7 +258,7 @@ async fn delete_by_file_path(graph: &Arc<dyn GraphRepository>, project: &str, re
             .await;
     }
 
-    // Delete Class nodes
+    // 删除 Class 节点
     {
         let mut params = HashMap::new();
         params.insert(
@@ -280,10 +279,10 @@ async fn delete_by_file_path(graph: &Arc<dyn GraphRepository>, project: &str, re
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: write entities
+// 辅助函数：写入实体
 // ---------------------------------------------------------------------------
 
-/// Write (MERGE) method nodes in batches of 200.
+/// 以每批 200 个写入（MERGE）方法节点。
 async fn write_methods(
     graph: &Arc<dyn GraphRepository>,
     methods: &[crate::domain::types::MethodBlock],
@@ -346,7 +345,7 @@ async fn write_methods(
     }
 }
 
-/// Write (MERGE) class nodes in batches of 100.
+/// 以每批 100 个写入（MERGE）类节点。
 async fn write_classes(
     graph: &Arc<dyn GraphRepository>,
     classes: &[crate::domain::types::ClassBlock],
@@ -397,7 +396,7 @@ async fn write_classes(
     }
 }
 
-/// Write CONTAINS relationships (Class → Method) for the given classes.
+/// 为给定的类写入 CONTAINS 关系（Class → Method）。
 async fn write_contains_relationships(
     graph: &Arc<dyn GraphRepository>,
     classes: &[crate::domain::types::ClassBlock],
@@ -427,7 +426,7 @@ async fn write_contains_relationships(
     }
 }
 
-/// Write module nodes from the package/module paths found in methods and classes.
+/// 根据方法与类中的包/模块路径写入模块节点。
 async fn write_modules_for_file(
     graph: &Arc<dyn GraphRepository>,
     project: &str,
@@ -487,10 +486,10 @@ async fn write_modules_for_file(
     }
 }
 
-/// Rebuild CALLS relationships for methods in a single file.
+/// 重建单个文件中方法的 CALLS 关系。
 ///
-/// Matches caller methods (those in this file) to callee methods by name.
-/// Returns the number of CALLS relationships created.
+/// 将调用方方法（本文件内的）与按名称匹配的被调用方法连接起来。
+/// 返回创建的 CALLS 关系数。
 async fn rebuild_calls_for_file(
     graph: &Arc<dyn GraphRepository>,
     project: &str,
@@ -499,13 +498,13 @@ async fn rebuild_calls_for_file(
 ) -> usize {
     use std::collections::HashMap;
 
-    // Collect unique caller method names in this file
+    // 收集本文件内唯一的调用方方法名
     let caller_names: Vec<String> = methods.iter().map(|m| m.name.clone()).collect();
     if caller_names.is_empty() {
         return 0;
     }
 
-    // First delete existing CALLS where the caller is in this file
+    // 先删除调用方位于本文件内的已有 CALLS 关系
     {
         let mut params = HashMap::new();
         params.insert(
@@ -524,7 +523,7 @@ async fn rebuild_calls_for_file(
             .await;
     }
 
-    // Now create new CALLS based on current method bodies
+    // 现在基于当前方法体创建新的 CALLS 关系
     let mut created = 0usize;
     for method in methods {
         if method.calls.is_empty() {
@@ -559,7 +558,7 @@ async fn rebuild_calls_for_file(
             )
             .await;
 
-        // Count created — approximate from result
+        // 统计创建数 — 根据结果近似统计
         if let Ok(ref val) = result {
             if let Some(props) = val.get("properties") {
                 if props.as_object().is_some_and(|o| !o.is_empty()) {
@@ -567,7 +566,7 @@ async fn rebuild_calls_for_file(
                 }
             }
         } else {
-            // If query runs without error, count all attempts
+            // 查询未报错时，统计全部尝试
             created += method.calls.len();
         }
     }
@@ -576,7 +575,7 @@ async fn rebuild_calls_for_file(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -640,7 +639,7 @@ mod tests {
     fn update_runner_creates() {
         let registry = Arc::new(ParserRegistry::new());
         let runner = UpdateRunner::new(registry);
-        // Just verify it compiles and constructs
+        // 仅验证它可编译且可构造
         let _ = &runner;
     }
 
@@ -670,17 +669,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(report.project, "test");
-        // methods_updated and classes_updated are usize — always ≥ 0
+        // methods_updated 与 classes_updated 均为 usize — 恒 ≥ 0
         let _ = report.methods_updated;
         let _ = report.classes_updated;
-        // elapsed_ms can be 0 (noop backends may return instantly)
+        // elapsed_ms 可能为 0（noop 后端可能立即返回）
         let _ = report.elapsed_ms;
     }
 
     #[tokio::test]
     async fn runner_delete_type_clears_and_returns_zero() {
         let _ = tempfile::tempdir().unwrap();
-        // Verify that a delete-type update report has zero counts
+        // 验证 delete 类型的更新报告计数值均为零
         let report = UpdateReport {
             file: "/tmp/gone.java".into(),
             project: "test".into(),

@@ -1,17 +1,16 @@
-//! Pipeline template — Template Method pattern for the build pipeline.
+//! 流水线模板 — 构建流程的 Template Method 模式。
 //!
-//! `PipelineTemplate::execute()` defines the fixed build flow:
-//! 1. Scan files
-//! 2. Select files via strategy
-//! 3. Prepare storage
-//! 4. Parse files
-//! 5. Embed + write vectors
-//! 6. Write graph
-//! 7. Rebuild call graph
-//! 8. Update snapshots
+//! `PipelineTemplate::execute()` 定义固定的构建流程：
+//! 1. 扫描文件
+//! 2. 通过策略选择文件
+//! 3. 准备存储
+//! 4. 解析文件
+//! 5. 嵌入并写入向量
+//! 6. 写入图谱
+//! 7. 重建调用图
+//! 8. 更新快照
 //!
-//! Sub-steps (strategy selection, prepare) are delegated to the
-//! [`BuildStrategy`] trait.
+//! 子步骤（策略选择、准备）委托给 [`BuildStrategy`] trait。
 
 use crate::domain::error::DtError;
 use crate::domain::id::make_document_id;
@@ -28,10 +27,10 @@ use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
 use crate::infrastructure::siliconflow::SiliconFlowClient;
 
-/// Maximum concurrent LLM analysis requests to SiliconFlow.
+/// 发往 SiliconFlow 的最大并发 LLM 分析请求数。
 const PHASE2_CONCURRENCY: usize = 5;
 
-/// Default prompt path (used when config/prompts/code_analysis.yaml is missing).
+/// 默认提示词路径（当 config/prompts/code_analysis.yaml 缺失时使用）。
 const PHASE2_DEFAULT_PROMPT: &str = "\
 你收到的每条消息都是一段代码，而不是提问。直接分析这段代码。\n\
 \n\
@@ -55,7 +54,7 @@ const PHASE2_DEFAULT_PROMPT: &str = "\
 逻辑：从对象属性中读取并返回name字段。\
 ";
 
-/// Result of extracting entities from all changed files.
+/// 从所有变更文件中提取实体的结果。
 pub struct ExtractionResult {
     pub methods: Vec<crate::domain::types::MethodBlock>,
     pub classes: Vec<crate::domain::types::ClassBlock>,
@@ -63,18 +62,18 @@ pub struct ExtractionResult {
     pub snapshots: Vec<FileSnapshot>,
 }
 
-/// The pipeline template that orchestrates the build flow.
+/// 编排构建流程的流水线模板。
 pub struct PipelineTemplate {
     parser_registry: Arc<ParserRegistry>,
     batch_config: BatchConfig,
-    /// Optional SiliconFlow client for Phase 2 (code semantic analysis).
+    /// 可选的 SiliconFlow 客户端，用于 Phase 2（代码语义分析）。
     siliconflow: Option<Arc<SiliconFlowClient>>,
-    /// Skip vector embedding (set processors.embed=false to preserve existing vectors).
+    /// 跳过向量嵌入（设置 processors.embed=false 以保留已有向量）。
     skip_embed: bool,
 }
 
 impl PipelineTemplate {
-    /// Create a new pipeline template with the given parser registry.
+    /// 使用给定的解析器注册表创建新的流水线模板。
     pub fn new(
         parser_registry: Arc<ParserRegistry>,
         batch_config: BatchConfig,
@@ -88,13 +87,13 @@ impl PipelineTemplate {
         }
     }
 
-    /// Set skip_embed flag (processors.embed=false in config).
+    /// 设置 skip_embed 标志（配置中的 processors.embed=false）。
     pub fn with_skip_embed(mut self, skip: bool) -> Self {
         self.skip_embed = skip;
         self
     }
 
-    /// Execute the full build pipeline.
+    /// 执行完整的构建流水线。
     #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
@@ -109,34 +108,34 @@ impl PipelineTemplate {
     ) -> Result<BuildReport, DtError> {
         let start = std::time::Instant::now();
 
-        // Step 1: Scan files
+        // 步骤 1：扫描文件
         let all_files = scanner::collect_files(root, scan_config);
         let files_scanned = all_files.len();
 
-        // Step 1b: Scan document files
+        // 步骤 1b：扫描文档文件
         let doc_files = scanner::collect_document_files(root, scan_config);
 
-        // Step 2: Select files via strategy
+        // 步骤 2：通过策略选择文件
         let (files_to_process, deleted) = strategy
             .select_files(root, &all_files, snapshot_repo.as_deref(), project)
             .await?;
         let files_changed = files_to_process.len();
 
-        // Step 3: Delete data for deleted files
+        // 步骤 3：删除已删除文件的数据
         if let Some(graph) = graph {
             if !deleted.is_empty() {
                 delete_files_from_graph(graph, project, &deleted).await;
             }
         }
 
-        // Step 3b (§6.5, Task 3): document lifecycle — purge deleted
-        // documents, keep snapshot baselines for change/deletion detection.
-        // Document extraction/consolidation itself runs in the pipeline
-        // engine (tree_sitter → chunk → hanlp → llm → store), not here.
+        // 步骤 3b（§6.5，任务 3）：文档生命周期 — 清理已删除的
+        // 文档，保留快照基线用于变更/删除检测。
+        // 文档提取/合并本身在流水线引擎中执行
+        // （tree_sitter → chunk → hanlp → llm → store），不在此处。
         //
-        // The snapshots table mixes code and document rows per project, so
-        // diffing only the document file set reports every code path as
-        // "deleted" — keep only real document deletions by extension.
+        // 快照表按项目混合存放代码与文档行，因此只对文档文件集
+        // 做差异比对会把每条代码路径都报为"已删除"——仅按扩展名
+        // 保留真正的文档删除。
         let (changed_docs, deleted_docs) = strategy
             .select_files(root, &doc_files, snapshot_repo.as_deref(), project)
             .await?;
@@ -145,11 +144,10 @@ impl PipelineTemplate {
             .filter(|p| is_document_path(p, &scan_config.document_extensions))
             .collect();
 
-        // §6.5.2: purge deleted documents — RELATES/MENTIONED_IN edges,
-        // Document node, and doc_chunks vector points. Per-file state is
-        // cleared only for successfully purged documents: a failed purge (or
-        // missing backends) keeps the baseline, so the deletion is reported
-        // again on the next build instead of leaking artifacts.
+        // §6.5.2：清理已删除文档 — RELATES/MENTIONED_IN 边、
+        // Document 节点与 doc_chunks 向量点。仅对成功清理的文档
+        // 清除逐文件状态：清理失败（或后端缺失）时保留基线，
+        // 这样删除会在下次构建时再次报告，而不是泄漏残留产物。
         if !deleted_docs.is_empty() {
             if let (Some(graph), Some(vector)) = (graph, vector.as_deref()) {
                 let mut purged: Vec<String> = Vec::with_capacity(deleted_docs.len());
@@ -157,7 +155,7 @@ impl PipelineTemplate {
                     let doc_id = make_document_id(project, rel);
                     match purge_document(graph, vector, &doc_id).await {
                         Ok(()) => purged.push(rel.clone()),
-                        Err(e) => tracing::warn!("purge deleted document {doc_id} failed: {e}"),
+                        Err(e) => tracing::warn!("清理已删除文档 {doc_id} 失败: {e}"),
                     }
                 }
                 if !purged.is_empty() {
@@ -168,11 +166,11 @@ impl PipelineTemplate {
             }
         }
 
-        // Step 4: Prepare storage (strategy-specific)
+        // 步骤 4：准备存储（策略相关）
         strategy.prepare(graph, vector.as_deref(), project).await?;
 
-        // Full rebuild: clear all pipeline step progress and LLM progress
-        // so that incremental tracking starts from scratch.
+        // 全量重建：清空所有流水线步骤进度与 LLM 进度，
+        // 使增量跟踪从头开始。
         if strategy.force_rebuild() {
             if let Some(ref snap) = snapshot_repo {
                 let _ = snap.clear_step_progress(project).await;
@@ -180,28 +178,27 @@ impl PipelineTemplate {
             }
         }
 
-        // Step 5: Parse files and extract entities
+        // 步骤 5：解析文件并提取实体
         let extraction = self.extract_entities(project, root, &files_to_process)?;
 
         let methods_total = extraction.methods.len();
         let methods_new = methods_total;
         let classes_total = extraction.classes.len();
 
-        // (Task 3) Document files are no longer chunk+embedded here — they
-        // flow through the pipeline engine's extract chain. Only their
-        // lifecycle (purge + snapshot baseline) is handled in this template
-        // (Step 3b / Step 9b).
+        // （任务 3）文档文件不再在此分块+嵌入 — 它们流经流水线
+        // 引擎的提取链。本模板只处理它们的生命周期
+        // （清理 + 快照基线，见步骤 3b / 步骤 9b）。
 
-        // Step 6: Write graph (methods, classes, modules, relationships)
+        // 步骤 6：写入图谱（方法、类、模块、关系）
         if let Some(graph) = graph {
             self.write_graph(graph, project, &extraction).await?;
         }
 
-        // Step 7b: Embed methods and write to Qdrant (skip if processors.embed=false)
+        // 步骤 7b：嵌入方法并写入 Qdrant（processors.embed=false 时跳过）
         if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
             if self.skip_embed {
                 tracing::info!(
-                    "Skipping embed step (processors.embed=false) — preserving existing Qdrant vectors"
+                    "跳过嵌入步骤（processors.embed=false）— 保留已有的 Qdrant 向量"
                 );
             } else if !extraction.methods.is_empty() {
                 let texts: Vec<String> = extraction
@@ -236,25 +233,25 @@ impl PipelineTemplate {
                                             "id": m.method_id,
                                             "vector": vec,
                                             "payload": {
-                                                // ---- identity ----
+                                                // ---- 标识 ----
                                                 "name": m.name,
                                                 "signature": m.signature,
                                                 "class_name": m.class_name,
-                                                // ---- location ----
+                                                // ---- 位置 ----
                                                 "file_path": m.file_path,
                                                 "package_or_module": m.package_or_module,
-                                                // ---- tech stack ----
+                                                // ---- 技术栈 ----
                                                 "language": m.language,
                                                 "project": m.project,
-                                                // ---- code range ----
+                                                // ---- 代码范围 ----
                                                 "start_line": m.start_line,
                                                 "end_line": m.end_line,
-                                                // ---- signature ----
+                                                // ---- 签名 ----
                                                 "params": m.params,
                                                 "return_type": m.return_type,
                                                 "calls": m.calls,
                                                 "comment": m.comment,
-                                                // ---- metadata ----
+                                                // ---- 元数据 ----
                                                 "entity_id": m.method_id,
                                             }
                                         })
@@ -278,7 +275,7 @@ impl PipelineTemplate {
                         crate::shared::collections::VECTOR_DIM,
                     )
                     .await?;
-                // Upsert in batches to avoid Qdrant timeouts with large payloads
+                // 分批 upsert 以避免大 payload 导致 Qdrant 超时
                 let upsert_batch = self.batch_config.upsert;
                 for chunk in all_points.chunks(upsert_batch) {
                     vector_repo
@@ -286,38 +283,37 @@ impl PipelineTemplate {
                         .await?;
                 }
                 tracing::info!(
-                    "upserted {} vectors to Qdrant ({} concurrent batches)",
+                    "已向 Qdrant upsert {} 个向量（{} 个并发批次）",
                     extraction.methods.len(),
                     (extraction.methods.len() + embed_batch - 1) / embed_batch
                 );
             }
         }
 
-        // Step 8: Rebuild call graph
+        // 步骤 8：重建调用图
         if let Some(graph) = graph {
             tracing::info!(
-                "rebuilding call graph for {} methods...",
+                "正在为 {} 个方法重建调用图...",
                 extraction.methods.len()
             );
             self.rebuild_call_graph(graph, project, &extraction.methods)
                 .await?;
-            tracing::info!("call graph rebuild complete");
+            tracing::info!("调用图重建完成");
         }
 
-        // Step 9: Update SQLite snapshots
+        // 步骤 9：更新 SQLite 快照
         if let Some(repo) = snapshot_repo.as_deref() {
-            tracing::info!("updating {} snapshots...", extraction.snapshots.len());
+            tracing::info!("正在更新 {} 个快照...", extraction.snapshots.len());
             strategy
                 .update_snapshots(repo, project, &extraction.snapshots)
                 .await?;
-            tracing::info!("snapshot update complete");
+            tracing::info!("快照更新完成");
         }
 
-        // Step 9b (Task 3): save document snapshots AFTER the strategy's
-        // snapshot update (FullRebuildStrategy wipes all project rows first).
-        // These baselines let the next incremental build detect document
-        // changes and deletions (§6.5). Only changed docs need fresh rows —
-        // unchanged docs keep accurate baselines from previous builds.
+        // 步骤 9b（任务 3）：在策略的快照更新之后再保存文档快照
+        // （FullRebuildStrategy 会先清空项目所有行）。
+        // 这些基线让下次增量构建能够检测文档变更与删除（§6.5）。
+        // 只有变更的文档需要新行 — 未变更的文档沿用上次构建的准确基线。
         if let Some(repo) = snapshot_repo.as_deref() {
             let doc_snapshots: Vec<FileSnapshot> = changed_docs
                 .iter()
@@ -338,13 +334,12 @@ impl PipelineTemplate {
             }
         }
 
-        // ── Phase 2: Per-method LLM analysis (background, non-blocking) ──
-        // LLM analysis is submitted as a background tokio task so the build
-        // returns immediately. The task processes methods concurrently and
-        // updates Qdrant points with llm_analysis field.
+        // ── Phase 2：逐方法 LLM 分析（后台、非阻塞）──
+        // LLM 分析作为后台 tokio 任务提交，使构建立即返回。
+        // 任务并发处理方法，并用 llm_analysis 字段更新 Qdrant 点。
         //
-        // NOTE: embed and vector are required only when processors.store is true.
-        // When store is false, we still run LLM analysis but skip the embed+upsert step.
+        // 注意：仅当 processors.store 为 true 时才需要 embed 与 vector。
+        // 当 store 为 false 时，我们仍运行 LLM 分析，但跳过 embed+upsert 步骤。
         let phase2_client_available = self.siliconflow.is_some();
         let phase2_snapshot_available = snapshot_repo.is_some();
 
@@ -356,7 +351,7 @@ impl PipelineTemplate {
                 let system_prompt = load_code_analysis_prompt();
                 let collection = crate::shared::collections::CODE_METHODS.to_string();
 
-                // Build job list: skip methods already analyzed with same source hash
+                // 构建任务列表：跳过已用相同源码哈希分析过的方法
                 let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
                 for m in methods {
                     let mut source_text = m.source_text.clone();
@@ -385,14 +380,14 @@ impl PipelineTemplate {
                 let total = jobs.len();
                 let skipped = methods.len() - total;
                 tracing::info!(
-                    "Phase 2: {} to analyze, {} up-to-date (background, non-blocking)",
+                    "Phase 2: {} 个待分析, {} 个已是最新（后台、非阻塞）",
                     total,
                     skipped,
                 );
 
                 if total > 0 {
-                    // Spawn background task — build returns immediately
-                    // embed_svc and vector_repo may be None when processors.store is false
+                    // 派生后台任务 — 构建立即返回
+                    // 当 processors.store 为 false 时，embed_svc 与 vector_repo 可能为 None
                     let client_cloned = client.clone();
                     let repo_cloned = repo.clone();
                     let proj = project.to_string();
@@ -400,7 +395,7 @@ impl PipelineTemplate {
                     let vector_repo_opt = vector.clone();
 
                     tokio::spawn(async move {
-                        tracing::info!("Phase 2 background worker started: {} methods", total);
+                        tracing::info!("Phase 2 后台工作线程已启动: {} 个方法", total);
 
                         let results: Vec<(String, bool)> = stream::iter(
                             jobs.into_iter().map(|(method, hash)| {
@@ -421,7 +416,7 @@ impl PipelineTemplate {
                                                 .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
                                                 .await;
 
-                                            // Only embed and upsert if store is enabled (embed_svc and vector_repo available)
+                                            // 仅当启用 store 时（embed_svc 与 vector_repo 可用）才嵌入并 upsert
                                             if let (Some(svc), Some(repo_vec)) = (embed_svc.as_ref(), vector_repo.as_ref()) {
                                                 match svc.embed_batch(&[llm_response.clone()]).await {
                                                     Ok(embeddings) => {
@@ -448,24 +443,24 @@ impl PipelineTemplate {
                                                                 }
                                                             });
                                                             if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
-                                                                tracing::warn!("Phase 2 upsert fail {}: {}", method_name, e);
+                                                                tracing::warn!("Phase 2 upsert 失败 {}: {}", method_name, e);
                                                             }
                                                         }
                                                     }
                                                     Err(e) => {
-                                                        tracing::warn!("Phase 2 embed fail {}: {}", method_name, e);
+                                                        tracing::warn!("Phase 2 embed 失败 {}: {}", method_name, e);
                                                     }
                                                 }
                                             } else {
-                                                // store=false: skip embed+upsert, just log the LLM response
-                                                tracing::debug!("Phase 2 LLM done (no store) {}: {}", method_name, llm_response.chars().take(50).collect::<String>());
+                                                // store=false：跳过 embed+upsert，仅记录 LLM 响应
+                                                tracing::debug!("Phase 2 LLM 完成（未存储）{}: {}", method_name, llm_response.chars().take(50).collect::<String>());
                                             }
 
-                                            tracing::info!("Phase 2 done {}", method_name);
+                                            tracing::info!("Phase 2 完成 {}", method_name);
                                             (method_name, true)
                                         }
                                         Err(e) => {
-                                            tracing::warn!("Phase 2 failed {}: {}", method_name, e);
+                                            tracing::warn!("Phase 2 失败 {}: {}", method_name, e);
                                             (method_name, false)
                                         }
                                     }
@@ -478,7 +473,7 @@ impl PipelineTemplate {
 
                         let analyzed = results.iter().filter(|(_, ok)| *ok).count();
                         tracing::info!(
-                            "Phase 2 background complete: {} analyzed, {} up-to-date, {} errors",
+                            "Phase 2 后台任务完成: {} 个已分析, {} 个已是最新, {} 个错误",
                             analyzed,
                             skipped,
                             total - analyzed,
@@ -486,7 +481,7 @@ impl PipelineTemplate {
                     });
 
                     tracing::info!(
-                        "Phase 2: {} methods submitted for background LLM analysis",
+                        "Phase 2: 已提交 {} 个方法进行后台 LLM 分析",
                         total
                     );
                 }
@@ -506,8 +501,8 @@ impl PipelineTemplate {
         })
     }
 
-    /// Extract entities (methods, classes, modules) from a batch of files.
-    /// Uses multiple threads for parallel file I/O and parsing.
+    /// 从一批文件中提取实体（方法、类、模块）。
+    /// 使用多线程并行执行文件 I/O 与解析。
     fn extract_entities(
         &self,
         project: &str,
@@ -537,10 +532,9 @@ impl PipelineTemplate {
                 let modules = module_set.clone();
                 s.spawn(move || {
                     for file_path in &chunk {
-                        // Compute hash FIRST (byte-level, works on all files) so
-                        // we always save a snapshot — even for files that fail
-                        // UTF-8 reading or parsing. Without this, unparseable
-                        // files would be detected as "changed" on every run.
+                        // 先计算哈希（字节级，适用于所有文件），
+                        // 这样即使文件 UTF-8 读取或解析失败也会保存快照。
+                        // 否则无法解析的文件每次运行都会被检测为"已变更"。
                         let rel_path = scanner::rel_path(&root, file_path);
                         let (file_hash, file_mtime) =
                             scanner::compute_file_hash(file_path).unwrap_or_default();
@@ -624,7 +618,7 @@ impl PipelineTemplate {
         })
     }
 
-    /// Write methods, classes, modules, and CONTAINS relationships to the graph database.
+    /// 将方法、类、模块及 CONTAINS 关系写入图数据库。
     async fn write_graph(
         &self,
         graph: &dyn GraphRepository,
@@ -636,7 +630,7 @@ impl PipelineTemplate {
         let batch = self.batch_config.clone();
         let unwind = batch.unwind;
 
-        // ---- Step 0: Ensure Project node exists ----
+        // ---- 步骤 0：确保 Project 节点存在 ----
         {
             let lang = extraction
                 .methods
@@ -670,7 +664,7 @@ impl PipelineTemplate {
                 .await?;
         }
 
-        // Write methods, classes, and modules in parallel
+        // 并行写入方法、类与模块
         {
             let methods = &extraction.methods;
             let classes = &extraction.classes;
@@ -773,7 +767,7 @@ impl PipelineTemplate {
             r3?;
         }
 
-        // Write CONTAINS relationships (depends on methods + classes being written)
+        // 写入 CONTAINS 关系（依赖已写入的方法与类）
         for c in &extraction.classes {
             for mid in &c.method_ids {
                 let mut params = HashMap::new();
@@ -799,7 +793,7 @@ impl PipelineTemplate {
         Ok(())
     }
 
-    /// Rebuild CALLS relationships for all methods in a project.
+    /// 重建项目中所有方法的 CALLS 关系。
     async fn rebuild_call_graph(
         &self,
         graph: &dyn GraphRepository,
@@ -848,7 +842,7 @@ impl PipelineTemplate {
     }
 }
 
-/// Delete method nodes and relationships for a list of deleted files.
+/// 为一组已删除文件删除方法节点及其关系。
 async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, files: &[String]) {
     let files_json: Vec<serde_json::Value> = files
         .iter()
@@ -873,14 +867,14 @@ async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, fil
 }
 
 // ---------------------------------------------------------------------------
-// Document lifecycle helpers
+// 文档生命周期辅助函数
 // ---------------------------------------------------------------------------
 
-/// Whether a project-relative path is a document per `ScanConfig::document_extensions`.
+/// 判断项目相对路径是否为 `ScanConfig::document_extensions` 定义的文档。
 ///
-/// Guards the strategy's `deleted` output against code-path contamination:
-/// the snapshots table mixes code and document rows per project, so every
-/// code path shows up as "deleted" when diffing only the document file set.
+/// 防止策略的 `deleted` 输出被代码路径污染：快照表按项目混合存放
+/// 代码与文档行，因此仅对文档文件集做差异比对时，每条代码路径
+/// 都会显示为"已删除"。
 fn is_document_path(
     rel_path: &str,
     document_extensions: &std::collections::HashSet<String>,
@@ -892,10 +886,10 @@ fn is_document_path(
         .unwrap_or(false)
 }
 
-/// Infer a human-readable project type label from the project name.
+/// 根据项目名称推断人类可读的项目类型标签。
 ///
-/// Uses simple heuristics based on common naming conventions
-/// (e.g. `api-gateway` → `"微服务 — API 网关"`, `yimeng-website` → `"前端 — Web 应用"`).
+/// 基于常见命名约定的简单启发式规则
+/// （如 `api-gateway` → `"微服务 — API 网关"`、`yimeng-website` → `"前端 — Web 应用"`）。
 fn infer_project_type(project: &str) -> &str {
     let lower = project.to_lowercase();
     if lower.contains("gateway") {
@@ -961,8 +955,8 @@ fn infer_project_type(project: &str) -> &str {
     "微服务"
 }
 
-/// Load the system prompt for Phase 2 code analysis from `config/prompts/code_analysis.yaml`.
-/// Falls back to a hardcoded default if the file is missing.
+/// 从 `config/prompts/code_analysis.yaml` 加载 Phase 2 代码分析的系统提示词。
+/// 文件缺失时回退到硬编码的默认提示词。
 fn load_code_analysis_prompt() -> String {
     let paths = [
         std::env::var("HOME").ok().map(|h| {
@@ -1011,8 +1005,8 @@ mod tests {
         assert!(is_document_path("docs/guide.md", &exts));
         assert!(is_document_path("config.yaml", &exts));
         assert!(is_document_path("a/b/c.properties", &exts));
-        // Code paths reported as "deleted" by the mixed snapshots table are
-        // filtered out — they never had Document nodes to purge.
+        // 混合快照表报为"已删除"的代码路径会被过滤掉 —
+        // 它们从未有需要清理的 Document 节点。
         assert!(!is_document_path("src/main.rs", &exts));
         assert!(!is_document_path("Service.java", &exts));
         assert!(!is_document_path("script.py", &exts));

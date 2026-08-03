@@ -22,9 +22,9 @@ impl PropertyMapper {
 
             if value.is_null() && prop.required {
                 tracing::warn!(
-                    "missing required property '{}' for hook '{}'",
-                    prop.name,
-                    ctx.hook_name
+                    "hook '{}' 缺少必填属性 '{}'",
+                    ctx.hook_name,
+                    prop.name
                 );
             }
 

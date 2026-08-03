@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::application::context::search_mcp::SearchHit;
 
-/// A ranked search result item for multi-source fusion.
+/// 用于多源融合的排序搜索结果项。
 #[derive(Debug, Clone)]
 pub struct RankedItem {
     pub id: String,
@@ -15,12 +15,11 @@ pub struct RankedItem {
     pub score: f64,
 }
 
-/// Reciprocal Rank Fusion (RRF) — combines ranked lists from multiple
-/// sources into a single ranked list.
+/// 倒数排名融合（RRF）— 将多个来源的排序列表合并为单个排序列表。
 ///
-/// Each item in each ranked list receives a score of `1.0 / (k + rank)`,
-/// where `k` is a damping constant (default: 60). Scores are accumulated
-/// across all lists, then the items are sorted by descending score.
+/// 每个列表中的每个条目获得 `1.0 / (k + rank)` 的分值，
+/// 其中 `k` 是阻尼常数（默认 60）。分值在所有列表中累加，
+/// 然后按分值降序排序条目。
 pub fn reciprocal_rank_fusion(
     rank_lists: Vec<Vec<RankedItem>>,
     k: f64,

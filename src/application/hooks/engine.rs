@@ -157,11 +157,11 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
 
-    /// Mock repo that tracks queries for Cypher verification
+    /// 记录查询以进行 Cypher 验证的 Mock 仓库
     struct TrackedRepo {
         queries: Arc<Mutex<Vec<String>>>,
         write_count: Arc<AtomicUsize>,
-        /// Simulates read_schema_state returning None (new node)
+        /// 模拟 read_schema_state 返回 None（新节点）
         return_empty_schema: bool,
     }
 
@@ -178,11 +178,11 @@ mod tests {
     #[async_trait]
     impl crate::domain::traits::GraphRepository for TrackedRepo {
         async fn read_query(&self, q: &str, _p: HashMap<String, Value>) -> Result<Value, DtError> {
-            // Track the query for verification
+            // 记录查询以便验证
             self.queries.lock().unwrap().push(q.to_string());
 
             if self.return_empty_schema || q.contains("_schema_hash") {
-                // Simulate no existing node → no migration needed
+                // 模拟节点不存在 → 无需迁移
                 return Ok(Value::Array(vec![]));
             }
             Ok(Value::Null)
@@ -244,7 +244,7 @@ event_types:
 
     #[tokio::test]
     async fn engine_migration_removes_deprecated_properties() {
-        // Config v1: has "region" property, v2 has "zone" instead
+        // 配置 v1 有 "region" 属性，v2 改为 "zone"
         let yaml = r#"
 hooks:
   test_hook: { description: "" }
@@ -266,10 +266,10 @@ event_types:
         let cfg = &registry.subscribers("test_hook")[0];
         assert!(!cfg.schema_hash.is_empty());
 
-        // Verify the hash starts with "sch_"
+        // 验证哈希以 "sch_" 开头
         assert!(
             cfg.schema_hash.starts_with("sch_"),
-            "bad hash: {}",
+            "错误的哈希: {}",
             cfg.schema_hash
         );
 

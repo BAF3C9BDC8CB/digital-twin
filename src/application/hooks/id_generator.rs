@@ -49,7 +49,7 @@ mod tests {
         let id1 = IdGenerator::generate(&cfg, &ctx);
         let id2 = IdGenerator::generate(&cfg, &ctx);
 
-        assert_eq!(id1, id2, "same input must produce same ID");
+        assert_eq!(id1, id2, "相同输入必须产生相同 ID");
     }
 
     #[test]
@@ -64,7 +64,7 @@ mod tests {
         let id_a = IdGenerator::generate(&cfg, &ctx_a);
         let id_b = IdGenerator::generate(&cfg, &ctx_b);
 
-        assert_ne!(id_a, id_b, "different entity_id must produce different ID");
+        assert_ne!(id_a, id_b, "不同的 entity_id 必须产生不同的 ID");
     }
 
     #[test]
@@ -77,8 +77,8 @@ mod tests {
 
         let id = IdGenerator::generate(&cfg, &ctx);
 
-        assert!(id.starts_with("dt://event/fix/"), "bad prefix: {id}");
-        assert_eq!(id.len(), "dt://event/fix/".len() + 16, "bad hash length");
+        assert!(id.starts_with("dt://event/fix/"), "错误的前缀: {id}");
+        assert_eq!(id.len(), "dt://event/fix/".len() + 16, "错误的哈希长度");
     }
 
     #[test]

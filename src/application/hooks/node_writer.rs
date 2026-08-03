@@ -153,9 +153,8 @@ impl NodeWriter {
         let props_json = serde_json::to_string(current_prop_names).unwrap_or_default();
         params.insert("schema_props".into(), Value::String(props_json));
 
-        // SET _kg_synced_at = NULL — marks node for re-sync to Qdrant
-        // on the next incremental kg-sync (which is triggered immediately
-        // after the hook fires).
+        // SET _kg_synced_at = NULL — 标记节点待重新同步到 Qdrant，
+        // 下一次增量 kg-sync（在 hook 触发后立即执行）会处理它。
         cypher.push_str("SET e._kg_synced_at = NULL\n");
 
         // REMOVE 废弃属性
@@ -233,7 +232,7 @@ mod tests {
         assert!(
             q.contains("MERGE (e:Deployment { deploy_id: $event_id })")
                 || q.contains("MERGE (e:Deployment {deploy_id: $event_id})"),
-            "bad cypher: {q}"
+            "错误的 Cypher: {q}"
         );
         assert!(q.contains("SET e.job = $p_job"));
     }
@@ -274,7 +273,7 @@ mod tests {
 
         let queries = repo.queries.lock().unwrap();
         let q = &queries[0];
-        assert!(q.contains("$p_job"), "should include 'job'");
-        assert!(!q.contains("$p_branch"), "should skip null 'branch'");
+        assert!(q.contains("$p_job"), "应包含 'job'");
+        assert!(!q.contains("$p_branch"), "应跳过 null 的 'branch'");
     }
 }

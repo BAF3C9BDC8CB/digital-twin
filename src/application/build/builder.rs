@@ -1,7 +1,7 @@
-//! Build command — CLI entry point for `dt build`.
+//! Build 命令 — `dt build` 的 CLI 入口。
 //!
-//! This module defines the `BuildCommand` struct with clap arguments
-//! and provides the `run()` method that executes the build pipeline.
+//! 本模块定义带 clap 参数的 `BuildCommand` 结构体，
+//! 并提供执行构建流水线的 `run()` 方法。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{
@@ -16,9 +16,9 @@ use super::service::BuildServiceImpl;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::siliconflow::SiliconFlowClient;
 
-/// Build command — index a project's source code into the knowledge graph.
+/// Build 命令 — 将项目源代码索引到知识图谱。
 ///
-/// Usage:
+/// 用法：
 /// ```bash
 /// dt build /path/to/project --name my-project
 /// dt build /path/to/project --name my-project --full
@@ -26,31 +26,31 @@ use crate::infrastructure::siliconflow::SiliconFlowClient;
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "build",
-    about = "Index project source code into the knowledge graph"
+    about = "将项目源代码索引到知识图谱"
 )]
 pub struct BuildCommand {
-    /// Path to the project root directory.
+    /// 项目根目录路径。
     #[arg(value_name = "PATH")]
     pub project_path: PathBuf,
 
-    /// Project name (used for entity IDs and graph grouping).
+    /// 项目名称（用于实体 ID 与图谱分组）。
     #[arg(short = 'n', long = "name")]
     pub project_name: String,
 
-    /// Perform a full rebuild (ignoring incremental snapshots).
+    /// 执行全量重建（忽略增量快照）。
     #[arg(long = "full")]
     pub full: bool,
 
-    /// Show verbose output.
+    /// 显示详细输出。
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
-    /// Skip vector embedding (processors.embed=false).
+    /// 跳过向量嵌入（processors.embed=false）。
     #[arg(long = "skip-embed")]
     pub skip_embed: bool,
 }
 
-/// Dependencies needed to run a build.
+/// 运行构建所需的依赖。
 pub struct BuildDependencies {
     pub graph: Option<Arc<dyn GraphRepository>>,
     pub vector: Option<Arc<dyn VectorRepository>>,
@@ -58,16 +58,16 @@ pub struct BuildDependencies {
     pub embed: Option<Arc<dyn EmbedService>>,
     pub siliconflow: Option<Arc<SiliconFlowClient>>,
     pub batch_config: Option<BatchConfig>,
-    /// Skip vector embedding (preserve existing vectors in Qdrant).
+    /// 跳过向量嵌入（保留 Qdrant 中的已有向量）。
     pub skip_embed: bool,
 }
 
 impl BuildCommand {
-    /// Execute the build command with the provided dependencies.
+    /// 使用提供的依赖执行 build 命令。
     pub async fn run(&self, deps: BuildDependencies) -> Result<(), DtError> {
         if self.verbose {
             tracing::info!(
-                "Starting build: project={}, path={}, full={}",
+                "开始构建: project={}, path={}, full={}",
                 self.project_name,
                 self.project_path.display(),
                 self.full
@@ -94,7 +94,7 @@ impl BuildCommand {
 
         if self.verbose {
             tracing::info!(
-                "Build complete: {} files scanned, {} changed, {} methods, {}ms",
+                "构建完成: 扫描 {} 个文件, 变更 {} 个, 共 {} 个方法, {}ms",
                 report.files_scanned,
                 report.files_changed,
                 report.methods_total,
@@ -102,7 +102,7 @@ impl BuildCommand {
             );
         } else {
             println!(
-                "Build report for {}: {} files scanned, {} changed, {} methods indexed, {}ms",
+                "{} 的构建报告: 扫描 {} 个文件, 变更 {} 个, 索引 {} 个方法, {}ms",
                 report.project,
                 report.files_scanned,
                 report.files_changed,
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn command_help_contains_info() {
         let cmd = BuildCommand::try_parse_from(["build", "--help"]);
-        // --help returns an error from clap (it's how clap prints help)
+        // --help 会让 clap 返回错误（这是 clap 打印帮助信息的方式）
         let err = cmd.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("build") || msg.contains("Index"));

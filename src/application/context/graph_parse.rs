@@ -1,20 +1,20 @@
-//! Unified graph query result parser — supports both Bolt driver and HTTP API formats.
+//! 统一的图谱查询结果解析器 — 同时支持 Bolt 驱动与 HTTP API 格式。
 //!
-//! - Bolt driver: `Value::Array` of row objects (each row is a JSON object)
-//! - HTTP API: `{"results":[{"data":[{"row":[...]}]}]}` (legacy)
+//! - Bolt 驱动：行对象的 `Value::Array`（每行是一个 JSON 对象）
+//! - HTTP API：`{"results":[{"data":[{"row":[...]}]}]}`（旧版）
 
-/// Parse graph query result into a Vec of row objects.
+/// 将图谱查询结果解析为行对象 Vec。
 ///
-/// Bolt format: `[{"col1": v1, "col2": v2}, ...]` — returns as-is.
-/// HTTP format: `{"results":[{"data":[{"row":[val1, val2, ...]}]}]}` — converts each row array
-/// to an object using column names from the first result's `columns` field.
+/// Bolt 格式：`[{"col1": v1, "col2": v2}, ...]` — 原样返回。
+/// HTTP 格式：`{"results":[{"data":[{"row":[val1, val2, ...]}]}]}` — 使用第一个
+/// 结果的 `columns` 字段中的列名，将每个行数组转换为对象。
 pub fn parse_graph_rows(raw: &serde_json::Value) -> Vec<serde_json::Value> {
-    // Bolt driver format: Array of row objects.
+    // Bolt 驱动格式：行对象数组。
     if let Some(rows) = raw.as_array() {
         return rows.clone();
     }
 
-    // HTTP API format: {"results: [{"columns": [...], "data": [{"row": [...]}]}]}
+    // HTTP API 格式：{"results: [{"columns": [...], "data": [{"row": [...]}]}]}
     let Some(results) = raw.get("results").and_then(|r| r.as_array()) else {
         return Vec::new();
     };

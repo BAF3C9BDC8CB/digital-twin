@@ -1,9 +1,9 @@
-//! **CrossWorldSearch** — cross-world semantic search (4.8).
+//! **CrossWorldSearch** — 跨世界语义搜索（4.8）。
 //!
-//! Searches across all available knowledge worlds (code, knowledge graph,
-//! documents, vector store) in a single query, returning blended results.
+//! 在单次查询中跨所有可用的知识世界（code、knowledge graph、
+//! documents、vector store）检索，返回混合结果。
 //!
-//! # MCP tool: `dt_search`
+//! # MCP 工具：`dt_search`
 //!
 //! ```text
 //! dt_search(query: str, world?: str, limit?: int)
@@ -22,16 +22,16 @@ use crate::domain::traits::{EmbedService, GraphRepository, RerankService, Vector
 // Request / Response
 // ---------------------------------------------------------------------------
 
-/// Input for cross-world search.
+/// 跨世界搜索的输入。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchRequest {
-    /// Natural-language search query.
+    /// 自然语言搜索查询。
     pub query: String,
-    /// Target world: "code", "knowledge", "doc", "all".  Default: "all".
+    /// 目标世界："code"、"knowledge"、"doc"、"all"。默认："all"。
     pub world: Option<String>,
-    /// Maximum results per world.
+    /// 每个世界的最大结果数。
     pub limit: Option<usize>,
-    /// Filter by project.
+    /// 按项目过滤。
     pub project: Option<String>,
     /// 图扩展跳数（knowledge 世界），白名单 {1,2}，默认 1。
     pub max_hops: Option<u32>,
@@ -43,37 +43,37 @@ pub struct SearchRequest {
     pub doc_id: Option<String>,
 }
 
-/// A single search hit from any world.
+/// 来自任意世界的单个搜索命中。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchHit {
-    /// Unique identifier.
+    /// 唯一标识符。
     pub id: String,
-    /// Short label / title.
+    /// 短标签/标题。
     pub title: String,
-    /// Content or summary snippet.
+    /// 内容或摘要片段。
     pub snippet: String,
-    /// Source world ("code", "knowledge", "doc", "vector").
+    /// 来源世界（"code"、"knowledge"、"doc"、"vector"）。
     pub source_world: String,
-    /// Entity type (Method, Class, Knowledge, Document, etc.).
+    /// 实体类型（Method、Class、Knowledge、Document 等）。
     pub entity_type: String,
-    /// Relevance score [0.0, 1.0].
+    /// 相关度分数 [0.0, 1.0]。
     pub score: f64,
-    /// Source file or reference URL.
+    /// 源文件或引用 URL。
     pub source_ref: Option<String>,
-    /// Source file path (code world).
+    /// 源文件路径（code 世界）。
     pub file_path: Option<String>,
-    /// Start line number (code world).
+    /// 起始行号（code 世界）。
     pub start_line: Option<u32>,
-    /// End line number (code world).
+    /// 结束行号（code 世界）。
     pub end_line: Option<u32>,
-    /// Function/method signature (code world).
+    /// 函数/方法签名（code 世界）。
     pub signature: Option<String>,
     /// 方法级 LLM 分析（code world，payload 直取；"用途：…\n逻辑：…"）。
     #[serde(default)]
     pub llm_analysis: Option<String>,
-    /// Called function names (code world).
+    /// 被调用的函数名（code 世界）。
     pub calls: Vec<String>,
-    /// Element ID from the knowledge graph.
+    /// 来自知识图谱的元素 ID。
     pub element_id: Option<String>,
     /// 排序分解（knowledge 世界新链路填充）。
     #[serde(default)]
@@ -95,18 +95,18 @@ pub struct SearchHit {
     pub rerank_degraded: Option<bool>,
 }
 
-/// Output of cross-world search.
+/// 跨世界搜索的输出。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CrossWorldResult {
-    /// The original query.
+    /// 原始查询。
     pub query: String,
-    /// Which world(s) were searched.
+    /// 被搜索的世界。
     pub world: String,
-    /// Aggregated results.
+    /// 聚合结果。
     pub hits: Vec<SearchHit>,
-    /// Total number of hits.
+    /// 命中总数。
     pub total: usize,
-    /// Per-world hit counts for transparency.
+    /// 各世界的命中数，便于透明化。
     pub per_world_counts: std::collections::HashMap<String, usize>,
     /// 降级标记（"rerank_unavailable" / "graph_expansion_failed" / "embed_unavailable"）。
     #[serde(default)]
@@ -117,14 +117,14 @@ pub struct CrossWorldResult {
 // Service trait + impl
 // ---------------------------------------------------------------------------
 
-/// Performs cross-world semantic search.
+/// 执行跨世界语义搜索。
 #[async_trait::async_trait]
 pub trait CrossWorldSearchTrait: Send + Sync {
-    /// Search across worlds.
+    /// 跨世界搜索。
     async fn search(&self, request: &SearchRequest) -> Result<CrossWorldResult, DtError>;
 }
 
-/// Canonical implementation of [`CrossWorldSearchTrait`].
+/// [`CrossWorldSearchTrait`] 的标准实现。
 pub struct CrossWorldSearch {
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
@@ -133,7 +133,7 @@ pub struct CrossWorldSearch {
 }
 
 impl CrossWorldSearch {
-    /// Create with backends.
+    /// 使用后端创建。
     pub fn new(
         graph: Option<Arc<dyn GraphRepository>>,
         vector: Option<Arc<dyn VectorRepository>>,
@@ -148,7 +148,7 @@ impl CrossWorldSearch {
         }
     }
 
-    /// Create with no backends (for testing).
+    /// 创建无后端实例（用于测试）。
     pub fn empty() -> Self {
         Self {
             graph: None,
@@ -173,12 +173,12 @@ impl CrossWorldSearch {
         &self.embed
     }
 
-    /// Search the Reality World (code entities) via Qdrant vector search.
+    /// 通过 Qdrant 向量搜索检索 Reality World（代码实体）。
     ///
-    /// Queries `{project}_methods` collections (or all `*_methods` when no project
-    /// is specified) and extracts full payload fields including start_line, end_line,
-    /// calls, and method_id.  Score threshold is read from `DT_SEARCH_MIN_SCORE`
-    /// (default 0.3).
+    /// 查询 `{project}_methods` 集合（未指定项目时查询所有 `*_methods`），
+    /// 并提取完整的 payload 字段，包括 start_line、end_line、
+    /// calls 与 method_id。分数阈值从 `DT_SEARCH_MIN_SCORE` 读取
+    /// （默认 0.3）。
     async fn search_code(
         &self,
         query: &str,
@@ -201,7 +201,7 @@ impl CrossWorldSearch {
             return Ok(Vec::new());
         }
 
-        // Score threshold from environment (default 0.3)
+        // 环境变量中的分数阈值（默认 0.3）
         let min_score = std::env::var("DT_SEARCH_MIN_SCORE")
             .ok()
             .and_then(|s| s.parse::<f64>().ok())
@@ -318,11 +318,11 @@ impl CrossWorldSearch {
                         });
                     }
                 }
-                Err(e) => tracing::warn!("Qdrant search on {col}: {e}"),
+                Err(e) => tracing::warn!("对 {col} 的 Qdrant 搜索失败: {e}"),
             }
         }
 
-        // Sort by score descending, cap to limit
+        // 按分数降序排序，截断到 limit
         all_hits.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -332,7 +332,7 @@ impl CrossWorldSearch {
         Ok(all_hits)
     }
 
-    /// Search the Knowledge World via GraphRAG hybrid retrieval (S5).
+    /// 通过 GraphRAG 混合检索（S5）搜索 Knowledge World。
     ///
     /// 委托 retrieve.rs；返回 (hits, degraded)。vector/embed 缺失时无可召回手段，返回空。
     async fn search_knowledge(&self, request: &SearchRequest) -> (Vec<SearchHit>, Vec<String>) {
@@ -362,13 +362,13 @@ impl CrossWorldSearch {
                 (outcome.hits, outcome.degraded)
             }
             Err(e) => {
-                tracing::warn!("knowledge retrieval failed: {e}");
+                tracing::warn!("知识检索失败: {e}");
                 (Vec::new(), Vec::new())
             }
         }
     }
 
-    /// Search the Doc World via `doc_chunks` (S5 §5.5)。
+    /// 通过 `doc_chunks` 搜索 Doc World（S5 §5.5）。
     ///
     /// filter 强制 `source="doc"`——排除 config_sync 写入的 nacos 配置点
     /// （payload 无 text/doc_id/block_index）。分数过 DT_SEARCH_MIN_SCORE。

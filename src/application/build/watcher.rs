@@ -1,26 +1,25 @@
-//! File watcher daemon — monitors project source directories for changes.
+//! 文件监听守护进程 — 监控项目源码目录的变更。
 //!
-//! Uses the `notify` crate for cross-platform file-system events (inotify on
-//! Linux, FSEvents on macOS, kqueue on BSD).  Events are debounced (100 ms)
-//! so that rapid successive writes to the same file (typical of editors and
-//! build tools) are collapsed into a single `dt update` call.
+//! 使用 `notify` crate 实现跨平台文件系统事件（Linux 上为 inotify，
+//! macOS 上为 FSEvents，BSD 上为 kqueue）。事件经过防抖（100 ms），
+//! 使对同一文件的快速连续写入（编辑器和构建工具的典型行为）
+//! 合并为一次 `dt update` 调用。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! 1. `FileWatcher::start()` spawns a dedicated OS thread that owns a
-//!    `notify::RecommendedWatcher`.  The watcher thread feeds raw FS events
-//!    into a `std::sync::mpsc` channel.
-//! 2. An inner loop reads from that channel, filters for source-code files,
-//!    applies debounce, resolves the owning project, and pushes
-//!    `FileChangeEvent` values onto a `tokio::sync::mpsc` channel.
-//! 3. The consumer (typically `dt-daemon`'s `watch` subcommand) reads from
-//!    that channel and dispatches `UpdateRunner::run()` for each event.
+//! 1. `FileWatcher::start()` 派生一个专用 OS 线程，持有
+//!    `notify::RecommendedWatcher`。监听线程将原始文件系统事件
+//!    送入 `std::sync::mpsc` 通道。
+//! 2. 内部循环从该通道读取，过滤源码文件，应用防抖，
+//!    解析所属项目，并把 `FileChangeEvent` 值推入 `tokio::sync::mpsc` 通道。
+//! 3. 消费方（通常是 `dt-daemon` 的 `watch` 子命令）从该通道读取，
+//!    并为每个事件调度 `UpdateRunner::run()`。
 //!
-//! # PID file
+//! # PID 文件
 //!
-//! On start, the watcher writes its OS process-id to `/var/run/dt-watch.pid`.
-//! `dt watch --status` and `dt watch --stop` use this file to inspect or
-//! signal the daemon process.
+//! 启动时，监听器将自身 OS 进程 ID 写入 `/var/run/dt-watch.pid`。
+//! `dt watch --status` 与 `dt watch --stop` 使用该文件来检查或
+//! 通知守护进程。
 
 use std::collections::HashMap;
 use std::fs;
@@ -35,16 +34,16 @@ use notify::{Event, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
-/// Source-code file extensions that the watcher monitors.
+/// 监听器监控的源码文件扩展名。
 const SOURCE_EXTENSIONS: &[&str] = &[
     "java", "py", "ts", "tsx", "go", "rs", "php", "js", "jsx", "mjs", "cjs", "kt", "kts", "swift",
     "scala", "rb", "cpp", "cc", "cxx", "c", "h", "hpp", "cs", "fs", "fsx", "vue", "svelte",
 ];
 
-/// Directory names whose contents are never watched.
+/// 内容永不监听的目录名。
 const IGNORE_DIRS: &[&str] = &[
     "node_modules",
     ".git",
@@ -73,23 +72,23 @@ const IGNORE_DIRS: &[&str] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Public types
+// 公共类型
 // ---------------------------------------------------------------------------
 
-/// A single file-system change event emitted by the watcher.
+/// 监听器发出的单个文件系统变更事件。
 #[derive(Debug, Clone)]
 pub struct FileChangeEvent {
-    /// Logical project name (from config.yaml).
+    /// 逻辑项目名称（来自 config.yaml）。
     pub project_name: String,
-    /// Project root directory (absolute path).
+    /// 项目根目录（绝对路径）。
     pub project_root: PathBuf,
-    /// Changed file (absolute path).
+    /// 变更的文件（绝对路径）。
     pub file_path: PathBuf,
-    /// What happened to the file.
+    /// 文件发生了什么。
     pub kind: FileChangeKind,
 }
 
-/// Granularity of a file change.
+/// 文件变更的粒度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileChangeKind {
     Created,
@@ -98,8 +97,7 @@ pub enum FileChangeKind {
 }
 
 impl FileChangeKind {
-    /// Human-readable label matching the `--type` values accepted by
-    /// `UpdateRunner`.
+    /// 与 `UpdateRunner` 接受的 `--type` 值对应的可读标签。
     pub fn as_op_type(&self) -> &'static str {
         match self {
             FileChangeKind::Created => "create",
@@ -109,7 +107,7 @@ impl FileChangeKind {
     }
 }
 
-/// Snapshot of the watcher's current state.
+/// 监听器当前状态的快照。
 #[derive(Debug, Clone)]
 pub struct WatcherStatus {
     pub running: bool,
@@ -122,43 +120,42 @@ pub struct WatcherStatus {
 // FileWatcher
 // ---------------------------------------------------------------------------
 
-/// Cross-platform file-system watcher that monitors project source trees.
+/// 监控项目源码树的跨平台文件系统监听器。
 ///
-/// # Lifecycle
+/// # 生命周期
 ///
 /// ```ignore
 /// let watcher = FileWatcher::new(projects, pid_file);
-/// let mut rx = watcher.start()?;              // spawns OS thread
+/// let mut rx = watcher.start()?;              // 派生 OS 线程
 /// while let Some(event) = rx.recv().await {
-///     // dispatch event to update pipeline
+///     // 将事件分发到更新流水线
 /// }
-/// // Drop rx → watcher thread exits & removes PID file.
+/// // 丢弃 rx → 监听线程退出并移除 PID 文件。
 /// ```
 pub struct FileWatcher {
-    /// (project_name, project_root) pairs.
+    /// (project_name, project_root) 对。
     projects: Vec<(String, PathBuf)>,
-    /// Subset of `projects` roots that actually exist on disk.
+    /// `projects` 中实际存在于磁盘上的根目录子集。
     watched_dirs: Vec<PathBuf>,
-    /// Path of the PID file.
+    /// PID 文件路径。
     pid_file: PathBuf,
-    /// Debounce window in milliseconds.
+    /// 防抖窗口（毫秒）。
     debounce_ms: u64,
-    /// Set to `true` when the watcher thread is active.
+    /// 监听线程激活时置为 `true`。
     running: Arc<AtomicBool>,
-    /// Monotonically incremented for every event emitted.
+    /// 每发出一个事件便单调递增。
     events_processed: Arc<AtomicU64>,
 }
 
 impl FileWatcher {
     // ------------------------------------------------------------------
-    // Constructors
+    // 构造函数
     // ------------------------------------------------------------------
 
-    /// Create a new watcher that monitors the given project directories.
+    /// 创建监控给定项目目录的新监听器。
     ///
-    /// `projects` is a list of `(name, root_path)` tuples.  Directories that
-    /// do not exist are silently skipped; `watched_dirs` in the status will
-    /// only count resolvable paths.
+    /// `projects` 是 `(name, root_path)` 元组列表。不存在的目录会被
+    /// 静默跳过；状态中的 `watched_dirs` 只统计可解析的路径。
     pub fn new(projects: Vec<(String, PathBuf)>, pid_file: PathBuf) -> Self {
         let watched_dirs: Vec<PathBuf> = projects
             .iter()
@@ -177,22 +174,21 @@ impl FileWatcher {
     }
 
     // ------------------------------------------------------------------
-    // Public helpers
+    // 公共辅助函数
     // ------------------------------------------------------------------
 
-    /// Returns `true` when `path` refers to a source-code file worth tracking.
+    /// 当 `path` 指向值得跟踪的源码文件时返回 `true`。
     ///
-    /// A file is considered source code when its extension is in
-    /// [`SOURCE_EXTENSIONS`] **and** no path component matches any entry in
-    /// [`IGNORE_DIRS`].
+    /// 当文件的扩展名在 [`SOURCE_EXTENSIONS`] 中**且**没有任何路径
+    /// 组件匹配 [`IGNORE_DIRS`] 中的条目时，该文件被视为源码。
     pub fn is_source_file(path: &Path) -> bool {
-        // ---- Extension check ----
+        // ---- 扩展名检查 ----
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if !SOURCE_EXTENSIONS.contains(&ext) {
             return false;
         }
 
-        // ---- Ignored-directory check (walk components) ----
+        // ---- 忽略目录检查（遍历组件） ----
         for component in path.components() {
             if let Component::Normal(name) = component {
                 if let Some(s) = name.to_str() {
@@ -207,25 +203,23 @@ impl FileWatcher {
     }
 
     // ------------------------------------------------------------------
-    // Lifecycle
+    // 生命周期
     // ------------------------------------------------------------------
 
-    /// Start the background watcher thread.
+    /// 启动后台监听线程。
     ///
-    /// Writes the PID file, then spawns a dedicated OS thread that owns the
-    /// `notify` watcher instance.  Returns a Tokio multi-producer
-    /// single-consumer receiver that yields [`FileChangeEvent`] values.
+    /// 写入 PID 文件，然后派生一个持有 `notify` 监听实例的专用 OS 线程。
+    /// 返回一个 Tokio 多生产者单消费者接收器，产出 [`FileChangeEvent`] 值。
     ///
-    /// # Errors
+    /// # 错误
     ///
-    /// Returns `Err` if the watcher is already running or the PID file
-    /// cannot be written.
+    /// 若监听器已在运行或 PID 文件无法写入，则返回 `Err`。
     pub fn start(&self) -> anyhow::Result<mpsc::UnboundedReceiver<FileChangeEvent>> {
         if self.running.swap(true, Ordering::SeqCst) {
-            anyhow::bail!("watcher is already running");
+            anyhow::bail!("监听器已在运行");
         }
 
-        // ---- PID file ----
+        // ---- PID 文件 ----
         let pid = std::process::id();
         if let Some(parent) = self.pid_file.parent() {
             fs::create_dir_all(parent)?;
@@ -233,10 +227,10 @@ impl FileWatcher {
         let mut f = fs::File::create(&self.pid_file)?;
         writeln!(f, "{pid}")?;
 
-        // ---- Channel between the notify thread and the tokio world ----
+        // ---- notify 线程与 tokio 世界之间的通道 ----
         let (tx, rx) = mpsc::unbounded_channel();
 
-        // ---- Clone Arcs for the thread ----
+        // ---- 为线程克隆 Arc ----
         let projects = self.projects.clone();
         let watched_dirs = self.watched_dirs.clone();
         let debounce_ms = self.debounce_ms;
@@ -261,21 +255,21 @@ impl FileWatcher {
         Ok(rx)
     }
 
-    /// Stop a running watcher process by sending `SIGTERM` to the PID stored
-    /// in the PID file.
+    /// 通过向 PID 文件中存储的 PID 发送 `SIGTERM` 来停止正在运行的
+    /// 监听进程。
     ///
-    /// # Platform
+    /// # 平台
     ///
-    /// On Unix the function invokes `kill -TERM <pid>`.  On non-Unix targets
-    /// it returns an error.
+    /// 在 Unix 上，该函数调用 `kill -TERM <pid>`。在非 Unix 目标上
+    /// 返回错误。
     pub fn stop(&self) -> anyhow::Result<()> {
         let pid_str = fs::read_to_string(&self.pid_file).map_err(|e| {
-            anyhow::anyhow!("cannot read PID file {}: {e}", self.pid_file.display())
+            anyhow::anyhow!("无法读取 PID 文件 {}: {e}", self.pid_file.display())
         })?;
         let pid: i32 = pid_str
             .trim()
             .parse()
-            .map_err(|e| anyhow::anyhow!("invalid PID in {}: {e}", self.pid_file.display()))?;
+            .map_err(|e| anyhow::anyhow!("{} 中的 PID 无效: {e}", self.pid_file.display()))?;
 
         #[cfg(unix)]
         {
@@ -284,7 +278,7 @@ impl FileWatcher {
                 .arg(pid.to_string())
                 .status()?;
             if !status.success() {
-                anyhow::bail!("kill -TERM {pid} returned non-zero exit");
+                anyhow::bail!("kill -TERM {pid} 返回非零退出码");
             }
             self.running.store(false, Ordering::SeqCst);
             Ok(())
@@ -293,21 +287,21 @@ impl FileWatcher {
         #[cfg(not(unix))]
         {
             let _ = pid;
-            anyhow::bail!("stop is only supported on Unix systems");
+            anyhow::bail!("stop 仅在 Unix 系统上受支持");
         }
     }
 
-    /// Return a snapshot of the watcher's state.
+    /// 返回监听器状态的快照。
     ///
-    /// The `running` flag is derived from whether the PID in the PID file
-    /// corresponds to a live process (checked via `/proc/<pid>` on Linux).
+    /// `running` 标志由 PID 文件中的 PID 是否对应一个存活进程
+    /// （在 Linux 上通过 `/proc/<pid>` 检查）得出。
     pub fn status(&self) -> WatcherStatus {
         let pid = fs::read_to_string(&self.pid_file)
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok());
 
         let running = pid.is_some_and(|p| {
-            // Check /proc/<pid> — portable across Linux without libc dependency.
+            // 检查 /proc/<pid> — 不依赖 libc 即可跨 Linux 使用。
             Path::new(&format!("/proc/{p}")).exists()
         });
 
@@ -321,11 +315,11 @@ impl FileWatcher {
 }
 
 // ---------------------------------------------------------------------------
-// Watcher thread inner loop
+// 监听线程内部循环
 // ---------------------------------------------------------------------------
 
-/// Runs in a dedicated OS thread.  Creates a `notify` watcher, subscribes to
-/// all project roots, and pumps debounced source-file events into `tx`.
+/// 在专用 OS 线程中运行。创建 `notify` 监听器，订阅所有项目根目录，
+/// 并将防抖后的源码事件送入 `tx`。
 fn run_watcher_loop(
     projects: &[(String, PathBuf)],
     watched_dirs: &[PathBuf],
@@ -335,7 +329,7 @@ fn run_watcher_loop(
     events_processed: &AtomicU64,
     pid_file: &Path,
 ) {
-    // ---- Create notify watcher with an MPSC bridge ----
+    // ---- 通过 MPSC 桥接创建 notify 监听器 ----
     let (notify_tx, notify_rx) = std::sync::mpsc::channel::<Event>();
 
     let mut watcher = match notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
@@ -345,46 +339,46 @@ fn run_watcher_loop(
     }) {
         Ok(w) => w,
         Err(e) => {
-            tracing::error!("failed to create file watcher: {e}");
+            tracing::error!("创建文件监听器失败: {e}");
             running.store(false, Ordering::SeqCst);
             let _ = fs::remove_file(pid_file);
             return;
         }
     };
 
-    // ---- Subscribe to project roots ----
+    // ---- 订阅项目根目录 ----
     let mut watched_count = 0usize;
     for dir in watched_dirs {
         match watcher.watch(dir, RecursiveMode::Recursive) {
             Ok(()) => {
                 watched_count += 1;
-                tracing::info!("watching: {}", dir.display());
+                tracing::info!("正在监听: {}", dir.display());
             }
             Err(e) => {
-                tracing::warn!("failed to watch {}: {e}", dir.display());
+                tracing::warn!("监听 {} 失败: {e}", dir.display());
             }
         }
     }
 
     if watched_count == 0 {
-        tracing::error!("no directories to watch — exiting");
+        tracing::error!("没有可监听的目录 — 退出");
         running.store(false, Ordering::SeqCst);
         let _ = fs::remove_file(pid_file);
         return;
     }
 
-    tracing::info!("file watcher started — {watched_count} directories");
+    tracing::info!("文件监听器已启动 — {watched_count} 个目录");
 
-    // ---- Debounce state ----
+    // ---- 防抖状态 ----
     let debounce_duration = Duration::from_millis(debounce_ms);
     let mut last_event: HashMap<PathBuf, Instant> = HashMap::new();
 
-    // ---- Main event loop ----
+    // ---- 主事件循环 ----
     loop {
         let event = match notify_rx.recv_timeout(Duration::from_millis(500)) {
             Ok(e) => e,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Periodically flush stale debounce entries to bound memory.
+                // 周期性刷新过期的防抖条目以限制内存。
                 let now = Instant::now();
                 last_event.retain(|_, t| now.duration_since(*t) < debounce_duration * 5);
                 continue;
@@ -392,16 +386,16 @@ fn run_watcher_loop(
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         };
 
-        // ---- Classify the event kind once ----
+        // ---- 一次性对事件类型分类 ----
         let kind = classify_event_kind(&event.kind);
 
         for path in &event.paths {
-            // Source-file filter
+            // 源码文件过滤
             if !FileWatcher::is_source_file(path) {
                 continue;
             }
 
-            // Debounce
+            // 防抖
             let now = Instant::now();
             if let Some(last) = last_event.get(path) {
                 if now.duration_since(*last) < debounce_duration {
@@ -410,13 +404,13 @@ fn run_watcher_loop(
             }
             last_event.insert(path.clone(), now);
 
-            // Resolve project
+            // 解析项目
             let (project_name, project_root) = match resolve_project(path, projects) {
                 Some(p) => p,
                 None => continue,
             };
 
-            // Skip non-file events (e.g. metadata-only)
+            // 跳过非文件事件（如仅元数据）
             let Some(kind) = kind else {
                 continue;
             };
@@ -429,27 +423,27 @@ fn run_watcher_loop(
             };
 
             if tx.send(change).is_err() {
-                // Consumer dropped the receiver — orderly shutdown.
+                // 消费方丢弃了接收器 — 有序关闭。
                 break;
             }
             events_processed.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    // ---- Cleanup ----
+    // ---- 清理 ----
     running.store(false, Ordering::SeqCst);
     let _ = fs::remove_file(pid_file);
-    tracing::info!("file watcher stopped");
+    tracing::info!("文件监听器已停止");
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Map a `notify::EventKind` to our simplified enum.
+/// 将 `notify::EventKind` 映射到我们的简化枚举。
 ///
-/// Returns `None` for event kinds that don't represent actual file content
-/// changes (e.g. `Access`, `Other`).
+/// 对不表示实际文件内容变更的事件类型（如 `Access`、`Other`）
+/// 返回 `None`。
 fn classify_event_kind(kind: &EventKind) -> Option<FileChangeKind> {
     match kind {
         EventKind::Create(_) => Some(FileChangeKind::Created),
@@ -459,7 +453,7 @@ fn classify_event_kind(kind: &EventKind) -> Option<FileChangeKind> {
     }
 }
 
-/// Find the project that owns `file_path` by longest-prefix match.
+/// 通过最长前缀匹配找到拥有 `file_path` 的项目。
 fn resolve_project(file_path: &Path, projects: &[(String, PathBuf)]) -> Option<(String, PathBuf)> {
     projects
         .iter()
@@ -469,7 +463,7 @@ fn resolve_project(file_path: &Path, projects: &[(String, PathBuf)]) -> Option<(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -486,7 +480,7 @@ mod tests {
             let path = PathBuf::from(format!("src/main.{ext}"));
             assert!(
                 FileWatcher::is_source_file(&path),
-                "extension .{ext} should be recognised"
+                "扩展名 .{ext} 应被识别"
             );
         }
     }
@@ -603,7 +597,7 @@ mod tests {
 
         let (name, _) =
             resolve_project(Path::new("/data/projects/x/src/main.rs"), &projects).unwrap();
-        assert_eq!(name, "inner", "longest prefix should match inner");
+        assert_eq!(name, "inner", "最长前缀应匹配 inner");
     }
 
     #[test]
@@ -613,7 +607,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // FileWatcher construction & status
+    // FileWatcher 构造与状态
     // ------------------------------------------------------------------
 
     #[test]

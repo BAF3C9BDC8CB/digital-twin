@@ -10,8 +10,8 @@ use crate::shared::collections::{CONFIG_CHUNKS, DOC_CHUNKS};
 
 /// 提取查询中的 ASCII 词（逐字搬移自 cli/build.rs:750-756）。
 ///
-/// Chinese and English (e.g. "Redis集群配置信息" → ["redis"],
-/// "我所有的MySQL数据库地址" → ["mysql"]).
+/// 中英混合（如 "Redis集群配置信息" → ["redis"]、
+/// "我所有的MySQL数据库地址" → ["mysql"]）。
 pub(crate) fn extract_ascii_words(s: &str) -> Vec<String> {
     let re = regex::Regex::new(r"[a-zA-Z0-9_.-]+").unwrap();
     re.find_iter(s)
@@ -24,7 +24,7 @@ pub(crate) fn extract_ascii_words(s: &str) -> Vec<String> {
 pub(crate) mod rewrite {
     use std::collections::HashMap;
 
-    /// Query rewriter for Chinese-English query expansion.
+    /// 中英查询扩写的查询重写器。
     pub struct QueryRewriter {
         mapping: HashMap<String, Vec<String>>,
     }
@@ -76,8 +76,8 @@ pub(crate) mod rewrite {
             QueryRewriter { mapping }
         }
 
-        /// Rewrite a Chinese query into possible English expansions.
-        /// Returns [original, expansion1, expansion2, ...].
+        /// 将中文查询重写为可能的英文扩展。
+        /// 返回 [原查询, 扩展1, 扩展2, ...]。
         pub fn rewrite(&self, query: &str) -> Vec<String> {
             let mut results = vec![query.to_string()];
             for (cn, en_list) in &self.mapping {
@@ -408,7 +408,7 @@ impl CrossWorldSearch {
                 (hits, degraded)
             }
             Err(e) => {
-                tracing::warn!("config world cypher fallback failed: {e}");
+                tracing::warn!("config 世界 Cypher 回退失败: {e}");
                 (Vec::new(), degraded)
             }
         }

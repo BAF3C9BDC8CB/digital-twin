@@ -1,4 +1,4 @@
-//! Full rebuild strategy — wipes all project data and rebuilds from scratch.
+//! 全量重建策略 — 清空项目的所有数据并从零重建。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
@@ -10,7 +10,7 @@ use std::path::Path;
 
 use super::BuildStrategy;
 
-/// Full rebuild: process every file, delete all previous data for the project.
+/// 全量重建：处理所有文件，删除该项目之前的全部数据。
 pub struct FullRebuildStrategy;
 
 #[async_trait]
@@ -30,7 +30,7 @@ impl BuildStrategy for FullRebuildStrategy {
         _snapshot_repo: Option<&dyn SnapshotRepository>,
         _project: &str,
     ) -> Result<(Vec<std::path::PathBuf>, Vec<String>), DtError> {
-        // In full rebuild, ALL files are candidates for processing
+        // 全量重建中，所有文件都是处理候选
         Ok((all_files.to_vec(), Vec::new()))
     }
 
@@ -40,10 +40,9 @@ impl BuildStrategy for FullRebuildStrategy {
         vector: Option<&dyn VectorRepository>,
         project: &str,
     ) -> Result<(), DtError> {
-        // §7.5: clear this project's vectors first — extracted-entity points
-        // (kg_nodes) and evidence blocks (doc_chunks) are project-scoped via
-        // the payload `project` key. Failures are logged, not fatal: the
-        // subsequent upserts are idempotent by deterministic point ids.
+        // §7.5：先清空该项目的向量 — 提取实体点（kg_nodes）与
+        // 证据块（doc_chunks）通过 payload 的 `project` 键按项目隔离。
+        // 失败仅记录日志，不致命：后续的 upsert 通过确定性点 ID 幂等。
         if let Some(vector) = vector {
             let project_filter = serde_json::json!({
                 "must": [{"key": "project", "match": {"value": project}}],
@@ -54,13 +53,13 @@ impl BuildStrategy for FullRebuildStrategy {
                     .await
                 {
                     tracing::warn!(
-                        "[full_rebuild] clear {collection} vectors for {project} failed: {e}"
+                        "[full_rebuild] 清空 {collection} 中 {project} 的向量失败: {e}"
                     );
                 }
             }
         }
 
-        // Delete all Method, Class, and Module nodes for this project
+        // 删除该项目的所有 Method、Class 与 Module 节点
         if let Some(graph) = graph {
             let mut params = HashMap::new();
             params.insert(
@@ -68,7 +67,7 @@ impl BuildStrategy for FullRebuildStrategy {
                 serde_json::Value::String(project.to_string()),
             );
 
-            // Delete CALLS relationships first
+            // 先删除 CALLS 关系
             let _ = graph
                 .write_query(
                     "MATCH (m:Method {project: $project})-[r:CALLS]->() DELETE r",
@@ -76,7 +75,7 @@ impl BuildStrategy for FullRebuildStrategy {
                 )
                 .await;
 
-            // Delete CONTAINS relationships
+            // 删除 CONTAINS 关系
             let _ = graph
                 .write_query(
                     "MATCH (c:Class {project: $project})-[r:CONTAINS]->() DELETE r",
@@ -84,7 +83,7 @@ impl BuildStrategy for FullRebuildStrategy {
                 )
                 .await;
 
-            // Delete methods
+            // 删除方法
             let _ = graph
                 .write_query(
                     "MATCH (m:Method {project: $project}) DETACH DELETE m",
@@ -92,7 +91,7 @@ impl BuildStrategy for FullRebuildStrategy {
                 )
                 .await;
 
-            // Delete classes
+            // 删除类
             let _ = graph
                 .write_query(
                     "MATCH (c:Class {project: $project}) DETACH DELETE c",
@@ -100,7 +99,7 @@ impl BuildStrategy for FullRebuildStrategy {
                 )
                 .await;
 
-            // Delete modules
+            // 删除模块
             let _ = graph
                 .write_query(
                     "MATCH (m:Module {project: $project}) DETACH DELETE m",
@@ -118,7 +117,7 @@ impl BuildStrategy for FullRebuildStrategy {
         project: &str,
         snapshots: &[FileSnapshot],
     ) -> Result<(), DtError> {
-        // For full rebuild, first clear all old snapshots, then insert fresh ones
+        // 全量重建：先清空所有旧快照，再插入新快照
         let _ = snapshot_repo.delete_project(project).await;
         snapshot_repo.save_snapshots(project, snapshots).await
     }

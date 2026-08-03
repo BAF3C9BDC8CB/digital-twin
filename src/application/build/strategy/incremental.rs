@@ -1,5 +1,5 @@
-//! Incremental build strategy — only processes files that have changed since
-//! the last build, using SHA1 hashes stored in SQLite.
+//! 增量构建策略 — 仅处理自上次构建以来发生变更的文件，
+//! 使用存储在 SQLite 中的 SHA1 哈希进行比较。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
@@ -10,10 +10,9 @@ use std::path::Path;
 
 use super::BuildStrategy;
 
-/// Incremental strategy: compare SHA1 hashes against stored snapshots.
+/// 增量策略：将 SHA1 哈希与已存快照进行比较。
 ///
-/// Only processes files that are new or have changed. Deletes data for
-/// files that no longer exist.
+/// 仅处理新增或变更的文件；删除已不存在文件的数据。
 pub struct IncrementalStrategy;
 
 #[async_trait]
@@ -29,7 +28,7 @@ impl BuildStrategy for IncrementalStrategy {
         snapshot_repo: Option<&dyn SnapshotRepository>,
         project: &str,
     ) -> Result<(Vec<std::path::PathBuf>, Vec<String>), DtError> {
-        // Load stored snapshots FIRST (now we keep mtime for fast-path).
+        // 先加载已存快照（现在保留 mtime 用于快速路径）。
         let mut stored_map: HashMap<String, (String, f64)> = HashMap::new();
         if let Some(repo) = snapshot_repo {
             if let Ok(snapshots) = repo.list_snapshots(project).await {
@@ -39,8 +38,8 @@ impl BuildStrategy for IncrementalStrategy {
             }
         }
 
-        // Build current-hash map, using mtime fast-path: if a file's mtime
-        // matches the stored snapshot, reuse the stored hash (skip SHA-256).
+        // 构建当前哈希映射，使用 mtime 快速路径：若文件的 mtime
+        // 与已存快照一致，则复用已存哈希（跳过 SHA-256）。
         let mut current_map: HashMap<String, (String, f64)> = HashMap::new();
         for path in all_files {
             let rel = crate::infrastructure::scanner::rel_path(root, path);
@@ -52,7 +51,7 @@ impl BuildStrategy for IncrementalStrategy {
                 .map(|d| d.as_secs_f64())
                 .unwrap_or(0.0);
 
-            // mtime unchanged → reuse stored hash (no file read, no SHA-256)
+            // mtime 未变 → 复用已存哈希（不读文件、不做 SHA-256）
             if let Some((stored_hash, stored_mtime)) = stored_map.get(&rel) {
                 if (current_mtime - stored_mtime).abs() < 1.0 {
                     current_map.insert(rel, (stored_hash.clone(), current_mtime));
@@ -60,13 +59,13 @@ impl BuildStrategy for IncrementalStrategy {
                 }
             }
 
-            // mtime changed or new file → compute SHA-256
+            // mtime 已变或新文件 → 计算 SHA-256
             if let Ok((hash, _)) = crate::infrastructure::scanner::compute_file_hash(path) {
                 current_map.insert(rel, (hash, current_mtime));
             }
         }
 
-        // Detect changes (same logic, now with mtime-aware current_map)
+        // 检测变更（相同逻辑，现使用带 mtime 的 current_map）
         let mut stored_hash_only: HashMap<String, String> = HashMap::new();
         for (k, (hash, _)) in &stored_map {
             stored_hash_only.insert(k.clone(), hash.clone());
@@ -74,7 +73,7 @@ impl BuildStrategy for IncrementalStrategy {
         let (changed_paths, deleted_paths) =
             crate::infrastructure::scanner::detect_changes(&current_map, &stored_hash_only);
 
-        // Map changed relative paths back to absolute paths
+        // 将变更的相对路径映射回绝对路径
         let changed_files: Vec<std::path::PathBuf> = changed_paths
             .iter()
             .map(|p| root.join(p))
@@ -90,8 +89,8 @@ impl BuildStrategy for IncrementalStrategy {
         _vector: Option<&dyn VectorRepository>,
         _project: &str,
     ) -> Result<(), DtError> {
-        // For incremental builds, we don't wipe everything.
-        // Individual file deletes happen at the file level in the pipeline.
+        // 增量构建不清空全部数据。
+        // 单个文件的删除在流水线的文件级完成。
         Ok(())
     }
 

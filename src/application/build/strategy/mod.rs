@@ -1,4 +1,4 @@
-//! Build strategies — decide which files to process and how to prepare storage.
+//! 构建策略 — 决定处理哪些文件以及如何准备存储。
 
 pub mod full_rebuild;
 pub mod incremental;
@@ -8,19 +8,19 @@ use crate::domain::types::FileSnapshot;
 use async_trait::async_trait;
 use std::path::Path;
 
-/// Strategy for determining what files to process in a build.
+/// 决定构建中处理哪些文件的策略。
 ///
-/// Implementations:
-/// - `IncrementalStrategy`: SHA1 diff against SQLite snapshots.
-/// - `FullRebuildStrategy`: wipe all data and rebuild from scratch.
+/// 实现：
+/// - `IncrementalStrategy`：对 SQLite 快照做 SHA1 差异比对。
+/// - `FullRebuildStrategy`：清空所有数据并从零重建。
 #[async_trait]
 pub trait BuildStrategy: Send + Sync {
-    /// Return the strategy name (for logging/reporting).
+    /// 返回策略名称（用于日志/报告）。
     fn name(&self) -> &'static str;
 
-    /// Select which files need processing.
+    /// 选择需要处理的文件。
     ///
-    /// Returns `(files_to_process, files_to_delete)`.
+    /// 返回 `(files_to_process, files_to_delete)`。
     async fn select_files(
         &self,
         root: &Path,
@@ -29,7 +29,7 @@ pub trait BuildStrategy: Send + Sync {
         project: &str,
     ) -> Result<(Vec<std::path::PathBuf>, Vec<String>), DtError>;
 
-    /// Prepare storage before writing (e.g., delete old data).
+    /// 写入前准备存储（如删除旧数据）。
     async fn prepare(
         &self,
         graph: Option<&dyn crate::domain::traits::GraphRepository>,
@@ -37,7 +37,7 @@ pub trait BuildStrategy: Send + Sync {
         project: &str,
     ) -> Result<(), DtError>;
 
-    /// Update snapshots after writing.
+    /// 写入后更新快照。
     async fn update_snapshots(
         &self,
         snapshot_repo: &dyn crate::domain::traits::SnapshotRepository,
@@ -45,8 +45,8 @@ pub trait BuildStrategy: Send + Sync {
         snapshots: &[FileSnapshot],
     ) -> Result<(), DtError>;
 
-    /// Whether this strategy forces a full rebuild.
-    /// When true, document processing skips mtime checks and re-processes all files.
+    /// 该策略是否强制全量重建。
+    /// 为 true 时，文档处理跳过 mtime 检查并重新处理所有文件。
     fn force_rebuild(&self) -> bool {
         false
     }

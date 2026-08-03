@@ -217,7 +217,7 @@ mod tests {
         let queries = repo.queries.lock().unwrap();
         assert!(
             queries.is_empty(),
-            "should not write when target is missing"
+            "目标缺失时不应写入关系"
         );
     }
 }

@@ -1,9 +1,9 @@
-//! Build service — orchestration layer for the build pipeline.
+//! Build 服务 — 构建流水线的编排层。
 //!
-//! Implements `BuildService` trait and provides:
-//! - `build(project, path)` — full/incremental build
-//! - `update_file(project, path)` — single file update
-//! - `delete_project(project)` — remove all data for a project
+//! 实现 `BuildService` trait，提供：
+//! - `build(project, path)` — 全量/增量构建
+//! - `update_file(project, path)` — 单文件更新
+//! - `delete_project(project)` — 删除项目的所有数据
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{
@@ -21,11 +21,10 @@ use super::strategy::BuildStrategy;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::siliconflow::SiliconFlowClient;
 
-/// Default build service implementation.
+/// 默认的构建服务实现。
 ///
-/// Holds references to all required storage backends, the parser registry,
-/// and the embed service. Orchestrates builds by selecting the appropriate
-/// strategy and executing the pipeline.
+/// 持有所有存储后端、解析器注册表与 embed 服务的引用。
+/// 通过选择适当的策略并执行流水线来编排构建。
 pub struct BuildServiceImpl {
     parser_registry: Arc<ParserRegistry>,
     graph: Option<Arc<dyn GraphRepository>>,
@@ -40,7 +39,7 @@ pub struct BuildServiceImpl {
 }
 
 impl BuildServiceImpl {
-    /// Create a new build service.
+    /// 创建新的构建服务。
     pub fn new(
         parser_registry: Arc<ParserRegistry>,
         graph: Option<Arc<dyn GraphRepository>>,
@@ -66,13 +65,13 @@ impl BuildServiceImpl {
         }
     }
 
-    /// Set custom scan configuration.
+    /// 设置自定义扫描配置。
     pub fn with_scan_config(mut self, config: ScanConfig) -> Self {
         self.scan_config = config;
         self
     }
 
-    /// Choose the appropriate build strategy.
+    /// 选择适当的构建策略。
     fn select_strategy(&self) -> Box<dyn BuildStrategy> {
         if self.full {
             Box::new(FullRebuildStrategy)
@@ -112,7 +111,7 @@ impl BuildService for BuildServiceImpl {
     }
 
     async fn update_file(&self, project: &str, path: &Path) -> Result<(), DtError> {
-        // For single file update, we parse the file and upsert to graph.
+        // 单文件更新：解析文件并 upsert 到图谱。
         let source = std::fs::read_to_string(path).map_err(DtError::Io)?;
 
         let result = self.parser_registry.parse_file(&source, path, project)?;
@@ -124,9 +123,9 @@ impl BuildService for BuildServiceImpl {
                 modules: Vec::new(),
                 snapshots: Vec::new(),
             };
-            // Re-use the write_graph logic - but extraction is private
-            // For now, skip graph writing for single file updates.
-            // In real implementation, use the pipeline's write methods.
+            // 复用 write_graph 逻辑 - 但 extraction 是私有的
+            // 目前单文件更新暂不写入图谱。
+            // 正式实现中应使用流水线的写入方法。
             let _ = graph;
             let _ = extraction;
         }
@@ -143,7 +142,7 @@ impl BuildService for BuildServiceImpl {
                 serde_json::Value::String(project.to_string()),
             );
 
-            // Delete all outgoing relationships first
+            // 先删除所有出向关系
             let _ = graph
                 .write_query(
                     "MATCH (m:Method {project: $project})-[r:CALLS]->() DELETE r",
@@ -156,21 +155,21 @@ impl BuildService for BuildServiceImpl {
                     params.clone(),
                 )
                 .await;
-            // Delete BELONGS_TO relationships from Method/Class to Project
+            // 删除 Method/Class 到 Project 的 BELONGS_TO 关系
             let _ = graph
                 .write_query(
                     "MATCH (n {project: $project})-[r:BELONGS_TO]->(:Project) DELETE r",
                     params.clone(),
                 )
                 .await;
-            // Delete entities
+            // 删除实体
             let _ = graph
                 .write_query(
                     "MATCH (n) WHERE n.project = $project AND (n:Method OR n:Class OR n:Module) DETACH DELETE n",
                     params.clone(),
                 )
                 .await;
-            // Delete the Project node
+            // 删除 Project 节点
             let _ = graph
                 .write_query("MATCH (p:Project {name: $project}) DETACH DELETE p", params)
                 .await;
@@ -202,7 +201,7 @@ mod tests {
             BatchConfig::default(),
             false,
         );
-        // Just verify it compiles and is constructable
+        // 仅验证它可编译且可构造
         assert_eq!(service.scan_config.max_file_size, 524_288);
     }
 }
