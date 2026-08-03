@@ -56,7 +56,7 @@ src/
 | Runtime | Pod status, service runtime | K8s API (live) |
 | Reasoning | Observation → Analysis → Decision chain | Memgraph (with TTL) |
 
-**CLI binary** (`src/main.rs`): `dt` with 29 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
+**CLI binary** (`src/main.rs`): `dt` with 27 commands. Dual-mode: server (gRPC daemon) or CLI subcommand.
 
 ## Pipeline Engine
 
@@ -73,20 +73,26 @@ File → TreeSitterProcessor → ChunkProcessor → {HanlpClientProcessor → Ll
 
 ## Qdrant Collections
 
-Two collections with strict separation:
-- `{project}_methods` — code search (method-level, from `dt build`)
+Global collections with strict separation:
+- `code_methods` — code search (method-level, from `dt build`; single global collection, `project` payload field for filtering)
 - `kg_nodes` — knowledge graph entity vectors (from `dt kg-sync`)
+- `doc_chunks` — document block vectors (internal)
 
 ## CrossWorldSearch (`src/application/context/search_mcp.rs`)
 
-Unified search entry point — dispatches by `world` parameter:
-- `world=code` → Qdrant `{project}_methods`
-- `world=knowledge` → Memgraph (Concept/Decision/...)
-- `world=doc` → Qdrant `kg_nodes`
+Unified search entry point — the single search stack behind CLI `dt search`, MCP `dt_search`/`dt_search_kg`, and gRPC `Search`. Dispatches by `world` parameter:
+- `world=code` → Qdrant `code_methods`
+- `world=knowledge` → Memgraph GraphRAG (vector recall + graph expansion + rerank)
+- `world=doc` → Qdrant `kg_nodes`/`doc_chunks`
+- `world=config` → Qdrant `config_chunks` (+ QueryRewriter)
+- `world=memory` → Memgraph event labels
+- `world=all` (default) → RRF fusion over code+knowledge+doc
+
+Every hit carries `llm_analysis` (method purpose/logic) and precise location (`file_path`/`start_line`/`end_line`).
 
 ## External Dependencies
 
-- **Memgraph 5.x** (Bolt :7687) — knowledge graph
+- **Memgraph 5.x** (Bolt :7688) — knowledge graph
 - **Qdrant** (gRPC :6334) — vector storage
 - **SiliconFlow API** — embed (BGE-M3), rerank, chat (Qwen2.5-14B)
 - **tree-sitter** — multi-language AST parsing (Java, Python, JS, TS, Go, Rust, PHP)

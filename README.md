@@ -44,7 +44,9 @@ cargo build --release
 
 配置从 `~/.config/digital-twin/config.yaml` 加载。
 
-## CLI 命令 (29 个)
+## CLI 命令 (27 个)
+
+> **AI 助手使用时优先走 MCP 工具**（`mcp/mcp-server.py`，33 个工具，见文末「AI 集成」）；CLI 是降级/运维入口。
 
 ### 管线
 
@@ -109,34 +111,37 @@ cargo build --release
 
 ### CrossWorldSearch — 统一搜索入口
 
-所有搜索走 `CrossWorldSearch` 服务（`src/application/context/search_mcp.rs`），按 `world` 参数分派到不同数据源：
+所有搜索走 `CrossWorldSearch` 服务（`src/application/context/search_mcp.rs`），CLI / MCP / gRPC 三入口共享同一栈，按 `world` 参数分派：
 
 ```
-MCP/CLI → gRPC Search RPC → CrossWorldSearch.search()
-                               ├─ world=code → Qdrant code_methods (全局集合)
-                               ├─ world=knowledge → Memgraph (Concept/Decision/...)
-                               └─ world=doc → Qdrant kg_nodes
+CLI dt search / MCP dt_search / gRPC Search → CrossWorldSearch.search()
+    ├─ world=code      → Qdrant code_methods (全局集合)
+    ├─ world=knowledge → Memgraph GraphRAG (向量召回+图扩展+rerank)
+    ├─ world=doc       → Qdrant 文档块
+    ├─ world=config    → Qdrant config_chunks (+ QueryRewriter)
+    ├─ world=memory    → Memgraph 事件标签
+    └─ world=all (默认) → code+knowledge+doc RRF 融合
 ```
+
+每条命中自带 `llm_analysis`（方法用途/逻辑）与精确位置（`file_path`/`start_line`/`end_line`）。
 
 ### 三个 Qdrant 全局集合
 
 | Collection | 数据来源 | 内容 | 搜索工具 |
 |------------|---------|------|---------|
-| `code_methods` | `dt build` 代码索引 | 方法级源码向量（含 start_line/end_line/calls/llm_analysis） | `dt search` |
-| `doc_chunks` | 文档分块 | 文档段落向量 | 内部使用 |
-| `kg_nodes` | `dt kg-sync` KG 节点同步 | 业务实体向量（Server/DB/NacosConfig/Knowledge/Decision 等） | `dt search-kg` |
+| `code_methods` | `dt build` 代码索引 | 方法级源码向量（含 start_line/end_line/calls/llm_analysis） | `dt_search` (world=code) / `dt search` |
+| `doc_chunks` | 文档分块 | 文档段落向量 | `dt_search` (world=doc) |
+| `kg_nodes` | `dt kg-sync` KG 节点同步 | 业务实体向量（Server/DB/NacosConfig/Knowledge/Decision 等） | `dt_search_kg` / `dt search --world knowledge` |
 
 **关键：三者职责分离，不交叉。** 代码搜索走 `code_methods`，文档搜索走 `doc_chunks`，KG 搜索走 `kg_nodes`。
-旧版 `{project}_methods` 等命名集合仍被支持（后向兼容），通过 RRF 融合两端结果。
 
 ### 代码搜索流程
 
-1. MCP 层 `--path` → 解析为项目名（从 config.yaml）
-2. embed query → 向量
-3. 搜索 `code_methods` 全局集合（按 project payload 过滤）
-4. 读完整 payload（name/file_path/start_line/end_line/signature/calls/method_id）
-5. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤
-6. 兜底：vector 不可用时用 Memgraph 全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`
+1. embed query → 向量
+2. 搜索 `code_methods` 全局集合（可选按 `project` payload 过滤）
+3. 读完整 payload（name/file_path/start_line/end_line/signature/calls/llm_analysis）
+4. score < `DT_SEARCH_MIN_SCORE`（默认 0.3）过滤
+5. 兜底：vector 不可用时用 Memgraph 全文索引 `db.index.fulltext.queryNodes("infra_search", ...)`
 
 ## Pipeline Engine
 
@@ -235,12 +240,11 @@ digital-twin-v2/
 │   │   └── parser/             # tree-sitter 解析器 (7 语言)
 │   ├── application/            # 应用层 (8 模块)
 │   │   ├── build/              # dt build (strategy/pipeline/watcher)
-│   │   ├── context/            # Context Builder (6-stage pipeline)
+│   │   ├── context/            # Context Builder + CrossWorldSearch 统一检索 (search_mcp/fusion)
 │   │   ├── hooks/              # Hook 事件驱动系统
 │   │   ├── knowledge/          # knowledge/memory/reasoning/thread
 │   │   ├── pipeline/           # Pipeline Engine (processor orchestration)
 │   │   ├── plugins/            # K8s/Svc/Jenkins 插件
-│   │   ├── search.rs           # 搜索融合 (RRF) + 扩展
 │   │   └── sync/               # nacos/k8s/jenkins/kg 同步
 │   ├── interfaces/             # 接口层
 │   │   ├── cli/                # 17 个 CLI 命令处理模块
@@ -256,12 +260,13 @@ digital-twin-v2/
 │   ├── pipeline.yaml           # Pipeline 引擎配置
 │   │── prompts/                # LLM prompt 模板
 │   └── event-hooks.yaml        # Hook 事件定义
-├── docs/                       # 架构文档 (10+ 份)
+├── docs/
+│   └── superpowers/            # 设计文档 (specs/) 与实施计划 (plans/)
 ├── skill/
 │   ├── SKILL.md                # digital-twin 技能入口
-│   └── guides/                 # 操作指南 (12 份)
+│   └── guides/                 # 操作指南 (13 份)
 ├── mcp/                        # MCP 服务器
-│   ├── mcp-server.py           # DT MCP Server V2 (34 工具)
+│   ├── mcp-server.py           # DT MCP Server V2 (33 工具)
 │   └── mcp-session-hooks.py    # 会话生命周期钩子 (旧版)
 ├── scripts/
 │   ├── build-all.sh            # 全项目构建
@@ -279,14 +284,12 @@ digital-twin-v2/
 
 ## 架构文档
 
-详见 [docs/](docs/) 目录。
+详见 [docs/superpowers/](docs/superpowers/) 目录：
 
-| 文档 | 内容 |
+| 目录 | 内容 |
 |------|------|
-| [architecture-v3-single-crate-layered.md](docs/architecture-v3-single-crate-layered.md) | 当前架构: 单 crate DDD 五层 |
-| [architecture-v2-six-worlds.md](docs/architecture-v2-six-worlds.md) | 六世界模型设计 (DEPRECATED) |
-| [architecture-v2-data-schema.md](docs/architecture-v2-data-schema.md) | Memgraph Schema 设计 (DEPRECATED) |
-| [architecture-v2-mcp-api-spec.md](docs/architecture-v2-mcp-api-spec.md) | MCP API 规范 |
+| [docs/superpowers/specs/](docs/superpowers/specs/) | 设计规格（含知识管线主文档、S5 知识混合检索、统一检索设计） |
+| [docs/superpowers/plans/](docs/superpowers/plans/) | 实施计划 |
 
 ## HanLP NLP 集成
 
@@ -307,16 +310,32 @@ digital-twin-v2/
 
 ## AI 集成 (OpenCode / Claude Code)
 
-`dt` CLI 提供 gRPC 服务和 MCP 工具接口，外部 AI 助手通过 MCP 协议调用：
+AI 助手通过 **MCP 协议**调用 `mcp/mcp-server.py`（33 个工具），检索/记忆/分析类操作优先用 MCP Tool（返回结构化 JSON），CLI 仅作降级：
+
+| 场景 | MCP Tool（首选） | CLI 降级 |
+|------|-----------------|---------|
+| 统一搜索（代码/知识/文档/配置/事件） | `dt_search` | `dt search` |
+| KG GraphRAG 搜索 | `dt_search_kg` | `dt search --world knowledge` |
+| 写知识/事件 | `dt_memorize` / `dt_event` | `dt memorize` / `dt event` |
+| 索引构建 | `dt_build` | `dt build` |
+| KG/Nacos 同步 | `dt_kg_sync` / `nacos_sync` | `dt kg-sync` / `dt nacos-sync` |
+| 上下文/计划/依赖/校验 | `dt_context` / `dt_plan` / `dt_dependency` / `dt_verify` | 同名 CLI |
+| Jenkins / 微服务 / K8s 日志 | `jcli_*` / `svc_*` / `kublog_*` | `dt jcli` / `dt kub` |
+| 健康检查/备份/清理/指标 | `dt_health` / `dt_backup` / `dt_cleanup` / `dt_metrics` | 同名 CLI |
+
+事件写入由 Hook 系统自动完成（AI 无需手动调 `dt_event`）：
 
 | 触发操作 | 自动执行 |
 |---------|---------|
-| 源码编辑 | `dt build --file <path>` |
-| 软件安装 | Hook: `code_modified` / `dt event --type SoftwareInstalled ...` |
-| Nacos 配置变更 | Hook: `config_changed` / `dt nacos-sync` |
-| 架构决策 | Hook: `decision_made` / `dt memorize --type Decision ...` |
+| 源码编辑 | Hook: `code_modified`（插件自动触发 `dt_build`） |
+| Nacos 配置变更 | Hook: `config_changed` |
+| 架构决策 | Hook: `decision_made` |
+| Bug 修复 | Hook: `bug_fix_recorded` |
 | 生产部署 | Hook: `jenkins_deploy_completed` |
 | 会话结束 | Hook: `session_ended` |
+| K8s Pod 异常 | Hook: `pod_event_occurred` |
+
+> 软件安装/手动记忆等主动写入仍需调 `dt_event` / `dt_memorize`（见 `skill/guides/WRITE-EVENTS.md`）。
 
 ## 许可证
 

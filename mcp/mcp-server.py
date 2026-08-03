@@ -378,7 +378,7 @@ async def list_tools():
         # ===== 知识 =====
         Tool(
             name="dt_memorize",
-            description="写入知识节点到KG(架构决策、用户说'记住')。--type: Decision/KnowledgeAdded/Environment/Dependencies",
+            description="写入知识节点到KG(架构决策、用户说'记住')。type 取值: Decision/KnowledgeAdded/Environment/Dependencies",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -392,7 +392,7 @@ async def list_tools():
         ),
         Tool(
             name="dt_event",
-            description="写入事件节点到KG(部署/安装/配置变更/会话记录)。--type: Deploy/SoftwareInstalled/ConfigChange/Conversation",
+            description="写入事件节点到KG(部署/安装/配置变更/会话记录)。type 取值: Deploy/SoftwareInstalled/ConfigChange/Conversation",
             inputSchema={
                 "type": "object",
                 "properties": {

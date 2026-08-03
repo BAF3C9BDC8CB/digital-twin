@@ -5,7 +5,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 
 # digital-twin 技能
 
-> **优先使用 MCP Tool**（`digital-twin_*`），MCP 不可用时降级为 CLI 命令。MCP Tool 列表见 [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md)。
+> **优先使用 MCP Tool**（服务前缀 `digital-twin_`，如 `digital-twin_dt_search`），MCP 不可用时才降级为 CLI 命令。工具与命令的完整对照见 [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md)。
 
 凡是需要**定位代码、找函数、找类、找文件、理解项目逻辑**，一律走语义搜索流程。
 **禁止直接用 grep / glob / find 扫代码。** 遇到代码搜索需求时，先读 [CODE-SEARCH.md](./guides/CODE-SEARCH.md)。
@@ -30,7 +30,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 | 场景 | 文档 |
 |------|------|
 | 🎯 **Leader 工作流（高效并行执行）** | [EXECUTION-LEADER.md](./guides/EXECUTION-LEADER.md) |
-| 📖 **dt CLI 全部命令参考** | [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md) |
+| 📖 **MCP 工具与 CLI 命令对照参考** | [DT-CLI-REFERENCE.md](./guides/DT-CLI-REFERENCE.md) |
 | 🔍 **搜索代码逻辑、方法定位、文件查找** | [CODE-SEARCH.md](./guides/CODE-SEARCH.md) |
 | 🧠 **查知识图谱（任何任务的第一个动作）** | [KG-QUERY.md](./guides/KG-QUERY.md) |
 | 🔄 **KG 节点同步到向量库** | MCP: `dt_kg_sync` / CLI: `dt kg-sync --incremental` |
@@ -40,7 +40,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 | 🚀 **发布服务（正式/测试环境）** | [JCLI-GUIDE.md](./guides/JCLI-GUIDE.md) |
 | ⚙️ **管理本地服务（启停/状态/日志）** | [SVC-GUIDE.md](./guides/SVC-GUIDE.md) |
 | 📦 **监听/下载 K8s Pod 日志，查看 Pod/Deployment/Service 状态** | [K8S-LOGS-GUIDE.md](./guides/K8S-LOGS-GUIDE.md) |
-| 📝 **Git 提交规范** | [COMMIT-GUIDE.md](./guides/COMMIT-GUIDE.md) |
+| 📝 **Git 提交规范** | [Git工作流策略.md](./guides/Git工作流策略.md) |
 | 🆕 **打开新工作空间 → 发现未索引项目** | [PROJECT-DISCOVERY.md](./guides/PROJECT-DISCOVERY.md) |
 
 ---
@@ -50,7 +50,7 @@ description: 知识图谱查询 + Qdrant 语义代码搜索 + 事件写入规则
 - ❌ 不要问用户"要不要查知识图谱"——静默查询
 - ❌ 不要每次对话全量扫代码
 - ❌ 不要询问用户已知存在于知识图谱中的信息
-- ❌ **禁止直接用 grep / glob / find 搜索代码——先用 MCP Tool `dt_search_expand` 语义搜索**
-- ❌ **禁止用 `ls` + `read` 浏览目录来替代语义搜索——查找代码逻辑第一步永远是 `dt_search_expand`**
+- ❌ **禁止直接用 grep / glob / find 搜索代码——先用 MCP Tool `dt_search` 语义搜索**
+- ❌ **禁止用 `ls` + `read` 浏览目录来替代语义搜索——查找代码逻辑第一步永远是 `dt_search`**
 - ❌ **禁止让用户去 Kuboard 网页查看 K8s Pod 日志——一律用 MCP Tool `kublog_*`（已解决网页日志断开问题）**
 - ❌ **禁止用 `kubectl logs` 替代 `kublog`**——kublog 已封装 Kuboard 鉴权与 WS 稳定性（（（

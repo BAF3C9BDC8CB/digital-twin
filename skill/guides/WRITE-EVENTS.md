@@ -4,24 +4,32 @@
 
 ## 触发写入
 
-| 触发操作 | 条件 | 命令 |
-|---------|------|------|
-| 用户说"记忆/记一下/记住这个/记下来/记住" | 总是 | `dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"` |
-| 安装软件（apt/pip/npm/brew 等） | 总是 | `dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>, method: <安装方式>" --project "<项目>"` |
-| 修改 Nacos/Apollo/Consul 等外部配置 | 总是 | `dt event --type ConfigChange --entity-id "<data_id>" --entity-type NacosConfig --details "<改动摘要>" --project "<项目>"` |
-| 同步 Nacos 配置 | AI 判断必要时 | `dt nacos-sync --env test` 或 `dt nacos-sync --env prod` |
-| 做出架构/技术决策 | 总是 | `dt memorize --type Decision --entity-id "<决策标识>" --entity-type ArchitectureDecision --details "decision: <决策>; reason: <原因>" --project "<项目>"` |
-| Jenkins 部署 | **所有环境** | `dt event --type Deployment --entity-id "<job_name>" --entity-type JenkinsJob --details "job: <job_name>; env: <环境>; build_number: <构建号>; branch: <分支>; version: <版本>" --project "<项目>"` |
+| 触发操作 | 条件 | MCP Tool（首选） |
+|---------|------|-----------------|
+| 用户说"记忆/记一下/记住这个/记下来/记住" | 总是 | `dt_memorize(type="KnowledgeAdded", entity_id="<标识>", entity_type="<实体类型>", details="<内容>", project="<项目>")` |
+| 安装软件（apt/pip/npm/brew 等） | 总是 | `dt_event(type="SoftwareInstalled", entity_id="<包名>", entity_type="Software", details="version: <版本>, method: <安装方式>", project="<项目>")` |
+| 修改 Nacos/Apollo/Consul 等外部配置 | 总是 | `dt_event(type="ConfigChange", entity_id="<data_id>", entity_type="NacosConfig", details="<改动摘要>", project="<项目>")` |
+| 同步 Nacos 配置 | AI 判断必要时 | `nacos_sync(env="test")` 或 `nacos_sync(env="prod")` |
+| 做出架构/技术决策 | 总是 | `dt_memorize(type="Decision", entity_id="<决策标识>", entity_type="ArchitectureDecision", details="decision: <决策>; reason: <原因>", project="<项目>")` |
+| Jenkins 部署 | **所有环境** | `dt_event(type="Deployment", entity_id="<job_name>", entity_type="JenkinsJob", details="job: <job_name>; env: <环境>; build_number: <构建号>; branch: <分支>; version: <版本>", project="<项目>")` |
+
+**CLI 降级**（MCP 不可用时，参数一一对应）：
+
+```bash
+dt memorize --type KnowledgeAdded --entity-id "<标识>" --entity-type "<实体类型>" --details "<内容>" --project "<项目>"
+dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software --details "version: <版本>" --project "<项目>"
+dt nacos-sync --env test
+```
 
 ## 代码实体同步（自动）
 
 `dt build` 已由 OpenCode 插件自动触发（`tool.execute.after` 钩子拦截 `edit`/`write`），**AI 无需手动执行**。
 
-| 触发操作 | 条件 | 命令 |
-|---------|------|------|
+| 触发操作 | 条件 | 执行方式 |
+|---------|------|---------|
 | 源码修改 | 自动（插件） | 无需 AI 执行 |
-| 删除文件 | 文件已删除 | `dt remove --project <项目名> --file <原相对路径>` |
-| 批量同步 / 项目首次索引 | 项目维度 | `dt build --path <路径> --name <项目名>`（手动触发） |
+| 删除文件 | 文件已删除 | MCP `dt_build(path="<项目根>", name="<项目名>", full=true)`；CLI `dt build --full --path <路径> --name <项目名>`（全量重建，无单文件删除命令） |
+| 批量同步 / 项目首次索引 | 项目维度 | MCP `dt_build(path="<项目根>", name="<项目名>")`；CLI 降级 `dt build --path <路径> --name <项目名>` |
 
 ## 完全不操作
 
@@ -41,7 +49,7 @@
 
 用户说 "done" / "结束" 时：
 1. 列出关键发现
-2. 执行：`dt event --type Conversation --entity-id "<会话日期>" --entity-type Session --project "<项目>" --details "<关键发现摘要>"`
+2. 执行：`dt_event(type="Conversation", entity_id="<会话日期>", entity_type="Session", project="<项目>", details="<关键发现摘要>")`
 3. 回复：`📝 已将 [本次会话摘要] 记录到知识图谱`
 
 ## Event 架构

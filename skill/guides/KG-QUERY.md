@@ -1,16 +1,18 @@
 # KG 查询：一步到位
 
-**规则：所有 KG 查询优先用 MCP Tool `dt_search_kg`，MCP 不可用时降级为 `dt search-kg` CLI。**
+**规则：所有 KG 查询优先用 MCP Tool `dt_search_kg`，MCP 不可用时降级为 CLI `dt search --world knowledge`。**
 
 ---
 
 ## 推荐方式（覆盖 90% 场景）
 
-```bash
-dt search-kg "<自然语言关键词>" --limit 10
+```
+dt_search_kg(query="<自然语言关键词>", limit=10)
 ```
 
-返回结果含 `elementId`，用精确查询取完整属性：
+GraphRAG 混合检索（向量召回 + 图扩展 + rerank），返回 JSON，含 `summary` / 来源文档 / `hop` / `score_breakdown`。
+
+返回结果含 `elementId` 时，用精确查询取完整属性（经 memgraph MCP `run_cypher_query`）：
 
 ```cypher
 MATCH (n) WHERE elementId(n) = "<返回的 elementId>"
@@ -20,6 +22,14 @@ RETURN n
 ---
 
 ## 回退方式
+
+### 方式 A-降级：CLI（MCP 不可用时）
+
+```bash
+dt search "<关键词>" --world knowledge --limit 10
+```
+
+> `dt search-kg` 子命令已移除，KG 语义搜索走统一检索的 knowledge 世界。
 
 ### 方式 B：全文索引
 
@@ -51,6 +61,12 @@ LIMIT 20
 ---
 
 ## KG 同步
+
+```
+dt_kg_sync()                    # MCP Tool（首选）
+```
+
+CLI 降级：
 
 ```bash
 dt kg-sync                 # 全量同步（推荐首次）

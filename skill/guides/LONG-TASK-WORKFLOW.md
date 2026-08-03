@@ -81,28 +81,30 @@ RETURN k.details
 5. 逐模块呈现设计，用户逐模块审批
 6. 保存设计文档，commit
 
-```bash
-# 记忆写入：决策
-dt memorize --type Decision \
-  --entity-id "arch-$(date +%Y%m%d)-<功能名>" \
-  --entity-type ArchitectureDecision \
-  --project "<项目>" \
-  --details "decision: <决策内容>; reason: <原因>; scope: <影响范围>"
+```
+# 记忆写入（MCP Tool，首选）：决策
+dt_memorize(type="Decision",
+            entity_id="arch-<日期>-<功能名>",
+            entity_type="ArchitectureDecision",
+            project="<项目>",
+            details="decision: <决策内容>; reason: <原因>; scope: <影响范围>")
 
 # 记忆写入：测试环境
-dt memorize --type Environment \
-  --entity-id "dev-env-$(date +%Y%m%d)" \
-  --entity-type DevEnvironment \
-  --project "<项目>" \
-  --details "{\"dev_url\": \"http://localhost:3000\", \"notes\": \"前端端口 3000, 后端 8080\"}"
+dt_memorize(type="Environment",
+            entity_id="dev-env-<日期>",
+            entity_type="DevEnvironment",
+            project="<项目>",
+            details='{"dev_url": "http://localhost:3000", "notes": "前端端口 3000, 后端 8080"}')
 
 # 记忆写入：测试账号
-dt memorize --type Credentials \
-  --entity-id "test-account-<项目>" \
-  --entity-type TestAccount \
-  --project "<项目>" \
-  --details "{\"role\": \"admin\", \"username\": \"admin@test.com\", \"password\": \"<掩码>\", \"notes\": \"测试环境专属账号\"}"
+dt_memorize(type="Credentials",
+            entity_id="test-account-<项目>",
+            entity_type="TestAccount",
+            project="<项目>",
+            details='{"role": "admin", "username": "admin@test.com", "password": "<掩码>", "notes": "测试环境专属账号"}')
 ```
+
+> MCP 不可用时降级为 `dt memorize --type <类型> --entity-id <标识> --entity-type <实体类型> --project <项目> --details <内容>`。
 
 > **密码处理规则:** 密码写入 KG 时做掩码处理（如 `adm***com`），仅记录部分字符用于识别。主 agent 在每次会话中重新询问完整密码，不在知识图谱中明文存储敏感凭据。
 
@@ -195,7 +197,7 @@ dt memorize --type Credentials \
 主 agent 只做三件事:
 ├─ 发任务 -> 写 prompt -> 发子 agent
 ├─ 收结果 -> 阅读审查报告 -> 判断通过/退回
-└─ 写记忆 -> dt memorize / dt event
+└─ 写记忆 -> dt_memorize / dt_event (MCP Tool)
 
 主 agent 坚决不做:
 ❌ 不写任何代码
@@ -360,13 +362,13 @@ def test_login_flow_with_mock_session():
     # ... 测试实际的登录功能
 ```
 
-```bash
-# 记忆记录
-dt memorize --type Dependencies \
-  --entity-id "mock-task1-waiting-task5" \
-  --entity-type PendingIntegration \
-  --project "<项目>" \
-  --details "{\"mock_task\": \"task1_user_registration\", \"waiting_for\": \"task5_session_middleware\", \"mock_file\": \"src/auth/session_manager.py\", \"status\": \"pending_integration\"}"
+```
+# 记忆记录（MCP Tool）
+dt_memorize(type="Dependencies",
+            entity_id="mock-task1-waiting-task5",
+            entity_type="PendingIntegration",
+            project="<项目>",
+            details='{"mock_task": "task1_user_registration", "waiting_for": "task5_session_middleware", "mock_file": "src/auth/session_manager.py", "status": "pending_integration"}')
 ```
 
 **Mock 实现规则：**
@@ -687,12 +689,14 @@ Mock 任务积累到一定程度后，启动集成阶段。
 7. 更新记忆
 
 记忆更新:
-├─ dt event --type TaskReimplemented \
-     --entity-id "task1-integrated" \
-     --entity-type FeatureTask \
-     --details "mocks_resolved: [task5]; integration_status: complete"
-└─ dt remove --project <项目> --file src/auth/session_manager.py (if Mock file was separate)
-    dt build --file ... (if Mock was inline)
+├─ dt_event(type="TaskReimplemented",
+│          entity_id="task1-integrated",
+│          entity_type="FeatureTask",
+│          project="<项目>",
+│          details="mocks_resolved: [task5]; integration_status: complete")
+└─ 索引更新:
+   ├─ Mock 是独立文件 → 删除文件后 dt_build(path="<项目根>", name="<项目>", full=true) 全量重建
+   └─ Mock 是 inline  → dt_build(path="<文件绝对路径>")（传文件自动解析项目）
 ```
 
 ---
@@ -728,7 +732,7 @@ Mock 任务积累到一定程度后，启动集成阶段。
   搜索代码中的 MOCK 标记 → 确认全部清理
 
 □ 记忆完整性
-  确认所有 dt event / dt memorize 已执行
+  确认所有 dt_event / dt_memorize 已执行
 
 □ 展示完整 diff 给用户确认
   git diff （等待用户确认）
@@ -838,41 +842,40 @@ continuation_context:
 
 使用**固定 entity-id**，每次写入自动覆盖上一次的记录：
 
-```bash
+```
 # 1. 列出本次会话做了什么，计算进度百分比
-
-# 2. 写入续接上下文（固定 entity-id，自动覆盖）
 PROGRESS_PERCENT=20  # 计算: 已完成任务数 / 总任务数 * 100
 
-dt memorize --type Context \
-  --entity-id "continuation-<项目名>" \
-  --entity-type SessionContinuation \
-  --project "<项目>" \
-  --details "{
-    \"progress_percent\": $PROGRESS_PERCENT,
-    \"total_tasks\": 10,
-    \"completed_this_session\": 2,
-    \"session_summary\": \"完成了注册页面和 Session 中间件 Mock\",
-    \"completed\": [\"Task 1: 注册页面\", \"Task 5: Session 中间件\"],
-    \"pending\": [\"Task 2: 登录页面 (Mock Task5)\"],
-    \"completed_details\": \"{task: Task 1, files: [Register.vue, api/user.ts, tests], browser_test: pass}\",
-    \"next\": \"集成 Task 2: 拆 Mock 接 Task 5\",
-    \"dev_url\": \"http://localhost:3000\",
-    \"branch\": \"feature/user-center\",
-    \"notes\": \"TestAccount 密码已掩码, 下次会话需重新提供\"
-  }"
+# 2. 写入续接上下文（MCP Tool，固定 entity-id，自动覆盖）
+dt_memorize(type="Context",
+            entity_id="continuation-<项目名>",
+            entity_type="SessionContinuation",
+            project="<项目>",
+            details='{
+              "progress_percent": 20,
+              "total_tasks": 10,
+              "completed_this_session": 2,
+              "session_summary": "完成了注册页面和 Session 中间件 Mock",
+              "completed": ["Task 1: 注册页面", "Task 5: Session 中间件"],
+              "pending": ["Task 2: 登录页面 (Mock Task5)"],
+              "completed_details": "{task: Task 1, files: [Register.vue, api/user.ts, tests], browser_test: pass}",
+              "next": "集成 Task 2: 拆 Mock 接 Task 5",
+              "dev_url": "http://localhost:3000",
+              "branch": "feature/user-center",
+              "notes": "TestAccount 密码已掩码, 下次会话需重新提供"
+            }')
 
 # 3. 记录会话事件（固定 entity-id，同样覆盖）
-dt event --type Conversation \
-  --entity-id "<项目名>-session" \
-  --entity-type Session \
-  --project "<项目>" \
-  --details "{
-    \"date\": \"$(date +%Y-%m-%d)\",
-    \"progress\": \"$PROGRESS_PERCENT%\",
-    \"completed_this_session\": \"Task 1, Task 5\",
-    \"summary\": \"完成了注册页面前端+API，Session 中间件 Mock\"
-  }"
+dt_event(type="Conversation",
+         entity_id="<项目名>-session",
+         entity_type="Session",
+         project="<项目>",
+         details='{
+           "date": "<YYYY-MM-DD>",
+           "progress": "20%",
+           "completed_this_session": "Task 1, Task 5",
+           "summary": "完成了注册页面前端+API，Session 中间件 Mock"
+         }')
 
 # 4. 回复
 > 📝 进度 $PROGRESS_PERCENT% 已记录到知识图谱。下次会话自动续接。
@@ -1032,17 +1035,19 @@ HIGHLIGHTS: <做得好的地方>
 
 ## 十一、记忆命令速查
 
-| 场景 | 命令 |
-|------|------|
-| 架构决策 | `dt memorize --type Decision --entity-type ArchitectureDecision --details "decision: ...; reason: ..."` |
-| Mock 依赖记录 | `dt memorize --type Dependencies --entity-type PendingIntegration --details "mock_for: <任务>; waiting_for: <依赖>"` |
-| Mock 清理记录 | `dt event --type TaskReimplemented --entity-type FeatureTask --details "mocks_resolved: [依赖列表]"` |
-| 任务完成 | `dt event --type TaskComplete --entity-type FeatureTask --details "coverage: X%; tests: Y pass"` |
-| 代码变更 | `dt build --path <项目> --name <项目>` 或 `dt build --file <文件绝对路径>` |
-| 批量同步 | `dt build --path <项目> --name <项目>` |
-| 软件安装 | `dt event --type SoftwareInstalled --entity-type Software --details "version: X"` |
-| 会话结束 + 续接上下文（覆盖） | `dt memorize --type Context --entity-id "continuation-<项目>" --entity-type SessionContinuation --details "{progress_percent/completed/pending/next/dev_url}"` |
-| 会话结束 + 事件（覆盖） | `dt event --type Conversation --entity-id "<项目>-session" --entity-type Session --details "{date/progress/completed/summary}"` |
+> 均为 MCP Tool；CLI 降级时把参数映射为同名 flag（`dt memorize --type X --entity-id ... --details ...`）。
+
+| 场景 | MCP Tool |
+|------|----------|
+| 架构决策 | `dt_memorize(type="Decision", entity_type="ArchitectureDecision", details="decision: ...; reason: ...")` |
+| Mock 依赖记录 | `dt_memorize(type="Dependencies", entity_type="PendingIntegration", details="mock_for: <任务>; waiting_for: <依赖>")` |
+| Mock 清理记录 | `dt_event(type="TaskReimplemented", entity_type="FeatureTask", details="mocks_resolved: [依赖列表]")` |
+| 任务完成 | `dt_event(type="TaskComplete", entity_type="FeatureTask", details="coverage: X%; tests: Y pass")` |
+| 代码变更 | `dt_build(path="<项目根>", name="<项目>")` 或 `dt_build(path="<文件绝对路径>")` |
+| 批量同步 | `dt_build(path="<项目根>", name="<项目>")` |
+| 软件安装 | `dt_event(type="SoftwareInstalled", entity_type="Software", details="version: X")` |
+| 会话结束 + 续接上下文（覆盖） | `dt_memorize(type="Context", entity_id="continuation-<项目>", entity_type="SessionContinuation", details="{progress_percent/completed/pending/next/dev_url}")` |
+| 会话结束 + 事件（覆盖） | `dt_event(type="Conversation", entity_id="<项目>-session", entity_type="Session", details="{date/progress/completed/summary}")` |
 
 ---
 
@@ -1052,7 +1057,7 @@ HIGHLIGHTS: <做得好的地方>
 
 ```
 Brainstorming: 确定做注册/登录/个人中心/密码重置 4个功能
-→ dt memorize --type Decision --entity-type ArchitectureDecision
+→ dt_memorize(type="Decision", entity_type="ArchitectureDecision", ...)
 → Writing Plans: 分解为 7 个任务
 
 依赖分析:
@@ -1087,5 +1092,5 @@ Brainstorming: 确定做注册/登录/个人中心/密码重置 4个功能
   无残留 Mock ✅
 
 展示 diff → 用户确认 → commit → push
-dt event --type Conversation → 📝
+dt_event(type="Conversation", ...) → 📝
 ```

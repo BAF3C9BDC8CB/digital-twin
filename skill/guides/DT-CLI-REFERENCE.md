@@ -1,49 +1,62 @@
-# dt CLI 命令参考：按场景触发
+# 工具参考：MCP 优先，CLI 降级
 
-> **优先使用 MCP Tool**（`digital-twin_*`），MCP 不可用时降级为 CLI 命令。
+> **首选 MCP Tool**（服务前缀 `digital-twin_`），MCP 不可用时才降级为 `dt` CLI 命令。
 > 不是命令手册，是**决策指南**——AI 根据用户意图选择正确的工具。
+> MCP 工具返回结构化 JSON，比解析 CLI 文本输出更省上下文、更可靠。
 
 ---
 
 ## 🔍 搜索：用户想找东西
 
-| 用户说 | 应执行 | 说明 |
-|--------|--------|------|
-| "XX 服务的密码/账号/地址/配置" | `dt search-kg "XX" --limit 10` → `memgraph_read_cypher` 取属性 | 基础设施/凭证类走 KG 向量搜索 |
+| 用户说 | MCP Tool（首选） | 说明 |
+|--------|-----------------|------|
+| "XX 服务的密码/账号/地址/配置" | `dt_search_kg(query="XX", limit=10)` → memgraph `run_cypher_query` 取属性 | 基础设施/凭证类走 KG GraphRAG |
 | "XX 服务的端口/URL" | 同上 | 同上 |
-| "项目有哪些数据库/中间件" | `dt search-kg "数据库 中间件 基础设施" --limit 20` | 全景查询 |
-| "XX 功能的代码在哪里/怎么实现的" | `dt search "XX" --project <项目名>` | 代码语义搜索 |
-| "XX 的逻辑是什么"（模糊） | `dt search "XX" --project <项目名> --expand` | 扩展搜索，多变体合并 |
-| "代码仓库/GitLab/ELK/K8s 地址" | `dt search-kg "关键字" --limit 5` | 服务 URL 类走 KG |
-| Jenkins Job 信息/构建历史/参数 | 用 `jcli_list` / `jcli_params` / `jcli_history` | Jenkins 类走 jcli 工具 |
-| "微服务状态/日志" | 用 `svc_list` / `svc_status` / `svc_logs` | 本地服务走 svc 工具 |
-| "K8s Pod 日志/状态" | 用 `kublog_logs` / `kublog_status` | K8s 类走 kublog 工具 |
+| "项目有哪些数据库/中间件" | `dt_search_kg(query="数据库 中间件 基础设施", limit=20)` | 全景查询 |
+| "XX 功能的代码在哪里/怎么实现的" | `dt_search(query="XX", world="code", project="<项目名>")` | 代码语义搜索，命中含 llm_analysis + 文件行号 |
+| "XX 的逻辑是什么"（模糊） | `dt_search(query="XX")`（默认 world=all） | 代码+知识+文档 RRF 融合 |
+| "查文档/手册里的说明" | `dt_search(query="XX", world="doc")` | 文档块检索，含原文 |
+| "之前做过类似的事吗" | `dt_search(query="XX", world="memory")` 或 `dt_history(task="XX")` | 事件/历史任务检索 |
+| "代码仓库/GitLab/ELK/K8s 地址" | `dt_search_kg(query="关键字", limit=5)` | 服务 URL 类走 KG |
+| Jenkins Job 信息/构建历史/参数 | `jcli_list` / `jcli_params` / `jcli_history` | Jenkins 类走 jcli 工具 |
+| "微服务状态/日志" | `svc_list` / `svc_status` / `svc_logs` | 本地服务走 svc 工具 |
+| "K8s Pod 日志/状态" | `kublog_logs` / `kublog_status` | K8s 类走 kublog 工具 |
+
+**CLI 降级**：
+
+```bash
+dt search "XX" --world code --project <项目名> --limit 10   # 代码
+dt search "XX" --world knowledge --limit 10                # KG（dt search-kg 已移除）
+dt search "XX" --limit 10                                  # all 世界
+```
 
 ---
 
 ## ✍️ 写入：用户做了变更操作
 
-| 用户做了 | 应执行 | 说明 |
-|---------|--------|------|
+| 用户做了 | MCP Tool（首选） | 说明 |
+|---------|-----------------|------|
 | 修改了代码文件（.java/.py/.ts等） | ✅ 插件自动触发，AI 无需操作 | 自动增量索引 |
-| 批量同步 / 首次索引 | `dt build --path <根目录> --name <项目名>` | 手动触发 |
-| 删除了文件 | `dt build --full --path <根目录> --name <项目名>` | 全量重建，不再支持单文件删除  |
-| 修改了 Nacos/Apollo 配置 | `dt nacos-sync --env test`（测试）或 `--env prod`（生产） | 同步到 KG |
-| 安装了软件（apt/pip/npm等） | `dt event --type SoftwareInstalled --entity-id <包名> --details "version: X"` | 记录事件 |
-| 做了架构/技术决策 | `dt memorize --type Decision --entity-id <标识> --project <项目> --details "decision: X; reason: Y"` | 记录决策 |
-| 部署了生产环境 | `dt event --type Deploy --entity-id <Job名> --details "branch: X, env: prod"` | **仅生产**部署 |
-| 说"记一下/记住这个/记下来" | `dt memorize --type KnowledgeAdded --entity-id <标识> --details "<内容>" --project <项目>` | 用户命令 |
+| 批量同步 / 首次索引 | `dt_build(path="<根目录>", name="<项目名>")` | 手动触发 |
+| 删除了文件 | `dt_build(path="<根目录>", name="<项目名>", full=true)` | 全量重建，不再支持单文件删除 |
+| 修改了 Nacos/Apollo 配置 | `nacos_sync(env="test")`（测试）或 `nacos_sync(env="prod")`（生产） | 同步到 KG |
+| 安装了软件（apt/pip/npm等） | `dt_event(type="SoftwareInstalled", entity_id="<包名>", entity_type="Software", details="version: X", project="<项目>")` | 记录事件 |
+| 做了架构/技术决策 | `dt_memorize(type="Decision", entity_id="<标识>", entity_type="ArchitectureDecision", details="decision: X; reason: Y", project="<项目>")` | 记录决策 |
+| 部署了生产环境 | `dt_event(type="Deployment", entity_id="<Job名>", entity_type="JenkinsJob", details="branch: X, env: prod", project="<项目>")` | **仅生产**部署 |
+| 说"记一下/记住这个/记下来" | `dt_memorize(type="KnowledgeAdded", entity_id="<标识>", details="<内容>", project="<项目>")` | 用户命令 |
+| 任务完成沉淀经验 | `dt_learn(task="<任务>", pattern="...", pitfalls="...", decisions="...", project="<项目>")` | 结构化知识沉淀 |
 
 ---
 
 ## 🔄 同步：保持数据一致
 
-| 场景 | 应执行 | 说明 |
-|------|--------|------|
-| KG 节点增加了新的基础设施/服务 | `dt kg-sync` | 全量同步到 Qdrant |
-| KG 节点有少量变更 | `dt kg-sync --incremental` | 增量同步，仅新节点 |
-| Nacos 配置有更新 | `dt nacos-sync --env test` | 按环境同步 |
-| K8s 资源有变化 | `dt k8s-sync` | 同步 K8s 到 KG |
+| 场景 | MCP Tool（首选） | CLI 降级 |
+|------|-----------------|---------|
+| KG 节点增加了新的基础设施/服务 | `dt_kg_sync()` | `dt kg-sync`（全量） |
+| KG 节点有少量变更 | `dt_kg_sync()` | `dt kg-sync --incremental` |
+| Nacos 配置有更新 | `nacos_sync(env="test")` | `dt nacos-sync --env test` |
+| K8s 资源有变化 | （无 MCP 等价物） | `dt k8s-sync` |
+| Jenkins Views/Jobs/Builds | （无 MCP 等价物） | `dt jc-sync` |
 
 ---
 
@@ -51,35 +64,42 @@
 
 | 场景 | 应执行 | 说明 |
 |------|--------|------|
-| 搜索失败/报错/行为异常 | `dt health` | 5 项检查：Memgraph、Embed、Qdrant、KG Bridge、全文索引 |
-| "dt search 返回空" | 先 `dt health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
-| "search-kg 报错" | `dt health`，看 [4/5] 是否通过 | kg_nodes 集合可能不存在，需 `dt kg-sync` |
-| 验证新项目解析是否正常 | `dt validate --path <路径> --name <项目名>` | 干跑，不写数据库 |
+| 搜索失败/报错/行为异常 | `dt_health`（MCP）/ `dt health`（CLI） | 5 项检查：Memgraph、Embed、Qdrant、KG Bridge、全文索引 |
+| "dt_search 返回空" | 先 `dt_health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
+| "knowledge 世界报错" | `dt_health`，看 KG Bridge 检查项 | kg_nodes 集合可能不存在，需 `dt_kg_sync` |
+| 验证新项目解析是否正常 | `dt build --path <路径> --name <项目名>` 后用 `dt_health` 确认 | 实测索引（无独立 validate 命令） |
+| 数据备份/清理/指标 | `dt_backup` / `dt_cleanup` / `dt_metrics`（MCP） | 运维类工具 |
 
 ---
 
 ## 🏗️ 项目首次接入
 
-| 步骤 | 命令 | 说明 |
+| 步骤 | 执行 | 说明 |
 |------|------|------|
-| 1 | `dt build --path <项目根> --name <项目名> --full` | 全量重建索引 |
-| 2 | `dt kg-sync` | 同步 KG 节点到向量库 |
-| 3 | `dt health` | 确认全部就绪 |
+| 1 | `dt_build(path="<项目根>", name="<项目名>", full=true)` | 全量重建索引 |
+| 2 | `dt_kg_sync()` | 同步 KG 节点到向量库 |
+| 3 | `dt_health()` | 确认全部就绪 |
 
 ---
 
-## 决策速查：选 dt 还是 MCP Tool
+## 决策速查：MCP Tool vs CLI
 
-| 操作 | 优先用 |
-|------|--------|
-| 搜索 KG | `dt_search_kg` (MCP Tool) |
-| 搜索代码 | `dt_search_expand` (MCP Tool) |
-| 写知识/事件 | `dt_memorize` / `dt_event` (MCP Tool) |
-| 索引代码 | `dt_build` (MCP Tool) |
-| 同步 KG | `dt_kg_sync` (MCP Tool) |
-| 健康检查 | `dt_health` (MCP Tool) |
-| 查 Jenkins | `jcli_*` (MCP Tool) |
-| 管微服务 | `svc_*` (MCP Tool) |
-| 查 K8s | `kublog_*` (MCP Tool) |
+| 操作 | 优先用 | CLI 降级 |
+|------|--------|---------|
+| 统一搜索（代码/知识/文档/配置/事件） | `dt_search` | `dt search` |
+| 搜索 KG（GraphRAG） | `dt_search_kg` | `dt search --world knowledge` |
+| 写知识/事件 | `dt_memorize` / `dt_event` | `dt memorize` / `dt event` |
+| 任务经验沉淀 | `dt_learn` | `dt learn` |
+| Digital Thread 管理 | `dt_thread` | `dt thread` |
+| 索引代码 | `dt_build` | `dt build` |
+| 同步 KG | `dt_kg_sync` | `dt kg-sync` |
+| 同步 Nacos | `nacos_sync` | `dt nacos-sync` |
+| 健康检查 | `dt_health` | `dt health` |
+| 上下文/计划/领域/历史/依赖/校验 | `dt_context` / `dt_plan` / `dt_domain` / `dt_history` / `dt_dependency` / `dt_verify` | 同名 CLI |
+| 查 Jenkins | `jcli_*` | `dt jcli` |
+| 管微服务 | `svc_*` | （MCP 专属，无 CLI） |
+| 查 K8s 日志 | `kublog_*` | `dt kub` |
+| 项目注册表/项目发现 | （读 `~/.config/digital-twin/config.yaml`） | `dt build`（无参数=构建所有项目） |
 
-> 以上操作都有对应的 MCP Tool（`digital-twin_*`），AI 应优先调用 Tool 而非手写 bash。Tool 失败时才回退 shell。
+> 有 MCP Tool 的操作一律优先调 Tool，不要手写 bash。Tool 失败时才回退 CLI；
+> CLI 也失败（如 `dt` 不在 PATH）才考虑直接操作 Qdrant/Memgraph。

@@ -22,18 +22,21 @@ This project uses a Memgraph knowledge graph for persistent memory.
 
 #### 🥇 场景 A：查找基础设施/服务/凭证/配置信息
 
-**最先尝试** `dt search-kg`（向量语义搜索，无需写 Cypher）：
+**最先尝试 MCP Tool `dt_search_kg`**（GraphRAG 混合检索，无需写 Cypher）：
 
-```bash
-dt search-kg "<关键词>" --limit 10
+```
+dt_search_kg(query="<关键词>", limit=10)
 ```
 
-拿到 `elementId` 后，用精确查询取完整属性：
+拿到 `elementId` 后，用精确查询取完整属性（经 memgraph MCP `run_cypher_query`）：
 
 ```cypher
 MATCH (n) WHERE elementId(n) = "4:xxx..."
 RETURN n.auth_user, n.auth_password, n.hostname, n.port, n.url, n.service_type
 ```
+
+> MCP 不可用时降级为 CLI：`dt search "<关键词>" --world knowledge --limit 10`
+> （`dt search-kg` 子命令已移除，KG 搜索走统一检索的 knowledge 世界。）
 
 #### 🥈 场景 B：全文关键词精确匹配
 
@@ -67,7 +70,7 @@ RETURN labels(n)[0] AS type, n.name, n.auth_user, n.hostname, n.description
 LIMIT 20
 ```
 
-> ⚠️ 场景 C 是兜底方案，优先用场景 A 或 B。场景 A (`dt search-kg`) 是推荐首选。
+> ⚠️ 场景 C 是兜底方案，优先用场景 A 或 B。场景 A (`dt_search_kg`) 是推荐首选。
 
 **唯一不查的情况：** 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须查。
 
@@ -79,7 +82,16 @@ LIMIT 20
 
 必须立即写入 KG。这是命令，不是建议。
 
-写入方式（优先使用系统命令，不依赖编辑器 API）：
+写入方式（首选 MCP Tool `dt_memorize`）：
+```
+dt_memorize(type="KnowledgeAdded",
+            entity_id="<唯一标识>",
+            entity_type="<实体类型>",
+            details="<要记住的内容>",
+            project="<项目名>")
+```
+
+MCP 不可用时降级为 CLI：
 ```bash
 dt memorize --type KnowledgeAdded \
   --entity-id "<唯一标识>" \

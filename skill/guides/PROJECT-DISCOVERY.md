@@ -1,6 +1,8 @@
 # 项目发现规则
 
 > AI 每次进入新工作空间时执行此规则。不在代码中实现，由 AI 按本文档自行判断。
+> **注意：项目注册表 = `~/.config/digital-twin/config.yaml` 的 `projects` 段（直接读文件，无 `dt list` 命令）；**
+> **索引状态用 `dt llm-status` / `dt_health` 查看；构建用 `dt build`（无参数 = 构建所有项目）或 MCP `dt_build`。**
 
 ---
 
@@ -11,23 +13,24 @@
 **第一步：快速诊断已有项目**
 
 ```bash
-dt list --all
+# 1. 读项目注册表
+cat ~/.config/digital-twin/config.yaml   # projects 段：base + name 列表
+
+# 2. 查各项目索引/LLM 分析状态
+dt llm-status
 ```
 
-该命令输出 `config.yaml` 中所有注册项目的状态：
-- **磁盘** — 路径是否存在
-- **向量** — Qdrant 中是否有索引
-- **方法** — Memgraph 中是否有知识图谱节点
-
-如果当前目录下的项目**磁盘 ✅ 但向量为 0 或 -**，说明项目已注册但未 build，提示用户执行 `dt build-all`。
-如果当前目录下的项目**磁盘 ✅ 向量有值**，说明一切正常，跳过。
+对照判断当前目录下的项目：
+- **已在 config.yaml 注册且已有索引** → 一切正常，跳过
+- **已注册但未 build**（无向量/方法数据）→ 提示用户执行 `dt build --name <项目名>`（或 MCP `dt_build`）
+- **未注册** → 执行项目发现
 
 **第二步：检查当前工作目录**
 
-1. 检查 `dt list` 输出中是否存在当前工作目录或其父目录
-2. 如果**根目录已注册且向量不为 0** → 跳过项目发现
-3. 如果**根目录已注册但向量为 0** → 提示 `dt build-all`
-4. 如果**根目录未注册**或`dt list` 输出显示当前目录下存在独立子项目未列出 → 执行项目发现
+1. 检查 config.yaml `projects` 中是否存在当前工作目录或其父目录
+2. 如果**根目录已注册且有索引** → 跳过项目发现
+3. 如果**根目录已注册但无索引** → 提示 `dt build --name <项目名>`
+4. 如果**根目录未注册** → 执行项目发现
 
 ---
 
@@ -55,10 +58,10 @@ dt list --all
 
 | 排除条件 | 判断方式 |
 |---------|---------|
-| 已在 `config.yaml` 注册 | `dt list` 中已列出 |
+| 已在 `config.yaml` 注册 | `~/.config/digital-twin/config.yaml` projects 段中已列出 |
 | 已知非项目目录 | `scanner.ignore_dirs` 中列出的目录（.git .weave node_modules ...） |
 | 用户已拒绝且不再询问 | `ignored_dirs.yaml` 中列出的路径 |
-| 已有向量索引 | `dt list --all` 输出中该项目向量数 > 0 |
+| 已有索引 | `dt llm-status` 输出中该项目有数据 |
 
 ---
 
@@ -68,8 +71,8 @@ dt list --all
 
 | 文件 | 路径 | 作用 |
 |------|------|------|
-| `config.yaml` | `~/.config/opencode/skills/digital-twin/config.yaml` | 用户选"是" → 项目写入此文件 → 下次不再问 |
-| `ignored_dirs.yaml` | `~/.config/opencode/skills/digital-twin/ignored_dirs.yaml` | 用户选"否，不再询问" → 目录写入此文件 → 永久跳过 |
+| `config.yaml` | `~/.config/digital-twin/config.yaml` | 用户选"是" → 项目写入此文件 → 下次不再问 |
+| `ignored_dirs.yaml` | `~/.config/digital-twin/ignored_dirs.yaml` | 用户选"否，不再询问" → 目录写入此文件 → 永久跳过 |
 
 `ignored_dirs.yaml` 格式：
 ```yaml
@@ -97,7 +100,7 @@ ignored:
 是否添加到 config.yaml 并执行 dt build？
 
 选项：
-  [是，全部添加并构建]        → 追加到 config.yaml → dt build-all --filter "..."
+  [是，全部添加并构建]        → 追加到 config.yaml → `dt build`（默认构建所有项目）
   [是，仅添加不构建]          → 只追加到 config.yaml，不 build
   [否，下次再说]              → 不做任何操作，下次打开仍会提示
   [否，不再询问此目录]        → 写入 ignored_dirs.yaml，永久跳过
@@ -112,8 +115,9 @@ ignored:
 
 ```bash
 # 1. 追加到 config.yaml projects 列表末尾
-# 2. 执行构建
-dt build-all --filter "proj1,proj2,..."
+# 2. 执行构建（无参数 = 构建 config.yaml 中所有项目；
+#    单项目可用 dt build --name <项目名> 或 MCP dt_build(path=..., name=...)）
+dt build
 ```
 
 ### 用户选"否，不再询问"时
@@ -134,11 +138,9 @@ dt build-all --filter "proj1,proj2,..."
 ```
 工作目录: /data/aflmProjects/warehouse
 
-1. dt list --all:
-   项目名                 磁盘  向量    方法   路径
-   yyc-caigou            ✅    1089   1089   /data/.../yyc-caigou
-   yyc-yaochang-gongsi   ✅    583    583    /data/.../yyc-yaochang-gongsi
-   warehouse             ✅    0      13066  /data/.../warehouse
+1. 读 config.yaml projects 段 + dt llm-status:
+   已注册且有索引: yyc-caigou, yyc-yaochang-gongsi
+   已注册但无索引: warehouse
    （uvp-business-center 等未列出 → 未注册）
 
 2. 检查 ignored_dirs.yaml:
@@ -146,11 +148,11 @@ dt build-all --filter "proj1,proj2,..."
 
 3. 递归扫描（跳过 ignore_dirs）:
    发现源码的目录:
-   ├── uvp-business-center/       ★ 候选 (不在 dt list 中)
+   ├── uvp-business-center/       ★ 候选 (未注册)
    ├── uvp-warehouse-api/         ★ 候选
    ├── uvp-warehouse-center/      ★ 候选
-   ├── yyc-caigou/                ✗ 已有向量 (dt list --all 中向量>0)
-   ├── yyc-yaochang-gongsi/       ✗ 已有向量
+   ├── yyc-caigou/                ✗ 已注册且有索引
+   ├── yyc-yaochang-gongsi/       ✗ 已注册且有索引
    └── goods/
        ├── goods-center-h5/        ★ 候选
        └── uvp-goods-center/       ★ 候选
