@@ -478,7 +478,7 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
                     degraded.extend(dgr);
                     h
                 }
-                // memory 分支由 Task 4 加入
+                "memory" => self.search_memory(&request.query, limit).await,
                 _ => Vec::new(),
             };
             per_world.insert(world.to_string(), hits.len());

@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod plan;
 pub mod search_config;
 pub mod search_mcp;
+pub mod search_memory;
 pub mod service;
 pub mod stages;
 pub mod verify;
