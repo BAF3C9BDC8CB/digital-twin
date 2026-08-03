@@ -733,7 +733,7 @@ llm → store），代码文件继续走现有 AST 抽取，文档文件走通�
 | **S3** | `process_documents` 接入 pipeline engine（含 deleted_paths 接 purge_document、旧 doc_chunks 写入摘除） | ✅ 完成（自审，用户指示无 subagent） | `647bddd` | 控制者自审（同 S2b 模式，见 §13.7） |
 | **S4** | 删除 `@knowledge` 全链路 + store 老分支残留 + learn 停用 | ✅ 完成（自审，用户指示无 subagent） | `80d1f33` | 控制者自审（同 S2b 模式） |
 | 终审 | 全分支 code review + finishing-a-development-branch | ✅ 完成（1C+2M 已修复） | `20a8bee` + `ab105c5` | 见 §13.9 |
-| **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ⏸️ 方案本身延后，不在本轮 | — | — |
+| **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ✅ 完成（2026-08-02） | `3f97574`..S5 系列提交 | spec: 2026-08-01-knowledge-search-design.md §10 实施记录 |
 
 ### 13.2 S1 验收数字（独立复验通过）
 

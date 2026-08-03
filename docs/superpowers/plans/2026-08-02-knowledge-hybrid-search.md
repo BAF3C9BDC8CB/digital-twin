@@ -2675,11 +2675,11 @@ git commit -m "feat(s5): with_evidence backfill — merged single query, per-ent
 - Consumes: 全部前置任务的实测结果。
 - Produces: 后续任务卡文本（proto 变更 + CLI/MCP 换栈 + `application/search.rs` 归并）。
 
-- [ ] **Step 1: 权重收敛观测**
+- [x] **Step 1: 权重收敛观测**
 
 对 test-pipeline 与任一生产项目各跑 ≥10 个真实查询，采样 `score_breakdown` 三分量分布（可临时加 `tracing::info!` 或直接用返回 JSON）。记录：rerank 分与语义分的相关性、邻居进入 top-10 的比例、降级/正常占比。结论写进 S5 实施记录；若权重明显失调（如 rerank 分恒高导致语义失效），调整 `0.6/0.3/0.1` 初值并同步修改 spec §5.4 与主文档 §8。
 
-- [ ] **Step 2: 主文档 §13.1 S5 行更新**
+- [x] **Step 2: 主文档 §13.1 S5 行更新**
 
 把 `2026-07-31-universal-knowledge-pipeline-design.md` §13.1 的 S5 行：
 
@@ -2693,7 +2693,7 @@ git commit -m "feat(s5): with_evidence backfill — merged single query, per-ent
 | **S5** | 检索层混合检索（向量召回+图扩展+rerank） | ✅ 完成 | <提交哈希> | spec: 2026-08-01-knowledge-search-design.md |
 ```
 
-- [ ] **Step 3: S5 spec 追加实施记录 + 后续任务卡**
+- [x] **Step 3: S5 spec 追加实施记录 + 后续任务卡**
 
 `2026-08-01-knowledge-search-design.md` 文末追加：
 
@@ -2723,12 +2723,12 @@ proto `SearchRequest` 无 `world` 字段、`SearchResult` 无新字段位；CLI 
 **验收**：`dt search --world knowledge "渠道怎么路由"` 与 gRPC 同参调用返回一致结果。
 ```
 
-- [ ] **Step 4: 全量验证**
+- [x] **Step 4: 全量验证**
 
 Run: `cargo test 2>&1 | tail -5 && cargo clippy --all-targets 2>&1 | tail -5`
 Expected: 全绿（预存 2 失败不扩大）；clippy 0 error。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/superpowers/specs/2026-07-31-universal-knowledge-pipeline-design.md docs/superpowers/specs/2026-08-01-knowledge-search-design.md
