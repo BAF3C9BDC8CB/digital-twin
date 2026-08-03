@@ -1,14 +1,13 @@
-//! Memory world: time-dimension management.
+//! Memory 世界：时间维度管理。
 //!
-//! Provides the entities (Day, Session, MemoryEvent) and the [`MemoryService`]
-//! trait for time-dimension operations.
+//! 提供实体（Day、Session、MemoryEvent）以及面向时间维度操作的
+//! [`MemoryService`] trait。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! All event types are handled by [`HookEngine`] via YAML-driven hooks
-//! (see `config/event-hooks.yaml`). The `record_event` method on
-//! [`MemoryService`] routes each [`EventType`] to the appropriate hook
-//! name for backward compatibility.
+//! 所有事件类型都由 [`HookEngine`] 通过 YAML 驱动的 hook 处理
+//! （见 `config/event-hooks.yaml`）。[`MemoryService`] 上的 `record_event`
+//! 方法将每个 [`EventType`] 路由到对应的 hook 名以保持向后兼容。
 //!
 //! ```text
 //! service::DefaultMemoryService (trait impl)

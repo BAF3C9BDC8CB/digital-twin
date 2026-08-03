@@ -1,14 +1,14 @@
-//! LearnService — high-level knowledge acquisition from AI task execution.
+//! LearnService——从 AI 任务执行中进行高层知识沉淀。
 //!
-//! The `learn` operation takes a task result (pattern, pitfalls, decisions,
-//! success/failure) and writes structured knowledge into the Knowledge World:
+//! `learn` 操作接收任务结果（模式、踩坑、决策、成功/失败），
+//! 并将结构化知识写入 Knowledge 世界：
 //!
-//! - Patterns → Knowledge nodes (source: `ai_task`)
-//! - Pitfalls → Experience nodes
-//! - Pattern + pitfalls → Playbook (ordered steps)
-//! - Success/failure → Playbook counter updates; auto-flags `_needs_review`
+//! - 模式（Patterns）→ Knowledge 节点（来源：`ai_task`）
+//! - 踩坑（Pitfalls）→ Experience 节点
+//! - 模式 + 踩坑 → Playbook（有序步骤）
+//! - 成功/失败 → Playbook 计数器更新；自动标记 `_needs_review`
 //!
-//! # Typical usage
+//! # 典型用法
 //!
 //! ```ignore
 //! let svc = LearnServiceImpl::new(knowledge_svc);
@@ -37,69 +37,69 @@ use crate::application::knowledge::knowledge::service::DefaultKnowledgeService;
 use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
 // ---------------------------------------------------------------------------
-// Request / Report
+// 请求 / 报告
 // ---------------------------------------------------------------------------
 
-/// Input for the `learn` operation.
+/// `learn` 操作的输入。
 #[derive(Debug, Clone)]
 pub struct LearnRequest {
-    /// Task title or description (e.g. "支付平台迁移").
+    /// 任务标题或描述（如 "支付平台迁移"）。
     pub task: String,
-    /// Affected entities (file paths, class names, service names).
+    /// 受影响的实体（文件路径、类名、服务名）。
     pub entities: Vec<String>,
-    /// Recognised solution pattern.
+    /// 识别出的解决方案模式。
     pub pattern: Option<String>,
-    /// Pitfalls encountered or to watch out for.
+    /// 遇到的或需要防范的坑。
     pub pitfalls: Vec<String>,
-    /// Architecture / technical decisions made.
+    /// 做出的架构 / 技术决策。
     pub decisions: Vec<String>,
-    /// Optional digital-thread ID for cross-task lineage.
+    /// 可选的数字线程 ID，用于跨任务溯源。
     pub thread_id: Option<String>,
-    /// Whether execution succeeded.
+    /// 执行是否成功。
     pub success: Option<bool>,
-    /// Owning project.
+    /// 所属项目。
     pub project: Option<String>,
 }
 
-/// Summary of what was learned / persisted.
+/// 沉淀结果的摘要。
 #[derive(Debug, Clone)]
 pub struct LearnReport {
-    /// Number of Knowledge nodes created/updated.
+    /// 创建/更新的 Knowledge 节点数。
     pub knowledge_created: usize,
-    /// Number of Experience nodes created.
+    /// 创建的 Experience 节点数。
     pub experiences_created: usize,
-    /// Whether a Playbook was created or its counters updated.
+    /// 是否创建了 Playbook 或更新了其计数器。
     pub playbook_updated: bool,
-    /// Human-readable one-line summary.
+    /// 人类可读的一行摘要。
     pub summary: String,
 }
 
 // ---------------------------------------------------------------------------
-// Trait
+// Trait（服务接口）
 // ---------------------------------------------------------------------------
 
-/// Service for high-level knowledge acquisition.
+/// 高层知识沉淀服务。
 ///
-/// A `LearnService` receives a structured [`LearnRequest`] and:
-/// 1. Extracts the domain from the task name.
-/// 2. Writes pattern-based Knowledge nodes.
-/// 3. Writes pitfall-based Experience nodes.
-/// 4. Synthesises a Playbook from pattern + pitfalls.
-/// 5. Updates success/failure counters on the Playbook.
-/// 6. Optionally links nodes to a digital thread.
+/// 一个 `LearnService` 接收结构化的 [`LearnRequest`] 并：
+/// 1. 从任务名提取领域。
+/// 2. 写入基于模式（pattern）的 Knowledge 节点。
+/// 3. 写入基于踩坑（pitfall）的 Experience 节点。
+/// 4. 由模式 + 踩坑综合生成 Playbook。
+/// 5. 更新 Playbook 上的成功/失败计数器。
+/// 6. 可选地将节点关联到数字线程。
 #[async_trait]
 pub trait LearnService: Send + Sync {
-    /// Execute the learn pipeline and return a report.
+    /// 执行学习管线并返回报告。
     async fn learn(&self, request: &LearnRequest) -> Result<LearnReport, DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// Implementation
+// 实现
 // ---------------------------------------------------------------------------
 
-/// Canonical implementation of [`LearnService`].
+/// [`LearnService`] 的规范实现。
 ///
-/// Delegates actual storage writes to a [`KnowledgeService`].
+/// 实际存储写入委托给 [`KnowledgeService`]。
 pub struct LearnServiceImpl<S: KnowledgeService> {
     knowledge: Arc<S>,
 }
@@ -110,16 +110,15 @@ impl<S: KnowledgeService> LearnServiceImpl<S> {
     }
 }
 
-/// Constructor for [`LearnServiceImpl`] backed by a [`DefaultKnowledgeService`]
-/// configured with vectorisation support.
+/// 由支持向量化的 [`DefaultKnowledgeService`] 支撑的
+/// [`LearnServiceImpl`] 构造函数。
 ///
-/// Call this when `embed` / `vector` backends are available — the underlying
-/// service will auto-embed Knowledge, Experience, Concept, and Playbook nodes
-/// into the unified `kg_nodes` Qdrant collection on every write.
+/// 当 `embed` / `vector` 后端可用时调用此构造函数——底层服务会在
+/// 每次写入时自动将 Knowledge、Experience、Concept 与 Playbook 节点
+/// 向量化到统一的 `kg_nodes` Qdrant 集合。
 ///
-/// This is only implemented for `DefaultKnowledgeService` (not generic `S`)
-/// because it relies on that concrete type's [`with_vectorization`]
-/// constructor.
+/// 仅对 `DefaultKnowledgeService`（而非泛型 `S`）实现，因为它依赖
+/// 该具体类型的 [`with_vectorization`] 构造函数。
 ///
 /// [`with_vectorization`]: DefaultKnowledgeService::with_vectorization
 impl LearnServiceImpl<DefaultKnowledgeService> {
@@ -243,7 +242,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
             let mut steps: Vec<Step> = Vec::new();
             let mut order: u32 = 0;
 
-            // Pattern step
+            // 模式步骤
             if let Some(pattern) = &request.pattern {
                 order += 1;
                 steps.push(Step {
@@ -256,7 +255,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 });
             }
 
-            // Entity steps
+            // 实体步骤
             for entity in &request.entities {
                 order += 1;
                 steps.push(Step {
@@ -269,7 +268,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 });
             }
 
-            // Pitfall steps (preventive)
+            // 踩坑步骤（预防性）
             for pitfall in &request.pitfalls {
                 order += 1;
                 steps.push(Step {
@@ -282,7 +281,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 });
             }
 
-            // Decision steps
+            // 决策步骤
             for decision in &request.decisions {
                 order += 1;
                 steps.push(Step {
@@ -311,8 +310,8 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 },
             );
 
-            // Determine current counters: if success calls update existing counts.
-            // We default to 0 on create; an ON MATCH path handles updates.
+            // 确定当前计数器：若提供 success 则更新已有计数。
+            // 创建时默认 0；ON MATCH 路径负责更新。
             let (success_count, failure_count) = match request.success {
                 Some(true) => (1, 0),
                 Some(false) => (0, 1),
@@ -341,22 +340,22 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
         }
 
         // ---- 5. Success/failure → update playbook counters (MERGE-based) ----
-        // The playbook was already written above with the correct counters.
-        // If success/failure is set, the counters are already applied.
-        // For subsequent calls on the same task, the ON MATCH SET in write_playbook
-        // will overwrite. For now this is sufficient.
+        // Playbook 已在上方以正确的计数器写入。
+        // 若设置了 success/failure，计数器已一并应用。
+        // 后续对同一任务的调用由 write_playbook 中的 ON MATCH SET
+        // 覆盖。目前这样已足够。
 
         // ---- 6. Thread association (placeholder) ----
-        // In a future phase, link Knowledge/Experience/Playbook nodes
-        // to the Digital Thread via `HAS_KNOWLEDGE` / `HAS_PLAYBOOK` relations.
+        // 未来阶段：通过 `HAS_KNOWLEDGE` / `HAS_PLAYBOOK` 关系
+        // 将 Knowledge/Experience/Playbook 节点关联到数字线程。
         if let Some(_thread_id) = &request.thread_id {
-            // TODO: when Digital Thread entity exists, create:
+            // TODO: 数字线程实体存在后，创建：
             //   MATCH (th:Thread {thread_id: $thread_id})
             //   MERGE (k)-[:HAS_KNOWLEDGE]->(th)
             //   MERGE (p)-[:HAS_PLAYBOOK]->(th)
         }
 
-        // ---- Build summary ----
+        // ---- 构建摘要 ----
         if knowledge_count > 0 {
             summary_parts.push(format!("{} 个知识模式", knowledge_count));
         }
@@ -383,21 +382,21 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Extract a domain keyword from a task title.
+/// 从任务标题提取领域关键词。
 ///
-/// Examples:
+/// 示例：
 /// - "支付平台迁移"  → "支付"
 /// - "部署服务升级"  → "部署"
 /// - "日志采集优化"  → "日志"
-/// Extract a domain keyword from the task title.
+/// 从任务标题提取领域关键词。
 ///
-/// Common Chinese domain keywords are matched first, with a fallback to
-/// the first 2 characters of the trimmed task.
+/// 先匹配常见中文领域关键词，匹配不到则回退到
+/// 去除首尾空白后任务的前 2 个字符。
 pub(crate) fn extract_domain(task: &str) -> String {
-    // Common domain keywords in Chinese
+    // 常见中文领域关键词
     let domains = [
         "支付",
         "部署",
@@ -413,16 +412,16 @@ pub(crate) fn extract_domain(task: &str) -> String {
             return d.to_string();
         }
     }
-    // Fallback: first 2 chars of trimmed task
+    // 回退：去除空白后任务的前 2 个字符
     task.chars().take(2).collect()
 }
 
-/// Convert a task title into a snake_case identifier.
+/// 将任务标题转换为 snake_case 标识符。
 ///
-/// Strips non-alphanumeric ASCII, lowercases, joins with hyphens.
-/// Convert a task title into a snake_case identifier.
+/// 去除非字母数字 ASCII 字符，转小写，以连字符连接。
+/// 将任务标题转换为 snake_case 标识符。
 ///
-/// Strips non-alphanumeric ASCII, lowercases, joins with hyphens.
+/// 去除非字母数字 ASCII 字符，转小写，以连字符连接。
 pub(crate) fn to_snake(task: &str) -> String {
     let filtered: String = task
         .chars()
@@ -435,8 +434,8 @@ pub(crate) fn to_snake(task: &str) -> String {
     }
 }
 
-/// Create a deterministic knowledge_id for a pattern.
-/// Create a deterministic knowledge_id for a pattern.
+/// 为模式创建确定性的 knowledge_id。
+/// 为模式创建确定性的 knowledge_id。
 pub(crate) fn format_knowledge_id(project: &str, domain: &str, kind: &str, task: &str) -> String {
     format!(
         "dt://knowledge/{}/{}/{}-{}",
@@ -448,7 +447,7 @@ pub(crate) fn format_knowledge_id(project: &str, domain: &str, kind: &str, task:
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -461,7 +460,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// Counts calls per entity type.
+    /// 按实体类型统计调用次数。
     struct SpyKnowledgeService {
         knowledge_count: Arc<AtomicUsize>,
         experience_count: Arc<AtomicUsize>,
@@ -540,7 +539,7 @@ mod tests {
         (svc, learner)
     }
 
-    /// Test the trait is object-safe.
+    /// 验证 trait 是对象安全的。
     #[test]
     fn trait_is_object_safe() {
         fn _accept(_: &dyn LearnService) {}
@@ -561,7 +560,7 @@ mod tests {
                 project: Some("test".into()),
             })
             .await
-            .expect("learn");
+            .expect("learn 应成功");
         assert_eq!(report.knowledge_created, 1);
         assert_eq!(report.experiences_created, 0);
         assert!(report.playbook_updated);
@@ -585,7 +584,7 @@ mod tests {
                 project: None,
             })
             .await
-            .expect("learn");
+            .expect("learn 应成功");
         assert_eq!(report.knowledge_created, 0);
         assert_eq!(report.experiences_created, 2);
         assert!(report.playbook_updated);
@@ -608,7 +607,7 @@ mod tests {
                 project: Some("aflm".into()),
             })
             .await
-            .expect("learn");
+            .expect("learn 应成功");
         assert_eq!(report.knowledge_created, 1);
         assert_eq!(report.experiences_created, 1);
         assert!(report.playbook_updated);
@@ -630,7 +629,7 @@ mod tests {
                 project: None,
             })
             .await
-            .expect("learn");
+            .expect("learn 应成功");
         assert_eq!(report.knowledge_created, 0);
         assert_eq!(report.experiences_created, 0);
         assert!(!report.playbook_updated);
@@ -652,12 +651,12 @@ mod tests {
                 project: Some("infra".into()),
             })
             .await
-            .expect("learn");
+            .expect("learn 应成功");
         assert_eq!(report.experiences_created, 1);
         assert!(report.playbook_updated);
     }
 
-    // ---- helper tests ----
+    // ---- 辅助测试 ----
 
     #[test]
     fn extract_domain_from_task() {

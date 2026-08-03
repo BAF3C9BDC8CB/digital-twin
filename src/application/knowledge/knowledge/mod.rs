@@ -1,10 +1,10 @@
-//! Knowledge world: concept, pattern, and experience management.
+//! Knowledge 世界：概念、模式与经验管理。
 //!
-//! Provides entities (Knowledge, KnowledgeVersion, Experience, Concept,
-//! Domain, Playbook), the [`KnowledgeService`] trait for knowledge-dimension
-//! operations, and a [`DefaultKnowledgeService`] backed by [`GraphRepository`].
+//! 提供实体（Knowledge、KnowledgeVersion、Experience、Concept、
+//! Domain、Playbook）、面向知识维度操作的 [`KnowledgeService`] trait，
+//! 以及由 [`GraphRepository`] 支撑的 [`DefaultKnowledgeService`]。
 //!
-//! # Architecture
+//! # 架构
 //!
 //! ```text
 //! service::DefaultKnowledgeService (trait impl)
@@ -16,7 +16,7 @@
 //!   └── update_knowledge  → CREATE new version + [:EVOLVED_FROM] + (:KnowledgeVersion)
 //! ```
 //!
-//! # Entity relationships
+//! # 实体关系
 //!
 //! ```text
 //! (:Domain)-[:CONTAINS]->(:Knowledge)

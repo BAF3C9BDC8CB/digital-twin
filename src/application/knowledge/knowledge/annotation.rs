@@ -1,22 +1,19 @@
-//! Shared `key: value` details-string parsing helpers.
+//! 共享的 `key: value` details 字符串解析辅助函数。
 //!
-//! Provides functions to parse structured details strings from CLI input
-//! into key-value HashMaps. This is the shared parsing logic used by the
-//! KnowledgeService convenience constructors.
+//! 提供将 CLI 输入的结构化 details 字符串解析为键值 HashMap 的函数。
+//! 这是 KnowledgeService 便捷构造函数共用的解析逻辑。
 //!
-//! The `parse_details` function re-uses the same parsing strategy as the
-//! memory world's `parse_key_values` in `memory::handlers::mod`, ensuring
-//! consistent behaviour across the project.
+//! `parse_details` 函数复用与 memory 世界 `memory::handlers::mod` 中
+//! `parse_key_values` 相同的解析策略，保证全项目行为一致。
 
 use std::collections::HashMap;
 
-/// Parse a semicolon-separated `key: value` details string into a HashMap.
+/// 将分号分隔的 `key: value` details 字符串解析为 HashMap。
 ///
-/// Pairs are separated by `;`, `\n`, or `,`. Keys and values are split on
-/// the first `=` or `:`. Leading/trailing whitespace is trimmed. Keys are
-/// lowercased so callers can match case-insensitively.
+/// 键值对以 `;`、`\n` 或 `,` 分隔。键和值在第一个 `=` 或 `:` 处拆分。
+/// 首尾空白会被修剪。键统一转小写，便于调用方大小写不敏感匹配。
 ///
-/// # Example
+/// # 示例
 ///
 /// ```ignore
 /// let m = parse_details("decision: 选择银盛; reason: 费率低; scope: PayService");
@@ -31,7 +28,7 @@ pub fn parse_details(raw: &str) -> HashMap<String, String> {
         if part.is_empty() {
             continue;
         }
-        // Split on first `=` or `:` to allow both delimiters.
+        // 在第一个 `=` 或 `:` 处拆分，以同时支持两种分隔符。
         if let Some(pos) = part.find(['=', ':']) {
             let key = part[..pos].trim().to_lowercase();
             let value = part[pos + 1..].trim().to_string();
@@ -43,12 +40,12 @@ pub fn parse_details(raw: &str) -> HashMap<String, String> {
     map
 }
 
-/// Parse a details string as a value list (semicolon-separated, no key prefix).
+/// 将 details 字符串解析为值列表（分号分隔，无键前缀）。
 ///
-/// Each semicolon-separated segment is treated as a value (not a key:value pair).
-/// This is useful for parsing fields like `tags: tag1; tag2; tag3`.
+/// 每个分号分隔的段都视为值（而非 key:value 对）。
+/// 适用于解析 `tags: tag1; tag2; tag3` 这类字段。
 ///
-/// # Example
+/// # 示例
 ///
 /// ```ignore
 /// let tags = parse_value_list("tag1; tag2; tag3");
@@ -63,7 +60,7 @@ pub fn parse_value_list(raw: &str) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -118,7 +115,7 @@ mod tests {
         let m = parse_details("Decision: 选择银盛; Reason: 费率低");
         assert_eq!(m.get("decision"), Some(&"选择银盛".to_string()));
         assert_eq!(m.get("reason"), Some(&"费率低".to_string()));
-        // Original case keys are NOT stored.
+        // 原始大小写的键不会被存储。
         assert_eq!(m.get("Decision"), None);
     }
 
@@ -154,22 +151,22 @@ mod tests {
 
     #[test]
     fn parse_complex_details() {
-        // Realistic details from a Memorize CLI call
+        // 来自 Memorize CLI 调用的真实 details
         let details = "decision: 选择银盛; reason: 费率低; \
                        scope: PayService, BusinessService; \
                        confidence: 0.9";
         let m = parse_details(details);
         assert_eq!(m.get("decision"), Some(&"选择银盛".to_string()));
         assert_eq!(m.get("reason"), Some(&"费率低".to_string()));
-        // Note: "scope" contains commas which are also delimiters, so the
-        // value gets truncated. This is expected — the caller should use a
-        // different delimiter strategy for multi-value fields.
+        // 注意："scope" 中含逗号，逗号同样是分隔符，因此
+        // 该值会被截断。这是预期行为——多值字段应改用
+        // 不同的分隔策略。
         assert_eq!(m.get("confidence"), Some(&"0.9".to_string()));
     }
 
     #[test]
     fn parse_details_roundtrip_with_service_constructors() {
-        // Verify the parse_details output is compatible with entity constructors.
+        // 验证 parse_details 的输出与实体构造函数兼容。
         let details = "title: Redis超时; severity: critical; domain: 支付; project: test";
         let m = parse_details(details);
         assert_eq!(m.get("title"), Some(&"Redis超时".to_string()));

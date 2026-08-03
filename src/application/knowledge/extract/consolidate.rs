@@ -1,27 +1,25 @@
-//! Consolidate 整合层 — the second stage of the universal knowledge pipeline
-//! (抽取 → 整合 → 检索), 方案 §6.
+//! Consolidate 整合层——通用知识管线的第二阶段
+//! （抽取 → 整合 → 检索），方案 §6。
 //!
-//! Consumes `Vec<ExtractedGraph>` (per-document block extraction output) and:
+//! 消费 `Vec<ExtractedGraph>`（逐文档块的抽取输出）并：
 //!
-//! 1. **Normalises** canonical names (lowercase, trim, full→half width,
-//!    percent-encoding of URI-reserved chars) into stable `entity_id`s.
-//! 2. **Two-level disambiguation** (§6.1): exact `entity_id` short-circuit,
-//!    then vector near-neighbour merge (score > 0.92 + type一致).
-//! 3. **Graph writes** (§6.2): `Document` / `Entity` / `RELATES` /
-//!    `MENTIONED_IN` via four independent `write_query` calls (final
-//!    consistency, no transaction wrapper).
-//! 4. **Dual vector writes** (§6.3): entity → `kg_nodes` (per-entity, write-
-//!    through so disambiguation can see it immediately), block → `doc_chunks`.
-//! 5. **Lifecycle autonomy** (§6.5): entry purge of the document's old
-//!    edges/vectors before writing; [`purge_document`] for deleted docs.
+//! 1. **规范化** canonical name（转小写、修剪、全角→半角、
+//!    对 URI 保留字符做百分号编码），得到稳定的 `entity_id`。
+//! 2. **两级消歧**（§6.1）：精确 `entity_id` 短路，
+//!    再向量近邻合并（score > 0.92 且类型一致）。
+//! 3. **图写入**（§6.2）：`Document` / `Entity` / `RELATES` /
+//!    `MENTIONED_IN` 通过四次独立的 `write_query` 调用（最终一致，
+//!    无事务包装）。
+//! 4. **双重向量写入**（§6.3）：实体 → `kg_nodes`（逐实体、写透，
+//!    使消歧能立即看到）、块 → `doc_chunks`。
+//! 5. **生命周期自治**（§6.5）：写入前先清空该文档的旧边/向量；
+//!    删除文档走 [`purge_document`]。
 //!
-//! Hard constraints honoured here:
-//! - Disambiguation query and entity ingestion share one text constructor,
-//!   [`entity_embed_text`].
-//! - Vector upserts are per-entity, never batched (§12.1: disambiguation
-//!   depends on immediately searchable writes).
-//! - Relation endpoints resolve through the per-block
-//!   `canonical_name → entity_id` map, never re-derived from canonical text.
+//! 此处遵守的硬约束：
+//! - 消歧查询与实体入库共享同一个文本构造函数 [`entity_embed_text`]。
+//! - 向量 upsert 逐实体进行，绝不批量（§12.1：消歧依赖立即可检索的写入）。
+//! - 关系端点通过逐块的 `canonical_name → entity_id` 映射解析，
+//!   绝不从 canonical 文本重新推导。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -32,52 +30,51 @@ use crate::shared::collections::{DOC_CHUNKS, KG_NODES, VECTOR_DIM};
 
 use super::model::{EntityType, ExtractedEntity, ExtractedGraph};
 
-/// Cosine-similarity threshold for the second-level (vector) disambiguation.
+/// 第二级（向量）消歧的余弦相似度阈值。
 const MERGE_SCORE_THRESHOLD: f32 = 0.92;
 
-/// `kg_nodes` payload `origin` value for entities written by this layer.
+/// 本层写入实体的 `kg_nodes` payload `origin` 值。
 const ORIGIN_EXTRACTED: &str = "extracted";
 
 // ---------------------------------------------------------------------------
-// Public statistics
+// 公共统计
 // ---------------------------------------------------------------------------
 
-/// Counters produced by [`Consolidator::consolidate_document`]; surfaced to
-/// the pipeline engine's build report via the store processor output (R9).
+/// [`Consolidator::consolidate_document`] 产出的计数器；经 store
+/// 处理器输出上浮到管线引擎的构建报告（R9）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConsolidateStats {
-    /// Entities merged into an existing graph node (short-circuit or vector hit).
+    /// 合并进既有图节点的实体数（短路或向量命中）。
     pub entities_merged: usize,
-    /// Entities that created a brand-new graph node.
+    /// 创建了全新图节点的实体数。
     pub entities_created: usize,
-    /// `RELATES` edges successfully written.
+    /// 成功写入的 `RELATES` 边数。
     pub relations_written: usize,
-    /// Relations dropped because an endpoint could not be resolved.
+    /// 因端点无法解析而被丢弃的关系数。
     pub relations_orphaned: usize,
-    /// Blocks carrying the §5.5 degradation marker.
+    /// 携带 §5.5 降级标记的块数。
     pub degraded_blocks: usize,
-    /// Total blocks processed.
+    /// 处理的块总数。
     pub blocks_processed: usize,
-    /// Non-degraded blocks with empty entities/relations/summary (observed only).
+    /// entities/relations/summary 全空的非降级块（仅观测）。
     pub empty_blocks: usize,
 }
 
 // ---------------------------------------------------------------------------
-// Text normalisation (§6.1)
+// 文本规范化（§6.1）
 // ---------------------------------------------------------------------------
 
-/// Normalise a canonical name into the path segment of an `entity_id`:
-/// full→half width, trim, lowercase, then percent-encode URI-reserved
-/// characters (`%` first — implemented as a single char pass so replacement
-/// strings are never re-scanned).
+/// 将 canonical name 规范化为 `entity_id` 的路径段：
+/// 全角→半角、修剪、转小写，然后对 URI 保留字符做百分号编码
+/// （`%` 最先处理——通过单遍字符处理实现，替换串绝不会被重扫）。
 pub fn normalize(name: &str) -> String {
     let half: String = name.chars().map(to_half_width).collect();
     let lowered = half.trim().to_lowercase();
     percent_encode(&lowered)
 }
 
-/// Map full-width ASCII variants (U+FF01..U+FF5E) and the full-width space
-/// (U+3000) to their half-width equivalents.
+/// 将全角 ASCII 变体（U+FF01..U+FF5E）与全角空格（U+3000）
+/// 映射为半角等价物。
 fn to_half_width(c: char) -> char {
     match c {
         '\u{3000}' => ' ',
@@ -88,11 +85,11 @@ fn to_half_width(c: char) -> char {
     }
 }
 
-/// Percent-encode URI-reserved characters so a free-form canonical name can
-/// never inject extra URI segments into an `entity_id`.
+/// 对 URI 保留字符做百分号编码，使自由格式的 canonical name
+/// 永远无法向 `entity_id` 注入额外的 URI 段。
 ///
-/// Percent-encoding (not character replacement) is deliberate: replacement
-/// would collide "读/写分离" with "读_写分离" into the same ID.
+/// 特意采用百分号编码（而非字符替换）：替换会使
+/// "读/写分离" 与 "读_写分离" 碰撞成同一个 ID。
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -111,8 +108,8 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-/// Derive the stable business primary key of an extracted entity (§6.1).
-/// `{type}` is the enum variant name (e.g. `Channel`).
+/// 推导抽取实体的稳定业务主键（§6.1）。
+/// `{type}` 是枚举变体名（如 `Channel`）。
 pub fn entity_id_for(project: &str, entity_type: EntityType, canonical_name: &str) -> String {
     format!(
         "dt://entity/{}/{}/{}",
@@ -122,8 +119,8 @@ pub fn entity_id_for(project: &str, entity_type: EntityType, canonical_name: &st
     )
 }
 
-/// The single text constructor shared by the §6.1 disambiguation query and
-/// the §6.3 entity ingestion — never duplicate this formatting elsewhere.
+/// §6.1 消歧查询与 §6.3 实体入库共享的唯一文本构造函数——
+/// 切勿在别处重复此格式化逻辑。
 pub fn entity_embed_text(e: &ExtractedEntity) -> String {
     format!(
         "{}。{}。关键词: {}",
@@ -134,11 +131,11 @@ pub fn entity_embed_text(e: &ExtractedEntity) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Consolidator
+// Consolidator（整合器）
 // ---------------------------------------------------------------------------
 
-/// The Consolidate layer worker. Holds the three backend handles; per-call
-/// state (block maps, stats) lives on the stack.
+/// Consolidate 层的工作器。持有三个后端句柄；每次调用的
+/// 状态（块映射、统计）放在栈上。
 pub struct Consolidator {
     graph: Arc<dyn GraphRepository>,
     vector: Arc<dyn VectorRepository>,
@@ -158,10 +155,10 @@ impl Consolidator {
         }
     }
 
-    /// Consolidate one document's extracted graphs into KG + vectors.
+    /// 将一个文档的抽取图整合进 KG 与向量库。
     ///
-    /// `block_texts` maps `block_index` → raw chunk text (from the chunk
-    /// processor output), used for the `doc_chunks` dual write.
+    /// `block_texts` 映射 `block_index` → 原始块文本（来自分块
+    /// 处理器输出），用于 `doc_chunks` 双重写入。
     pub async fn consolidate_document(
         &self,
         project: &str,
@@ -175,8 +172,8 @@ impl Consolidator {
 
         let mut stats = ConsolidateStats::default();
 
-        // ── §6.5 entry purge (autonomous, idempotent): wipe this document's
-        //    old edges and doc_chunks points before writing anything new.
+        // ── §6.5 入口清理（自治、幂等）：写入任何新内容前，
+        //    先清掉该文档的旧边与旧 doc_chunks 点。
         let mut purge_params = HashMap::new();
         purge_params.insert("doc_id".to_string(), serde_json::json!(doc_id));
         self.graph
@@ -195,7 +192,7 @@ impl Consolidator {
             .delete_by_filter(DOC_CHUNKS, doc_id_filter(doc_id))
             .await?;
 
-        // ── §6.2.0 Document node: MERGE before any MENTIONED_IN write.
+        // ── §6.2.0 Document 节点：在任何 MENTIONED_IN 写入前先 MERGE。
         let mut doc_params = HashMap::new();
         doc_params.insert("doc_id".to_string(), serde_json::json!(doc_id));
         doc_params.insert("project".to_string(), serde_json::json!(project));
@@ -218,8 +215,8 @@ impl Consolidator {
                 && block.relations.is_empty()
                 && block.block_summary.is_empty()
             {
-                // Task-1 carried minor: silently-empty successful block —
-                // observe only (never dropped, never degraded).
+                // 任务 1 遗留的小问题：静默为空的成功块——
+                // 仅观测（不丢弃、不降级）。
                 stats.empty_blocks += 1;
                 tracing::warn!(
                     "consolidate: 非降级空块 doc={} block_index={}",
@@ -228,12 +225,12 @@ impl Consolidator {
                 );
             }
 
-            // canonical_name → disambiguated entity_id, registered per entity
-            // (hard constraint: relation endpoints resolve through this map).
+            // canonical_name → 消歧后的 entity_id，逐实体登记
+            // （硬约束：关系端点通过此映射解析）。
             let mut block_map: HashMap<String, String> = HashMap::new();
 
             if !block.entities.is_empty() {
-                // ── First level: batch exact-id check (one read per block).
+                // ── 第一级：批量精确 ID 检查（每块一次读）。
                 let derived: Vec<String> = block
                     .entities
                     .iter()
@@ -258,8 +255,8 @@ impl Consolidator {
                     })
                     .unwrap_or_default();
 
-                // ── §6.3 embed decoupling: one batch for the whole block,
-                //    then per-entity search → write → upsert.
+                // ── §6.3 embed 解耦：整块一次批量向量化，
+                //    然后逐实体 search → write → upsert。
                 let embed_texts: Vec<String> =
                     block.entities.iter().map(entity_embed_text).collect();
                 let vectors = self.embed.embed_batch(&embed_texts).await?;
@@ -269,9 +266,9 @@ impl Consolidator {
                         entity_id_for(project, entity.entity_type, &entity.canonical_name);
 
                     let (final_id, created) = if existing.contains(&derived_id) {
-                        (derived_id, false) // first-level short-circuit merge
+                        (derived_id, false) // 第一级短路合并
                     } else {
-                        // ── Second level: vector near-neighbour merge.
+                        // ── 第二级：向量近邻合并。
                         let hits = self
                             .vector
                             .search_with_filter(
@@ -303,7 +300,7 @@ impl Consolidator {
                         }
                     };
 
-                    // ── §6.2.1 Entity MERGE (returns elementId for payload).
+                    // ── §6.2.1 Entity MERGE（返回 elementId 供 payload 使用）。
                     let mut ep = HashMap::new();
                     ep.insert("entity_id".to_string(), serde_json::json!(final_id));
                     ep.insert("name".to_string(), serde_json::json!(entity.canonical_name));
@@ -346,8 +343,8 @@ impl Consolidator {
                         stats.entities_merged += 1;
                     }
 
-                    // ── §6.3 entity → kg_nodes write-through (per entity,
-                    //    never batched — §12.1).
+                    // ── §6.3 实体 → kg_nodes 写透（逐实体，
+                    //    绝不批量——§12.1）。
                     let point = serde_json::json!({
                         "id": crate::application::sync::kg_bridge::make_point_id(&final_id),
                         "vector": vector,
@@ -367,7 +364,7 @@ impl Consolidator {
                     });
                     self.vector.upsert(KG_NODES, vec![point]).await?;
 
-                    // _kg_synced_at only after graph + vector both succeeded.
+                    // 图与向量都成功后才标记 _kg_synced_at。
                     let mut mp = HashMap::new();
                     mp.insert("entity_id".to_string(), serde_json::json!(final_id));
                     self.graph
@@ -378,16 +375,16 @@ impl Consolidator {
                         )
                         .await?;
 
-                    // Register both the raw and the normalised canonical as
-                    // lookup keys — LLM case/whitespace variance in relation
-                    // endpoints must not fall through to the fallback.
+                    // 同时登记原始与规范化后的 canonical 作为
+                    // 查找键——关系端点中 LLM 的大小写/空白差异
+                    // 绝不能落到回退分支。
                     block_map.insert(entity.canonical_name.clone(), final_id.clone());
                     block_map
                         .entry(normalize(&entity.canonical_name))
                         .or_insert(final_id);
                 }
 
-                // ── §6.2.3 MENTIONED_IN provenance (batched per block).
+                // ── §6.2.3 MENTIONED_IN 溯源（每块批量）。
                 let ids: Vec<String> = block_map
                     .values()
                     .cloned()
@@ -408,8 +405,8 @@ impl Consolidator {
                     .await?;
             }
 
-            // ── §6.2.2 Relations: endpoints via block map, then historical
-            //    fallback, else orphan (log + count, no placeholder nodes).
+            // ── §6.2.2 关系：端点先经块映射，再走历史节点
+            //    回退，否则记为孤儿（记日志 + 计数，不建占位节点）。
             for relation in &block.relations {
                 let head_id = self
                     .resolve_endpoint(project, &block_map, &relation.head)
@@ -438,8 +435,8 @@ impl Consolidator {
                     "evidence".to_string(),
                     serde_json::json!(relation.evidence.clone().unwrap_or_default()),
                 );
-                // f32→f64 widening is lossy (0.9f32 → 0.899999976…); round in
-                // f64 space so the stored confidence is clean (0.9 exactly).
+                // f32→f64 加宽有精度损失（0.9f32 → 0.899999976…）；
+                // 在 f64 空间四舍五入，使存储的 confidence 干净（精确 0.9）。
                 let confidence = ((relation.confidence.unwrap_or(0.5) as f64) * 1e6).round() / 1e6;
                 rp.insert("confidence".to_string(), serde_json::json!(confidence));
                 self.graph
@@ -454,13 +451,13 @@ impl Consolidator {
                 stats.relations_written += 1;
             }
 
-            // ── §6.3 block → doc_chunks dual write (per block).
+            // ── §6.3 块 → doc_chunks 双重写入（每块）。
             let raw_text = block_texts
                 .get(&block.block_index)
                 .cloned()
                 .unwrap_or_default();
             let block_embed_text = if block.block_summary.is_empty() {
-                raw_text.clone() // no summary to prefix (degraded blocks always have an empty summary per §5.5)
+                raw_text.clone() // 无摘要可前置（按 §5.5，降级块摘要恒为空）
             } else {
                 format!("{}\n{}", block.block_summary, raw_text)
             };
@@ -492,10 +489,9 @@ impl Consolidator {
         Ok(stats)
     }
 
-    /// Resolve a relation endpoint: the per-block disambiguation map first
-    /// (raw key, then normalised key), then a project-scoped historical-node
-    /// suffix lookup (the endpoint may be a node from an older build), else
-    /// `None` (caller counts an orphan relation).
+    /// 解析关系端点：先查逐块消歧映射（原始键，再规范化键），
+    /// 再做项目范围内的历史节点后缀查找（端点可能是旧构建的节点），
+    /// 否则返回 `None`（调用方计为孤儿关系）。
     async fn resolve_endpoint(
         &self,
         project: &str,
@@ -508,8 +504,8 @@ impl Consolidator {
         {
             return Ok(Some(id.clone()));
         }
-        // `/`-anchored suffix: canonical "网关" must not match "支付网关";
-        // project-scoped: never resolve into another project's same-named node.
+        // `/` 锚定的后缀：canonical "网关" 不得匹配 "支付网关"；
+        // 项目范围：绝不解析到其他项目的同名节点。
         let mut params = HashMap::new();
         params.insert(
             "prefix".to_string(),
@@ -534,25 +530,23 @@ impl Consolidator {
         Ok(id)
     }
 
-    /// §6.5.2 — a document was deleted: remove its `RELATES`/`MENTIONED_IN`
-    /// edges, the `Document` node itself, and every `doc_chunks` vector point
-    /// of the document. Entity nodes survive while referenced elsewhere.
+    /// §6.5.2——文档被删除：移除其 `RELATES`/`MENTIONED_IN` 边、
+    /// `Document` 节点本身以及该文档的所有 `doc_chunks` 向量点。
+    /// 实体节点只要被别处引用就保留。
     ///
-    /// Delegates to the free [`purge_document`] so the build orchestration
-    /// layer (Task 3) can purge without constructing a full `Consolidator`.
+    /// 委托给自由函数 [`purge_document`]，使构建编排层（任务 3）
+    /// 无需构造完整 `Consolidator` 即可清理。
     pub async fn purge_document(&self, doc_id: &str) -> Result<(), DtError> {
         purge_document(self.graph.as_ref(), self.vector.as_ref(), doc_id).await
     }
 }
 
-/// §6.5.2 — purge every artifact of one document: its `RELATES` edges, its
-/// `MENTIONED_IN` provenance edges, the `Document` node, and all its
-/// `doc_chunks` vector points. Entity nodes survive while referenced
-/// elsewhere; orphaned entities are handled by §6.5.4 periodic cleanup.
+/// §6.5.2——清理一个文档的全部产物：其 `RELATES` 边、`MENTIONED_IN`
+/// 溯源边、`Document` 节点及其所有 `doc_chunks` 向量点。
+/// 实体节点只要被别处引用就保留；孤儿实体由 §6.5.4 定期清理处理。
 ///
-/// Free function: the build orchestration layer consumes `deleted_paths`
-/// through this entry point without needing an embed service (purging never
-/// embeds). Idempotent — safe to re-run for the same `doc_id`.
+/// 自由函数：构建编排层通过此入口消费 `deleted_paths`，无需
+/// embed 服务（清理从不做向量化）。幂等——对同一 `doc_id` 可安全重跑。
 pub async fn purge_document(
     graph: &dyn GraphRepository,
     vector: &dyn VectorRepository,
@@ -581,16 +575,15 @@ pub async fn purge_document(
     Ok(())
 }
 
-/// Qdrant filter selecting every `doc_chunks` point of one document.
+/// 选中某文档所有 `doc_chunks` 点的 Qdrant 过滤器。
 fn doc_id_filter(doc_id: &str) -> serde_json::Value {
     serde_json::json!({"must": [{"key": "doc_id", "match": {"value": doc_id}}]})
 }
 
-/// §6.2/I7 one-off migration + collection provisioning, run once per process
-/// on first consolidation. Memgraph errors on re-creating an existing
-/// index/constraint — tolerated (debug-logged). The latch is set only when at
-/// least one statement succeeded, so a transient backend outage is retried on
-/// the next call instead of being silently skipped for the process lifetime.
+/// §6.2/I7 一次性迁移 + 集合预置，首次整合时每进程运行一次。
+/// Memgraph 对重建已有索引/约束会报错——可容忍（debug 日志）。
+/// 仅当至少一条语句成功后才置位 latch，因此瞬时后端故障会在
+/// 下次调用重试，而不会在进程生命周期内被静默跳过。
 async fn ensure_schema(graph: &Arc<dyn GraphRepository>, vector: &Arc<dyn VectorRepository>) {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if ONCE.get().is_some() {
@@ -603,13 +596,13 @@ async fn ensure_schema(graph: &Arc<dyn GraphRepository>, vector: &Arc<dyn Vector
     ] {
         match graph.write_query(stmt, HashMap::new()).await {
             Ok(_) => any_ok = true,
-            Err(e) => tracing::debug!("consolidate schema migration skipped ({e})"),
+            Err(e) => tracing::debug!("consolidate schema 迁移已跳过（{e}）"),
         }
     }
     for collection in [KG_NODES, DOC_CHUNKS] {
         match vector.ensure_collection(collection, VECTOR_DIM).await {
             Ok(_) => any_ok = true,
-            Err(e) => tracing::debug!("consolidate ensure_collection {collection} skipped ({e})"),
+            Err(e) => tracing::debug!("consolidate ensure_collection {collection} 已跳过（{e}）"),
         }
     }
     if any_ok {
@@ -617,9 +610,8 @@ async fn ensure_schema(graph: &Arc<dyn GraphRepository>, vector: &Arc<dyn Vector
     }
 }
 
-/// §6.4 `SAME_AS` manual entry point. Auto-triggering is unreachable in the
-/// current flow (second-level merges never produce twin nodes); this is the
-/// human correction entry.
+/// §6.4 `SAME_AS` 手动入口。当前流程中自动触发不可达
+/// （第二级合并从不产生孪生节点）；这是人工纠正入口。
 pub async fn link_same_as(
     graph: &Arc<dyn GraphRepository>,
     from_id: &str,
@@ -644,7 +636,7 @@ pub async fn link_same_as(
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -655,7 +647,7 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Mutex;
 
-    // ── Pure helpers ─────────────────────────────────────────────────
+    // ── 纯辅助函数 ──────────────────────────────────────────────────
 
     fn entity(canonical: &str, ty: EntityType) -> ExtractedEntity {
         ExtractedEntity {
@@ -674,9 +666,9 @@ mod tests {
 
     #[test]
     fn normalize_full_width_to_half_width() {
-        // ＩｆＣｏｄｅ (full-width) → ifcode
+        // ＩｆＣｏｄｅ（全角）→ ifcode
         assert_eq!(normalize("ＩｆＣｏｄｅ"), "ifcode");
-        // full-width space U+3000 → space → percent-encoded
+        // 全角空格 U+3000 → 空格 → 百分号编码
         assert_eq!(normalize("读\u{3000}写"), "读%20写");
     }
 
@@ -687,11 +679,11 @@ mod tests {
         assert_eq!(normalize("a b"), "a%20b");
         assert_eq!(normalize("a#b"), "a%23b");
         assert_eq!(normalize("a?b"), "a%3Fb");
-        // '%' itself must be encoded (and not double-handled)
+        // '%' 自身必须被编码（且不会被重复处理）
         assert_eq!(normalize("100%"), "100%25");
-        // An already-encoded sequence encodes the '%' again — correct,
-        // because '%' is encoded first in a single pass. (Lowercasing runs
-        // before encoding per spec §6.1, so the embedded hex lowercases too.)
+        // 已编码的序列会再次编码 '%'——这是正确的，
+        // 因为单遍处理中 '%' 最先被编码。（按规范 §6.1，转小写在
+        // 编码之前执行，因此内嵌的十六进制也会一并转小写。）
         assert_eq!(normalize("a%2Fb"), "a%252fb");
     }
 
@@ -736,10 +728,10 @@ mod tests {
         assert_eq!(entity_embed_text(&e), "支付网关。支付网关的摘要。关键词: ");
     }
 
-    // ── Mock backends ────────────────────────────────────────────────
+    // ── Mock 后端 ───────────────────────────────────────────────────
 
-    /// Records every Cypher (and its params) so tests can assert exact
-    /// statements; scripted read responses keyed by substring match.
+    /// 记录每一条 Cypher（及其参数），供测试断言精确语句；
+    /// 脚本化的读响应按子串匹配分发。
     struct MockGraph {
         writes: Mutex<Vec<(String, HashMap<String, serde_json::Value>)>>,
         reads: Mutex<Vec<(String, HashMap<String, serde_json::Value>)>>,
@@ -801,8 +793,8 @@ mod tests {
         }
     }
 
-    /// Returns vectors derived from the input text length so tests can tell
-    /// embeddings apart; records every batch.
+    /// 返回由输入文本长度派生的向量，便于测试区分不同的
+    /// 嵌入；并记录每一次批量。
     struct MockEmbed {
         batches: Mutex<Vec<Vec<String>>>,
     }
@@ -922,7 +914,7 @@ mod tests {
         }
     }
 
-    // ── consolidate_document scenarios ───────────────────────────────
+    // ── consolidate_document 场景 ────────────────────────────────────
 
     fn graph_block(
         entities: Vec<ExtractedEntity>,
@@ -944,8 +936,8 @@ mod tests {
 
     #[tokio::test]
     async fn first_level_exact_hit_short_circuits_vector_search() {
-        // Entity already exists in graph (first-level batch check hits) →
-        // no vector search may happen at all.
+        // 实体已存在于图中（第一级批量检查命中）→
+        // 不得发生任何向量搜索。
         let derived = entity_id_for("proj", EntityType::Service, "支付网关");
         let graph = Arc::new(MockGraph::new(vec![(
             "MATCH (e:Entity {entity_id: eid})".to_string(),
@@ -974,7 +966,7 @@ mod tests {
         assert_eq!(stats.entities_created, 0);
         assert!(
             vector.searches.lock().unwrap().is_empty(),
-            "first-level hit must not trigger a vector search"
+            "第一级命中不得触发向量搜索"
         );
     }
 
@@ -1008,28 +1000,28 @@ mod tests {
         assert_eq!(stats.entities_merged, 1);
         assert_eq!(stats.entities_created, 0);
 
-        // The Entity MERGE must target the EXISTING entity_id (the merge
-        // target), not the freshly derived one.
+        // Entity MERGE 必须指向已存在的 entity_id（合并目标），
+        // 而不是新推导出的那个。
         let writes = graph.writes();
         let merge = writes
             .iter()
             .find(|(q, _)| q.contains("MERGE (e:Entity {entity_id: $entity_id})"))
-            .expect("entity merge must run");
+            .expect("实体合并必须执行");
         assert_eq!(
             merge.1.get("entity_id").and_then(|v| v.as_str()),
             Some(existing_id)
         );
 
-        // kg_nodes point id must derive from the merged business_id.
+        // kg_nodes 点 ID 必须由合并后的 business_id 推导。
         let upserts = vector.upserts.lock().unwrap();
         let kg = upserts
             .iter()
             .find(|(cname, _)| cname == KG_NODES)
-            .expect("kg_nodes upsert");
+            .expect("kg_nodes upsert 必须执行");
         assert_eq!(
             kg.1.len(),
             1,
-            "entity upsert must be per-entity, not batched"
+            "实体 upsert 必须逐实体进行，不得批量"
         );
         assert_eq!(
             kg.1[0]["payload"]["business_id"].as_str(),
@@ -1041,7 +1033,7 @@ mod tests {
     #[tokio::test]
     async fn second_level_low_score_creates_new() {
         let vector = Arc::new(MockVector::new().with_hits(vec![serde_json::json!({
-            "score": 0.90, // below the 0.92 threshold
+            "score": 0.90, // 低于 0.92 阈值
             "payload": {"business_id": "dt://entity/proj/Service/other", "type": "Service", "project": "proj"}
         })]));
         let graph = Arc::new(MockGraph::new(vec![]));
@@ -1097,8 +1089,8 @@ mod tests {
 
     #[tokio::test]
     async fn relation_endpoints_resolve_through_block_map() {
-        // "支付网关" merges into an existing node; the relation must use the
-        // MERGED id as its endpoint, not the derived one.
+        // "支付网关" 合并进既有节点；关系必须以合并后的
+        // ID 为端点，而非新推导的那个。
         let merged_id = "dt://entity/proj/Service/支付服务网关";
         let tail_id = entity_id_for("proj", EntityType::Channel, "银联渠道");
         let vector = Arc::new(MockVector::new().with_hits(vec![serde_json::json!({
@@ -1140,11 +1132,11 @@ mod tests {
         let rel = writes
             .iter()
             .find(|(q, _)| q.contains("MERGE (h)-[r:RELATES"))
-            .expect("RELATES merge must run");
+            .expect("RELATES 合并必须执行");
         assert_eq!(
             rel.1.get("head_id").and_then(|v| v.as_str()),
             Some(merged_id),
-            "head must come from the disambiguation map (merged id)"
+            "head 必须来自消歧映射（合并后的 id）"
         );
         assert_eq!(
             rel.1.get("tail_id").and_then(|v| v.as_str()),
@@ -1207,8 +1199,8 @@ mod tests {
 
     #[tokio::test]
     async fn relation_unresolvable_endpoint_is_orphaned() {
-        // The relation endpoint "幽灵" was not extracted as an entity and
-        // the historical-node fallback finds nothing → orphan.
+        // 关系端点 "幽灵" 未被抽取为实体，且历史节点
+        // 回退也一无所获 → 记为孤儿。
         let graph = Arc::new(MockGraph::new(vec![]));
         let vector = Arc::new(MockVector::new());
         let embed = Arc::new(MockEmbed::new());
@@ -1241,8 +1233,8 @@ mod tests {
 
     #[tokio::test]
     async fn relation_fallback_resolves_historical_node() {
-        // Endpoint not in block map, but a historical node exists whose
-        // entity_id ends with the normalised canonical.
+        // 端点不在块映射中，但存在一个 entity_id 以规范化后的
+        // canonical 结尾的历史节点。
         let historical = "dt://entity/proj/Service/老节点";
         let graph = Arc::new(MockGraph::new(vec![(
             "ENDS WITH".to_string(),
@@ -1284,12 +1276,12 @@ mod tests {
             Some(historical)
         );
 
-        // Fallback lookup must be project-scoped and `/`-anchored.
+        // 回退查找必须限定项目范围并以 `/` 锚定。
         let reads = graph.reads();
         let fallback = reads
             .iter()
             .find(|(q, _)| q.contains("ENDS WITH"))
-            .expect("fallback read must run");
+            .expect("回退读必须执行");
         assert!(fallback.0.contains("STARTS WITH $prefix"));
         assert_eq!(
             fallback.1.get("prefix").and_then(|v| v.as_str()),
@@ -1328,8 +1320,8 @@ mod tests {
         assert_eq!(stats.blocks_processed, 1);
         assert_eq!(stats.entities_created, 0);
 
-        // doc_chunks point: degraded=true, text = raw chunk only, and the
-        // embed text must be exactly the raw chunk (no summary prefix).
+        // doc_chunks 点：degraded=true，text 仅为原始块，
+        // 且 embed 文本必须恰好是原始块（无摘要前缀）。
         let batches = embed.batches.lock().unwrap();
         assert_eq!(batches.len(), 1);
         assert_eq!(batches[0], vec!["原文块文本".to_string()]);
@@ -1338,7 +1330,7 @@ mod tests {
         let doc = upserts
             .iter()
             .find(|(cname, _)| cname == DOC_CHUNKS)
-            .expect("doc_chunks upsert");
+            .expect("doc_chunks upsert 必须执行");
         assert_eq!(doc.1[0]["payload"]["degraded"], serde_json::json!(true));
         assert_eq!(doc.1[0]["payload"]["text"].as_str(), Some("原文块文本"));
         assert_eq!(
@@ -1349,8 +1341,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_block_is_observed_not_dropped() {
-        // Non-degraded but everything empty → warn + empty_blocks += 1,
-        // still processed (doc_chunks point written).
+        // 非降级但全空 → warn + empty_blocks += 1，
+        // 仍会处理（写入 doc_chunks 点）。
         let mut block = graph_block(vec![], vec![]);
         block.block_summary = String::new();
 
@@ -1467,7 +1459,7 @@ mod tests {
         assert_eq!(payload["source"].as_str(), Some("doc"));
         assert_eq!(payload["text"].as_str(), Some("原文块文本"));
 
-        // point id determinism: make_point_id("{doc_id}:{block_index}")
+        // 点 ID 确定性：make_point_id("{doc_id}:{block_index}")
         let expected_pid =
             crate::application::sync::kg_bridge::make_point_id("dt://doc/proj/a.md:0");
         assert_eq!(doc.1[0]["id"].as_str(), Some(expected_pid.as_str()));
@@ -1496,29 +1488,29 @@ mod tests {
         let purge_relates = writes
             .iter()
             .position(|(q, _)| q.contains("MATCH ()-[r:RELATES {doc_id: $doc_id}]->() DELETE r"))
-            .expect("RELATES purge must run");
+            .expect("RELATES 清理必须执行");
         let purge_mentioned = writes
             .iter()
             .position(|(q, _)| {
                 q.contains("MATCH ()-[m:MENTIONED_IN]->(:Document {doc_id: $doc_id}) DELETE m")
             })
-            .expect("MENTIONED_IN purge must run");
+            .expect("MENTIONED_IN 清理必须执行");
         let first_entity_write = writes
             .iter()
             .position(|(q, _)| q.contains("MERGE (e:Entity {entity_id: $entity_id})"))
-            .expect("entity write must run");
+            .expect("实体写入必须执行");
         assert!(
             purge_relates < first_entity_write && purge_mentioned < first_entity_write,
-            "entry purge must run before any entity write"
+            "入口清理必须先于任何实体写入"
         );
 
-        // Old doc_chunks vector points must be deleted by doc_id filter.
+        // 旧 doc_chunks 向量点必须按 doc_id 过滤器删除。
         let deletes = vector.deleted_filters.lock().unwrap();
         assert!(
             deletes.iter().any(|(cname, f)| cname == DOC_CHUNKS
                 && f.to_string().contains("doc_id")
                 && f.to_string().contains("dt://doc/proj/a.md")),
-            "doc_chunks purge by doc_id must run; got: {:?}",
+            "doc_chunks 必须按 doc_id 清理；实际：{:?}",
             *deletes
         );
     }
@@ -1546,11 +1538,11 @@ mod tests {
         let doc_merge = writes
             .iter()
             .position(|(q, _)| q.contains("MERGE (d:Document {doc_id: $doc_id})"))
-            .expect("document merge must run");
+            .expect("文档合并必须执行");
         let mentioned = writes
             .iter()
             .position(|(q, _)| q.contains("MENTIONED_IN") && q.contains("MERGE"))
-            .expect("MENTIONED_IN must run");
+            .expect("MENTIONED_IN 必须执行");
         assert!(doc_merge < mentioned);
 
         let (_, params) = &writes[doc_merge];
@@ -1592,7 +1584,7 @@ mod tests {
             .iter()
             .find(|(q, _)| q.contains("MERGE (e:Entity {entity_id: $entity_id})"))
             .unwrap();
-        // §6.2 exact statement shape: aliases/keywords REDUCE merge on match.
+        // §6.2 精确语句形态：命中时 aliases/keywords 用 REDUCE 合并。
         assert!(q.contains("e.aliases = REDUCE(acc = coalesce(e.aliases, []), x IN $new_aliases |"));
         assert!(q.contains("e.keywords = REDUCE(kacc = coalesce(e.keywords, []), x IN $keywords |"));
         assert_eq!(params.get("name").and_then(|v| v.as_str()), Some("ifCode"));
@@ -1635,7 +1627,7 @@ mod tests {
         let mentioned = writes
             .iter()
             .find(|(q, _)| q.contains("MENTIONED_IN") && q.contains("MERGE"))
-            .expect("MENTIONED_IN must run");
+            .expect("MENTIONED_IN 必须执行");
         let ids: Vec<&str> = mentioned
             .1
             .get("ids")
@@ -1680,11 +1672,11 @@ mod tests {
             .iter()
             .filter(|(cname, _)| cname == KG_NODES)
             .collect();
-        assert_eq!(kg_upserts.len(), 3, "one upsert call per entity");
+        assert_eq!(kg_upserts.len(), 3, "每个实体一次 upsert 调用");
         for (_, points) in kg_upserts {
             assert_eq!(points.len(), 1);
         }
-        // _kg_synced_at marked per entity after successful upsert.
+        // 每次 upsert 成功后逐实体标记 _kg_synced_at。
         let writes = graph.writes();
         let marks = writes
             .iter()
@@ -1737,7 +1729,7 @@ mod tests {
         let (q, params) = writes
             .iter()
             .find(|(q, _)| q.contains("MERGE (a)-[r:SAME_AS]->(b)"))
-            .expect("SAME_AS merge must run");
+            .expect("SAME_AS 合并必须执行");
         assert!(q.contains("r.created_by = $created_by"));
         assert_eq!(params.get("score").and_then(|v| v.as_f64()), Some(1.0));
         assert_eq!(

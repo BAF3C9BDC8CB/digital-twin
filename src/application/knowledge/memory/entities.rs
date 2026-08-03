@@ -1,6 +1,6 @@
-//! Memory world entities: Day, Session, MemoryEvent.
+//! Memory 世界实体：Day、Session、MemoryEvent。
 //!
-//! These form the time dimension of the knowledge graph:
+//! 这些构成知识图谱的时间维度：
 //! ```text
 //! (:Day {day_id: "2026-07-09"})
 //!   └─[:HAS_SESSION]-> (:Session {session_id: "2026-07-09-001"})
@@ -11,42 +11,42 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Day node — represents a calendar day in the time dimension.
+/// Day 节点——时间维度上的一个日历日。
 ///
-/// Created lazily when the first event of a day is recorded.
-/// Only one node per date (idempotent via `day_id` uniqueness).
+/// 当某天的首个事件被记录时惰性创建。
+/// 每天仅一个节点（通过 `day_id` 唯一性保证幂等）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Day {
-    /// Unique day identifier, format "YYYY-MM-DD".
+    /// 唯一日标识，格式 "YYYY-MM-DD"。
     pub day_id: String,
-    /// Human-readable date string, format "YYYY-MM-DD".
+    /// 人类可读的日期字符串，格式 "YYYY-MM-DD"。
     pub date: String,
 }
 
-/// Session node — a work session within a day.
+/// Session 节点——一天内的工作会话。
 ///
-/// A day can have multiple sessions, numbered sequentially.
-/// Owned by exactly one [:HAS_SESSION] relationship from a Day.
+/// 一天可有多个会话，按顺序编号。
+/// 由 Day 的恰好一条 [:HAS_SESSION] 关系拥有。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
-    /// Unique session identifier, e.g. "2026-07-09-001" or UUID.
+    /// 唯一会话标识，如 "2026-07-09-001" 或 UUID。
     pub session_id: String,
-    /// Human-readable summary of the session.
+    /// 会话的人类可读摘要。
     pub summary: String,
-    /// Key architectural / technical decisions made during the session.
+    /// 会话期间做出的关键架构 / 技术决策。
     pub key_decisions: Vec<String>,
-    /// Optional thread/conversation identifier for grouping.
+    /// 可选的线程/会话标识，用于分组。
     pub thread_id: Option<String>,
-    /// Session start time (ISO 8601).
+    /// 会话开始时间（ISO 8601）。
     pub started_at: chrono::DateTime<chrono::Utc>,
-    /// Session end time (None if still active).
+    /// 会话结束时间（仍活跃时为 None）。
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-/// All event types supported by the memory system.
+/// memory 系统支持的所有事件类型。
 ///
-/// Each event type maps to its own graph label
-/// (e.g. `EventType::Modification` → `:Modification` label).
+/// 每种事件类型映射到各自的图标签
+/// （如 `EventType::Modification` → `:Modification` 标签）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventType {
     Modification,
@@ -59,7 +59,7 @@ pub enum EventType {
 }
 
 impl EventType {
-    /// Return the string representation used in Cypher labels.
+    /// 返回用于 Cypher 标签的字符串表示。
     pub fn as_str(&self) -> &'static str {
         match self {
             EventType::Modification => "Modification",
@@ -73,29 +73,29 @@ impl EventType {
     }
 }
 
-/// A memory event — something that happened during a session.
+/// 记忆事件——会话期间发生的某件事。
 ///
-/// Each event is linked to its parent Session via [:HAS_EVENT].
+/// 每个事件通过 [:HAS_EVENT] 关联到其父 Session。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEvent {
-    /// The kind of event.
+    /// 事件类型。
     pub event_type: EventType,
-    /// External entity identifier (e.g. Jenkins job name, Nacos data_id).
+    /// 外部实体标识（如 Jenkins job 名、Nacos data_id）。
     pub entity_id: String,
-    /// External entity type label (e.g. "JenkinsJob", "NacosConfig").
+    /// 外部实体类型标签（如 "JenkinsJob"、"NacosConfig"）。
     pub entity_type: String,
-    /// Owning project name.
+    /// 所属项目名。
     pub project: String,
-    /// Human-readable details / description.
+    /// 人类可读的详情 / 描述。
     pub details: String,
-    /// The session this event belongs to.
+    /// 该事件所属的会话。
     pub session_id: String,
-    /// When the event occurred.
+    /// 事件发生时间。
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -152,8 +152,8 @@ mod tests {
             session_id: "2026-07-09-001".into(),
             timestamp: t,
         };
-        let json = serde_json::to_string(&evt).expect("serialize");
-        let back: MemoryEvent = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&evt).expect("序列化应成功");
+        let back: MemoryEvent = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.event_type, EventType::Deployment);
         assert_eq!(back.entity_id, "my-job");
         assert_eq!(back.project, "digital-twin");

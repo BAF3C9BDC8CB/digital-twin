@@ -1,10 +1,8 @@
-//! Extract 抽取层 — the first stage of the universal knowledge pipeline
-//! (抽取 → 整合 → 检索).
+//! Extract 抽取层——通用知识管线的第一阶段（抽取 → 整合 → 检索）。
 //!
-//! Turns per-block LLM responses into structured [`ExtractedGraph`] values.
-//! This layer never writes the graph database, never embeds, and never
-//! touches the vector store — Task 2's Consolidate layer consumes the
-//! produced `Vec<ExtractedGraph>`.
+//! 将逐块的 LLM 响应转换为结构化的 [`ExtractedGraph`] 值。
+//! 本层从不写入图数据库、从不做向量化、从不接触向量存储——由
+//! 任务 2 的 Consolidate 层消费产出的 `Vec<ExtractedGraph>`。
 
 pub mod consolidate;
 pub mod model;
@@ -16,17 +14,15 @@ pub use consolidate::{
 };
 pub use model::{EntityType, ExtractedEntity, ExtractedGraph, ExtractedRelation};
 
-/// Parse one LLM block response into an [`ExtractedGraph`] (§5.5).
+/// 将一条 LLM 块响应解析为 [`ExtractedGraph`]（§5.5）。
 ///
-/// Tolerates markdown fences or surrounding prose: tries a whole-string parse
-/// first, then falls back to the substring from the first `{` to the last `}`.
+/// 容忍 markdown 围栏或前后赘述：先尝试整体解析，
+/// 失败则回退到从第一个 `{` 到最后一个 `}` 的子串。
 ///
-/// Entities with an empty `canonical_name` or `summary` are invalid output —
-/// they are dropped here (with a warn log) and do **not** mark the block as
-/// degraded.
+/// `canonical_name` 或 `summary` 为空的实体是无效输出——
+/// 在此丢弃（并记 warn 日志），且**不**将块标记为降级。
 ///
-/// `doc_id` and `block_index` are stamped onto the result; `degraded` is
-/// always `false` on success.
+/// `doc_id` 与 `block_index` 会盖印到结果上；成功时 `degraded` 恒为 `false`。
 pub fn parse_block_response(
     response: &str,
     doc_id: &str,
@@ -35,8 +31,7 @@ pub fn parse_block_response(
     let mut graph = match serde_json::from_str::<ExtractedGraph>(response) {
         Ok(g) => g,
         Err(first_err) => {
-            // Tolerate markdown fences / surrounding prose: retry with the
-            // substring from the first '{' to the last '}'.
+            // 容忍 markdown 围栏 / 前后赘述：用第一个 '{' 到最后一个 '}' 的子串重试。
             let start = response.find('{');
             let end = response.rfind('}');
             match (start, end) {
@@ -50,8 +45,8 @@ pub fn parse_block_response(
     graph.block_index = block_index;
     graph.degraded = false;
 
-    // Drop invalid entities (missing/empty canonical_name or summary) —
-    // this is not a degradation of the block.
+    // 丢弃无效实体（canonical_name/summary 缺失或为空）——
+    // 这不属于块的降级。
     graph.entities.retain(|e| {
         let valid = !e.canonical_name.trim().is_empty() && !e.summary.trim().is_empty();
         if !valid {
@@ -66,8 +61,7 @@ pub fn parse_block_response(
     Ok(graph)
 }
 
-/// Build the degraded placeholder graph for a block (§5.5):
-/// empty summary/entities/relations with `degraded = true`.
+/// 构建块的降级占位图（§5.5）：空的 summary/entities/relations 且 `degraded = true`。
 pub fn degraded_graph(doc_id: &str, block_index: u32) -> ExtractedGraph {
     ExtractedGraph {
         doc_id: doc_id.to_string(),
@@ -80,7 +74,7 @@ pub fn degraded_graph(doc_id: &str, block_index: u32) -> ExtractedGraph {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -128,7 +122,7 @@ mod tests {
         let g = parse_block_response(raw, DOC, 0).unwrap();
         assert_eq!(g.entities.len(), 1);
         assert_eq!(g.entities[0].canonical_name, "好实体");
-        // Dropping invalid entities is not a degradation.
+        // 丢弃无效实体不算降级。
         assert!(!g.degraded);
     }
 

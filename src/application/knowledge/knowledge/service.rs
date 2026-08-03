@@ -1,22 +1,20 @@
-//! KnowledgeService trait — contract for knowledge-dimension operations.
+//! KnowledgeService trait——知识维度操作的契约。
 //!
-//! Implementations handle CRUD for the five Knowledge World entity types:
-//! Knowledge, Experience, Concept, Domain, and Playbook.
+//! 实现负责 Knowledge 世界五种实体类型的增删改查：
+//! Knowledge、Experience、Concept、Domain 与 Playbook。
 //!
-//! The trait is decoupled from any specific storage backend via the
-//! [`GraphRepository`] abstraction.
+//! trait 通过 [`GraphRepository`] 抽象与任何具体存储后端解耦。
 //!
-//! [`DefaultKnowledgeService`] is the canonical production implementation.
+//! [`DefaultKnowledgeService`] 是规范的生产实现。
 //!
-//! # Node vectorisation
+//! # 节点向量化
 //!
-//! When any `write_*()` method is called on a [`DefaultKnowledgeService`]
-//! that has been configured with an [`EmbedService`] and [`VectorRepository`],
-//! the node's text (name / title / summary / content / definition as
-//! applicable) is automatically embedded via [`embed_kg_node`] and upserted
-//! into the unified Qdrant `kg_nodes` collection. This covers Knowledge,
-//! Experience, Concept, and Playbook nodes. Vectorisation failures are
-//! logged as warnings and do not fail the underlying graph write.
+//! 当 [`DefaultKnowledgeService`] 配置了 [`EmbedService`] 与 [`VectorRepository`]
+//! 后，任何 `write_*()` 方法被调用时，节点的文本（按适用取
+//! name / title / summary / content / definition）会经 [`embed_kg_node`]
+//! 自动向量化并 upsert 到统一的 Qdrant `kg_nodes` 集合。覆盖 Knowledge、
+//! Experience、Concept 与 Playbook 节点。向量化失败仅记录警告，
+//! 不会导致底层图写入失败。
 //!
 //! [`embed_kg_node`]: crate::application::sync::kg_bridge::embed_kg_node
 
@@ -30,9 +28,9 @@ use super::entities::{
     Concept, Domain, Experience, ExperienceSeverity, Knowledge, KnowledgeSource, Playbook,
 };
 
-/// Service for managing Knowledge World entities.
+/// 管理 Knowledge 世界实体的服务。
 ///
-/// # Typical usage
+/// # 典型用法
 ///
 /// ```ignore
 /// let svc = DefaultKnowledgeService::new(graph_repo);
@@ -51,26 +49,26 @@ use super::entities::{
 /// ```
 #[async_trait]
 pub trait KnowledgeService: Send + Sync {
-    /// Write (MERGE) a Knowledge node into the graph.
+    /// 将 Knowledge 节点写入（MERGE）图。
     async fn write_knowledge(&self, knowledge: &Knowledge) -> Result<(), DtError>;
 
-    /// Write (MERGE) an Experience node into the graph.
+    /// 将 Experience 节点写入（MERGE）图。
     async fn write_experience(&self, experience: &Experience) -> Result<(), DtError>;
 
-    /// Write (MERGE) a Concept node into the graph.
+    /// 将 Concept 节点写入（MERGE）图。
     async fn write_concept(&self, concept: &Concept) -> Result<(), DtError>;
 
-    /// Write (MERGE) a Domain node into the graph.
+    /// 将 Domain 节点写入（MERGE）图。
     async fn write_domain(&self, domain: &Domain) -> Result<(), DtError>;
 
-    /// Write (MERGE) a Playbook node into the graph.
+    /// 将 Playbook 节点写入（MERGE）图。
     async fn write_playbook(&self, playbook: &Playbook) -> Result<(), DtError>;
 
-    /// Update knowledge via versioned evolution.
+    /// 通过版本化演化更新知识。
     ///
-    /// Instead of mutating the existing node, this creates a new Knowledge
-    /// node with `version = old.version + 1`, links it to the old node via
-    /// `[:EVOLVED_FROM]`, and creates a KnowledgeVersion record.
+    /// 不是修改现有节点，而是新建一个 `version = old.version + 1` 的
+    /// Knowledge 节点，通过 `[:EVOLVED_FROM]` 关联到旧节点，
+    /// 并创建一条 KnowledgeVersion 记录。
     async fn update_knowledge(
         &self,
         knowledge_id: &str,
@@ -80,39 +78,38 @@ pub trait KnowledgeService: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// DefaultKnowledgeService — canonical implementation
+// DefaultKnowledgeService — 规范实现
 // ---------------------------------------------------------------------------
 
-/// Canonical implementation of [`KnowledgeService`] backed by
-/// a [`GraphRepository`].
+/// 由 [`GraphRepository`] 支撑的 [`KnowledgeService`] 规范实现。
 ///
-/// # Lifecycle
+/// # 生命周期
 ///
 /// ```text
 /// write_knowledge   → MERGE (:Knowledge {knowledge_id}) SET ...
-///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+///                     → embed_kg_node → Qdrant kg_nodes upsert（如已配置）
 /// write_experience  → MERGE (:Experience {experience_id}) SET ...
-///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+///                     → embed_kg_node → Qdrant kg_nodes upsert（如已配置）
 /// write_concept     → MERGE (:Concept {concept_id}) SET ...
-///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
+///                     → embed_kg_node → Qdrant kg_nodes upsert（如已配置）
 /// write_playbook    → MERGE (:Playbook {playbook_id}) SET ...
-///                     → embed_kg_node → Qdrant kg_nodes upsert (if configured)
-/// update_knowledge  → 1. MATCH old node
-///                     2. CREATE new version node
+///                     → embed_kg_node → Qdrant kg_nodes upsert（如已配置）
+/// update_knowledge  → 1. MATCH 旧节点
+///                     2. CREATE 新版本节点
 ///                     3. CREATE (new)-[:EVOLVED_FROM]->(old)
 ///                     4. CREATE (:KnowledgeVersion)-[:RECORDS]->(new)
 /// ```
 pub struct DefaultKnowledgeService {
     graph: Arc<dyn GraphRepository>,
-    /// Optional embedding service for auto-vectorising knowledge-world nodes.
+    /// 可选的嵌入服务，用于自动向量化知识世界节点。
     embed: Option<Arc<dyn EmbedService>>,
-    /// Optional vector repository for storing knowledge-world node vectors.
+    /// 可选的向量仓库，用于存储知识世界节点的向量。
     vector: Option<Arc<dyn VectorRepository>>,
 }
 
 impl DefaultKnowledgeService {
-    /// Create a new [`DefaultKnowledgeService`] backed by the given
-    /// graph repository (without vectorisation support).
+    /// 创建由给定图仓库支撑的 [`DefaultKnowledgeService`]
+    /// （不含向量化支持）。
     pub fn new(graph: Arc<dyn GraphRepository>) -> Self {
         Self {
             graph,
@@ -121,10 +118,10 @@ impl DefaultKnowledgeService {
         }
     }
 
-    /// Create a new [`DefaultKnowledgeService`] with vectorisation support.
+    /// 创建带向量化支持的 [`DefaultKnowledgeService`]。
     ///
-    /// When configured this way, [`write_experience`] will automatically
-    /// embed the title + summary text and upsert into Qdrant.
+    /// 以这种方式配置后，[`write_experience`] 会自动将 title + summary
+    /// 文本向量化并 upsert 到 Qdrant。
     pub fn with_vectorization(
         graph: Arc<dyn GraphRepository>,
         embed: Arc<dyn EmbedService>,
@@ -137,19 +134,19 @@ impl DefaultKnowledgeService {
         }
     }
 
-    /// Whether vectorisation is available for this service instance.
+    /// 该服务实例是否具备向量化能力。
     pub fn has_vectorization(&self) -> bool {
         self.embed.is_some() && self.vector.is_some()
     }
 
-    /// Auto-vectorise an experience's title + summary into Qdrant `kg_nodes`.
+    /// 将经验的 title + summary 自动向量化进 Qdrant `kg_nodes`。
     ///
-    /// Called automatically by [`write_experience`] when both
-    /// `embed` and `vector` backends are configured. No-op otherwise.
+    /// 当 `embed` 与 `vector` 后端都已配置时，由 [`write_experience`]
+    /// 自动调用；否则为 no-op。
     ///
-    /// Writes to the unified `kg_nodes` collection via [`embed_kg_node`]
-    /// (instead of the legacy `{project}_semantic` collection) so that all
-    /// knowledge-world nodes share a single searchable index.
+    /// 经 [`embed_kg_node`] 写入统一的 `kg_nodes` 集合
+    /// （替代旧的 `{project}_semantic` 集合），使所有知识世界节点
+    /// 共享同一个可检索索引。
     async fn auto_vectorize_experience(&self, experience: &Experience) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
@@ -179,7 +176,7 @@ impl DefaultKnowledgeService {
         .await
     }
 
-    /// Auto-vectorise a knowledge node's name + title + summary into Qdrant kg_nodes.
+    /// 将知识节点的 name + title + summary 自动向量化进 Qdrant kg_nodes。
     async fn auto_vectorize_knowledge(&self, knowledge: &Knowledge) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
@@ -210,7 +207,7 @@ impl DefaultKnowledgeService {
         .await
     }
 
-    /// Auto-vectorise a concept node into Qdrant kg_nodes.
+    /// 将概念节点自动向量化进 Qdrant kg_nodes。
     async fn auto_vectorize_concept(&self, concept: &Concept) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
@@ -240,7 +237,7 @@ impl DefaultKnowledgeService {
         .await
     }
 
-    /// Auto-vectorise a playbook node into Qdrant kg_nodes.
+    /// 将 playbook 节点自动向量化进 Qdrant kg_nodes。
     async fn auto_vectorize_playbook(&self, playbook: &Playbook) -> Result<(), DtError> {
         let embed = match &self.embed {
             Some(e) => e,
@@ -360,7 +357,7 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         if self.has_vectorization() {
             if let Err(e) = self.auto_vectorize_knowledge(knowledge).await {
-                tracing::warn!("auto_vectorize_knowledge failed: {e}");
+                tracing::warn!("auto_vectorize_knowledge 失败：{e}");
             }
         }
         Ok(())
@@ -420,14 +417,11 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         self.graph.write_query(cypher, params).await?;
 
-        // Auto-vectorise the experience if embed+vector backends are configured.
-        // Failure to vectorise is logged but does NOT fail the write_experience call:
-        // the graph write succeeded, and vectorisation is a best-effort enhancement.
+        // 若已配置 embed+vector 后端则自动向量化经验。
+        // 向量化失败仅记录日志，不导致 write_experience 调用失败：
+        // 图写入已成功，向量化属于尽力而为的增强。
         if let Err(e) = self.auto_vectorize_experience(experience).await {
-            tracing::warn!(
-                "Experience written to graph but vectorisation failed: {}",
-                e
-            );
+            tracing::warn!("经验已写入图，但向量化失败：{}", e);
         }
 
         Ok(())
@@ -472,7 +466,7 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         if self.has_vectorization() {
             if let Err(e) = self.auto_vectorize_concept(concept).await {
-                tracing::warn!("auto_vectorize_concept failed: {e}");
+                tracing::warn!("auto_vectorize_concept 失败：{e}");
             }
         }
         Ok(())
@@ -507,7 +501,7 @@ impl KnowledgeService for DefaultKnowledgeService {
     }
 
     async fn write_playbook(&self, playbook: &Playbook) -> Result<(), DtError> {
-        // Serialize steps as JSON array string for storage
+        // 将步骤序列化为 JSON 数组字符串以便存储
         let steps_json =
             serde_json::to_string(&playbook.steps).unwrap_or_else(|_| "[]".to_string());
 
@@ -574,7 +568,7 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         if self.has_vectorization() {
             if let Err(e) = self.auto_vectorize_playbook(playbook).await {
-                tracing::warn!("auto_vectorize_playbook failed: {e}");
+                tracing::warn!("auto_vectorize_playbook 失败：{e}");
             }
         }
         Ok(())
@@ -586,7 +580,7 @@ impl KnowledgeService for DefaultKnowledgeService {
         diff: &str,
         session_id: &str,
     ) -> Result<(), DtError> {
-        // 1. Read current version from the existing knowledge node.
+        // 1. 从现有知识节点读取当前版本。
         let read_cypher = r#"
             MATCH (k:Knowledge {knowledge_id: $knowledge_id})
             RETURN k.version AS version, k.name AS name, k.title AS title,
@@ -603,7 +597,7 @@ impl KnowledgeService for DefaultKnowledgeService {
 
         let result = self.graph.read_query(read_cypher, read_params).await?;
 
-        // Parse current version; default to 0 if not found (first version will be 1).
+        // 解析当前版本；未找到时默认 0（首个版本将为 1）。
         let current_version = result
             .as_array()
             .and_then(|rows| rows.first())
@@ -616,8 +610,8 @@ impl KnowledgeService for DefaultKnowledgeService {
         let version_id = format!("dt://knowledge-version/{}/v{}", knowledge_id, new_version);
         let now = chrono::Utc::now().to_rfc3339();
 
-        // 2. Create new version node, copying properties from old node.
-        // The Cypher reads from the old node, creates a new one, and links them.
+        // 2. 创建新版本节点，从旧节点复制属性。
+        // Cypher 从旧节点读取、创建新节点并将二者关联。
         let write_cypher = r#"
             MATCH (old:Knowledge {knowledge_id: $knowledge_id})
             CREATE (new:Knowledge {
@@ -674,12 +668,12 @@ impl KnowledgeService for DefaultKnowledgeService {
 }
 
 // ---------------------------------------------------------------------------
-// Convenience: build Knowledge from details string
+// 便捷构造：从 details 字符串构建 Knowledge
 // ---------------------------------------------------------------------------
 
-/// Build a [`Knowledge`] struct from the CLI details string.
+/// 从 CLI details 字符串构建 [`Knowledge`] 结构体。
 ///
-/// Expected format (semicolon-separated key: value pairs):
+/// 期望格式（分号分隔的 key: value 对）：
 /// ```text
 /// "title: 支付平台迁移; domain: 支付; summary: 通联→银盛; content: ...;
 ///  source: ai_session; project: test; confidence: 0.8"
@@ -719,9 +713,9 @@ pub fn knowledge_from_details(
     }
 }
 
-/// Build an [`Experience`] struct from the CLI details string.
+/// 从 CLI details 字符串构建 [`Experience`] 结构体。
 ///
-/// Expected format:
+/// 期望格式：
 /// ```text
 /// "title: Redis超时; summary: 教训; content: ...; domain: 支付;
 ///  severity: warning; project: test"
@@ -744,7 +738,7 @@ pub fn experience_from_details(experience_id: &str, project: &str, details: &str
     }
 }
 
-/// Build a [`Concept`] struct from the CLI details string.
+/// 从 CLI details 字符串构建 [`Concept`] 结构体。
 pub fn concept_from_details(concept_id: &str, details: &str) -> Concept {
     let kv = parse_details(details);
 
@@ -757,7 +751,7 @@ pub fn concept_from_details(concept_id: &str, details: &str) -> Concept {
     }
 }
 
-/// Build a [`Domain`] struct from the CLI details string.
+/// 从 CLI details 字符串构建 [`Domain`] 结构体。
 pub fn domain_from_details(domain_id: &str, details: &str) -> Domain {
     let kv = parse_details(details);
 
@@ -768,7 +762,7 @@ pub fn domain_from_details(domain_id: &str, details: &str) -> Domain {
     }
 }
 
-/// Build a [`Playbook`] struct from the CLI details string.
+/// 从 CLI details 字符串构建 [`Playbook`] 结构体。
 pub fn playbook_from_details(playbook_id: &str, project: &str, details: &str) -> Playbook {
     let kv = parse_details(details);
     let now = chrono::Utc::now().to_rfc3339();
@@ -777,7 +771,7 @@ pub fn playbook_from_details(playbook_id: &str, project: &str, details: &str) ->
         playbook_id: playbook_id.to_string(),
         name: kv.get("name").cloned().unwrap_or_default(),
         description: kv.get("description").cloned().unwrap_or_default(),
-        steps: vec![], // Steps require JSON; not parseable from flat details string
+        steps: vec![], // 步骤需要 JSON；无法从扁平 details 字符串解析
         domain: kv.get("domain").cloned().unwrap_or_default(),
         project: project.to_string(),
         success_count: kv
@@ -797,7 +791,7 @@ pub fn playbook_from_details(playbook_id: &str, project: &str, details: &str) ->
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -810,7 +804,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// A mock graph repository that counts write_query calls.
+    /// 统计 write_query 调用次数的 mock 图仓库。
     struct CountingRepo {
         write_count: Arc<AtomicUsize>,
         read_count: Arc<AtomicUsize>,
@@ -833,7 +827,7 @@ mod tests {
             _params: std::collections::HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
             self.read_count.fetch_add(1, Ordering::SeqCst);
-            // Return a valid version=1 row so update_knowledge finds the old node.
+            // 返回 version=1 的有效行，让 update_knowledge 能找到旧节点。
             Ok(serde_json::json!([{"version": 1}]))
         }
 
@@ -851,13 +845,13 @@ mod tests {
         }
     }
 
-    /// Verify the trait is object-safe.
+    /// 验证 trait 是对象安全的。
     #[test]
     fn trait_is_object_safe() {
         fn _accept(_: &dyn KnowledgeService) {}
     }
 
-    /// Verify all trait methods compile when referenced.
+    /// 验证所有 trait 方法在被引用时可编译。
     #[test]
     fn trait_method_signatures_exist() {
         fn _assert_methods<T: KnowledgeService>() {}
@@ -890,7 +884,7 @@ mod tests {
         let svc = DefaultKnowledgeService::new(repo);
 
         let k = make_knowledge();
-        svc.write_knowledge(&k).await.expect("write_knowledge");
+        svc.write_knowledge(&k).await.expect("write_knowledge 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -911,7 +905,7 @@ mod tests {
             project: "test".into(),
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        svc.write_experience(&e).await.expect("write_experience");
+        svc.write_experience(&e).await.expect("write_experience 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -929,7 +923,7 @@ mod tests {
             domain: "支付".into(),
             summary: "用于标识".into(),
         };
-        svc.write_concept(&c).await.expect("write_concept");
+        svc.write_concept(&c).await.expect("write_concept 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -945,7 +939,7 @@ mod tests {
             name: "支付".into(),
             description: "支付领域".into(),
         };
-        svc.write_domain(&d).await.expect("write_domain");
+        svc.write_domain(&d).await.expect("write_domain 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -975,7 +969,7 @@ mod tests {
             _needs_review: false,
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        svc.write_playbook(&p).await.expect("write_playbook");
+        svc.write_playbook(&p).await.expect("write_playbook 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -992,15 +986,15 @@ mod tests {
             "2026-07-09-001",
         )
         .await
-        .expect("update_knowledge");
+        .expect("update_knowledge 应成功");
 
-        // Should trigger: 1 read (find old) + 1 write (create new + version)
+        // 应触发：1 次读（找旧节点）+ 1 次写（创建新节点 + 版本）
         assert!(read.load(Ordering::SeqCst) >= 1);
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
     // -------------------------------------------------------------------
-    // details → entity constructors
+    // details → 实体构造函数
     // -------------------------------------------------------------------
 
     #[test]
@@ -1031,7 +1025,7 @@ mod tests {
         );
         assert_eq!(k.title, "Some Knowledge");
         assert_eq!(k.name, "KnowledgeAdded");
-        assert_eq!(k.confidence, 0.5); // default
+        assert_eq!(k.confidence, 0.5); // 默认值
     }
 
     #[test]
@@ -1090,7 +1084,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // Experience vectorisation tests
+    // Experience 向量化测试
     // -------------------------------------------------------------------
 
     use crate::domain::traits::{EmbedService, VectorRepository};
@@ -1107,7 +1101,7 @@ mod tests {
         }
     }
 
-    /// Mock VectorRepository that tracks upsert calls.
+    /// 跟踪 upsert 调用的 mock VectorRepository。
     struct TrackingVectorRepo {
         upsert_count: Arc<AtomicUsize>,
     }
@@ -1142,7 +1136,7 @@ mod tests {
             Ok(vec![])
         }
         async fn collection_info(&self, _n: &str) -> Result<CollectionInfo, DtError> {
-            Err(DtError::NotFound("mock".into()))
+            Err(DtError::NotFound("mock 不存在".into()))
         }
         async fn delete_collection(&self, _n: &str) -> Result<(), DtError> {
             Ok(())
@@ -1152,8 +1146,8 @@ mod tests {
         }
     }
 
-    /// CountingRepoExtended — wraps CountingRepo as GraphRepository + tracks calls.
-    /// We reuse the write_count for the graph calls already.
+    /// CountingRepoExtended——包装 CountingRepo 作为 GraphRepository 并跟踪调用。
+    /// 图调用直接复用 write_count。
     struct CountingRepoVector {
         write_count: Arc<AtomicUsize>,
         read_count: Arc<AtomicUsize>,
@@ -1176,10 +1170,10 @@ mod tests {
             _p: std::collections::HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
             self.read_count.fetch_add(1, Ordering::SeqCst);
-            // Response must include an "eid" field so that
-            // `embed_kg_node` (called by auto_vectorize_*) can fetch the
-            // real Memgraph elementId after the C1 fix. The legacy
-            // "version" field is preserved for any consumer that reads it.
+            // 响应必须包含 "eid" 字段，以便
+            // `embed_kg_node`（由 auto_vectorize_* 调用）在 C1 修复后
+            // 能取到真实的 Memgraph elementId。保留旧 "version"
+            // 字段供读取它的消费者使用。
             Ok(serde_json::json!([{"version": 1, "eid": "4:1:mock-experience"}]))
         }
         async fn write_query(
@@ -1219,11 +1213,11 @@ mod tests {
             project: "test".into(),
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        svc.write_experience(&e).await.expect("write_experience");
+        svc.write_experience(&e).await.expect("write_experience 应成功");
 
-        // Graph write should have occurred
+        // 图写入应已发生
         assert!(write.load(Ordering::SeqCst) >= 1);
-        // Vector upsert should have occurred
+        // 向量 upsert 应已发生
         assert!(upsert.load(Ordering::SeqCst) >= 1);
     }
 
@@ -1246,10 +1240,10 @@ mod tests {
             project: "test".into(),
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        // Should succeed without vectorisation
-        svc.write_experience(&e).await.expect("write_experience");
+        // 无向量化也应成功
+        svc.write_experience(&e).await.expect("write_experience 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
-        // read count unchanged (no call graph involved)
+        // 读计数不变（未涉及图调用）
     }
 
     #[test]

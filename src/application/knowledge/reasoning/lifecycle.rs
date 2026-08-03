@@ -1,63 +1,60 @@
-// Lifecycle management for reasoning graph nodes.
+// 推理图节点的生命周期管理。
 //
-// Two-level cleanup strategy:
+// 两级清理策略：
 //
-// Phase 1 — Mark stale (deprecation):
-// When a session ends, all reasoning nodes belonging to that session are
-// marked with _stale_at = timestamp(). Stale nodes are excluded from
-// Context Builder queries.
+// 阶段 1 —— 标记过期（弃用）：
+// 会话结束时，属于该会话的所有推理节点被标记 _stale_at = timestamp()。
+// 过期节点在 Context Builder 查询中被排除。
 //
-// Phase 2 — Delete (garbage collection):
-// A nightly dt cleanup job deletes all reasoning nodes whose _stale_at
-// is more than 30 days in the past.
+// 阶段 2 —— 删除（垃圾回收）：
+// 夜间 dt 清理任务删除所有 _stale_at 距今超过 30 天的推理节点。
 //
-// Affected labels: :Observation, :Analysis, :Decision.
+// 受影响的标签：:Observation、:Analysis、:Decision。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Manages the lifecycle of reasoning graph nodes.
+/// 管理推理图节点的生命周期。
 ///
-/// Provides methods for marking reasoning nodes as stale and
-/// performing garbage-collection cleanups.
+/// 提供将推理节点标记为过期以及执行垃圾回收清理的方法。
 #[async_trait]
 pub trait LifecycleManager: Send + Sync {
-    /// Mark all reasoning nodes for a given session as stale.
+    /// 将给定会话的所有推理节点标记为过期。
     ///
-    /// Sets _stale_at = timestamp() on every :Observation,
-    /// :Analysis, and :Decision node whose session_id matches.
+    /// 为每个 session_id 匹配的 :Observation、
+    /// :Analysis 与 :Decision 节点设置 _stale_at = timestamp()。
     ///
-    /// Returns the number of nodes marked.
+    /// 返回被标记的节点数。
     async fn mark_stale(&self, session_id: &str) -> Result<usize, DtError>;
 
-    /// Delete stale reasoning nodes older than retention_days.
+    /// 删除早于 retention_days 的过期推理节点。
     ///
-    /// Removes every :Observation, :Analysis, and :Decision node
-    /// whose _stale_at is more than retention_days in the past.
+    /// 移除所有 _stale_at 距今超过 retention_days 的
+    /// :Observation、:Analysis 与 :Decision 节点。
     ///
-    /// Returns the number of nodes deleted.
+    /// 返回被删除的节点数。
     async fn cleanup_stale(&self, retention_days: u32) -> Result<usize, DtError>;
 
-    /// Confirm a reasoning decision (set verified = true).
+    /// 确认一个推理决策（设置 verified = true）。
     ///
-    /// This transitions a tentative :Decision into a confirmed
-    /// decision suitable for archival / Memory World integration.
+    /// 将 tentative 的 :Decision 转为适合归档 / Memory 世界
+    /// 集成的已确认决策。
     async fn confirm_decision(&self, decision_id: &str) -> Result<(), DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// DefaultLifecycleManager — canonical implementation
+// DefaultLifecycleManager — 规范实现
 // ---------------------------------------------------------------------------
 
-/// Canonical implementation of LifecycleManager backed by a GraphRepository.
+/// 由 GraphRepository 支撑的 LifecycleManager 规范实现。
 pub struct DefaultLifecycleManager {
     graph: Arc<dyn GraphRepository>,
 }
 
 impl DefaultLifecycleManager {
-    /// Create a new DefaultLifecycleManager backed by the given graph repository.
+    /// 创建由给定图仓库支撑的 DefaultLifecycleManager。
     pub fn new(graph: Arc<dyn GraphRepository>) -> Self {
         Self { graph }
     }
@@ -141,7 +138,7 @@ impl LifecycleManager for DefaultLifecycleManager {
 
         if affected == 0 {
             return Err(DtError::NotFound(format!(
-                "Decision not found: {}",
+                "未找到决策：{}",
                 decision_id
             )));
         }
@@ -151,7 +148,7 @@ impl LifecycleManager for DefaultLifecycleManager {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -240,14 +237,14 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let mgr = DefaultLifecycleManager::new(repo);
 
-        let count = mgr.mark_stale("2026-07-09-001").await.expect("mark_stale");
+        let count = mgr.mark_stale("2026-07-09-001").await.expect("mark_stale 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
         assert_eq!(count, 3);
     }
 
     #[tokio::test]
     async fn cleanup_stale_writes_query() {
-        // Use a repo that returns deleted count (different field name than mark_stale).
+        // 使用返回 deleted 计数的仓库（字段名与 mark_stale 不同）。
         struct CleanupRepo {
             counter: Arc<AtomicUsize>,
         }
@@ -279,7 +276,7 @@ mod tests {
         });
         let mgr = DefaultLifecycleManager::new(repo);
 
-        let count = mgr.cleanup_stale(30).await.expect("cleanup_stale");
+        let count = mgr.cleanup_stale(30).await.expect("cleanup_stale 应成功");
         assert!(counter.load(Ordering::SeqCst) >= 1);
         assert_eq!(count, 5);
     }
@@ -294,13 +291,13 @@ mod tests {
 
         mgr.confirm_decision("dec://test/001")
             .await
-            .expect("confirm_decision");
+            .expect("confirm_decision 应成功");
         assert!(counter.load(Ordering::SeqCst) >= 1);
     }
 
     #[tokio::test]
     async fn mark_stale_returns_zero_for_no_matches() {
-        // Use a different repo that returns 0 marked
+        // 使用返回 0 个标记的仓库
         struct EmptyRepo;
         #[async_trait]
         impl GraphRepository for EmptyRepo {
@@ -324,7 +321,7 @@ mod tests {
         }
 
         let mgr = DefaultLifecycleManager::new(Arc::new(EmptyRepo));
-        let count = mgr.mark_stale("no-such-session").await.expect("mark_stale");
+        let count = mgr.mark_stale("no-such-session").await.expect("mark_stale 应成功");
         assert_eq!(count, 0);
     }
 }

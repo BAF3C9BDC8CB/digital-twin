@@ -406,10 +406,7 @@ impl Retriever {
             .iter()
             .filter(|s| {
                 if s.element_id.is_none() {
-                    tracing::warn!(
-                        "seed {} has no elementId, skip graph expansion",
-                        s.business_id
-                    );
+                    tracing::warn!("种子 {} 缺少 elementId，跳过图扩展", s.business_id);
                 }
                 s.element_id.is_some()
             })
@@ -830,7 +827,7 @@ impl Retriever {
                 true
             }
             Err(e) => {
-                tracing::warn!("rerank failed, falling back to degraded weights: {e}");
+                tracing::warn!("rerank 失败，回退到降级权重：{e}");
                 false
             }
         }
@@ -889,7 +886,7 @@ ORDER BY eid, d.doc_id
         {
             Ok(s) => s,
             Err(e) => {
-                tracing::error!("knowledge recall failed: {e}");
+                tracing::error!("knowledge 召回失败：{e}");
                 return Ok(RetrieveOutcome {
                     hits: vec![],
                     degraded: vec!["embed_unavailable".into()],
@@ -911,7 +908,7 @@ ORDER BY eid, d.doc_id
                     expansion.edges.extend(r.edges);
                 }
                 Err(e) => {
-                    tracing::warn!("entity expansion failed: {e}");
+                    tracing::warn!("实体扩展失败：{e}");
                     failed = true;
                 }
             }
@@ -921,7 +918,7 @@ ORDER BY eid, d.doc_id
                     expansion.edges.extend(r.edges);
                 }
                 Err(e) => {
-                    tracing::warn!("business expansion failed: {e}");
+                    tracing::warn!("业务扩展失败：{e}");
                     failed = true;
                 }
             }
@@ -1075,7 +1072,7 @@ impl Retriever {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1197,7 +1194,7 @@ mod tests {
     impl RerankService for MockRerank {
         async fn rerank(&self, _q: &str, docs: &[String]) -> Result<Vec<f32>, DtError> {
             if self.fail {
-                return Err(DtError::Repository("rerank down".into()));
+                return Err(DtError::Repository("rerank 服务不可用".into()));
             }
             Ok(self.scores.iter().take(docs.len()).cloned().collect())
         }
@@ -1661,7 +1658,7 @@ mod tests {
         #[async_trait::async_trait]
         impl EmbedService for FailEmbed {
             async fn embed_batch(&self, _t: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
-                Err(DtError::Repository("embed down".into()))
+                Err(DtError::Repository("embed 服务不可用".into()))
             }
             async fn health_check(&self) -> Result<HealthStatus, DtError> {
                 Ok(HealthStatus::Healthy)
@@ -1690,7 +1687,7 @@ mod tests {
                 _q: &str,
                 _p: HashMap<String, serde_json::Value>,
             ) -> Result<serde_json::Value, DtError> {
-                Err(DtError::Repository("graph down".into()))
+                Err(DtError::Repository("图服务不可用".into()))
             }
             async fn write_query(
                 &self,

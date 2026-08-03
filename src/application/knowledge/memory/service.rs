@@ -1,16 +1,15 @@
-//! MemoryService trait — contract for time-dimension operations.
+//! MemoryService trait——时间维度操作的契约。
 //!
-//! Implementations handle Day→Session→Event chain creation and query.
-//! The trait is decoupled from any specific storage backend via the
-//! `GraphRepository` abstraction.
+//! 实现负责 Day→Session→Event 链的创建与查询。
+//! trait 通过 `GraphRepository` 抽象与任何具体存储后端解耦。
 //!
-//! [`DefaultMemoryService`] is the canonical production implementation.
+//! [`DefaultMemoryService`] 是规范的生产实现。
 //!
-//! # Event routing
+//! # 事件路由
 //!
-//! All event types are now handled by [`HookEngine`]; `record_event`
-//! retains an `else if` chain that maps each [`EventType`] to the
-//! appropriate hook name for backward compatibility.
+//! 所有事件类型现由 [`HookEngine`] 处理；`record_event`
+//! 保留一条 `else if` 链，将每个 [`EventType`] 映射到
+//! 对应的 hook 名以保持向后兼容。
 
 use std::collections::HashMap;
 
@@ -22,10 +21,10 @@ use std::sync::Arc;
 
 use super::entities::{Day, MemoryEvent, Session};
 
-/// Parse a `key=value` / `key: value` string into a [`HashMap`].
+/// 将 `key=value` / `key: value` 字符串解析为 [`HashMap`]。
 ///
-/// Pairs are separated by `;` or `,`. Leading/trailing whitespace is
-/// trimmed. Keys are lowercased so callers can match case-insensitively.
+/// 键值对以 `;` 或 `,` 分隔。首尾空白会被修剪。
+/// 键统一转小写，便于调用方大小写不敏感匹配。
 pub(crate) fn parse_key_values(raw: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for part in raw.split([';', '\n', ',']) {
@@ -44,9 +43,9 @@ pub(crate) fn parse_key_values(raw: &str) -> HashMap<String, String> {
     map
 }
 
-/// Service for managing the time dimension (Day → Session → Event).
+/// 管理时间维度（Day → Session → Event）的服务。
 ///
-/// # Typical usage
+/// # 典型用法
 ///
 /// ```ignore
 /// let svc = DefaultMemoryService::new(graph_repo);
@@ -65,41 +64,39 @@ pub(crate) fn parse_key_values(raw: &str) -> HashMap<String, String> {
 /// ```
 #[async_trait]
 pub trait MemoryService: Send + Sync {
-    /// Ensure a Day node exists for the given date (idempotent).
+    /// 确保给定日期存在 Day 节点（幂等）。
     ///
-    /// If the node already exists, returns it without modification.
-    /// Otherwise creates a new `(:Day)` node.
+    /// 若节点已存在则原样返回，不做修改。
+    /// 否则新建一个 `(:Day)` 节点。
     async fn ensure_day(&self, date: &str) -> Result<Day, DtError>;
 
-    /// Create a new Session node and link it to its parent Day via [:HAS_SESSION].
+    /// 新建 Session 节点，并通过 [:HAS_SESSION] 关联到父 Day。
     ///
-    /// The Day must have been created via `ensure_day` first.
+    /// Day 必须先经 `ensure_day` 创建。
     async fn create_session(&self, session: &Session) -> Result<(), DtError>;
 
-    /// Record an event and link it to its parent Session via [:HAS_EVENT].
+    /// 记录事件，并通过 [:HAS_EVENT] 关联到父 Session。
     ///
-    /// Automatically ensures the Session exists and also creates
-    /// the external entity reference node (if not already present).
+    /// 自动确保 Session 存在，并创建外部实体引用节点（若尚不存在）。
     async fn record_event(&self, event: &MemoryEvent) -> Result<(), DtError>;
 
-    /// Retrieve all events belonging to a session, ordered by timestamp.
+    /// 检索某个会话的所有事件，按时间排序。
     async fn get_session_events(&self, session_id: &str) -> Result<Vec<MemoryEvent>, DtError>;
 
-    /// Retrieve the timeline — all Days and their Sessions — for the
-    /// last `days` calendar days.
+    /// 检索最近 `days` 个日历日的时间线——所有 Day 及其 Session。
     ///
-    /// Returns Days in descending date order (most recent first).
+    /// 返回的 Day 按日期降序（最近的在前）。
     async fn get_timeline(&self, days: u32) -> Result<Vec<Day>, DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// DefaultMemoryService — canonical implementation
+// DefaultMemoryService — 规范实现
 // ---------------------------------------------------------------------------
 
-/// Canonical implementation of [`MemoryService`] backed by
-/// a [`GraphRepository`] and (optionally) a [`HookEngine`].
+/// 由 [`GraphRepository`] 以及（可选的）[`HookEngine`] 支撑的
+/// [`MemoryService`] 规范实现。
 ///
-/// # Lifecycle
+/// # 生命周期
 ///
 /// ```text
 /// ensure_day     → MERGE (:Day)
@@ -115,8 +112,7 @@ pub struct DefaultMemoryService {
 }
 
 impl DefaultMemoryService {
-    /// Create a new [`DefaultMemoryService`] backed by the given
-    /// graph repository.
+    /// 创建由给定图仓库支撑的 [`DefaultMemoryService`]。
     pub fn new(graph: Arc<dyn GraphRepository>, hook_engine: Option<Arc<HookEngine>>) -> Self {
         Self { graph, hook_engine }
     }
@@ -201,7 +197,7 @@ impl MemoryService for DefaultMemoryService {
     }
 
     async fn record_event(&self, event: &MemoryEvent) -> Result<(), DtError> {
-        // Route each event type through the hook engine.
+        // 通过 hook 引擎路由每种事件类型。
         let hook_name = match event.event_type {
             super::entities::EventType::BugFix => "bug_fix_recorded",
             super::entities::EventType::Conversation => "session_ended",
@@ -221,7 +217,7 @@ impl MemoryService for DefaultMemoryService {
             fields: parse_key_values(&event.details),
         };
 
-        // Special-case: Deployment needs virtual variables for side-effect templates.
+        // 特例：Deployment 需要为副作用模板提供虚拟变量。
         if event.event_type == super::entities::EventType::Deployment {
             let job = ctx
                 .fields
@@ -259,7 +255,7 @@ impl MemoryService for DefaultMemoryService {
             for r in &results {
                 if !r.success {
                     tracing::warn!(
-                        "[hook] {} event failed for label {}: {}",
+                        "[hook] {} 事件写入失败，标签 {}：{}",
                         hook_name,
                         r.label,
                         r.error.as_deref().unwrap_or("unknown"),
@@ -268,7 +264,7 @@ impl MemoryService for DefaultMemoryService {
             }
         } else {
             tracing::warn!(
-                "No hook engine configured — event type={} not recorded",
+                "未配置 hook 引擎——事件类型={} 未记录",
                 event.event_type.as_str(),
             );
         }
@@ -286,7 +282,7 @@ impl MemoryService for DefaultMemoryService {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -376,7 +372,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------
-    // DefaultMemoryService tests
+    // DefaultMemoryService 测试
     // -------------------------------------------------------------------
 
     #[tokio::test]
@@ -386,7 +382,7 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultMemoryService::new(repo, None);
 
-        let day = svc.ensure_day("2026-07-09").await.expect("ensure_day");
+        let day = svc.ensure_day("2026-07-09").await.expect("ensure_day 应成功");
         assert_eq!(day.day_id, "2026-07-09");
         assert_eq!(day.date, "2026-07-09");
         assert!(read.load(Ordering::SeqCst) >= 1);
@@ -409,7 +405,7 @@ mod tests {
             ended_at: None,
         };
 
-        svc.create_session(&session).await.expect("create_session");
+        svc.create_session(&session).await.expect("create_session 应成功");
         assert!(read.load(Ordering::SeqCst) >= 1);
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
@@ -431,8 +427,8 @@ mod tests {
             timestamp: chrono::Utc::now(),
         };
 
-        svc.record_event(&evt).await.expect("record_event");
-        // No hook engine — only a warning log, no graph writes.
+        svc.record_event(&evt).await.expect("record_event 应成功");
+        // 无 hook 引擎——仅记警告日志，无图写入。
         assert_eq!(write.load(Ordering::SeqCst), 0);
         assert_eq!(read.load(Ordering::SeqCst), 0);
     }
@@ -444,10 +440,10 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultMemoryService::new(repo, None);
 
-        let events = svc.get_session_events("any").await.expect("stub");
+        let events = svc.get_session_events("any").await.expect("桩调用应成功");
         assert!(events.is_empty());
 
-        let timeline = svc.get_timeline(7).await.expect("stub");
+        let timeline = svc.get_timeline(7).await.expect("桩调用应成功");
         assert!(timeline.is_empty());
     }
 }

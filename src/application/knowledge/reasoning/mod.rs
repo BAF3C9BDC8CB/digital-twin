@@ -1,6 +1,6 @@
-// Reasoning World entities: Observation, Analysis, Decision.
+// Reasoning 世界实体：Observation、Analysis、Decision。
 //
-// These form the reasoning dimension of the knowledge graph:
+// 这些构成知识图谱的推理维度：
 // ```text
 // (:Observation)-[:ABOUT]->(:Method|:Class|:Service)
 // (:Observation)-[:UPGRADES_TO]->(:Knowledge)
@@ -13,7 +13,7 @@
 // (:Decision)-[:BELONGS_TO]->(:Thread)
 // ```
 //
-// Three-tier progression:
+// 三级递进：
 //   Observation(发现) → Analysis(分析) → Decision(决策)
 
 pub mod lifecycle;
@@ -22,31 +22,30 @@ pub mod service;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Observation — a factual observation or evidence about code/system
+// Observation — 关于代码/系统的事实性观察或证据
 // ---------------------------------------------------------------------------
 
-/// An observation represents a factual discovery about the codebase or system
-/// behaviour. Observations are the first tier in the reasoning pipeline and
-/// form the evidence base for subsequent analysis.
+/// 观察（observation）表示对代码库或系统行为的事实性发现。
+/// 观察是推理管线的第一级，构成后续分析的证据基础。
 ///
-/// Label: `:Observation`
+/// 标签：`:Observation`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
-    /// Unique observation identifier.
+    /// 唯一观察标识。
     pub observation_id: String,
-    /// Human-readable description of what was observed.
+    /// 对所观察内容的人类可读描述。
     pub description: String,
-    /// Supporting evidence (e.g. log excerpts, code snippets, URLs).
+    /// 支撑证据（如日志摘录、代码片段、URL）。
     pub evidence: String,
-    /// List of entity identifiers this observation is about.
+    /// 该观察涉及的实体标识列表。
     pub entities: Vec<String>,
-    /// Observed pattern or category (e.g. "null-pointer", "timeout").
+    /// 观察到的模式或类别（如 "null-pointer"、"timeout"）。
     pub pattern: Option<String>,
-    /// Confidence in this observation (0.0–1.0).
+    /// 该观察的置信度（0.0–1.0）。
     pub confidence: f64,
-    /// The session in which this observation was made.
+    /// 做出该观察的会话。
     pub session_id: String,
-    /// When the observation was recorded (ISO 8601).
+    /// 观察记录时间（ISO 8601）。
     pub timestamp: String,
 }
 
@@ -66,35 +65,34 @@ impl Default for Observation {
 }
 
 // ---------------------------------------------------------------------------
-// Analysis — the reasoning process that connects observations to decisions
+// Analysis — 将观察连接到决策的推理过程
 // ---------------------------------------------------------------------------
 
-/// An analysis represents a structured investigation triggered by a session.
-/// It examines observations (and code entities) and may produce new
-/// observations or decisions.
+/// 分析（analysis）表示由会话触发的结构化调查。
+/// 它审视观察（以及代码实体），并可能产出新的观察或决策。
 ///
-/// Label: `:Analysis`
+/// 标签：`:Analysis`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Analysis {
-    /// Unique analysis identifier.
+    /// 唯一分析标识。
     pub analysis_id: String,
-    /// The question or problem being investigated.
+    /// 正在调查的问题。
     pub question: String,
-    /// Initial hypothesis about the answer.
+    /// 关于答案的初始假设。
     pub hypothesis: Option<String>,
-    /// Method or approach used for analysis (e.g. "root-cause", "comparison").
+    /// 分析方法或途径（如 "root-cause"、"comparison"）。
     pub method: String,
-    /// Intermediate reasoning steps.
+    /// 中间推理步骤。
     pub intermediate: Vec<Step>,
-    /// Final conclusion drawn from the analysis.
+    /// 从分析得出的最终结论。
     pub conclusion: String,
-    /// Confidence in the conclusion (0.0–1.0).
+    /// 结论的置信度（0.0–1.0）。
     pub confidence: f64,
-    /// Total cost in milliseconds (API calls, processing time).
+    /// 总耗时毫秒数（API 调用、处理时间）。
     pub total_cost_ms: Option<u64>,
-    /// The session that triggered this analysis.
+    /// 触发本次分析的会话。
     pub session_id: String,
-    /// When the analysis was recorded (ISO 8601).
+    /// 分析记录时间（ISO 8601）。
     pub timestamp: String,
 }
 
@@ -115,62 +113,62 @@ impl Default for Analysis {
     }
 }
 
-/// A single intermediate reasoning step within an analysis.
+/// 分析中的单个中间推理步骤。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
-    /// Execution order (1-indexed).
+    /// 执行顺序（从 1 开始）。
     pub order: u32,
-    /// The thought or action taken.
+    /// 思路或采取的动作。
     pub thought: String,
-    /// Tool used (e.g. "search", "read", "grep").
+    /// 使用的工具（如 "search"、"read"、"grep"）。
     pub tool: Option<String>,
-    /// Target entity or file examined.
+    /// 被检查的目标实体或文件。
     pub target: Option<String>,
-    /// What was discovered at this step.
+    /// 该步骤中发现了什么。
     pub finding: String,
 }
 
 // ---------------------------------------------------------------------------
-// Decision — a reasoned decision (may not yet be confirmed)
+// Decision — 经过推理的决策（可能尚未确认）
 // ---------------------------------------------------------------------------
 
-/// A decision represents a reasoned choice made during analysis. Unlike
-/// Memory World Decisions (which are confirmed/archived), Reasoning World
-/// Decisions may still be tentative (verified = false).
+/// 决策（decision）表示分析期间做出的经过推理的选择。与
+/// Memory 世界的决策（已确认/已归档）不同，Reasoning 世界的
+/// 决策可能仍是 tentative（verified = false）。
 ///
-/// Once confirmed via [`ReasoningService::confirm_decision`], the decision
-/// is considered final (verified = true).
+/// 一旦经 [`ReasoningService::confirm_decision`] 确认，
+/// 该决策即被视为最终（verified = true）。
 ///
-/// Label: `:Decision`
+/// 标签：`:Decision`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
-    /// Unique decision identifier.
+    /// 唯一决策标识。
     pub decision_id: String,
-    /// Short title describing the decision.
+    /// 描述决策的短标题。
     pub title: String,
-    /// Background context — why this decision was needed.
+    /// 背景上下文——为何需要此决策。
     pub context: String,
-    /// Comma-separated list of alternatives considered.
+    /// 考虑过的备选方案列表（逗号分隔）。
     pub alternatives: String,
-    /// Supporting evidence for the decision.
+    /// 支持该决策的证据。
     pub evidence: String,
-    /// The chosen option.
+    /// 被选中的方案。
     pub choice: String,
-    /// Rationale explaining why this choice was made.
+    /// 解释为何做出此选择的理由。
     pub rationale: String,
-    /// Expected consequences of the decision.
+    /// 决策的预期后果。
     pub consequences: String,
-    /// Confidence in this decision (0.0–1.0).
+    /// 该决策的置信度（0.0–1.0）。
     pub confidence: f64,
-    /// Whether this decision has been confirmed (verified) as final.
+    /// 该决策是否已被确认（verified）为最终。
     pub verified: bool,
-    /// The session in which this decision was made.
+    /// 做出该决策的会话。
     pub session_id: String,
-    /// Knowledge node this decision is based on.
+    /// 该决策所依据的知识节点。
     pub knowledge_id: Option<String>,
-    /// Thread this decision belongs to.
+    /// 该决策所属的线程。
     pub thread_id: Option<String>,
-    /// When the decision was made (ISO 8601).
+    /// 决策做出时间（ISO 8601）。
     pub timestamp: String,
 }
 
@@ -196,23 +194,23 @@ impl Default for Decision {
 }
 
 // ---------------------------------------------------------------------------
-// ReasoningChain — the complete reasoning trace for a session
+// ReasoningChain — 会话的完整推理轨迹
 // ---------------------------------------------------------------------------
 
-/// A reasoning chain bundles all three tiers (observations, analyses,
-/// decisions) for a given session, forming a complete reasoning trace.
+/// 推理链将一个会话的全部三级（观察、分析、决策）打包在一起，
+/// 构成完整的推理轨迹。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningChain {
-    /// All observations recorded during the session.
+    /// 会话期间记录的所有观察。
     pub observations: Vec<Observation>,
-    /// All analyses performed during the session.
+    /// 会话期间执行的所有分析。
     pub analyses: Vec<Analysis>,
-    /// All decisions made during the session.
+    /// 会话期间做出的所有决策。
     pub decisions: Vec<Decision>,
 }
 
 impl ReasoningChain {
-    /// Create an empty reasoning chain.
+    /// 创建空推理链。
     pub fn empty() -> Self {
         Self {
             observations: Vec::new(),
@@ -223,7 +221,7 @@ impl ReasoningChain {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -376,8 +374,8 @@ mod tests {
             session_id: "s001".into(),
             timestamp: "2026-07-09T00:00:00Z".into(),
         };
-        let json = serde_json::to_string(&obs).expect("serialize");
-        let back: Observation = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&obs).expect("序列化应成功");
+        let back: Observation = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.observation_id, obs.observation_id);
         assert_eq!(back.confidence, 0.8);
         assert_eq!(back.entities.len(), 1);
@@ -403,8 +401,8 @@ mod tests {
             session_id: "s001".into(),
             timestamp: "2026-07-09T00:00:00Z".into(),
         };
-        let json = serde_json::to_string(&analysis).expect("serialize");
-        let back: Analysis = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&analysis).expect("序列化应成功");
+        let back: Analysis = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.analysis_id, analysis.analysis_id);
         assert_eq!(back.intermediate.len(), 1);
     }
@@ -427,8 +425,8 @@ mod tests {
             thread_id: Some("dt://thread/test/default".into()),
             timestamp: "2026-07-09T00:00:00Z".into(),
         };
-        let json = serde_json::to_string(&d).expect("serialize");
-        let back: Decision = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&d).expect("序列化应成功");
+        let back: Decision = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.decision_id, d.decision_id);
         assert!(back.verified);
     }

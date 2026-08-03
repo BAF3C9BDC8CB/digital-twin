@@ -1,13 +1,12 @@
-//! ReasoningService trait — contract for the reasoning dimension.
+//! ReasoningService trait——推理维度的契约。
 //!
-//! Manages the three-tier reasoning pipeline:
+//! 管理三级推理管线：
 //!   Observation(发现) → Analysis(分析) → Decision(决策)
 //!
-//! The trait is decoupled from any specific storage backend via the
-//! [`GraphRepository`] abstraction. Lifecycle management is delegated
-//! to [`LifecycleManager`].
+//! trait 通过 [`GraphRepository`] 抽象与任何具体存储后端解耦。
+//! 生命周期管理委托给 [`LifecycleManager`]。
 //!
-//! [`DefaultReasoningService`] is the canonical production implementation.
+//! [`DefaultReasoningService`] 是规范的生产实现。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
@@ -17,14 +16,14 @@ use std::sync::Arc;
 use super::lifecycle::{DefaultLifecycleManager, LifecycleManager};
 use super::{Analysis, Decision, Observation, ReasoningChain};
 
-/// Service for managing the reasoning dimension.
+/// 管理推理维度的服务。
 ///
-/// # Typical usage
+/// # 典型用法
 ///
 /// ```ignore
 /// let svc = DefaultReasoningService::new(graph_repo);
 ///
-/// // Record an observation
+/// // 记录一条观察
 /// svc.record_observation(&Observation {
 ///     observation_id: "obs://session-001/001".into(),
 ///     description: "NullPointerException in PayService".into(),
@@ -36,7 +35,7 @@ use super::{Analysis, Decision, Observation, ReasoningChain};
 ///     ..
 /// }).await?;
 ///
-/// // Record analysis results
+/// // 记录分析结果
 /// svc.record_analysis(&Analysis {
 ///     analysis_id: "an://session-001/001".into(),
 ///     question: "Why is PayService throwing NPE?".into(),
@@ -45,7 +44,7 @@ use super::{Analysis, Decision, Observation, ReasoningChain};
 ///     ..
 /// }).await?;
 ///
-/// // Record a decision
+/// // 记录一条决策
 /// svc.record_decision(&Decision {
 ///     decision_id: "dec://session-001/001".into(),
 ///     title: "Initialize channelExtra in constructor".into(),
@@ -54,64 +53,62 @@ use super::{Analysis, Decision, Observation, ReasoningChain};
 ///     ..
 /// }).await?;
 ///
-/// // Confirm a decision
+/// // 确认决策
 /// svc.confirm_decision("dec://session-001/001").await?;
 ///
-/// // End of session: mark all reasoning nodes stale
+/// // 会话结束：将所有推理节点标记为过期
 /// svc.mark_stale("2026-07-09-001").await?;
 ///
-/// // Get the full reasoning chain for review
+/// // 获取完整推理链以供回顾
 /// let chain = svc.get_reasoning_chain("2026-07-09-001").await?;
 /// ```
 #[async_trait]
 pub trait ReasoningService: Send + Sync {
-    /// Record an observation node in the graph.
+    /// 在图中的观察节点记录。
     ///
-    /// Creates a `(:Observation)` node with the given properties.
+    /// 用给定属性创建 `(:Observation)` 节点。
     async fn record_observation(&self, obs: &Observation) -> Result<(), DtError>;
 
-    /// Record an analysis node in the graph.
+    /// 在图中的分析节点记录。
     ///
-    /// Creates an `(:Analysis)` node with the given properties.
-    /// Intermediate steps are serialised as a JSON string.
+    /// 用给定属性创建 `(:Analysis)` 节点。
+    /// 中间步骤序列化为 JSON 字符串。
     async fn record_analysis(&self, analysis: &Analysis) -> Result<(), DtError>;
 
-    /// Record a decision node in the graph.
+    /// 在图中的决策节点记录。
     ///
-    /// Creates a `(:Decision)` node with the given properties,
-    /// optionally linking it to a Knowledge node and a Thread node.
+    /// 用给定属性创建 `(:Decision)` 节点，
+    /// 可选地关联到 Knowledge 节点与 Thread 节点。
     async fn record_decision(&self, decision: &Decision) -> Result<(), DtError>;
 
-    /// Confirm a decision by setting `verified = true`.
+    /// 通过设置 `verified = true` 确认决策。
     ///
-    /// Delegates to the underlying [`LifecycleManager::confirm_decision`].
+    /// 委托给底层 [`LifecycleManager::confirm_decision`]。
     async fn confirm_decision(&self, decision_id: &str) -> Result<(), DtError>;
 
-    /// Mark all reasoning nodes for a session as stale.
+    /// 将会话的所有推理节点标记为过期。
     ///
-    /// Sets `_stale_at = timestamp()` on every `:Observation`,
-    /// `:Analysis`, and `:Decision` for the given session.
-    /// Stale nodes are excluded from Context Builder queries.
+    /// 为给定会话的每个 `:Observation`、`:Analysis` 与 `:Decision`
+    /// 设置 `_stale_at = timestamp()`。
+    /// 过期节点在 Context Builder 查询中被排除。
     ///
-    /// Returns the number of nodes marked.
+    /// 返回被标记的节点数。
     async fn mark_stale(&self, session_id: &str) -> Result<usize, DtError>;
 
-    /// Retrieve the complete reasoning chain for a session.
+    /// 检索会话的完整推理链。
     ///
-    /// Queries all `:Observation`, `:Analysis`, and `:Decision` nodes
-    /// belonging to the given session and bundles them into a
-    /// [`ReasoningChain`].
+    /// 查询属于给定会话的所有 `:Observation`、`:Analysis` 与 `:Decision`
+    /// 节点，并打包成 [`ReasoningChain`]。
     async fn get_reasoning_chain(&self, session_id: &str) -> Result<ReasoningChain, DtError>;
 }
 
 // ---------------------------------------------------------------------------
-// DefaultReasoningService — canonical implementation
+// DefaultReasoningService — 规范实现
 // ---------------------------------------------------------------------------
 
-/// Canonical implementation of [`ReasoningService`] backed by a
-/// [`GraphRepository`].
+/// 由 [`GraphRepository`] 支撑的 [`ReasoningService`] 规范实现。
 ///
-/// # Lifecycle
+/// # 生命周期
 ///
 /// ```text
 /// record_observation → MERGE (:Observation {observation_id}) SET ...
@@ -129,8 +126,7 @@ pub struct DefaultReasoningService {
 }
 
 impl DefaultReasoningService {
-    /// Create a new [`DefaultReasoningService`] backed by the given
-    /// graph repository.
+    /// 创建由给定图仓库支撑的 [`DefaultReasoningService`]。
     pub fn new(graph: Arc<dyn GraphRepository>) -> Self {
         Self {
             graph: Arc::clone(&graph),
@@ -270,7 +266,7 @@ impl ReasoningService for DefaultReasoningService {
     }
 
     async fn record_decision(&self, decision: &Decision) -> Result<(), DtError> {
-        // Build the base Cypher for the Decision node.
+        // 构建 Decision 节点的基础 Cypher。
         let cypher = if decision.knowledge_id.is_some() && decision.thread_id.is_some() {
             r#"
                 MERGE (d:Decision {decision_id: $decision_id})
@@ -414,7 +410,7 @@ impl ReasoningService for DefaultReasoningService {
     }
 
     async fn get_reasoning_chain(&self, session_id: &str) -> Result<ReasoningChain, DtError> {
-        // Query observations for this session.
+        // 查询该会话的观察。
         let obs_cypher = r#"
             MATCH (o:Observation {session_id: $session_id})
             RETURN o.observation_id AS observation_id,
@@ -436,7 +432,7 @@ impl ReasoningService for DefaultReasoningService {
 
         let obs_result = self.graph.read_query(obs_cypher, params.clone()).await?;
 
-        // Query analyses for this session.
+        // 查询该会话的分析。
         let ana_cypher = r#"
             MATCH (a:Analysis {session_id: $session_id})
             RETURN a.analysis_id AS analysis_id,
@@ -454,7 +450,7 @@ impl ReasoningService for DefaultReasoningService {
 
         let ana_result = self.graph.read_query(ana_cypher, params.clone()).await?;
 
-        // Query decisions for this session.
+        // 查询该会话的决策。
         let dec_cypher = r#"
             MATCH (d:Decision {session_id: $session_id})
             RETURN d.decision_id AS decision_id,
@@ -474,7 +470,7 @@ impl ReasoningService for DefaultReasoningService {
 
         let dec_result = self.graph.read_query(dec_cypher, params).await?;
 
-        // Parse observations
+        // 解析观察
         let observations: Vec<Observation> = obs_result
             .as_array()
             .map(|rows| {
@@ -523,7 +519,7 @@ impl ReasoningService for DefaultReasoningService {
             })
             .unwrap_or_default();
 
-        // Parse analyses
+        // 解析分析
         let analyses: Vec<Analysis> = ana_result
             .as_array()
             .map(|rows| {
@@ -578,7 +574,7 @@ impl ReasoningService for DefaultReasoningService {
             })
             .unwrap_or_default();
 
-        // Parse decisions
+        // 解析决策
         let decisions: Vec<Decision> = dec_result
             .as_array()
             .map(|rows| {
@@ -637,9 +633,8 @@ impl ReasoningService for DefaultReasoningService {
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        // knowledge_id and thread_id are not returned by
-                        // the decision query above (they live on relationships);
-                        // we leave them None.
+                        // 上面的决策查询不返回 knowledge_id 和 thread_id
+                        //（它们存在于关系上）；此处保持 None。
                         knowledge_id: None,
                         thread_id: None,
                         timestamp: row
@@ -661,7 +656,7 @@ impl ReasoningService for DefaultReasoningService {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -741,7 +736,7 @@ mod tests {
 
         svc.record_observation(&obs)
             .await
-            .expect("record_observation");
+            .expect("record_observation 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -767,7 +762,7 @@ mod tests {
 
         svc.record_analysis(&analysis)
             .await
-            .expect("record_analysis");
+            .expect("record_analysis 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -797,7 +792,7 @@ mod tests {
 
         svc.record_decision(&decision)
             .await
-            .expect("record_decision");
+            .expect("record_decision 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -827,7 +822,7 @@ mod tests {
 
         svc.record_decision(&decision)
             .await
-            .expect("record_decision");
+            .expect("record_decision 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -838,12 +833,12 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultReasoningService::new(repo);
 
-        // confirm_decision returns NotFound because CountingRepo doesn't
-        // return rows; that's expected and validates the delegation path.
+        // confirm_decision 返回 NotFound，因为 CountingRepo 不返回行；
+        // 这是预期行为，验证了委托路径。
         let result = svc.confirm_decision("dec://test/001").await;
-        // The mock returns [{"marked":1}] but confirm needs [{"decision_id":...}]
-        // So this will be NotFound, which is fine for the test — we just
-        // verify it calls write_query via the lifecycle path.
+        // mock 返回 [{"marked":1}]，但 confirm 需要 [{"decision_id":...}]，
+        // 因此会得到 NotFound——测试中可接受——我们只
+        // 验证它经由生命周期路径调用了 write_query。
         assert!(write.load(Ordering::SeqCst) >= 1);
         let _ = result; // may be Err(NotFound)
     }
@@ -855,7 +850,7 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultReasoningService::new(repo);
 
-        let count = svc.mark_stale("2026-07-09-001").await.expect("mark_stale");
+        let count = svc.mark_stale("2026-07-09-001").await.expect("mark_stale 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
         assert_eq!(count, 1);
     }
@@ -870,11 +865,11 @@ mod tests {
         let chain = svc
             .get_reasoning_chain("2026-07-09-001")
             .await
-            .expect("get_reasoning_chain");
+            .expect("get_reasoning_chain 应成功");
 
-        // Should have triggered 3 read queries (obs, analysis, decision)
+        // 应已触发 3 次读查询（观察、分析、决策）
         assert!(read.load(Ordering::SeqCst) >= 3);
-        // All empty because the mock returns [].
+        // 全部为空，因为 mock 返回 []。
         assert!(chain.observations.is_empty());
         assert!(chain.analyses.is_empty());
         assert!(chain.decisions.is_empty());
@@ -887,7 +882,7 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultReasoningService::new(repo);
 
-        // Record all three tiers
+        // 记录全部三级
         svc.record_observation(&Observation {
             observation_id: "obs://pipeline/001".into(),
             description: "NPE in PayService".into(),
@@ -899,7 +894,7 @@ mod tests {
             timestamp: "2026-07-09T10:00:00Z".into(),
         })
         .await
-        .expect("observation");
+        .expect("observation 应成功");
 
         svc.record_analysis(&Analysis {
             analysis_id: "an://pipeline/001".into(),
@@ -914,7 +909,7 @@ mod tests {
             timestamp: "2026-07-09T10:30:00Z".into(),
         })
         .await
-        .expect("analysis");
+        .expect("analysis 应成功");
 
         svc.record_decision(&Decision {
             decision_id: "dec://pipeline/001".into(),
@@ -933,21 +928,21 @@ mod tests {
             timestamp: "2026-07-09T11:00:00Z".into(),
         })
         .await
-        .expect("decision");
+        .expect("decision 应成功");
 
-        // At least 3 writes (one per entity)
+        // 至少 3 次写（每类一个）
         assert!(write.load(Ordering::SeqCst) >= 3);
 
-        // Get the reasoning chain
+        // 获取推理链
         let _chain = svc
             .get_reasoning_chain("pipeline-session")
             .await
-            .expect("chain");
-        // Mock returns [] for all, so chain is empty — but the read calls happened.
+            .expect("chain 应成功");
+        // mock 对全部返回 []，因此链为空——但读调用确实发生了。
         assert!(read.load(Ordering::SeqCst) >= 3);
 
-        // Mark session stale
-        let count = svc.mark_stale("pipeline-session").await.expect("stale");
+        // 将会话标记为过期
+        let count = svc.mark_stale("pipeline-session").await.expect("stale 应成功");
         assert!(count >= 1);
     }
 }

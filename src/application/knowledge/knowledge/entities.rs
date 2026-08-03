@@ -1,7 +1,7 @@
-//! Knowledge World entities: Knowledge, KnowledgeVersion, Playbook, Experience,
-//! Concept, Domain.
+//! Knowledge 世界实体：Knowledge、KnowledgeVersion、Playbook、Experience、
+//! Concept、Domain。
 //!
-//! These form the knowledge dimension of the knowledge graph:
+//! 这些构成知识图谱的知识维度：
 //! ```text
 //! (:Domain)-[:CONTAINS]->(:Knowledge)
 //! (:Domain)-[:CONTAINS]->(:Concept)
@@ -14,74 +14,73 @@
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Knowledge — the central knowledge entity
+// Knowledge — 核心知识实体
 // ---------------------------------------------------------------------------
 
-/// A knowledge entry representing a concept, pattern, or insight.
+/// 表示概念、模式或洞见的知识条目。
 ///
-/// Knowledge can be sourced from AI sessions, tasks, documents, code comments,
-/// user dictation, or execution results. AI-generated knowledge has lower
-/// confidence; human-verified knowledge has confidence = 1.0.
+/// Knowledge 可来源于 AI 会话、任务、文档、代码注释、用户口述或执行结果。
+/// AI 生成的知识置信度较低；人工验证过的知识置信度 = 1.0。
 ///
-/// Version management: updates do NOT modify existing nodes. Instead, a new
-/// Knowledge node is created and linked to the old one via `[:EVOLVED_FROM]`.
+/// 版本管理：更新**不**修改现有节点，而是新建 Knowledge 节点，
+/// 并通过 `[:EVOLVED_FROM]` 关联到旧节点。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Knowledge {
-    /// Unique knowledge identifier (dt://knowledge/{project}/{domain}/{name}).
+    /// 唯一知识标识（dt://knowledge/{project}/{domain}/{name}）。
     pub knowledge_id: String,
-    /// Short name for the knowledge entry.
+    /// 知识条目的短名。
     pub name: String,
-    /// Human-readable title.
+    /// 人类可读的标题。
     pub title: String,
-    /// Domain classification (e.g. "支付", "部署", "配置").
+    /// 领域分类（如 "支付"、"部署"、"配置"）。
     pub domain: String,
-    /// One-sentence summary.
+    /// 一句话摘要。
     pub summary: String,
-    /// Full markdown content.
+    /// 完整 markdown 内容。
     pub content: String,
-    /// Formal definition (for concept-style knowledge).
+    /// 正式定义（面向概念型知识）。
     pub definition: String,
-    /// Origin of this knowledge.
+    /// 知识的来源。
     pub source: KnowledgeSource,
-    /// Owning project name.
+    /// 所属项目名。
     pub project: String,
-    /// Confidence 0.0–1.0. AI-generated = low, human-verified = 1.0.
+    /// 置信度 0.0–1.0。AI 生成 = 低，人工验证 = 1.0。
     pub confidence: f64,
-    /// Who verified this ("human" or null-equivalent).
+    /// 验证者（"human" 或 null 等价物）。
     pub verified_by: Option<String>,
-    /// Creation timestamp (ISO 8601).
+    /// 创建时间戳（ISO 8601）。
     pub created_at: String,
-    /// Last update timestamp (ISO 8601).
+    /// 最后更新时间戳（ISO 8601）。
     pub updated_at: String,
-    /// Version number: 1 for newly created, increments on update.
+    /// 版本号：新建为 1，每次更新递增。
     pub version: u32,
 }
 
-/// Where a piece of knowledge came from.
+/// 知识的来源。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KnowledgeSource {
-    /// Derived from an AI conversation session.
+    /// 源自 AI 对话会话。
     #[serde(rename = "ai_session")]
     AiSession,
-    /// Produced as a result of an AI task execution.
+    /// 作为 AI 任务执行的结果产生。
     #[serde(rename = "ai_task")]
     AiTask,
-    /// Extracted from project documentation.
+    /// 从项目文档中抽取。
     #[serde(rename = "document")]
     Document,
-    /// Extracted from code comments / annotations.
+    /// 从代码注释 / 注解中抽取。
     #[serde(rename = "code_comment")]
     CodeComment,
-    /// Explicitly dictated by a human user.
+    /// 由人类用户显式口述。
     #[serde(rename = "user_dictation")]
     UserDictation,
-    /// Derived from execution results / logs.
+    /// 源自执行结果 / 日志。
     #[serde(rename = "execution_result")]
     ExecutionResult,
 }
 
 impl KnowledgeSource {
-    /// Return the string representation used in Cypher/N4j labels.
+    /// 返回用于 Cypher/N4j 标签的字符串表示。
     pub fn as_str(&self) -> &'static str {
         match self {
             KnowledgeSource::AiSession => "ai_session",
@@ -93,7 +92,7 @@ impl KnowledgeSource {
         }
     }
 
-    /// Parse from a string, defaulting to AiSession for unknown values.
+    /// 从字符串解析，未知值默认回退到 AiSession。
     pub fn parse(s: &str) -> Self {
         match s {
             "ai_session" => KnowledgeSource::AiSession,
@@ -130,111 +129,111 @@ impl Default for Knowledge {
 }
 
 // ---------------------------------------------------------------------------
-// KnowledgeVersion — records each evolution of a knowledge entry
+// KnowledgeVersion — 记录知识条目的每次演化
 // ---------------------------------------------------------------------------
 
-/// A version record capturing what changed between two versions of knowledge.
+/// 记录两个知识版本之间变化的版本记录。
 ///
-/// Linked to the NEW version via `[:RECORDS]->(:Knowledge)`.
+/// 通过 `[:RECORDS]->(:Knowledge)` 关联到新版本。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeVersion {
-    /// Unique version identifier (dt://knowledge-version/{knowledge_id}/v{version}).
+    /// 唯一版本标识（dt://knowledge-version/{knowledge_id}/v{version}）。
     pub version_id: String,
-    /// The knowledge node this version describes.
+    /// 该版本所描述的知识节点。
     pub knowledge_id: String,
-    /// Version number (1, 2, 3, ...).
+    /// 版本号（1, 2, 3, ...）。
     pub version: u32,
-    /// Human-readable diff / change summary.
+    /// 人类可读的 diff / 变更摘要。
     pub diff: String,
-    /// The session in which this version was created.
+    /// 创建该版本的会话。
     pub session_id: String,
-    /// When this version was recorded (ISO 8601).
+    /// 版本记录时间（ISO 8601）。
     pub timestamp: String,
 }
 
 // ---------------------------------------------------------------------------
-// Playbook — executable how-to manual
+// Playbook — 可执行的操作手册
 // ---------------------------------------------------------------------------
 
-/// A playbook is a structured, executable how-to guide.
+/// Playbook 是一份结构化的、可执行的 how-to 指南。
 ///
-/// Consists of ordered steps that can be followed by AI or humans.
+/// 由有序步骤组成，AI 或人类均可按步骤执行。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playbook {
-    /// Unique playbook identifier (dt://playbook/{project}/{name}).
+    /// 唯一 playbook 标识（dt://playbook/{project}/{name}）。
     pub playbook_id: String,
-    /// Name of the playbook.
+    /// Playbook 的名称。
     pub name: String,
-    /// When this playbook is applicable.
+    /// 该 playbook 适用的场景。
     pub description: String,
-    /// Ordered execution steps.
+    /// 有序执行步骤。
     pub steps: Vec<Step>,
-    /// Domain classification.
+    /// 领域分类。
     pub domain: String,
-    /// Owning project.
+    /// 所属项目。
     pub project: String,
-    /// How many times this playbook was used successfully.
+    /// 该 playbook 成功执行的次数。
     pub success_count: u64,
-    /// How many times this playbook failed.
+    /// 该 playbook 失败的次数。
     pub failure_count: u64,
-    /// Auto-flagged when success rate < 70%.
+    /// 成功率 < 70% 时自动标记。
     pub _needs_review: bool,
-    /// Creation time (ISO 8601).
+    /// 创建时间（ISO 8601）。
     pub created_at: String,
 }
 
-/// A single step in a playbook.
+/// Playbook 中的单个步骤。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
-    /// Execution order (1-indexed).
+    /// 执行顺序（从 1 开始）。
     pub order: u32,
-    /// What to do.
+    /// 要做什么。
     pub action: String,
-    /// Which tool to use (e.g. "edit", "bash", "search").
+    /// 使用哪个工具（如 "edit"、"bash"、"search"）。
     pub tool: String,
-    /// What file or entity to target.
+    /// 目标文件或实体。
     pub target: Option<String>,
-    /// What the expected outcome looks like.
+    /// 预期结果是什么样。
     pub expected: String,
-    /// Gotchas and pitfalls to watch out for.
+    /// 需要注意的坑与陷阱。
     pub pitfall: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
-// Experience — lessons learned / war stories
+// Experience — 经验教训 / 事故复盘
 // ---------------------------------------------------------------------------
 
-/// An experience record capturing a lesson learned or pitfall encountered.
+/// 记录经验教训或踩坑经历的经验条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Experience {
-    /// Unique experience identifier (dt://experience/{project}/{id}).
+    /// 唯一经验标识（dt://experience/{project}/{id}）。
     pub experience_id: String,
-    /// Short title describing the experience.
+    /// 描述经验的短标题。
     pub title: String,
-    /// One-sentence takeaway.
+    /// 一句话要点。
     pub summary: String,
-    /// Detailed narrative.
+    /// 详细叙述。
     pub content: String,
-    /// Domain classification.
+    /// 领域分类。
     pub domain: String,
-    /// Severity of the lesson.
+    /// 教训的严重程度。
     pub severity: ExperienceSeverity,
-    /// Owning project.
+    /// 所属项目。
     pub project: String,
-    /// When this experience was recorded (ISO 8601).
+    /// 经验记录时间（ISO 8601）。
     pub created_at: String,
 }
 
-/// Severity level for experiences.
+/// 经验的严重程度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExperienceSeverity {
-    /// Critical — caused an outage or data loss.
+    /// Critical——造成过宕机或数据丢失。
     #[serde(rename = "critical")]
     Critical,
-    /// Warning — a near-miss or potential issue.
+    /// Warning——一次险情或潜在问题。
     #[serde(rename = "warning")]
     Warning,
-    /// Informational — a general tip.
+    /// Informational——一般性提示。
     #[serde(rename = "info")]
     Info,
 }
@@ -258,43 +257,43 @@ impl ExperienceSeverity {
 }
 
 // ---------------------------------------------------------------------------
-// Concept — a domain term / definition
+// Concept — 领域术语 / 定义
 // ---------------------------------------------------------------------------
 
-/// A concept is a defined term within a domain.
+/// 概念是领域内被定义的术语。
 ///
-/// Concepts help the AI understand project-specific jargon.
+/// 概念帮助 AI 理解项目特有的行话。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Concept {
-    /// Unique concept identifier (dt://concept/{domain}/{name}).
+    /// 唯一概念标识（dt://concept/{domain}/{name}）。
     pub concept_id: String,
-    /// The term or concept name.
+    /// 术语或概念名。
     pub name: String,
-    /// Formal definition.
+    /// 正式定义。
     pub definition: String,
-    /// Domain classification.
+    /// 领域分类。
     pub domain: String,
-    /// Extended explanation.
+    /// 扩展说明。
     pub summary: String,
 }
 
 // ---------------------------------------------------------------------------
-// Domain — a knowledge domain / category
+// Domain — 知识领域 / 分类
 // ---------------------------------------------------------------------------
 
-/// A domain groups related knowledge, concepts, and playbooks.
+/// 领域将相关的知识、概念与 playbook 归类到一起。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Domain {
-    /// Unique domain identifier (dt://domain/{name}).
+    /// 唯一领域标识（dt://domain/{name}）。
     pub domain_id: String,
-    /// Domain name (e.g. "支付", "部署", "配置").
+    /// 领域名（如 "支付"、"部署"、"配置"）。
     pub name: String,
-    /// Human-readable description.
+    /// 人类可读的描述。
     pub description: String,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -334,7 +333,7 @@ mod tests {
             KnowledgeSource::parse("execution_result"),
             KnowledgeSource::ExecutionResult
         );
-        // Unknown defaults to AiSession.
+        // 未知值默认回退到 AiSession。
         assert_eq!(
             KnowledgeSource::parse("garbage"),
             KnowledgeSource::AiSession
@@ -362,7 +361,7 @@ mod tests {
             ExperienceSeverity::Warning
         );
         assert_eq!(ExperienceSeverity::parse("info"), ExperienceSeverity::Info);
-        // Unknown defaults to Info.
+        // 未知值默认回退到 Info。
         assert_eq!(
             ExperienceSeverity::parse("unknown"),
             ExperienceSeverity::Info
@@ -448,8 +447,8 @@ mod tests {
             updated_at: "2026-07-09T00:00:00Z".into(),
             version: 1,
         };
-        let json = serde_json::to_string(&k).expect("serialize");
-        let back: Knowledge = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&k).expect("序列化应成功");
+        let back: Knowledge = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.knowledge_id, k.knowledge_id);
         assert_eq!(back.confidence, 0.8);
         assert_eq!(back.source, KnowledgeSource::AiSession);
@@ -476,8 +475,8 @@ mod tests {
             _needs_review: false,
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        let json = serde_json::to_string(&p).expect("serialize");
-        let back: Playbook = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_string(&p).expect("序列化应成功");
+        let back: Playbook = serde_json::from_str(&json).expect("反序列化应成功");
         assert_eq!(back.name, "支付平台迁移");
         assert_eq!(back.steps.len(), 1);
         assert_eq!(back.success_count, 10);

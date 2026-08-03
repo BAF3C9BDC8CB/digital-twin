@@ -1,64 +1,62 @@
-//! Unified output model of the Extract layer (方案 §5.3).
+//! Extract 层的统一输出模型（方案 §5.3）。
 //!
-//! The LLM extraction processor produces one [`ExtractedGraph`] per document
-//! block. Task 2's Consolidate layer consumes `Vec<ExtractedGraph>` — the
-//! Extract layer itself never writes the graph database, never embeds, and
-//! never touches the vector store.
+//! LLM 抽取处理器为每个文档块产出一个 [`ExtractedGraph`]。
+//! 任务 2 的 Consolidate 层消费 `Vec<ExtractedGraph>`——Extract 层本身
+//! 从不写图数据库、从不做向量化、从不接触向量存储。
 //!
-//! This module is pure serde data structures — no infrastructure types.
+//! 本模块是纯 serde 数据结构——不含任何基础设施类型。
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-/// Structured knowledge extracted from a single document block.
+/// 从单个文档块抽取出的结构化知识。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedGraph {
-    /// Document ID from the chunk processor output (`dt://doc/{project}/{path}`).
+    /// 来自分块处理器输出的文档 ID（`dt://doc/{project}/{path}`）。
     #[serde(default)]
     pub doc_id: String,
-    /// Block index, equal to `chunk.chunk_index`.
+    /// 块索引，等于 `chunk.chunk_index`。
     #[serde(default)]
     pub block_index: u32,
-    /// One-line summary of the block content.
+    /// 块内容的一行摘要。
     #[serde(default)]
     pub block_summary: String,
-    /// Entities extracted from the block.
+    /// 从块中抽取的实体。
     #[serde(default)]
     pub entities: Vec<ExtractedEntity>,
-    /// Relations extracted from the block.
+    /// 从块中抽取的关系。
     #[serde(default)]
     pub relations: Vec<ExtractedRelation>,
-    /// Degradation marker — set when JSON parsing failed even after one retry (§5.5).
+    /// 降级标记——重试一次后 JSON 解析仍失败时置位（§5.5）。
     #[serde(default)]
     pub degraded: bool,
 }
 
-/// A single extracted entity.
+/// 单个抽取出的实体。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedEntity {
-    /// Mention as it appears in the source text.
+    /// 源文本中出现的原样提及。
     #[serde(default)]
     pub mention: String,
-    /// Canonical name — the raw material of the disambiguation primary key.
+    /// 规范名——消歧主键的原材料。
     #[serde(default)]
     pub canonical_name: String,
-    /// Fixed-vocabulary entity type. Out-of-vocabulary values degrade to
-    /// [`EntityType::Other`] (see its custom `Deserialize`).
+    /// 固定词表的实体类型。词表外的值降级为
+    /// [`EntityType::Other`]（见其自定义 `Deserialize`）。
     #[serde(rename = "type", default)]
     pub entity_type: EntityType,
-    /// One-sentence semantic summary — the core text for embedding.
+    /// 一句话语义摘要——向量化的核心文本。
     #[serde(default)]
     pub summary: String,
-    /// Keywords; tolerated missing (defaults to empty).
+    /// 关键词；允许缺失（默认为空）。
     #[serde(default)]
     pub keywords: Vec<String>,
 }
 
-/// Fixed entity type vocabulary — a closed set, not free text.
+/// 固定实体类型词表——封闭集合，非自由文本。
 ///
-/// The Consolidate layer's "type consistency" hard constraint relies on this
-/// being a closed set. Out-of-vocabulary values produced by the LLM are
-/// normalised to [`EntityType::Other`] during deserialization (with a warn
-/// log recording the original value).
+/// Consolidate 层的“类型一致性”硬约束依赖此封闭集合。
+/// LLM 产生的词表外值在反序列化时归一为 [`EntityType::Other`]
+/// （warn 日志记录原始值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub enum EntityType {
     Service,
@@ -75,8 +73,8 @@ pub enum EntityType {
 }
 
 impl EntityType {
-    /// Enum variant name as used in `dt://entity/{project}/{type}/{canonical}`
-    /// entity IDs and the `type` property of graph `Entity` nodes (§6.1/§7.2).
+    /// 枚举变体名，用于 `dt://entity/{project}/{type}/{canonical}`
+    /// 实体 ID 及图 `Entity` 节点的 `type` 属性（§6.1/§7.2）。
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Service => "Service",
@@ -94,9 +92,8 @@ impl EntityType {
 }
 
 impl<'de> Deserialize<'de> for EntityType {
-    /// Closed-vocabulary deserialization. Out-of-vocabulary values are
-    /// normalised to [`EntityType::Other`] with a warn log recording the
-    /// original value; explicit `null` also maps to `Other`.
+    /// 封闭词表反序列化。词表外值归一为 [`EntityType::Other`]
+    /// 并用 warn 日志记录原始值；显式 `null` 同样映射为 `Other`。
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -122,31 +119,30 @@ impl<'de> Deserialize<'de> for EntityType {
     }
 }
 
-/// A single extracted relation triple.
+/// 单个抽取出的关系三元组。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExtractedRelation {
-    /// Must equal some entity's `canonical_name`.
+    /// 必须等于某个实体的 `canonical_name`。
     #[serde(default)]
     pub head: String,
-    /// Normalised verb, e.g. `routes_to` / `depends_on` / `configured_by`.
+    /// 归一化后的动词，如 `routes_to` / `depends_on` / `configured_by`。
     #[serde(default)]
     pub relation: String,
-    /// Must equal some entity's `canonical_name`.
+    /// 必须等于某个实体的 `canonical_name`。
     #[serde(default)]
     pub tail: String,
-    /// `Option` is required: the prompt rules allow "set null when unsure"
-    /// (§5.4). Deserialising an explicit null into `String`/`f32` would fail
-    /// and wrongly trigger the §5.5 degradation path. `Option` tolerates both
-    /// a missing field and an explicit null.
+    /// `Option` 是必须的：提示词规则允许“不确定就置 null”（§5.4）。
+    /// 若把显式 null 反序列化进 `String`/`f32` 会失败，从而错误触发
+    /// §5.5 降级路径。`Option` 同时容忍字段缺失与显式 null。
     #[serde(default)]
     pub evidence: Option<String>,
-    /// See [`ExtractedRelation::evidence`] for why this is an `Option`.
+    /// 为何是 `Option` 的原因见 [`ExtractedRelation::evidence`]。
     #[serde(default)]
     pub confidence: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -170,7 +166,7 @@ mod tests {
         ];
         for (s, expected) in cases {
             let t: EntityType = serde_json::from_value(json!(s)).unwrap();
-            assert_eq!(t, expected, "vocabulary value {s}");
+            assert_eq!(t, expected, "词表值 {s}");
         }
     }
 

@@ -1,10 +1,10 @@
-//! **ThreadService** — Digital Thread node management (4.10).
+//! **ThreadService**——数字线程节点管理（4.10）。
 //!
-//! Manages Digital Thread nodes in the Knowledge Graph for tracking
-//! long-running conversations, investigations, and multi-task workflows.
-//! A thread connects related sessions, decisions, and events on a timeline.
+//! 在知识图谱中管理数字线程节点，用于跟踪
+//! 长时运行的会话、调查与多任务工作流。
+//! 线程将相关的会话、决策与事件按时间线连接起来。
 //!
-//! # MCP tool: `dt_thread`
+//! # MCP 工具：`dt_thread`
 //!
 //! ```text
 //! dt_thread(action: str, thread_id?: str, title?: str, ...)
@@ -17,10 +17,10 @@ use crate::domain::error::DtError;
 use crate::domain::traits::GraphRepository;
 
 // ---------------------------------------------------------------------------
-// Request / Response types
+// Request / Response 类型
 // ---------------------------------------------------------------------------
 
-/// Action to perform on a thread.
+/// 在线程上执行的动作。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ThreadAction {
     Create {
@@ -52,7 +52,7 @@ pub enum ThreadAction {
     },
 }
 
-/// Request parameter parsing from MCP tool arguments.
+/// 从 MCP 工具参数解析请求。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadRequest {
     pub action: String,
@@ -69,7 +69,7 @@ pub struct ThreadRequest {
     pub limit: Option<usize>,
 }
 
-/// A thread session entry.
+/// 线程中的一条会话条目。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSession {
     pub session_id: String,
@@ -77,7 +77,7 @@ pub struct ThreadSession {
     pub timestamp: String,
 }
 
-/// A decision recorded in a thread.
+/// 线程中记录的一条决策。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadDecision {
     pub decision: String,
@@ -86,7 +86,7 @@ pub struct ThreadDecision {
     pub timestamp: String,
 }
 
-/// Full thread information.
+/// 完整的线程信息。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadInfo {
     pub thread_id: String,
@@ -102,14 +102,14 @@ pub struct ThreadInfo {
     pub closed_at: Option<String>,
 }
 
-/// Thread list result.
+/// 线程列表结果。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadListResult {
     pub threads: Vec<ThreadInfo>,
     pub total: usize,
 }
 
-/// Unified thread response.
+/// 统一的线程响应。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThreadResponse {
     pub action: String,
@@ -119,17 +119,17 @@ pub struct ThreadResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Service trait + impl
+// 服务 trait + 实现
 // ---------------------------------------------------------------------------
 
-/// Manages Digital Thread nodes in the Knowledge Graph.
+/// 管理知识图谱中的数字线程节点。
 #[async_trait::async_trait]
 pub trait ThreadTrait: Send + Sync {
-    /// Execute a thread action.
+    /// 执行一个线程动作。
     async fn execute(&self, request: &ThreadRequest) -> Result<ThreadResponse, DtError>;
 }
 
-/// Canonical implementation of [`ThreadTrait`].
+/// [`ThreadTrait`] 的规范实现。
 pub struct ThreadService {
     graph: Arc<dyn GraphRepository>,
 }
@@ -143,19 +143,19 @@ impl ThreadService {
         chrono::Utc::now().to_rfc3339()
     }
 
-    // ── Row helpers ──────────────────────────────────────────────────────
+    // ── 行辅助 ──────────────────────────────────────────────────────
 
-    /// Extract the first result row as a JSON object with named keys.
+    /// 提取第一行结果作为带命名键的 JSON 对象。
     ///
-    /// Handles both the Bolt driver format (Array of row objects with
-    /// named keys) and the legacy HTTP API format (nested results/data/row).
-    /// Returns the row object for named-key access.
+    /// 同时处理 Bolt 驱动格式（带命名键的行对象数组）与
+    /// 旧版 HTTP API 格式（嵌套的 results/data/row）。
+    /// 返回行对象供按命名键访问。
     fn first_row_obj(result: &serde_json::Value) -> Option<serde_json::Value> {
-        // Bolt driver format: Array of row objects like [{"id": "4:xxx", ...}]
+        // Bolt 驱动格式：行对象数组，如 [{"id": "4:xxx", ...}]
         if let Some(rows) = result.as_array() {
             return rows.first().cloned();
         }
-        // Legacy HTTP API format
+        // 旧版 HTTP API 格式
         result
             .get("results")
             .and_then(|r| r.as_array())
@@ -167,7 +167,7 @@ impl ThreadService {
             .cloned()
     }
 
-    /// Extract a string value from a row object by named key.
+    /// 按命名键从行对象中提取字符串值。
     fn row_val_str(row: &Option<serde_json::Value>, key: &str, default: &str) -> String {
         row.as_ref()
             .and_then(|r| r.get(key))
@@ -176,7 +176,7 @@ impl ThreadService {
             .to_string()
     }
 
-    /// Extract an optional string value from a row object by named key.
+    /// 按命名键从行对象中提取可选字符串值。
     fn row_val_str_opt(row: &Option<serde_json::Value>, key: &str) -> Option<String> {
         row.as_ref()
             .and_then(|r| r.get(key))
@@ -184,7 +184,7 @@ impl ThreadService {
             .map(|s| s.to_string())
     }
 
-    // ── ThreadInfo from row ──────────────────────────────────────────────
+    // ── 由行构建 ThreadInfo ──────────────────────────────────────────
 
     #[allow(dead_code)]
     fn thread_info_from_row(thread_id: &str, row: &Option<serde_json::Value>) -> ThreadInfo {
@@ -203,7 +203,7 @@ impl ThreadService {
         }
     }
 
-    // ── Action: Create ───────────────────────────────────────────────────
+    // ── 动作：创建（Create）───────────────────────────────────────────────
 
     async fn create_thread(
         &self,
@@ -260,7 +260,7 @@ impl ThreadService {
         })
     }
 
-    // ── Action: AddSession ───────────────────────────────────────────────
+    // ── 动作：添加会话（AddSession）───────────────────────────────────────
 
     async fn add_session(
         &self,
@@ -320,7 +320,7 @@ impl ThreadService {
         })
     }
 
-    // ── Action: AddDecision ──────────────────────────────────────────────
+    // ── 动作：添加决策（AddDecision）──────────────────────────────────────
 
     async fn add_decision(
         &self,
@@ -388,7 +388,7 @@ impl ThreadService {
         })
     }
 
-    // ── Action: Get ──────────────────────────────────────────────────────
+    // ── 动作：获取（Get）──────────────────────────────────────────────────
 
     async fn get_thread(&self, thread_id: &str) -> Result<ThreadInfo, DtError> {
         let cypher = r#"
@@ -423,7 +423,7 @@ impl ThreadService {
         let row = Self::first_row_obj(&result);
         match row {
             Some(ref row_obj) => {
-                // Parse sessions
+                // 解析会话
                 let sessions: Vec<ThreadSession> = row_obj
                     .get("sessions")
                     .and_then(|v| v.as_array())
@@ -440,7 +440,7 @@ impl ThreadService {
                     })
                     .unwrap_or_default();
 
-                // Parse decisions
+                // 解析决策
                 let decisions: Vec<ThreadDecision> = row_obj
                     .get("decisions")
                     .and_then(|v| v.as_array())
@@ -474,11 +474,11 @@ impl ThreadService {
                     closed_at: Self::row_val_str_opt(&row, "closed_at"),
                 })
             }
-            _ => Err(DtError::NotFound(format!("Thread not found: {thread_id}"))),
+            _ => Err(DtError::NotFound(format!("未找到线程：{thread_id}"))),
         }
     }
 
-    // ── Action: List ─────────────────────────────────────────────────────
+    // ── 动作：列表（List）─────────────────────────────────────────────────
 
     async fn list_threads(
         &self,
@@ -514,12 +514,12 @@ impl ThreadService {
         let params = std::collections::HashMap::new();
         let result = self.graph.read_query(&cypher, params).await?;
 
-        // Handle both Bolt driver format (Array of row objects) and legacy HTTP format
+        // 同时处理 Bolt 驱动格式（行对象数组）与旧版 HTTP 格式
         let rows: Vec<&serde_json::Value> = if let Some(arr) = result.as_array() {
-            // Bolt driver format: Array of row objects with named keys
+            // Bolt 驱动格式：带命名键的行对象数组
             arr.iter().collect()
         } else {
-            // Legacy HTTP API format
+            // 旧版 HTTP API 格式
             result
                 .get("results")
                 .and_then(|r| r.as_array())
@@ -532,8 +532,8 @@ impl ThreadService {
 
         let mut threads = Vec::new();
         for row_val in rows {
-            // Bolt driver format: row object has named keys like {"id": ..., "title": ..., ...}
-            // Legacy format: row_val.get("row") returns positional array
+            // Bolt 驱动格式：行对象带命名键，如 {"id": ..., "title": ..., ...}
+            // 旧版格式：row_val.get("row") 返回按位置的数组
             let is_driver_format = row_val.as_object().is_some();
             let get = |key: &str, default: &str| -> String {
                 if is_driver_format {
@@ -543,7 +543,7 @@ impl ThreadService {
                         .unwrap_or(default)
                         .to_string()
                 } else {
-                    // Legacy: positional array by index
+                    // 旧版：按索引的位置数组
                     let idx = match key {
                         "id" => 0,
                         "title" => 1,
@@ -634,7 +634,7 @@ impl ThreadService {
         Ok(ThreadListResult { threads, total })
     }
 
-    // ── Action: Close ────────────────────────────────────────────────────
+    // ── 动作：关闭（Close）────────────────────────────────────────────────
 
     async fn close_thread(
         &self,
@@ -683,7 +683,7 @@ impl ThreadService {
         })
     }
 
-    // ── Action parser ────────────────────────────────────────────────────
+    // ── 动作解析 ─────────────────────────────────────────────────────────
 
     fn parse_action(request: &ThreadRequest) -> Result<ThreadAction, DtError> {
         match request.action.as_str() {
@@ -714,7 +714,7 @@ impl ThreadService {
                 thread_id: request.thread_id.clone().unwrap_or_default(),
                 outcome: request.outcome.clone(),
             }),
-            other => Err(DtError::General(format!("Unknown action: {other}"))),
+            other => Err(DtError::General(format!("未知动作：{other}"))),
         }
     }
 }
@@ -734,7 +734,7 @@ impl ThreadTrait for ThreadService {
                 let thread = self
                     .create_thread(&title, description.as_deref(), project.as_deref())
                     .await?;
-                let msg = format!("Thread '{}' created", thread.title);
+                let msg = format!("已创建线程 '{}'", thread.title);
                 Ok(ThreadResponse {
                     action: action_name,
                     thread: Some(thread),
@@ -750,7 +750,7 @@ impl ThreadTrait for ThreadService {
                 let thread = self
                     .add_session(&thread_id, &session_id, summary.as_deref())
                     .await?;
-                let msg = format!("Session '{}' added to thread", session_id);
+                let msg = format!("已将会话 '{}' 加入线程", session_id);
                 Ok(ThreadResponse {
                     action: action_name,
                     thread: Some(thread),
@@ -771,7 +771,7 @@ impl ThreadTrait for ThreadService {
                     action: action_name,
                     thread: Some(thread),
                     list: None,
-                    message: "Decision recorded in thread".into(),
+                    message: "决策已记录到线程".into(),
                 })
             }
             ThreadAction::Get { thread_id } => {
@@ -781,7 +781,7 @@ impl ThreadTrait for ThreadService {
                     action: action_name,
                     thread: Some(thread),
                     list: None,
-                    message: format!("Thread '{}' retrieved", title),
+                    message: format!("已获取线程 '{}'", title),
                 })
             }
             ThreadAction::List { project, limit } => {
@@ -793,7 +793,7 @@ impl ThreadTrait for ThreadService {
                     action: action_name,
                     thread: None,
                     list: Some(list),
-                    message: format!("Found {} threads", total),
+                    message: format!("共找到 {} 个线程", total),
                 })
             }
             ThreadAction::Close { thread_id, outcome } => {
@@ -802,7 +802,7 @@ impl ThreadTrait for ThreadService {
                     action: action_name,
                     thread: Some(thread),
                     list: None,
-                    message: "Thread closed".into(),
+                    message: "线程已关闭".into(),
                 })
             }
         }
@@ -810,7 +810,7 @@ impl ThreadTrait for ThreadService {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -876,7 +876,7 @@ mod tests {
                 closed_at: None,
             }),
             list: None,
-            message: "Thread 'Test' created".into(),
+            message: "已创建线程 'Test'".into(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("create"));
@@ -902,7 +902,7 @@ mod tests {
         let action = ThreadService::parse_action(&req).unwrap();
         match action {
             ThreadAction::Create { title, .. } => assert_eq!(title, "My Thread"),
-            _ => panic!("Wrong action type"),
+            _ => panic!("动作类型错误"),
         }
     }
 
