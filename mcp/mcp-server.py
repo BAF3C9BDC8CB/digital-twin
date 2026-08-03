@@ -3,7 +3,7 @@
 DT MCP Server V2 — 将 digital-twin CLI 命令注册为 OpenCode Tool
 
 提供工具 (34个):
-  搜索: dt_search_kg, dt_search_expand, dt_search
+  搜索: dt_search_kg, dt_search
   分析: dt_context, dt_plan, dt_domain, dt_history, dt_dependency, dt_verify
   知识: dt_memorize, dt_event, dt_learn, dt_thread
   管线: dt_build, nacos_sync, dt_kg_sync
@@ -89,7 +89,7 @@ def _after_tool_execute(tool_name: str, arguments: dict, result: str):
     SKIP_TOOLS = {
         "ls", "cat", "echo", "cd", "pwd", "grep", "find", "head", "tail",
         "wc", "file", "which", "whoami", "date", "uname", "hostname",
-        "dt_search_kg", "dt_search_expand", "dt_search", "dt_health",
+        "dt_search_kg", "dt_search", "dt_health",
         "svc_status", "svc_logs", "svc_list",
         "kublog_status", "kublog_logs",
         "jcli_list", "jcli_params", "jcli_history", "jcli_build_log",
@@ -265,7 +265,7 @@ async def list_tools():
         # ===== 搜索 =====
         Tool(
             name="dt_search_kg",
-            description="向量语义搜索知识图谱节点(无需写Cypher)。返回匹配的KG节点及其elementId。拿到elementId后可通过Cypher查询精确取完整属性。",
+            description="搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源文档/hop/score_breakdown）。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -275,28 +275,15 @@ async def list_tools():
             }
         ),
         Tool(
-            name="dt_search_expand",
-            description="扩展语义代码搜索(多查询变体合并去重)。低级模型推荐使用。通过 path 或 name 限定搜索范围。",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "path": {"type": "string", "description": "搜索范围路径(优先)，搜索该路径下所有项目，通常传当前工作目录即可"},
-                    "name": {"type": "string", "description": "搜索范围项目名(path 未传时使用)"},
-                    "limit": {"type": "integer", "description": "返回数量", "default": 10}
-                }, "required": ["query"]
-            }
-        ),
-        Tool(
             name="dt_search",
-            description="语义代码搜索(精简版，单查询)。通过 path 或 name 限定搜索范围，搜索代码世界。",
+            description="统一检索（world: all|code|knowledge|doc|config|memory，默认 all），返回 JSON。Method 含 llm_analysis/file_path/start_line/end_line，Entity 含 summary/来源，Doc 含原文块。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
-                    "world": {"type": "string", "description": "搜索世界: code(代码方法) / doc(文档) / knowledge(踩坑/教程) / config(配置) / all(全部)", "default": "code"},
+                    "world": {"type": "string", "description": "搜索世界: all(代码+知识+文档) / code(代码方法) / knowledge(知识图谱) / doc(文档) / config(配置) / memory(事件)", "default": "all"},
                     "limit": {"type": "integer", "description": "返回数量", "default": 10},
-                    "path": {"type": "string", "description": "搜索范围路径"}
+                    "project": {"type": "string", "description": "限定项目名（可选）"}
                 }, "required": ["query"]
             }
         ),
@@ -731,28 +718,18 @@ async def call_tool(name: str, arguments: dict):
     if name == "dt_search_kg":
         query = arguments.get("query", "")
         limit = arguments.get("limit", 10)
-        text = run_cmd([DT_BIN, "search-kg", query, "--limit", str(limit)])
-
-    elif name == "dt_search_expand":
-        query = arguments.get("query", "")
-        path = arguments.get("path", "")
-        project = arguments.get("name", "")
-        limit = arguments.get("limit", 10)
-        cmd = [DT_BIN, "search", "--query", query, "--world", "code", "--limit", str(limit)]
-        if path:
-            cmd += ["--path", path]
-        elif project:
-            cmd += ["--path", project]
-        text = run_cmd(cmd)
+        text = run_cmd([DT_BIN, "search", query, "--world", "knowledge",
+                        "--limit", str(limit), "--json"])
 
     elif name == "dt_search":
         query = arguments.get("query", "")
-        world = arguments.get("world", "code")
+        world = arguments.get("world", "all")
         limit = arguments.get("limit", 10)
-        path = arguments.get("path", "")
-        cmd = [DT_BIN, "search", "--query", query, "--world", world, "--limit", str(limit)]
-        if path:
-            cmd += ["--path", path]
+        project = arguments.get("project", "")
+        cmd = [DT_BIN, "search", query, "--world", world,
+               "--limit", str(limit), "--json"]
+        if project:
+            cmd += ["--project", project]
         text = run_cmd(cmd)
 
     # ===== 分析 =====
