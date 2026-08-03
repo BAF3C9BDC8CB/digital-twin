@@ -376,7 +376,7 @@
     "has_project_node": true,
     "qdrant_methods_collection": true,
     "qdrant_methods_vector_count": 32,
-    "has_llm_analysis_on_methods": false,
+    "has_llm_analysis_on_methods": true,
     "_note_llm": "LLM analysis disabled when using local XInference without LLM model",
     "files_scanned_min": 20,
     "files_with_code": 10,

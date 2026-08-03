@@ -15,8 +15,8 @@ enabled: true
 # config.yaml.  Each capability (embed/rerank/llm) routes to a provider.
 providers:
   # Routing: which provider handles each capability
-  embed_provider: siliconflow
-  rerank_provider: siliconflow
+  embed_provider: xinference
+  rerank_provider: xinference
   llm_provider: xinference
 
   # SiliconFlow (云 API)
@@ -49,7 +49,7 @@ processors:
   extract_text: true   # Raw text extraction
   ocr: false           # OCR (off by default)
   store: true         # Graph + vector storage (disable for LLM-only test)
-  embed: false          # Enable vector embedding (set false to skip embedding, preserve existing vectors)
+  embed: true          # Enable vector embedding (set false to skip embedding, preserve existing vectors)
 
 # ── LLM inference presets ──────────────────────────────────────────────────
 llm:
