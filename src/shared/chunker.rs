@@ -1,13 +1,12 @@
-//! Document chunking — splits text documents into overlapping chunks
-//! with configurable boundaries, size, and overlap.
+//! 文档分块——将文本文档切分为带重叠的分块，
+//! 支持可配置的边界、大小与重叠度。
 //!
-//! The chunking strategy implements a hierarchical boundary approach:
-//! 1. Paragraph boundaries (double-newline) are preferred.
-//! 2. If a paragraph exceeds chunk_size, fall back to Sentence boundaries.
-//! 3. If a sentence still exceeds chunk_size, fall back to Fixed-length slicing.
+//! 分块策略采用分层边界方案：
+//! 1. 优先使用段落边界（双换行）。
+//! 2. 若段落超过 chunk_size，则回退到句子边界。
+//! 3. 若句子仍超过 chunk_size，则回退到固定长度切片。
 //!
-//! Each chunk includes back-links to its predecessor and forward-links
-//! to its successor, enabling navigation within a document.
+//! 每个分块包含指向前驱与后继的链接，支持在文档内导航。
 
 /// 文档类型枚举——决定分段策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,28 +50,28 @@ impl DocType {
     }
 }
 
-/// Boundary type for chunk splitting.
+/// 分块时使用的边界类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Boundary {
-    /// Split at paragraph boundaries (empty lines / double newlines).
+    /// 在段落边界处切分（空行 / 双换行）。
     Paragraph,
-    /// Split at sentence boundaries (`.`, `!`, `?`, `。`).
+    /// 在句子边界处切分（`.`、`!`、`?`、`。`）。
     Sentence,
-    /// Split at fixed character count (hard slice).
+    /// 按固定字符数切分（硬切片）。
     Fixed,
 }
 
-/// Configuration for the chunking strategy.
+/// 分块策略的配置。
 #[derive(Debug, Clone)]
 pub struct ChunkConfig {
-    /// Target number of tokens per chunk (approximated via character count).
+    /// 每个分块的目标 token 数（通过字符数近似估算）。
     pub chunk_size: usize,
-    /// Number of tokens of overlap between consecutive chunks.
+    /// 相邻分块之间的重叠 token 数。
     pub overlap: usize,
-    /// Preferred boundary type to split on.
+    /// 首选的分割边界类型。
     pub boundary: Boundary,
-    /// Minimum chunk size in tokens; chunks below this size are merged
-    /// into the previous chunk instead of being emitted standalone.
+    /// 分块的最小 token 数；低于此大小的分块会合并到
+    /// 前一个分块中，而不是独立输出。
     pub min_chunk_size: usize,
 }
 
@@ -87,38 +86,37 @@ impl Default for ChunkConfig {
     }
 }
 
-/// A single chunk of a document, with navigation links.
+/// 文档的单个分块，带有导航链接。
 #[derive(Debug, Clone)]
 pub struct DocumentChunk {
-    /// Unique chunk identifier: `"{doc_id}#chunk{index}"`
+    /// 唯一分块标识：`"{doc_id}#chunk{index}"`
     pub chunk_id: String,
-    /// Chunk text content.
+    /// 分块文本内容。
     pub text: String,
-    /// Zero-based index of this chunk within the document.
+    /// 该分块在文档中的从零开始的索引。
     pub chunk_index: usize,
-    /// Chunk ID of the previous chunk, if any.
+    /// 前一个分块的 ID（如果有）。
     pub prev_chunk_id: Option<String>,
-    /// Chunk ID of the next chunk, if any.
+    /// 下一个分块的 ID（如果有）。
     pub next_chunk_id: Option<String>,
-    /// Starting character offset in the original text.
+    /// 在原始文本中的起始字符偏移。
     pub start_char: usize,
-    /// Ending character offset in the original text (exclusive).
+    /// 在原始文本中的结束字符偏移（不含）。
     pub end_char: usize,
 }
 
-/// Chunk a document text into overlapping chunks using the configured
-/// boundary strategy.
+/// 使用配置的边界策略将文档文本切分为带重叠的分块。
 ///
-/// # Arguments
+/// # 参数
 ///
-/// * `text` - Full document text.
-/// * `doc_id` - Document identifier used to build `chunk_id` fields.
-/// * `config` - Chunking configuration.
+/// * `text` - 完整文档文本。
+/// * `doc_id` - 用于构建 `chunk_id` 字段的文档标识。
+/// * `config` - 分块配置。
 ///
-/// # Returns
+/// # 返回值
 ///
-/// A vector of `DocumentChunk` in order. Returns an empty vector if
-/// the input text is empty (whitespace-only).
+/// 按顺序返回 `DocumentChunk` 向量。若输入文本为空（仅空白字符），
+/// 则返回空向量。
 pub fn chunk_text(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<DocumentChunk> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -132,8 +130,8 @@ pub fn chunk_text(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<Documen
     }
 }
 
-/// Approximate token count from character count: ~4 chars = 1 token (English),
-/// ~2 chars = 1 token (CJK). We use a conservative heuristic of 3 chars/token.
+/// 根据字符数近似估算 token 数：约 4 字符 = 1 token（英文），
+/// 约 2 字符 = 1 token（中日韩文）。采用保守的启发式：3 字符/token。
 #[allow(dead_code)]
 fn approx_tokens(char_count: usize) -> usize {
     char_count / 3
@@ -143,9 +141,9 @@ fn approx_chars(tokens: usize) -> usize {
     tokens * 3
 }
 
-/// Parse a key=value or key: value line.
-/// Handles quoted values for the colon-delimited form.
-/// Returns `(key, value)` on success, `None` for empty/comment lines.
+/// 解析 key=value 或 key: value 行。
+/// 冒号分隔形式支持带引号的值。
+/// 成功时返回 `(key, value)`；空行/注释行返回 `None`。
 pub fn parse_kv_line(line: &str) -> Option<(&str, &str)> {
     if let Some(pos) = line.find('=') {
         let key = line[..pos].trim();
@@ -332,8 +330,8 @@ fn chunk_yaml_by_top_level_keys(
     }
 
     // -- 递归提取 section --
-    /// `ancestor_ids`: node indices of ancestors from root down to this node's parent.
-    /// Used to include parent key lines in section content for full YAML context.
+    /// `ancestor_ids`：从根节点到当前节点父节点的祖先节点索引。
+    /// 用于在 section 内容中包含父级 key 行，以提供完整的 YAML 上下文。
     fn collect_sections(
         items: &[Item],
         nodes: &[Node],
@@ -483,8 +481,7 @@ fn chunk_properties_by_prefix(
     result
 }
 
-/// Split text using the given boundary strategy, falling back to coarser
-/// boundaries as needed.
+/// 使用给定的边界策略切分文本，必要时回退到更粗的边界。
 fn chunk_by_boundary(
     text: &str,
     doc_id: &str,
@@ -499,8 +496,8 @@ fn chunk_by_boundary(
     let chunks =
         build_chunks_from_segments(doc_id, &segments, chunk_chars, overlap_chars, min_chars);
 
-    // If any single chunk is still too large (because a single segment
-    // exceeded chunk_size), fall back to the next coarser boundary.
+    // 若单个分块仍然过大（因为单个 segment 超过了 chunk_size），
+    // 则回退到下一个更粗的边界。
     let max_allowed = chunk_chars + overlap_chars;
     if chunks.iter().any(|c| c.text.chars().count() > max_allowed) {
         return match boundary {
@@ -513,17 +510,17 @@ fn chunk_by_boundary(
     chunks
 }
 
-/// Split text into segments using the given boundary.
+/// 使用给定的边界将文本切分为多个段（segment）。
 fn split_by_boundary(text: &str, boundary: Boundary) -> Vec<String> {
     match boundary {
         Boundary::Paragraph => {
-            // Split on one or more consecutive empty lines
+            // 按一个或多个连续空行切分
             let mut parts: Vec<String> = text
                 .split("\n\n")
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            // Also try splitting on \r\n\r\n for Windows-style line endings
+            // 同时尝试按 \r\n\r\n 切分，以支持 Windows 风格的行结束符
             if parts.len() <= 1 {
                 parts = text
                     .split("\r\n\r\n")
@@ -534,13 +531,13 @@ fn split_by_boundary(text: &str, boundary: Boundary) -> Vec<String> {
             parts
         }
         Boundary::Sentence => {
-            // Split on sentence-ending punctuation followed by whitespace
+            // 按句末标点后跟空白进行切分
             let mut sentences = Vec::new();
             let mut start = 0;
             for (i, c) in text.char_indices() {
                 match c {
                     '.' | '!' | '?' | '。' | '！' | '？' => {
-                        // Check if this is likely end-of-sentence (followed by space/newline or EOF)
+                        // 判断是否可能是句末（后跟空格/换行或文件结束）
                         let mut next = i + c.len_utf8();
                         while next < text.len() {
                             let nc = text[next..].chars().next().unwrap();
@@ -562,7 +559,7 @@ fn split_by_boundary(text: &str, boundary: Boundary) -> Vec<String> {
                     _ => {}
                 }
             }
-            // Remainder
+            // 剩余部分
             let remainder = text[start..].trim().to_string();
             if !remainder.is_empty() {
                 sentences.push(remainder);
@@ -570,14 +567,14 @@ fn split_by_boundary(text: &str, boundary: Boundary) -> Vec<String> {
             sentences
         }
         Boundary::Fixed => {
-            // Won't be called directly for Fixed from chunk_by_boundary,
-            // but provide for completeness.
+            // 从 chunk_by_boundary 不会直接以 Fixed 调用此分支，
+            // 仅为完整性保留。
             vec![text.to_string()]
         }
     }
 }
 
-/// Build overlapping chunks from segments.
+/// 从段构建带重叠的分块。
 fn build_chunks_from_segments(
     doc_id: &str,
     segments: &[String],
@@ -589,28 +586,28 @@ fn build_chunks_from_segments(
         return vec![];
     }
 
-    // Merge adjacent segments up to chunk_chars, but ONLY at segment boundaries.
-    // This keeps chunks semantically intact (no mid-sentence/paragraph cuts).
+    // 将相邻段合并至 chunk_chars，但仅限于段边界处。
+    // 这样可保持分块的语义完整（不会在句子/段落中间切断）。
     let mut raw_chunks: Vec<String> = Vec::new();
     let mut current = String::new();
 
     for seg in segments {
         if seg.chars().count() > chunk_chars {
-            // Flush current first
+            // 先写出当前缓冲区
             if !current.is_empty() {
                 raw_chunks.push(current.clone());
                 current.clear();
             }
-            // Segment too large even alone — push as-is (caller will fall back)
+            // 单个段也过大——原样压入（由调用方回退处理）
             raw_chunks.push(seg.clone());
         } else if current.is_empty() {
             current.push_str(seg);
         } else if current.chars().count() + 1 + seg.chars().count() <= chunk_chars {
-            // Room to add this segment
+            // 还有空间容纳该段
             current.push('\n');
             current.push_str(seg);
         } else {
-            // Would exceed chunk_chars → flush current, start new chunk
+            // 将超过 chunk_chars → 写出当前内容，开始新分块
             raw_chunks.push(current.clone());
             current = seg.clone();
         }
@@ -619,10 +616,10 @@ fn build_chunks_from_segments(
         raw_chunks.push(current);
     }
 
-    // Note: min_chunk_size merging is intentionally skipped — each chunk
-    // is already a complete semantic unit at the current boundary level.
+    // 注意：此处有意跳过 min_chunk_size 合并——在当前边界层级下，
+    // 每个分块已经是完整的语义单元。
 
-    // Build final chunks with overlap
+    // 构建带重叠的最终分块
     let mut chunks = Vec::new();
     let mut char_offset = 0;
 
@@ -649,10 +646,10 @@ fn build_chunks_from_segments(
         };
         chunks.push(chunk);
 
-        // Move offset forward, accounting for overlap (the chunk separator)
+        // 前移偏移量，计入重叠部分（即分块分隔符）
         if idx + 1 < raw_chunks.len() {
             let overlap_start = raw.chars().count().saturating_sub(overlap_chars);
-            char_offset += overlap_start + 1; // +1 for the separator
+            char_offset += overlap_start + 1; // 分隔符 +1
         } else {
             char_offset = end_char;
         }
@@ -661,7 +658,7 @@ fn build_chunks_from_segments(
     chunks
 }
 
-/// Merge chunks that are below `min_chars` into their preceding chunk.
+/// 将低于 `min_chars` 的分块合并到前一个分块。
 fn merge_small_chunks(chunks: Vec<String>, min_chars: usize) -> Vec<String> {
     if chunks.is_empty() {
         return chunks;
@@ -676,7 +673,7 @@ fn merge_small_chunks(chunks: Vec<String>, min_chars: usize) -> Vec<String> {
                 last.push('\n');
                 last.push_str(&chunk);
             } else {
-                // First chunk is small: just push it as-is
+                // 首个分块较小：原样压入
                 result.push(chunk);
             }
         } else {
@@ -726,7 +723,7 @@ pub fn chunk_markdown_by_headings(
         } else {
             current_section.push(line.to_string());
         }
-        char_offset += line.len() + 1; // +1 for newline
+        char_offset += line.len() + 1; // 换行符 +1
     }
 
     // flush 最后一个 section
@@ -802,14 +799,13 @@ fn flush_section(
             Some(format!("{}#section-{}", doc_id, chunks.len() - 1))
         },
         next_chunk_id: None,
-        start_char: 0, // will be set by caller if needed
+        start_char: 0, // 如需要将由调用方设置
         end_char: 0,
     };
     chunks.push(chunk);
 }
 
-/// Fixed-length chunking: slices text at exact character boundaries,
-/// with overlap between chunks.
+/// 固定长度分块：按精确的字符边界切片，分块之间带重叠。
 fn chunk_fixed(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<DocumentChunk> {
     let chunk_chars = approx_chars(config.chunk_size);
     let overlap_chars = approx_chars(config.overlap);
@@ -839,7 +835,7 @@ fn chunk_fixed(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<DocumentCh
         let end = std::cmp::min(start + chunk_chars, total);
         let chunk_text: String = chars[start..end].iter().collect();
 
-        // Skip very small tail chunks; merge into previous
+        // 跳过非常小的尾部块；合并到前一个块
         if chunks.is_empty() || chunk_text.chars().count() >= min_chars || end == total {
             let chunk = DocumentChunk {
                 chunk_id: format!("{}#chunk{}", doc_id, idx),
@@ -850,14 +846,14 @@ fn chunk_fixed(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<DocumentCh
                 } else {
                     None
                 },
-                next_chunk_id: None, // will be filled after loop
+                next_chunk_id: None, // 循环结束后填充
                 start_char: start,
                 end_char: end,
             };
             chunks.push(chunk);
             idx += 1;
         } else {
-            // Merge into previous
+            // 合并到前一个块
             if let Some(prev) = chunks.last_mut() {
                 prev.text.push('\n');
                 prev.text.push_str(&chunk_text);
@@ -867,13 +863,13 @@ fn chunk_fixed(text: &str, doc_id: &str, config: &ChunkConfig) -> Vec<DocumentCh
 
         start += step;
 
-        // Handle the case where step is 0 (overlap >= chunk_size)
+        // 处理 step 为 0（overlap >= chunk_size）的情况
         if step == 0 {
             start = end;
         }
     }
 
-    // Fix up next_chunk_id links
+    // 修复 next_chunk_id 链接
     for i in 0..chunks.len() {
         if i + 1 < chunks.len() {
             chunks[i].next_chunk_id = Some(chunks[i + 1].chunk_id.clone());
@@ -899,7 +895,7 @@ pub fn chunk_by_type(
         DocType::Markdown => {
             let chunks = chunk_markdown_by_headings(text, doc_id, config);
             if chunks.is_empty() || (chunks.len() == 1 && chunks[0].text.trim() == text.trim()) {
-                // No headings found or no splitting happened — fall back to paragraph
+                // 未找到标题或未发生切分——回退到段落级
                 chunk_text(text, doc_id, config)
             } else {
                 chunks
@@ -923,27 +919,27 @@ pub fn chunk_by_type(
 }
 
 // ===========================================================================
-// Adaptive Config Chunking
+// 自适应配置分块
 // ===========================================================================
 
-/// Result of adaptive config chunking: a section name and its key-value pairs.
+/// 自适应配置分块的结果：section 名称及其键值对。
 pub type AdaptiveSection = (String, Vec<(String, String)>);
 
-/// ─── Common: determine whether a key is a comment ─────────────────────────
+/// ─── 通用：判断一行是否为注释 ─────────────────────────────────────
 fn is_comment_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!')
 }
 
-/// ─── Properties adaptive chunking ─────────────────────────────────────────
+/// ─── Properties 自适应分块 ─────────────────────────────────────────────
 
-/// Build a prefix tree from dotted keys and chunk adaptively.
+/// 从点分隔的 key 构建前缀树并自适应分块。
 ///
-/// Heuristic:
-/// - Start grouping at depth 2 (e.g., `spring.datasource`)
-/// - If a depth-2 group has ≥3 distinct child prefixes at depth 3 → split to depth 3
-/// - If a depth-3 child has ≥3 distinct grandchild prefixes at depth 4 → split to depth 4
-/// - Otherwise, keep at current depth
+/// 启发式规则：
+/// - 从第 2 层开始分组（例如 `spring.datasource`）
+/// - 若第 2 层分组在第 3 层有 ≥3 个不同的子前缀 → 拆分到第 3 层
+/// - 若第 3 层子节点在第 4 层有 ≥3 个不同的孙前缀 → 拆分到第 4 层
+/// - 否则，保持当前层级
 pub fn chunk_properties_adaptive(content: &str) -> Vec<AdaptiveSection> {
     let pairs: Vec<(String, String)> = content
         .lines()
@@ -956,25 +952,25 @@ pub fn chunk_properties_adaptive(content: &str) -> Vec<AdaptiveSection> {
         return vec![];
     }
 
-    // Check if any keys have dots; if none do, group everything as one section
+    // 检查是否有 key 包含点；若都没有，则全部合并为一个 section
     let has_dotted = pairs.iter().any(|(k, _)| k.contains('.'));
     if !has_dotted {
-        // Flat key-value pairs — one section for all
+        // 扁平键值对——全部归为一个 section
         return vec![("config".to_string(), pairs)];
     }
 
-    // Separate dotless keys (single-segment) from dotted keys
+    // 将无点 key（单段）与点分隔 key 分开
     let (dotted_pairs, flat_pairs): (Vec<_>, Vec<_>) =
         pairs.into_iter().partition(|(k, _)| k.contains('.'));
 
-    // Build a prefix tree (trie) from dotted keys
+    // 从点分隔 key 构建前缀树（trie）
     let mut trie = PrefixTrie::new();
     for (key, _) in &dotted_pairs {
         let parts: Vec<&str> = key.split('.').collect();
         trie.insert(&parts);
     }
 
-    // Assign each dotted key-value to a section, using adaptive depth
+    // 使用自适应层级将每个点分隔键值对分配到 section
     let mut sections: std::collections::HashMap<String, Vec<(String, String)>> =
         std::collections::HashMap::new();
 
@@ -987,48 +983,48 @@ pub fn chunk_properties_adaptive(content: &str) -> Vec<AdaptiveSection> {
             .push((key.clone(), value.clone()));
     }
 
-    // Add dotless keys as a "config" section
+    // 将无点 key 作为 "config" section 加入
     if !flat_pairs.is_empty() {
         sections.insert("config".to_string(), flat_pairs);
     }
 
-    // ── Post-process: merge singleton sections into their parent prefix ──
-    // If a section has exactly 1 key and a "parent" section exists (by
-    // removing the last dot-segment), merge it up.  This prevents overly
-    // granular chunks like `spring.datasource.druid.max-active` when
-    // `spring.datasource.druid.stat-view-servlet` forced a split.
+    // ── 后处理：将单键 section 合并到其父前缀 ──
+    // 若某个 section 恰好只有 1 个 key，且存在"父"section（去掉最后一个
+    // 点分隔段后得到），则向上合并。这可以避免在
+    // `spring.datasource.druid.stat-view-servlet` 强制拆分时产生
+    // 过于细碎的分块，如 `spring.datasource.druid.max-active`。
     let merged = merge_singleton_sections(sections);
 
-    // ── Post-process: merge sibling sections into their parent prefix ──
-    // If a prefix has ≥2 sub-sections (e.g., spring.datasource.druid.core,
-    // spring.datasource.druid.log, ...), merge them all into one section
-    // named after the common parent (spring.datasource.druid).
+    // ── 后处理：将兄弟 section 合并到其父前缀 ──
+    // 若某前缀有 ≥2 个子 section（例如 spring.datasource.druid.core、
+    // spring.datasource.druid.log 等），则全部合并为一个以公共父前缀
+    // （spring.datasource.druid）命名的 section。
     let merged = merge_sibling_sections(merged);
 
-    // ── Post-process: merge orphan siblings (no existing grandparent) ──
-    // Files where all keys nest directly under druid (no spring.datasource
-    // top-level section) won't be caught by merge_sibling_sections because
-    // the grandparent check fails.  Handle those orphans here.
+    // ── 后处理：合并孤儿兄弟（不存在祖父前缀）──
+    // 所有 key 都直接嵌套在 druid 之下（没有 spring.datasource 顶级
+    // section）的文件不会被 merge_sibling_sections 捕获，因为祖父前缀
+    // 检查不通过。在此处理这些孤儿。
     let merged = merge_orphan_sibling_sections(merged);
 
-    // ── Post-process: promote parent keys into existing sub-section ──
-    // If a section (e.g., spring.datasource) contains only keys that all
-    // share a prefix matching an existing sub-section (spring.datasource.druid),
-    // move those keys into the sub-section and remove the parent.
+    // ── 后处理：将父级 key 提升到已存在的子 section ──
+    // 若某个 section（例如 spring.datasource）中的 key 全部共享一个与
+    // 已有子 section（spring.datasource.druid）匹配的前缀，则将这些
+    // key 移入子 section 并删除父级。
     let merged = promote_to_sub_section(merged);
 
-    // Sort sections for deterministic output
+    // 对 section 排序以获得确定性输出
     let mut result: Vec<AdaptiveSection> = merged.into_iter().collect();
     result.sort_by(|a, b| a.0.cmp(&b.0));
     result
 }
 
-/// Merge sections that have only 1 key into the nearest existing ancestor
-/// section (by walking up the dot-separated prefix chain).
+/// 将只有 1 个 key 的 section 合并到最近的已存在祖先 section
+/// （沿点分隔前缀链向上查找）。
 fn merge_singleton_sections(
     mut sections: std::collections::HashMap<String, Vec<(String, String)>>,
 ) -> std::collections::HashMap<String, Vec<(String, String)>> {
-    // Collect singleton section names
+    // 收集单键 section 的名称
     let singletons: Vec<String> = sections
         .iter()
         .filter(|(_, v)| v.len() == 1)
@@ -1036,7 +1032,7 @@ fn merge_singleton_sections(
         .collect();
 
     for name in singletons {
-        // Walk up dot-segments to find nearest existing parent
+        // 沿点分段向上查找最近的已存在父级
         let mut candidate = name.clone();
         let target = loop {
             match candidate.rfind('.') {
@@ -1046,7 +1042,7 @@ fn merge_singleton_sections(
                         break Some(candidate);
                     }
                 }
-                None => break None, // no dot left → can't merge
+                None => break None, // 没有剩余点 → 无法合并
             }
         };
 
@@ -1060,13 +1056,13 @@ fn merge_singleton_sections(
     sections
 }
 
-/// Merge sibling sub-sections under a common parent prefix into a single
-/// parent-named section.  For example, `spring.datasource.druid.core`,
-/// `spring.datasource.druid.log` → one `spring.datasource.druid` section.
+/// 将公共父前缀下的兄弟子 section 合并为单个以父级命名的 section。
+/// 例如，`spring.datasource.druid.core`、`spring.datasource.druid.log`
+/// → 一个 `spring.datasource.druid` section。
 fn merge_sibling_sections(
     mut sections: std::collections::HashMap<String, Vec<(String, String)>>,
 ) -> std::collections::HashMap<String, Vec<(String, String)>> {
-    // Find parent prefixes that have ≥2 child sections
+    // 找出拥有 ≥2 个子 section 的父前缀
     let section_names: Vec<String> = sections.keys().cloned().collect();
     let mut parent_counts: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
@@ -1078,18 +1074,18 @@ fn merge_sibling_sections(
         }
     }
 
-    // For each parent with ≥2 children that is NOT itself a section,
-    // AND whose own parent IS a section (i.e., the children are deep
-    // sub-groups of a meaningful parent), merge them into one section.
+    // 对每个拥有 ≥2 个子节点、且其自身不是 section、
+    // 而其父级是 section 的父前缀（即子节点是某个有意义父级的
+    // 深层子组），将它们合并为一个 section。
     let to_merge: Vec<String> = parent_counts
         .into_iter()
         .filter(|(parent, count)| {
             if *count < 2 || sections.contains_key(parent) {
                 return false;
             }
-            // Only merge if the grandparent exists as a section — prevents
-            // merging top-level siblings like spring.datasource + spring.redis
-            // into one massive "spring" section.
+            // 仅当祖父前缀已作为 section 存在时才合并——避免将
+            // spring.datasource + spring.redis 等顶级兄弟合并为
+            // 一个庞大的 "spring" section。
             parent
                 .rfind('.')
                 .map_or(false, |gp_pos| sections.contains_key(&parent[..gp_pos]))
@@ -1099,7 +1095,7 @@ fn merge_sibling_sections(
 
     for parent in to_merge {
         let mut merged_pairs: Vec<(String, String)> = Vec::new();
-        // Collect and remove all child sections
+        // 收集并移除所有子 section
         let child_names: Vec<String> = sections
             .keys()
             .filter(|k| k.starts_with(&format!("{}.", parent)))
@@ -1116,10 +1112,10 @@ fn merge_sibling_sections(
     sections
 }
 
-/// Merge sibling sub-sections that have no grandparent section.
-/// Same as merge_sibling_sections but without the grandparent-exists check.
-/// Handles cases like `spring.datasource.druid.{url,username,...}` where
-/// `spring.datasource` never appeared as its own section.
+/// 合并没有祖父 section 的兄弟子 section。
+/// 与 merge_sibling_sections 相同，但省略祖父存在性检查。
+/// 处理类似 `spring.datasource.druid.{url,username,...}` 的场景——
+/// 此时 `spring.datasource` 从未作为独立 section 出现。
 fn merge_orphan_sibling_sections(
     mut sections: std::collections::HashMap<String, Vec<(String, String)>>,
 ) -> std::collections::HashMap<String, Vec<(String, String)>> {
@@ -1134,9 +1130,9 @@ fn merge_orphan_sibling_sections(
         }
     }
 
-    // Merge orphans: ≥2 children, parent doesn't exist, grandparent may or may not exist
-    // Only merge when the parent prefix has ≥1 dot (depth ≥2).
-    // This prevents cascading to top-level like "spring", "management".
+    // 合并孤儿：≥2 个子节点、父前缀不存在，祖父前缀可有可无
+    // 仅当父前缀至少含 1 个点（深度 ≥2）时才合并。
+    // 这可以防止级联合并到 "spring"、"management" 等顶级前缀。
     let to_merge: Vec<String> = parent_counts
         .into_iter()
         .filter(|(parent, count)| {
@@ -1163,9 +1159,9 @@ fn merge_orphan_sibling_sections(
     sections
 }
 
-/// If a parent section has ≥2 keys that belong to an existing sub-section,
-/// move those keys into the sub-section.  Keeps "orphan" keys (that don't
-/// match any sub-section) in the parent.
+/// 若父 section 有 ≥2 个 key 属于某个已存在的子 section，
+/// 则将这些 key 移入子 section。不匹配任何子 section 的
+/// "孤儿" key 保留在父级。
 fn promote_to_sub_section(
     mut sections: std::collections::HashMap<String, Vec<(String, String)>>,
 ) -> std::collections::HashMap<String, Vec<(String, String)>> {
@@ -1201,15 +1197,15 @@ fn promote_to_sub_section(
     sections
 }
 
-/// A simple prefix trie for dotted key names.
-/// Used to determine the optimal section prefix for each key.
+/// 用于点分隔 key 名称的简单前缀树（trie）。
+/// 用于确定每个 key 的最优 section 前缀。
 struct PrefixTrie {
     root: TrieNode,
 }
 
 struct TrieNode {
     children: std::collections::HashMap<String, TrieNode>,
-    /// Number of leaf keys that pass through or end at this node.
+    /// 经过或终止于该节点的叶子 key 数量。
     leaf_count: usize,
 }
 
@@ -1235,13 +1231,13 @@ impl PrefixTrie {
         }
     }
 
-    /// Resolve the optimal section name for a key with the given parts.
+    /// 为给定 parts 的 key 解析最优 section 名称。
     ///
-    /// Strategy:
-    /// - Keys with 1-2 parts: section = first part (e.g., "server.port" → "server")
-    /// - Keys with 3+ parts: start at depth 1 ("a.b"), then deepen if needed
-    /// - At each intermediate node: count children with leaf_count > 1
-    ///   (multi-key prefixes). If ≥ 2, split deeper.
+    /// 策略：
+    /// - 1-2 段的 key：section = 第一段（例如 "server.port" → "server"）
+    /// - 3 段及以上的 key：从第 1 层（"a.b"）开始，必要时继续加深
+    /// - 在每个中间节点：统计 leaf_count > 1 的子节点
+    ///   （多 key 前缀）。若 ≥ 2，则进一步拆分。
     fn resolve_section(&self, parts: &[&str]) -> String {
         if parts.is_empty() {
             return String::new();
@@ -1257,7 +1253,7 @@ impl PrefixTrie {
         // 3+ part keys: start at depth 1 (e.g., "spring.datasource")
         let mut depth = 1; // 0-indexed → "a.b"
 
-        // Walk the trie from root to check for splits
+        // 从根节点遍历 trie 以检查是否需要拆分
         let mut node = &self.root;
         for i in 0..parts.len().min(4) {
             if let Some(child) = node.children.get(parts[i]) {
@@ -1267,28 +1263,28 @@ impl PrefixTrie {
             }
 
             if i >= 1 && i < parts.len() - 1 {
-                // At intermediate node: count children with leaf_count > 1
-                // (these are multi-key sub-groups that deserve their own section)
+                // 在中间节点：统计 leaf_count > 1 的子节点
+                //（这些是多 key 子组，应拥有独立 section）
                 let multi_key_children =
                     node.children.values().filter(|c| c.leaf_count > 1).count();
 
-                // Split if ≥ 2 sub-groups have multiple keys each
+                // 若 ≥ 2 个子组各含多个 key，则拆分
                 if multi_key_children >= 2 {
                     depth = i + 1; // "a.b.c"
                 }
             }
         }
 
-        // Cap depth at parts.len()-1 and max 4
+        // 将深度限制在 parts.len()-1 且最大为 4
         depth = depth.min(parts.len() - 1).min(3);
         parts[..=depth].join(".")
     }
 }
 
-/// ─── YAML adaptive chunking ───────────────────────────────────────────────
+/// ─── YAML 自适应分块 ─────────────────────────────────────────────────────
 
-/// Parse YAML into flat key-value pairs, then use the same prefix-based
-/// adaptive chunking as properties. This avoids complex tree walking.
+/// 将 YAML 解析为扁平的键值对，然后使用与 Properties 相同的前缀
+/// 自适应分块。这避免了复杂的树遍历。
 pub fn chunk_yaml_adaptive(content: &str) -> Vec<AdaptiveSection> {
     let pairs = flatten_yaml_to_pairs(content);
     if pairs.is_empty() {
@@ -1302,12 +1298,12 @@ pub fn chunk_yaml_adaptive(content: &str) -> Vec<AdaptiveSection> {
     chunk_properties_adaptive(&pseudo_props)
 }
 
-/// Parse YAML-like text into a flat list of (dotted.key, value) pairs.
+/// 将类 YAML 文本解析为扁平的 (dotted.key, value) 对列表。
 ///
-/// Uses a stack to track the current YAML path. For each line:
-/// - If indent decreases, pop from stack accordingly
-/// - If "key:" (no value), push key onto stack
-/// - If "key: value", emit (stack + key, value)
+/// 使用栈跟踪当前 YAML 路径。对每行：
+/// - 若缩进减小，相应地弹出栈
+/// - 若是 "key:"（无值），将 key 压入栈
+/// - 若是 "key: value"，输出（栈路径 + key, value）
 fn flatten_yaml_to_pairs(content: &str) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut stack: Vec<(usize, String)> = Vec::new();
@@ -1363,17 +1359,17 @@ fn flatten_yaml_to_pairs(content: &str) -> Vec<(String, String)> {
     pairs
 }
 
-/// Count leading spaces for indentation.
+/// 统计用于缩进的前导空格数。
 fn count_indent(line: &str) -> usize {
     line.chars().take_while(|c| c.is_whitespace()).count()
 }
 
-/// ─── Public entry point ───────────────────────────────────────────────────
+/// ─── 公共入口 ─────────────────────────────────────────────────────────────
 
-/// Adaptive config chunking: automatically determines the optimal
-/// section depth for both properties and YAML config files.
+/// 自适应配置分块：自动为 Properties 与 YAML 配置文件
+/// 确定最优的 section 层级。
 ///
-/// Returns a sorted vector of `(section_name, Vec<(key, value)>)`.
+/// 返回排序后的 `(section_name, Vec<(key, value)>)` 向量。
 pub fn chunk_config_adaptive(content: &str, is_yaml: bool) -> Vec<AdaptiveSection> {
     if content.trim().is_empty() {
         return vec![];
@@ -1386,7 +1382,7 @@ pub fn chunk_config_adaptive(content: &str, is_yaml: bool) -> Vec<AdaptiveSectio
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1427,7 +1423,7 @@ mod tests {
         let text = "First paragraph with some content.\n\nSecond paragraph also has content.\n\nThird paragraph is here too.";
         let doc_id = "dt://doc/test/para.md";
         let chunks = chunk_text(text, doc_id, &config);
-        // All three short paragraphs merge into one chunk (within chunk_size)
+        // 三个短段落合并为一个分块（在 chunk_size 范围内）
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].text.contains("First paragraph"));
         assert!(chunks[0].text.contains("Third paragraph"));
@@ -1436,10 +1432,10 @@ mod tests {
     #[test]
     fn chunks_have_prev_and_next_links() {
         let config = ChunkConfig {
-            chunk_size: 10, // ~30 chars — very small to force multiple chunks
-            overlap: 5,     // ~15 chars overlap
+            chunk_size: 10, // ~30 字符——非常小，用于强制产生多个分块
+            overlap: 5,     // ~15 字符重叠
             boundary: Boundary::Fixed,
-            min_chunk_size: 10, // ~30 chars
+            min_chunk_size: 10, // ~30 字符
         };
         let text =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1447,18 +1443,18 @@ mod tests {
         let chunks = chunk_text(text, doc_id, &config);
         assert!(
             chunks.len() >= 2,
-            "expected at least 2 chunks, got {}",
+            "预期至少 2 个分块，实际得到 {}",
             chunks.len()
         );
 
-        // First chunk: no prev, has next
+        // 第一个分块：无 prev，有 next
         assert!(chunks[0].prev_chunk_id.is_none());
         assert_eq!(
             chunks[0].next_chunk_id.as_deref(),
             Some(make_id(1).as_str())
         );
 
-        // Middle chunks have both
+        // 中间的分块两者都有
         if chunks.len() > 2 {
             for i in 1..chunks.len() - 1 {
                 assert_eq!(
@@ -1472,7 +1468,7 @@ mod tests {
             }
         }
 
-        // Last chunk: has prev, no next
+        // 最后一个分块：有 prev，无 next
         let last = chunks.len() - 1;
         assert_eq!(
             chunks[last].prev_chunk_id.as_deref(),
@@ -1500,8 +1496,8 @@ mod tests {
     #[test]
     fn fixed_boundary_chunks_have_correct_offsets() {
         let config = ChunkConfig {
-            chunk_size: 5, // ~15 chars
-            overlap: 2,    // ~6 chars
+            chunk_size: 5, // ~15 字符
+            overlap: 2,    // ~6 字符
             boundary: Boundary::Fixed,
             min_chunk_size: 2,
         };
@@ -1509,11 +1505,11 @@ mod tests {
         let doc_id = "dt://doc/test/offsets.md";
         let chunks = chunk_text(text, doc_id, &config);
 
-        // First chunk at offset 0
+        // 第一个分块偏移为 0
         assert_eq!(chunks[0].start_char, 0);
         assert!(chunks[0].text.len() > 0);
 
-        // Last chunk covers end of text
+        // 最后一个分块覆盖文本末尾
         let last = chunks.last().unwrap();
         assert_eq!(last.end_char, text.chars().count());
     }
@@ -1521,20 +1517,20 @@ mod tests {
     #[test]
     fn min_chunk_size_merges_small_tail() {
         let config = ChunkConfig {
-            chunk_size: 15, // ~45 chars
-            overlap: 3,     // ~9 chars
+            chunk_size: 15, // ~45 字符
+            overlap: 3,     // ~9 字符
             boundary: Boundary::Fixed,
-            min_chunk_size: 12, // ~36 chars
+            min_chunk_size: 12, // ~36 字符
         };
-        // Create text that produces multiple fixed chunks with a small tail at the end
-        // Each chunk at ~45 chars with ~9 char overlap, and ~36 char step
-        // So the last tail might be small
+        // 构造文本以产生多个固定分块，末尾带一个较小的尾部
+        // 每个分块约 45 字符、重叠约 9 字符、步长约 36 字符
+        // 因此最后的尾部可能较小
         let text = "A".repeat(100);
         let doc_id = "dt://doc/test/min_chunk.md";
         let chunks = chunk_text(&text, doc_id, &config);
 
-        // With Fixed boundary and chunk_size=15 (~45 chars), we should get ~3 chunks
-        // The key is that no chunk is empty and all have proper navigation links
+        // 使用 Fixed 边界和 chunk_size=15（约 45 字符），应得到约 3 个分块
+        // 关键是没有任何分块为空，且都带有正确的导航链接
         assert!(chunks.len() >= 2);
         for chunk in &chunks {
             assert!(!chunk.text.is_empty());
@@ -1545,7 +1541,7 @@ mod tests {
     #[test]
     fn sentence_boundary_splits_correctly() {
         let config = ChunkConfig {
-            chunk_size: 20, // ~60 chars
+            chunk_size: 20, // ~60 字符
             overlap: 5,
             boundary: Boundary::Sentence,
             min_chunk_size: 10,
@@ -1554,7 +1550,7 @@ mod tests {
         let doc_id = "dt://doc/test/sentences.md";
         let chunks = chunk_text(text, doc_id, &config);
         assert!(chunks.len() >= 1);
-        // All sentences should be present across chunks
+        // 所有句子都应出现在各分块中
         let combined: String = chunks
             .iter()
             .map(|c| c.text.as_str())
@@ -1577,28 +1573,28 @@ mod tests {
     #[test]
     fn large_text_produces_multiple_chunks() {
         let config = ChunkConfig {
-            chunk_size: 10, // ~30 chars
-            overlap: 3,     // ~9 chars
+            chunk_size: 10, // ~30 字符
+            overlap: 3,     // ~9 字符
             boundary: Boundary::Fixed,
-            min_chunk_size: 5, // ~15 chars
+            min_chunk_size: 5, // ~15 字符
         };
         let text = "X".repeat(500);
         let doc_id = "dt://doc/test/large.md";
         let chunks = chunk_text(&text, doc_id, &config);
         assert!(
             chunks.len() > 1,
-            "large text should produce multiple chunks, got {}",
+            "大文本应产生多个分块，实际得到 {}",
             chunks.len()
         );
 
-        // Verify chunk IDs are unique
+        // 验证分块 ID 唯一
         let ids: std::collections::HashSet<String> =
             chunks.iter().map(|c| c.chunk_id.clone()).collect();
         assert_eq!(ids.len(), chunks.len());
     }
 
     // -----------------------------------------------------------------------
-    // DocType detect tests
+    // DocType 检测测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1638,13 +1634,13 @@ mod tests {
 
     #[test]
     fn doc_type_detect_plain_text_when_contains_equals() {
-        // Lines with = are properties, not yaml
+        // 含 = 的行是 properties，而非 yaml
         let lines = &["key=value"];
         assert_eq!(DocType::detect("some.file", lines), DocType::PlainText);
     }
 
     // -----------------------------------------------------------------------
-    // Markdown heading chunking tests
+    // Markdown 标题分块测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1666,12 +1662,12 @@ mod tests {
         let chunks = chunk_markdown_by_headings(text, doc_id, &config);
         assert!(
             chunks.len() >= 2,
-            "expected at least 2 chunks, got {}",
+            "预期至少 2 个分块，实际得到 {}",
             chunks.len()
         );
         assert!(chunks[0].text.contains("[Main]"));
         assert!(chunks[1].text.contains("[Section 1]"));
-        // Check prev/next links
+        // 检查 prev/next 链接
         assert!(chunks[0].prev_chunk_id.is_none());
         if chunks.len() > 1 {
             assert_eq!(
@@ -1691,7 +1687,7 @@ mod tests {
         let text = "Just a plain paragraph.\n\nAnother paragraph without headings.";
         let doc_id = "dt://doc/test/noheading.md";
         let chunks = chunk_markdown_by_headings(text, doc_id, &config);
-        // Both short paragraphs merge into one chunk (within chunk_size)
+        // 两个短段落合并为一个分块（在 chunk_size 范围内）
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].text.contains("plain paragraph"));
     }
@@ -1704,7 +1700,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // parse_kv_line tests
+    // parse_kv_line 测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1740,8 +1736,8 @@ mod tests {
 
     #[test]
     fn parse_kv_line_colon_with_multiple_colons_in_value() {
-        // value containing colon should return None for colon path
-        // but = path works if present
+        // 值中包含冒号时，冒号路径应返回 None
+        // 但若存在 = 路径则仍可工作
         assert_eq!(parse_kv_line("key=foo:bar"), Some(("key", "foo:bar")));
     }
 
@@ -1752,16 +1748,16 @@ mod tests {
 
     #[test]
     fn chunk_long_document_paragraph_first() {
-        // Simulate a long document with multiple paragraphs
+        // 模拟包含多个段落的长文档
         let mut paragraphs: Vec<String> = Vec::new();
         for i in 0..10 {
             paragraphs.push(format!("这是第{}段。这一段描述了架构设计中的重要概念和相关实现细节。每个段落应该独立成为文档块。\n技术细节包括多个方面。", i));
         }
         let text = paragraphs.join("\n\n");
 
-        // Use small chunk_size to force multiple chunks
+        // 使用较小的 chunk_size 以强制产生多个分块
         let config = ChunkConfig {
-            chunk_size: 100, // small to force merge limits
+            chunk_size: 100, // 较小以触发合并限制
             overlap: 0,
             boundary: Boundary::Paragraph,
             min_chunk_size: 128,
@@ -1769,20 +1765,20 @@ mod tests {
         let doc_id = "dt://doc/test/long.md";
         let chunks = chunk_text(&text, doc_id, &config);
 
-        // Multiple chunks merged from paragraphs (each ~50 chars, 10 ≈ 500 chars)
-        // With chunk_size=100 (~300 chars), ~2-3 chunks
+        // 由段落合并出多个分块（每段约 50 字符，10 段 ≈ 500 字符）
+        // 在 chunk_size=100（约 300 字符）下，约 2-3 个分块
         assert!(
             chunks.len() >= 2 && chunks.len() <= 5,
-            "expected 2-5 chunks from paragraph merging, got {}",
+            "段落合并后预期 2-5 个分块，实际得到 {}",
             chunks.len()
         );
 
-        // Verify chunks don't cut mid-paragraph
+        // 验证分块不会在段落中间切断
         for chunk in &chunks {
             let text = &chunk.text;
             assert!(
                 !text.starts_with('第') || text.contains("段。"),
-                "chunk may be cut mid-paragraph: {}",
+                "分块可能在段落中间被切断：{}",
                 text.chars().take(30).collect::<String>()
             );
         }
@@ -1790,7 +1786,7 @@ mod tests {
 
     #[test]
     fn chunk_long_paragraph_falls_back_to_sentence() {
-        // A single very long paragraph (no \n\n) should fall back to sentence splitting
+        // 单个超长段落（无 \n\n）应回退到句子切分
         let mut long_text = String::new();
         for i in 0..20 {
             long_text.push_str(&format!(
@@ -1799,7 +1795,7 @@ mod tests {
             ));
         }
         let config = ChunkConfig {
-            chunk_size: 100, // small to force splitting
+            chunk_size: 100, // 较小以强制拆分
             overlap: 16,
             boundary: Boundary::Paragraph,
             min_chunk_size: 32,
@@ -1807,20 +1803,20 @@ mod tests {
         let doc_id = "dt://doc/test/long_para.md";
         let chunks = chunk_text(&long_text, doc_id, &config);
 
-        // Should produce multiple chunks (sentences, not fixed-size)
+        // 应产生多个分块（按句子，而非固定大小）
         assert!(
             chunks.len() >= 2,
-            "expected at least 2 chunks from sentence splitting, got {}",
+            "句子切分后预期至少 2 个分块，实际得到 {}",
             chunks.len()
         );
-        // Verify chunks don't cut mid-sentence
+        // 验证分块不会在句子中间切断
         for chunk in &chunks {
             let text = &chunk.text;
             if let Some(last_char) = text.chars().last() {
-                // Each chunk should end with a sentence boundary
+                // 每个分块应以句子边界结尾
                 assert!(
                     matches!(last_char, '。' | '！' | '？' | '）' | '"' | '\n'),
-                    "chunk should end with sentence boundary, ended with '{}': {}",
+                    "分块应以句子边界结尾，实际以 '{}' 结尾：{}",
                     last_char,
                     text.chars().take(30).collect::<String>()
                 );
@@ -1830,7 +1826,7 @@ mod tests {
 
     #[test]
     fn parse_kv_line_comment_char_not_at_start() {
-        // '#' in the middle is not a comment
+        // 中间的 '#' 不是注释
         assert_eq!(
             parse_kv_line("key=value#comment"),
             Some(("key", "value#comment"))
@@ -1838,7 +1834,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // extract_properties_sections tests
+    // extract_properties_sections 测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1885,7 +1881,7 @@ mod tests {
     fn extract_properties_single_part_key() {
         let content = "simple_key=simple_value\nanother_key=another_value";
         let sections = extract_properties_sections(content);
-        // Each key has only one part (no dot), so each is its own section
+        // 每个 key 只有一段（无点），因此各自独立成 section
         assert_eq!(sections.len(), 2);
     }
 
@@ -1898,7 +1894,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // chunk_config_by_sections tests (YAML)
+    // chunk_config_by_sections 测试（YAML）
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1919,7 +1915,7 @@ mod tests {
         let text =
             "server:\n  port: 8080\n  host: localhost\n\nredis:\n  host: 127.0.0.1\n  port: 6379";
         let result = chunk_config_by_sections(text, "doc1", &config, true);
-        assert_eq!(result.len(), 2, "expected 2 sections, got {}", result.len());
+        assert_eq!(result.len(), 2, "预期 2 个 section，实际得到 {}", result.len());
         let names: Vec<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"server"));
         assert!(names.contains(&"redis"));
@@ -1940,7 +1936,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // chunk_config_by_sections tests (Properties)
+    // chunk_config_by_sections 测试（Properties）
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1965,7 +1961,7 @@ mod tests {
         assert_eq!(
             result.len(),
             2,
-            "expected 2 sections, got {}: {:?}",
+            "预期 2 个 section，实际得到 {}: {:?}",
             result.len(),
             result
         );
@@ -1991,7 +1987,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Parent context inclusion tests for YAML sections
+    // YAML section 父级上下文包含测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2005,21 +2001,21 @@ spring:
         instance:
           service-url: http://doctor-center";
         let result = chunk_config_by_sections(yaml, "doc1", &config, true);
-        // Single chain should merge into one section
-        assert_eq!(result.len(), 1, "single chain should produce 1 section");
+        // 单链应合并为一个 section
+        assert_eq!(result.len(), 1, "单链应产生 1 个 section");
         let text = &result[0].1[0].text;
-        eprintln!("=== Single chain section ===\n{}", text);
-        assert!(text.contains("spring:"), "must contain spring: ancestor");
-        assert!(text.contains("boot:"), "must contain boot: ancestor");
-        assert!(text.contains("admin:"), "must contain admin: ancestor");
-        assert!(text.contains("client:"), "must contain client: ancestor");
+        eprintln!("=== 单链 section ===\n{}", text);
+        assert!(text.contains("spring:"), "必须包含 spring: 祖先");
+        assert!(text.contains("boot:"), "必须包含 boot: 祖先");
+        assert!(text.contains("admin:"), "必须包含 admin: 祖先");
+        assert!(text.contains("client:"), "必须包含 client: 祖先");
         assert!(
             text.contains("instance:"),
-            "must contain instance: ancestor"
+            "必须包含 instance: 祖先"
         );
         assert!(
             text.contains("service-url: http://doctor-center"),
-            "must contain leaf value"
+            "必须包含叶子值"
         );
     }
 
@@ -2040,39 +2036,39 @@ pay:
   service:
     url: http://pay-service:8081";
         let result = chunk_config_by_sections(yaml, "doc2", &config, true);
-        eprintln!("\n=== Multiple top-level keys sections ===");
+        eprintln!("\n=== 多个顶级 key 的 section ===");
         for (name, chunks) in &result {
             eprintln!(
-                "[{}] -> {} chars\n{}\n---",
+                "[{}] -> {} 字符\n{}\n---",
                 name,
                 chunks[0].text.len(),
                 chunks[0].text
             );
         }
-        // Should have 3 top-level sections
-        assert_eq!(result.len(), 3, "expected 3 sections (server, spring, pay)");
+        // 应有 3 个顶级 section
+        assert_eq!(result.len(), 3, "预期 3 个 section（server、spring、pay）");
 
-        // spring section should include full hierarchy
+        // spring section 应包含完整层级
         let spring = result
             .iter()
             .find(|(n, _)| n.as_str() == "spring.datasource")
-            .expect("spring.datasource section should exist");
+            .expect("spring.datasource section 应存在");
         assert!(
             spring.1[0].text.contains("spring:"),
-            "spring section must contain spring:"
+            "spring section 必须包含 spring:"
         );
         assert!(
             spring.1[0].text.contains("datasource:"),
-            "spring section must contain datasource:"
+            "spring section 必须包含 datasource:"
         );
         assert!(
             spring.1[0].text.contains("url: jdbc:mysql://localhost"),
-            "spring section must contain url"
+            "spring section 必须包含 url"
         );
-        // Should NOT contain pay content (scoping fix)
+        // 不应包含 pay 内容（作用域修复）
         assert!(
             !spring.1[0].text.contains("pay:"),
-            "spring section should NOT contain pay content"
+            "spring section 不应包含 pay 内容"
         );
     }
 
@@ -2101,68 +2097,68 @@ spring:
         password: pass2
         driver-class-name: com.mysql.cj.jdbc.Driver";
         let result = chunk_config_by_sections(yaml, "doc3", &config, true);
-        eprintln!("\n=== Doctor-Center-style sections ===");
+        eprintln!("\n=== Doctor-Center 风格 section ===");
         for (name, chunks) in &result {
             eprintln!(
-                "[{}] -> {} chars\n{}\n---",
+                "[{}] -> {} 字符\n{}\n---",
                 name,
                 chunks[0].text.len(),
                 chunks[0].text
             );
         }
 
-        // Should have sections: spring.boot.admin.client.instance, spring.datasource.dynamic,
-        // spring.datasource.druid.core, spring.datasource.druid.log
+        // 应包含 section：spring.boot.admin.client.instance、spring.datasource.dynamic、
+        // spring.datasource.druid.core、spring.datasource.druid.log
         assert!(
             result.len() >= 3,
-            "should have at least 3 sections, got {}",
+            "应至少有 3 个 section，实际得到 {}",
             result.len()
         );
 
-        // Check core section has full parent chain
+        // 检查 core section 是否包含完整父链
         let core = result.iter().find(|(n, _)| n.contains("core"));
-        assert!(core.is_some(), "core section should exist");
+        assert!(core.is_some(), "core section 应存在");
         let core = core.unwrap();
-        eprintln!("Core section name: {}", core.0);
+        eprintln!("core section 名称：{}", core.0);
         assert!(
             core.1[0].text.contains("spring:"),
-            "core section must contain spring: ancestor"
+            "core section 必须包含 spring: 祖先"
         );
         assert!(
             core.1[0].text.contains("datasource:"),
-            "core section must contain datasource: ancestor"
+            "core section 必须包含 datasource: 祖先"
         );
         assert!(
             core.1[0].text.contains("druid:"),
-            "core section must contain druid: ancestor"
+            "core section 必须包含 druid: 祖先"
         );
         assert!(
             core.1[0].text.contains("core:"),
-            "core section must contain core: itself"
+            "core section 必须包含 core: 自身"
         );
         assert!(
             core.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db1"),
-            "core section must contain its value"
+            "core section 必须包含其值"
         );
 
-        // Check log section
+        // 检查 log section
         let log = result
             .iter()
             .find(|(n, _)| n.contains("log") && !n.contains("dynamic") && !n.contains("boot"));
-        assert!(log.is_some(), "log section should exist");
+        assert!(log.is_some(), "log section 应存在");
         let log = log.unwrap();
         assert!(
             log.1[0].text.contains("spring:"),
-            "log section must contain spring: ancestor"
+            "log section 必须包含 spring: 祖先"
         );
         assert!(
             log.1[0].text.contains("jdbc:mysql://10.12.7.22:3308/db2"),
-            "log section must contain its value"
+            "log section 必须包含其值"
         );
     }
 
     // -----------------------------------------------------------------------
-    // chunk_by_type dispatch tests
+    // chunk_by_type 分发测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2190,7 +2186,7 @@ spring:
         let text = "Paragraph one.\n\nParagraph two.";
         let doc_id = "dt://doc/test/type_txt.md";
         let chunks = chunk_by_type(text, doc_id, DocType::PlainText, &config);
-        assert_eq!(chunks.len(), 1); // short paragraphs merged into one chunk
+        assert_eq!(chunks.len(), 1); // 短段落合并为一个分块
     }
 
     #[test]
@@ -2201,7 +2197,7 @@ spring:
     }
 
     // -----------------------------------------------------------------------
-    // Adaptive properties chunking tests
+    // Properties 自适应分块测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2211,8 +2207,8 @@ spring.datasource.url=jdbc:mysql://localhost/db\n\
 spring.datasource.username=admin\n\
 spring.datasource.password=secret";
         let sections = chunk_properties_adaptive(content);
-        // All 3 keys should be in one "spring.datasource" section
-        assert_eq!(sections.len(), 1, "expected 1 section, got {:?}", sections);
+        // 3 个 key 应都在一个 "spring.datasource" section 中
+        assert_eq!(sections.len(), 1, "预期 1 个 section，实际得到 {:?}", sections);
         assert_eq!(sections[0].0, "spring.datasource");
         assert_eq!(sections[0].1.len(), 3);
     }
@@ -2226,14 +2222,14 @@ spring.cloud.nacos.config.server-addr=addr\n\
 spring.cloud.nacos.config.namespace=ns2\n\
 spring.cloud.nacos.username=user";
         let sections = chunk_properties_adaptive(content);
-        // With orphan merge, all nacos children merge into spring.cloud.nacos
+        // 经孤儿合并后，所有 nacos 子 key 合并到 spring.cloud.nacos
         eprintln!(
-            "Sections: {:?}",
+            "Section 列表：{:?}",
             sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
         );
         assert!(
             sections.iter().any(|(n, _)| n == "spring.cloud.nacos"),
-            "expected spring.cloud.nacos section, got: {:?}",
+            "预期 spring.cloud.nacos section，实际得到：{:?}",
             sections
         );
         assert_eq!(
@@ -2265,7 +2261,7 @@ spring.jackson.default-property-inclusion=non_null";
         let content = "server.port=8080";
         let sections = chunk_properties_adaptive(content);
         assert_eq!(sections.len(), 1);
-        // 2-part key: grouped at first component
+        // 2 段 key：按第一段分组
         assert_eq!(sections[0].0, "server");
     }
 
@@ -2284,28 +2280,28 @@ spring.cloud.sentinel.dashboard=d\n\
 spring.cloud.sentinel.eager=true";
         let sections = chunk_properties_adaptive(content);
         eprintln!(
-            "Mixed depth sections: {:?}",
+            "混合深度 section：{:?}",
             sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
         );
-        // Adaptive + orphan merge: spring.cloud.nacos.* and spring.cloud.sentinel.*
-        // may merge into spring.cloud section.
+        // 自适应 + 孤儿合并：spring.cloud.nacos.* 和 spring.cloud.sentinel.*
+        // 可能合并到 spring.cloud section。
         assert!(
             sections.iter().any(|(n, _)| n == "spring.datasource"),
-            "Missing spring.datasource"
+            "缺少 spring.datasource"
         );
         assert!(
             sections.iter().any(|(n, _)| n == "spring.redis"),
-            "Missing spring.redis"
+            "缺少 spring.redis"
         );
-        // spring.cloud.* sections should exist (cloud, or sub-sections)
+        // spring.cloud.* section 应存在（cloud 或其子 section）
         assert!(
             sections.iter().any(|(n, _)| n.starts_with("spring.cloud")),
-            "Missing spring.cloud"
+            "缺少 spring.cloud"
         );
     }
 
     // -----------------------------------------------------------------------
-    // Adaptive YAML chunking tests
+    // YAML 自适应分块测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2313,7 +2309,7 @@ spring.cloud.sentinel.eager=true";
         let content = "\
 server:\n  port: 8080\n  host: localhost";
         let sections = chunk_yaml_adaptive(content);
-        eprintln!("YAML sections: {:?}", sections);
+        eprintln!("YAML section：{:?}", sections);
         assert_eq!(sections.len(), 1);
         assert!(sections[0].0.contains("server"));
         assert!(sections[0].1.iter().any(|(k, _)| k == "server.port"));
@@ -2324,7 +2320,7 @@ server:\n  port: 8080\n  host: localhost";
         let content = "\
 spring:\n  datasource:\n    url: jdbc:mysql://localhost/db\n    username: admin\n  redis:\n    host: 127.0.0.1\n    port: 6379";
         let sections = chunk_yaml_adaptive(content);
-        eprintln!("Nested YAML sections: {:?}", sections);
+        eprintln!("嵌套 YAML section：{:?}", sections);
         assert!(sections.len() >= 2);
         assert!(sections.iter().any(|(n, _)| n.contains("datasource")));
         assert!(sections.iter().any(|(n, _)| n.contains("redis")));
@@ -2335,11 +2331,11 @@ spring:\n  datasource:\n    url: jdbc:mysql://localhost/db\n    username: admin\
         let content = "\
 spring:\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n    deserialization:\n      READ_DATE_TIMESTAMPS_AS_NANOSECONDS: false\n    serialization:\n      WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS: false";
         let sections = chunk_yaml_adaptive(content);
-        eprintln!("Jackson YAML sections: {:?}", sections);
+        eprintln!("Jackson YAML section：{:?}", sections);
         let jackson_section = sections.iter().find(|(n, _)| n.contains("jackson"));
         assert!(
             jackson_section.is_some(),
-            "Expected a jackson section, got: {:?}",
+            "预期 jackson section，实际得到：{:?}",
             sections
         );
     }
@@ -2350,16 +2346,16 @@ spring:\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n
 spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nacos.newoffen.net\n        namespace: af6d04ec\n  jackson:\n    mapper:\n      ALLOW_EXPLICIT_PROPERTY_RENAMING: true\n    deserialization:\n      READ_DATE_TIMESTAMPS_AS_NANOSECONDS: false\n    serialization:\n      WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS: false\n  boot:\n    admin:\n      client:\n        url: http://172.18.252.175:23333\n        username: admin\n        password: admin";
         let sections = chunk_yaml_adaptive(content);
         eprintln!(
-            "Common YAML sections: {:?}",
+            "常见 YAML section：{:?}",
             sections.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>()
         );
         assert!(
             sections.len() >= 3,
-            "Expected at least 3 sections, got {}",
+            "预期至少 3 个 section，实际得到 {}",
             sections.len()
         );
-        // Adaptive: spring.cloud.nacos.discovery stays under spring.cloud (only 1 child at that depth)
-        // Check content includes nacos, not just section name
+        // 自适应：spring.cloud.nacos.discovery 保留在 spring.cloud 下（该深度只有 1 个子节点）
+        // 检查内容包含 nacos，而不只是 section 名称
         let has_nacos = sections.iter().any(|(n, pairs)| {
             n.contains("nacos")
                 || n.contains("discovery")
@@ -2369,7 +2365,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
         });
         assert!(
             has_nacos,
-            "Expected nacos/discovery in section names or keys"
+            "预期在 section 名称或 key 中包含 nacos/discovery"
         );
         assert!(sections.iter().any(|(n, _)| n.contains("jackson")));
         assert!(sections
@@ -2378,7 +2374,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
     }
 
     // -----------------------------------------------------------------------
-    // chunk_config_adaptive public entry point tests
+    // chunk_config_adaptive 公共入口测试
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2400,7 +2396,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
     }
 
     // -----------------------------------------------------------------------
-    // Integration: run against sample config files
+    // 集成：针对示例配置文件运行
     // -----------------------------------------------------------------------
 
     #[test]
@@ -2409,7 +2405,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
             "/data/myProject/digital-twin-v2/config/nacos_config_export_20260721165345/DEFAULT_GROUP",
         );
         if !dir.exists() {
-            eprintln!("Sample config directory not found, skipping integration test");
+            eprintln!("未找到示例配置目录，跳过集成测试");
             return;
         }
 
@@ -2420,8 +2416,8 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
-        eprintln!("\n===== Adaptive Config Chunking Results =====");
-        eprintln!("Total config files: {}\n", entries.len());
+        eprintln!("\n===== 自适应配置分块结果 =====");
+        eprintln!("配置文件总数：{}\n", entries.len());
 
         for entry in &entries {
             let path = entry.path();
@@ -2429,7 +2425,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
             let content = match std::fs::read_to_string(&path) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("  [SKIP] {}: read error {}", file_name, e);
+                    eprintln!("  [SKIP] {}: 读取错误 {}", file_name, e);
                     continue;
                 }
             };
@@ -2439,7 +2435,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
 
             eprintln!("\n──────────────────────────────────────────────");
             eprintln!(
-                "File: {} ({} bytes, {} sections)",
+                "文件：{}（{} 字节，{} 个 section）",
                 file_name,
                 content.len(),
                 sections.len()
@@ -2447,7 +2443,7 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
             eprintln!("──────────────────────────────────────────────");
 
             for (section_name, pairs) in &sections {
-                eprintln!("  ┌─ [{}] ({} keys)", section_name, pairs.len());
+                eprintln!("  ┌─ [{}]（{} 个 key）", section_name, pairs.len());
                 for (key, value) in pairs.iter().take(15) {
                     if value.chars().count() > 80 {
                         let truncated: String = value.chars().take(80).collect();
@@ -2457,13 +2453,13 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
                     }
                 }
                 if pairs.len() > 15 {
-                    eprintln!("  │  ... and {} more keys", pairs.len() - 15);
+                    eprintln!("  │  ... 以及另外 {} 个 key", pairs.len() - 15);
                 }
                 eprintln!("  └─");
             }
         }
 
-        // Summary statistics
+        // 汇总统计
         let mut total_sections = 0usize;
         let mut total_keys = 0usize;
         for entry in &entries {
@@ -2478,16 +2474,16 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
                 }
             }
         }
-        eprintln!("\n===== Summary =====");
-        eprintln!("Files: {}", entries.len());
-        eprintln!("Total sections (chunks): {}", total_sections);
-        eprintln!("Total keys: {}", total_keys);
+        eprintln!("\n===== 汇总 =====");
+        eprintln!("文件数：{}", entries.len());
+        eprintln!("section（分块）总数：{}", total_sections);
+        eprintln!("key 总数：{}", total_keys);
         eprintln!(
-            "Avg sections per file: {:.1}",
+            "每个文件的平均 section 数：{:.1}",
             total_sections as f64 / entries.len() as f64
         );
         eprintln!(
-            "Avg keys per section: {:.1}",
+            "每个 section 的平均 key 数：{:.1}",
             if total_sections > 0 {
                 total_keys as f64 / total_sections as f64
             } else {

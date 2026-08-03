@@ -1,39 +1,39 @@
-//! Qdrant collection name conventions.
+//! Qdrant collection 命名约定。
 //!
-//! Phase 5+6: Global collections with project as payload tag.
-//! Legacy `{project}_xxx` collections are kept for backward compatibility
-//! during migration — search queries both and fuses via RRF.
+//! 阶段 5+6：全局 collection，项目作为 payload 标签。
+//! 迁移期间保留旧的 `{project}_xxx` collection 以兼容旧数据——
+//! 搜索时同时查询两者并通过 RRF 融合。
 
-/// Global collection for code method vectors.
+/// 代码方法向量的全局 collection。
 pub const CODE_METHODS: &str = "code_methods";
 
-/// Global collection for document chunk vectors.
+/// 文档分块向量的全局 collection。
 pub const DOC_CHUNKS: &str = "doc_chunks";
 
-/// Global collection for KG business node vectors.
+/// KG 业务节点向量的全局 collection。
 pub const KG_NODES: &str = "kg_nodes";
 
-/// Global collection for config chunk vectors (dt sync --config-chunks 写入).
+/// 配置分块向量的全局 collection（dt sync --config-chunks 写入）。
 pub const CONFIG_CHUNKS: &str = "config_chunks";
 
-/// Vector dimension (BGE-M3 = 1024).
+/// 向量维度（BGE-M3 = 1024）。
 pub const VECTOR_DIM: u32 = 1024;
 
-/// Resolve a collection name for the given source type.
+/// 为给定的源类型解析 collection 名称。
 ///
-/// Phase 5+6: returns global collection names (project is a payload tag, not
-/// part of the collection name). Legacy `{project}_xxx` names are detected
-/// by `is_legacy_collection`.
+/// 阶段 5+6：返回全局 collection 名称（项目是 payload 标签，
+/// 不属于 collection 名称的一部分）。旧的 `{project}_xxx` 名称由
+/// `is_legacy_collection` 检测。
 pub fn collection_name(source: &str, _project: &str) -> &'static str {
     match source {
         "methods" | "code" => CODE_METHODS,
         "semantic" | "doc" => DOC_CHUNKS,
         "knowledge" | "kg" => KG_NODES,
-        _ => CODE_METHODS, // fallback
+        _ => CODE_METHODS, // 兜底
     }
 }
 
-/// Check if a collection name is a legacy `{project}_xxx` format.
+/// 检查 collection 名称是否为旧的 `{project}_xxx` 格式。
 pub fn is_legacy_collection(name: &str) -> bool {
     name.ends_with("_methods") && name != CODE_METHODS
         || name.ends_with("_semantic") && name != DOC_CHUNKS
@@ -41,12 +41,12 @@ pub fn is_legacy_collection(name: &str) -> bool {
         || name.ends_with("_entities")
 }
 
-/// Check if a collection name is a new global collection.
+/// 检查 collection 名称是否为新的全局 collection。
 pub fn is_global_collection(name: &str) -> bool {
     name == CODE_METHODS || name == DOC_CHUNKS || name == KG_NODES
 }
 
-/// Get the entity type from a collection name (for search result display).
+/// 从 collection 名称获取实体类型（用于搜索结果展示）。
 pub fn entity_type_from_collection(col: &str) -> &'static str {
     if col == CODE_METHODS || col.ends_with("_methods") {
         "Method"

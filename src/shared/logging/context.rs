@@ -1,11 +1,10 @@
-//! Namespaced logger for plugins — `PluginLogger`.
+//! 插件的命名空间日志器——`PluginLogger`。
 //!
-//! Every plugin receives a `PluginLogger` instance scoped to its plugin name.
-//! Messages are prefixed with the plugin name because `tracing` event macros
-//! require a `&'static str` target. The Rust module path provides the
-//! `target` field in JSON output.
+//! 每个插件都会收到一个绑定到其插件名的 `PluginLogger` 实例。
+//! 消息会以插件名为前缀，因为 `tracing` 事件宏要求 `&'static str` target。
+//! Rust 模块路径提供 JSON 输出中的 `target` 字段。
 //!
-//! # Usage
+//! # 用法
 //!
 //! ```ignore
 //! let log = PluginLogger::new("k8s");
@@ -13,27 +12,26 @@
 //! log.warn("slow response");
 //! ```
 
-/// Trace ID stored for cross-process correlation.
+/// 为跨进程关联而存储的 Trace ID。
 #[derive(Clone, Debug)]
 pub struct TraceId(pub String);
 
-/// A logger handle bound to a specific plugin name.
+/// 绑定到特定插件名的日志器句柄。
 ///
-/// All messages emitted through this logger have the plugin name as a
-/// `[prefix]` in the message and the Rust module path as `target`.
+/// 通过该日志器发出的所有消息都会以插件名作为 `[前缀]`，
+/// 并以 Rust 模块路径作为 `target`。
 ///
-/// The logger is cheap to clone (`Clone`) and safe to share across threads
-/// (`Send + Sync`).
+/// 该日志器克隆成本低（`Clone`），且可安全跨线程共享（`Send + Sync`）。
 #[derive(Clone)]
 pub struct PluginLogger {
-    /// The plugin name, e.g. `"k8s"`, `"svc"`, `"jenkins"`.
+    /// 插件名，例如 `"k8s"`、`"svc"`、`"jenkins"`。
     pub target: String,
 }
 
 impl PluginLogger {
-    /// Create a new logger for the given plugin name.
+    /// 为给定的插件名创建新的日志器。
     ///
-    /// `name` is typically the plugin `id()` (e.g. `"k8s"`, `"svc"`, `"jenkins"`).
+    /// `name` 通常是插件的 `id()`（例如 `"k8s"`、`"svc"`、`"jenkins"`）。
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             target: name.into(),
@@ -67,19 +65,19 @@ impl PluginLogger {
 }
 
 // ---------------------------------------------------------------------------
-// Span helpers
+// Span 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Set a trace ID on the current span.
+/// 在当前 span 上设置 trace ID。
 ///
-/// If no span is active, this is a no-op.
+/// 若没有活跃的 span，则该操作为空操作。
 #[allow(dead_code)]
 pub fn set_trace_id(id: impl Into<String>) {
     let id = TraceId(id.into());
     tracing::Span::current().record("trace_id", tracing::field::display(&id.0));
 }
 
-/// Generate and set a new random trace ID on the current span.
+/// 生成并在当前 span 上设置新的随机 trace ID。
 #[allow(dead_code)]
 pub fn generate_trace_id() -> String {
     let id = uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_string();

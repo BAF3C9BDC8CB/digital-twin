@@ -1,9 +1,9 @@
-//! Tracing-subscriber initialization with JSON-structured file output.
+//! Tracing-subscriber 初始化，带 JSON 结构化文件输出。
 //!
-//! Configures a layered subscriber:
-//! - Layer 1: env-filter for dynamic level control (`RUST_LOG` / `DT_LOG_LEVEL`)
-//! - Layer 2: JSON-format writer to a file
-//! - Layer 3: stderr fallback (human-readable) for development
+//! 配置分层的 subscriber：
+//! - 第 1 层：env-filter，用于动态级别控制（`RUST_LOG` / `DT_LOG_LEVEL`）
+//! - 第 2 层：写入文件的 JSON 格式输出器
+//! - 第 3 层：stderr 兜底（人类可读），供开发使用
 
 use std::fs;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-/// Log timestamps in local timezone (not UTC).
+/// 使用本地时区（而非 UTC）记录时间戳。
 struct LocalTimer;
 
 impl FormatTime for LocalTimer {
@@ -21,29 +21,29 @@ impl FormatTime for LocalTimer {
     }
 }
 
-/// Default log directory. If unwritable, falls back to `/tmp`.
+/// 默认日志目录。若不可写，则回退到 `/tmp`。
 const LOG_DIR: &str = "/var/log/digital-twin";
 
-/// Default log file name.
+/// 默认日志文件名。
 const LOG_FILE: &str = "dt-daemon.log";
 
-/// Initialise the unified logging pipeline.
+/// 初始化统一日志管线。
 ///
-/// # Write targets
+/// # 写入目标
 ///
-/// 1. **Primary**: JSON lines → `$LOG_DIR/dt-daemon.log`.
-/// 2. **Fallback**: If `LOG_DIR` is unwritable, writes to `/tmp/dt-daemon.log`.
-/// 3. **Stderr**: Human-readable compact output for development.
+/// 1. **主要**：JSON 行 → `$LOG_DIR/dt-daemon.log`。
+/// 2. **兜底**：若 `LOG_DIR` 不可写，则写入 `/tmp/dt-daemon.log`。
+/// 3. **stderr**：供开发使用的人类可读紧凑输出。
 ///
-/// # Environment
+/// # 环境变量
 ///
-/// | Variable        | Default              | Description                        |
+/// | 变量            | 默认值                | 说明                               |
 /// |-----------------|----------------------|------------------------------------|
-/// | `DT_LOG_DIR`    | `/var/log/digital-twin` | Override log directory          |
-/// | `RUST_LOG`      | `info`               | Per-module filter (tracing EnvFilter) |
-/// | `DT_LOG_LEVEL`  | `info`               | Fallback when RUST_LOG is unset      |
+/// | `DT_LOG_DIR`    | `/var/log/digital-twin` | 覆盖日志目录                   |
+/// | `RUST_LOG`      | `info`               | 按模块过滤（tracing EnvFilter）    |
+/// | `DT_LOG_LEVEL`  | `info`               | RUST_LOG 未设置时的兜底值          |
 pub fn init_logging() -> anyhow::Result<()> {
-    // Resolve the log directory + create if needed
+    // 解析日志目录，必要时创建
     let log_dir = std::env::var("DT_LOG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(LOG_DIR));
@@ -52,20 +52,20 @@ pub fn init_logging() -> anyhow::Result<()> {
         log_dir.join(LOG_FILE)
     } else {
         eprintln!(
-            "[dt-log] cannot create {}, falling back to /tmp/dt-daemon.log",
+            "[dt-log] 无法创建 {}，回退到 /tmp/dt-daemon.log",
             log_dir.display()
         );
         PathBuf::from("/tmp/dt-daemon.log")
     };
 
-    // Open (or create) the log file in append mode
+    // 以追加模式打开（或创建）日志文件
     let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_file)
-        .map_err(|e| anyhow::anyhow!("failed to open log file {}: {}", log_file.display(), e))?;
+        .map_err(|e| anyhow::anyhow!("无法打开日志文件 {}: {}", log_file.display(), e))?;
 
-    // ── Env filter ──────────────────────────────────────────────────
+    // ── 环境过滤 ──────────────────────────────────────────────────
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .or_else(|_| {
             tracing_subscriber::EnvFilter::try_new(
@@ -74,7 +74,7 @@ pub fn init_logging() -> anyhow::Result<()> {
         })
         .unwrap_or_else(|_| "info".into());
 
-    // ── JSON file layer ────────────────────────────────────────────
+    // ── JSON 文件层 ────────────────────────────────────────────
     let json_layer = tracing_subscriber::fmt::layer()
         .json()
         .flatten_event(true)
@@ -82,7 +82,7 @@ pub fn init_logging() -> anyhow::Result<()> {
         .with_ansi(false)
         .with_timer(LocalTimer);
 
-    // ── Stderr layer (compact, human-readable) ──────────────────────
+    // ── stderr 层（紧凑、人类可读）──────────────────────────
     // 注意：fmt layer 默认写 stdout——必须显式指定 stderr（U-D4 stdout 纯净约束）。
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
@@ -92,17 +92,17 @@ pub fn init_logging() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .with_timer(LocalTimer);
 
-    // ── Assemble ────────────────────────────────────────────────────
+    // ── 组装 ────────────────────────────────────────────────────
     tracing_subscriber::registry()
         .with(env_filter)
         .with(json_layer)
         .with(stderr_layer)
         .try_init()
-        .map_err(|e| anyhow::anyhow!("tracing subscriber init failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("tracing subscriber 初始化失败：{}", e))?;
 
     tracing::info!(
         log_path = %log_file.display(),
-        "logging initialised"
+        "日志初始化完成"
     );
 
     Ok(())

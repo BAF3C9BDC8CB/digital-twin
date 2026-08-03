@@ -1,10 +1,10 @@
-//! Built-in metrics collection with counter, gauge, and histogram primitives.
+//! 内置指标收集，提供 counter、gauge 与 histogram 原语。
 //!
-//! All metrics are stored in a global `MetricsCollector` singleton.
-//! The collector uses separate typed `HashMap`s per metric kind, avoiding
-//! trait-object downcasting issues.
+//! 所有指标都存储在全局 `MetricsCollector` 单例中。
+//! 收集器按指标类型使用独立的类型化 `HashMap`，
+//! 避免 trait 对象向下转型的问题。
 //!
-//! # Macros
+//! # 宏
 //!
 //! ```ignore
 //! counter!("dt.embed.requests", "status", "ok").inc();
@@ -19,11 +19,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// Metric value types (atomic-based, clonable handles)
+// 指标值类型（基于原子操作、可克隆的句柄）
 // ---------------------------------------------------------------------------
 
-/// A monotonically increasing counter. Each `Counter` handle points to the
-/// same underlying `AtomicU64`, so cloning a `Counter` shares the value.
+/// 单调递增的计数器。每个 `Counter` 句柄指向同一个底层 `AtomicU64`，
+/// 因此克隆 `Counter` 会共享该值。
 #[derive(Debug, Clone)]
 pub struct Counter {
     value: Arc<AtomicU64>,
@@ -36,17 +36,17 @@ impl Counter {
         }
     }
 
-    /// Increment by `n`.
+    /// 增加 `n`。
     pub fn inc_by(&self, n: u64) {
         self.value.fetch_add(n, Ordering::Relaxed);
     }
 
-    /// Increment by 1.
+    /// 增加 1。
     pub fn inc(&self) {
         self.inc_by(1);
     }
 
-    /// Current value (point-in-time read).
+    /// 当前值（某一时刻的读取）。
     pub fn value(&self) -> u64 {
         self.value.load(Ordering::Relaxed)
     }
@@ -58,8 +58,8 @@ impl Default for Counter {
     }
 }
 
-/// A point-in-time gauge. `Clone` shares the underlying `AtomicU64`
-/// (stores `f64` bits for portability on stable Rust).
+/// 某一时刻的仪表（gauge）。`Clone` 共享底层的 `AtomicU64`
+/// （以 `f64` 位存储，以保证在 stable Rust 上的可移植性）。
 #[derive(Debug, Clone)]
 pub struct Gauge {
     bits: Arc<AtomicU64>,
@@ -105,8 +105,7 @@ impl Default for Gauge {
     }
 }
 
-/// A histogram with a fixed set of bucket upper bounds. `Clone` shares the
-/// underlying bucket storage (guarded by a `RwLock`).
+/// 带固定桶上界的直方图。`Clone` 共享底层桶存储（由 `RwLock` 保护）。
 #[derive(Debug, Clone)]
 pub struct Histogram {
     inner: Arc<HistogramInner>,
@@ -147,10 +146,10 @@ impl Histogram {
         }
     }
 
-    /// Record an observation.
+    /// 记录一次观测。
     pub fn observe(&self, value: f64) {
         self.inner.total.fetch_add(1, Ordering::Relaxed);
-        // Atomic CAS for sum
+        // 对 sum 使用原子 CAS
         loop {
             let old = self.inner.sum_bits.load(Ordering::Relaxed);
             let new = f64::from_bits(old) + value;
@@ -186,10 +185,10 @@ impl Histogram {
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot types
+// 快照类型
 // ---------------------------------------------------------------------------
 
-/// Snapshot of a histogram at a point in time.
+/// 某一时刻的直方图快照。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct HistogramSnapshot {
     pub count: u64,
@@ -198,7 +197,7 @@ pub struct HistogramSnapshot {
     pub counts: Vec<u64>,
 }
 
-/// A complete point-in-time snapshot of all registered metrics.
+/// 所有已注册指标的完整时刻快照。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MetricSnapshot {
     pub timestamp: String,
@@ -208,10 +207,10 @@ pub struct MetricSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Global collector (singleton)
+// 全局收集器（单例）
 // ---------------------------------------------------------------------------
 
-/// Thread-safe global metrics registry.
+/// 线程安全的全局指标注册表。
 pub struct MetricsCollector {
     counters: RwLock<HashMap<String, Counter>>,
     gauges: RwLock<HashMap<String, Gauge>>,
@@ -219,7 +218,7 @@ pub struct MetricsCollector {
 }
 
 impl MetricsCollector {
-    /// Get (or initialise) the global singleton.
+    /// 获取（或初始化）全局单例。
     pub fn global() -> &'static Self {
         static INSTANCE: once_cell::sync::OnceCell<MetricsCollector> =
             once_cell::sync::OnceCell::new();
@@ -230,8 +229,8 @@ impl MetricsCollector {
         })
     }
 
-    /// Register or retrieve a counter. If the key already exists, returns
-    /// the existing counter (shared handle).
+    /// 注册或获取计数器。若 key 已存在，则返回
+    /// 已有的计数器（共享句柄）。
     pub fn counter(&self, key: &str) -> Counter {
         {
             let map = self.counters.read();
@@ -245,7 +244,7 @@ impl MetricsCollector {
         c
     }
 
-    /// Register or retrieve a gauge. Default value = 0.0.
+    /// 注册或获取仪表。默认值 = 0.0。
     pub fn gauge(&self, key: &str) -> Gauge {
         {
             let map = self.gauges.read();
@@ -259,13 +258,13 @@ impl MetricsCollector {
         g
     }
 
-    /// Get an existing gauge by key. Returns `None` if not registered.
+    /// 按 key 获取已有仪表。若未注册则返回 `None`。
     #[allow(dead_code)]
     pub fn get_gauge(&self, key: &str) -> Option<Gauge> {
         self.gauges.read().get(key).cloned()
     }
 
-    /// Register or retrieve a histogram with linear buckets.
+    /// 注册或获取带线性桶的直方图。
     pub fn histogram_linear(&self, key: &str, start: f64, width: f64, n: usize) -> Histogram {
         {
             let map = self.histograms.read();
@@ -279,7 +278,7 @@ impl MetricsCollector {
         h
     }
 
-    /// Register or retrieve a histogram with exponential buckets.
+    /// 注册或获取带指数桶的直方图。
     pub fn histogram_exponential(&self, key: &str, start: f64, factor: f64, n: usize) -> Histogram {
         {
             let map = self.histograms.read();
@@ -293,12 +292,12 @@ impl MetricsCollector {
         h
     }
 
-    /// Default histogram (linear buckets 0..10, width 1, 10 buckets).
+    /// 默认直方图（线性桶 0..10，宽度 1，10 个桶）。
     pub fn histogram(&self, key: &str) -> Histogram {
         self.histogram_linear(key, 0.0, 1.0, 10)
     }
 
-    /// Produce a point-in-time snapshot of all registered metrics.
+    /// 生成所有已注册指标的某一时刻快照。
     pub fn snapshot(&self) -> MetricSnapshot {
         let timestamp = Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
 
@@ -341,10 +340,10 @@ impl MetricsCollector {
 }
 
 // ---------------------------------------------------------------------------
-// Convenience macros
+// 便捷宏
 // ---------------------------------------------------------------------------
 
-/// Register or retrieve a counter by key segments joined with `.`.
+/// 通过以 `.` 连接的 key 段注册或获取计数器。
 ///
 /// ```ignore
 /// let c = counter!("dt.embed.requests", "status", "ok");
@@ -361,7 +360,7 @@ macro_rules! counter {
     }};
 }
 
-/// Register or retrieve a gauge by key segments joined with `.`.
+/// 通过以 `.` 连接的 key 段注册或获取仪表。
 ///
 /// ```ignore
 /// gauge!("dt.embed.queue_depth").set(12.0);
@@ -377,7 +376,7 @@ macro_rules! mx_gauge {
     }};
 }
 
-/// Register or retrieve a histogram by key segments joined with `.`.
+/// 通过以 `.` 连接的 key 段注册或获取直方图。
 ///
 /// ```ignore
 /// histogram!("dt.build.duration", "project", "my-app").observe(4.2);

@@ -1,47 +1,43 @@
-//! WriteCoordinator — concurrent write safety for three ingestion sources.
+//! WriteCoordinator——三个写入源的并发写安全。
 //!
-//! Three writers (OpenCode Hook → dt update, user dt build, cron syncs)
-//! can concurrently write to Memgraph / Qdrant. The `WriteCoordinator` provides
-//! file-level locks, entity-level locks, and an optional global serialization
-//! lock to prevent conflicts.
+//! 三个写入方（OpenCode Hook → dt update、用户 dt build、cron 同步）
+//! 可能并发写入 Memgraph / Qdrant。`WriteCoordinator` 提供文件级锁、
+//! 实体级锁以及可选的全局串行化锁，以防止冲突。
 //!
-//! # Architecture
+//! # 架构
 //!
-//! - **File locks**: `DashMap<file_path, Arc<Mutex>>`. Two writers cannot
-//!   concurrently update the same file.
-//! - **Entity locks**: `DashMap<entity_id, Arc<Mutex>>`. Two writers cannot
-//!   concurrently write the same entity (project-level for deletes, etc.).
-//! - **Global gate**: Optional `Arc<Semaphore>` with a large permit count.
-//!   File/entity ops each consume 1 permit (allowing many concurrent ops).
-//!   A full-build `acquire_global()` consumes ALL permits, blocking every
-//!   subsequent file/entity writer until the build completes.
-//! - **Active-writes counter**: `AtomicUsize` for cron jobs to check before
-//!   starting (e.g. nacos-sync skips if writes are in progress).
+//! - **文件锁**：`DashMap<file_path, Arc<Mutex>>`。两个写入方不能并发更新同一文件。
+//! - **实体锁**：`DashMap<entity_id, Arc<Mutex>>`。两个写入方不能并发写入同一实体
+//!   （删除时为项目级等）。
+//! - **全局闸门**：可选的 `Arc<Semaphore>`，带大量许可。文件/实体操作各消耗 1 个
+//!   许可（允许大量并发操作）。全量构建的 `acquire_global()` 消耗全部许可，
+//!   阻塞其后所有文件/实体写入方，直到构建完成。
+//! - **活动写入计数器**：`AtomicUsize`，供 cron 任务在启动前检查
+//!   （例如 nacos-sync 在存在写入时跳过）。
 //!
-//! # RAII Guards
+//! # RAII 守卫
 //!
-//! All lock methods return RAII guards (`FileGuard`, `EntityGuard`, `GlobalGuard`).
-//! On drop, the guard decrements the active-writes counter. The underlying
-//! `OwnedMutexGuard` / `OwnedSemaphorePermit` release the lock automatically.
+//! 所有加锁方法都返回 RAII 守卫（`FileGuard`、`EntityGuard`、`GlobalGuard`）。
+//! 守卫被 drop 时会递减活动写入计数器。底层的 `OwnedMutexGuard` /
+//! `OwnedSemaphorePermit` 会自动释放锁。
 
 use dashmap::DashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Maximum number of concurrent file/entity operations allowed before the
-/// global semaphore blocks. The global lock (`acquire_global`) acquires all
-/// 1024 permits, effectively blocking every new file/entity operation until
-/// the build finishes.
+/// 全局信号量阻塞之前允许的最大并发文件/实体操作数。全局锁
+/// （`acquire_global`）会获取全部 1024 个许可，从而在构建结束前
+/// 阻塞所有新的文件/实体操作。
 const MAX_CONCURRENT_WRITES: u32 = 1024;
 
 // ---------------------------------------------------------------------------
 // WriteCoordinator
 // ---------------------------------------------------------------------------
 
-/// Coordinates concurrent writes from multiple ingestion sources.
+/// 协调来自多个写入源的并发写操作。
 ///
-/// # Usage
+/// # 用法
 ///
 /// ```ignore
 /// let coordinator = Arc::new(WriteCoordinator::with_global_lock());
@@ -61,22 +57,21 @@ const MAX_CONCURRENT_WRITES: u32 = 1024;
 /// }
 /// ```
 pub struct WriteCoordinator {
-    /// Per-file mutexes. Key = canonical file path string.
+    /// 每个文件的互斥锁。Key = 规范化的文件路径字符串。
     file_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
-    /// Per-entity mutexes. Key = entity ID string.
+    /// 每个实体的互斥锁。Key = 实体 ID 字符串。
     entity_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
-    /// Global semaphore gate. File/entity ops consume 1 permit; full builds
-    /// consume all 1024 permits, blocking everything.
+    /// 全局信号量闸门。文件/实体操作消耗 1 个许可；全量构建
+    /// 消耗全部 1024 个许可，阻塞一切操作。
     global_semaphore: Option<Arc<tokio::sync::Semaphore>>,
-    /// Number of currently held write guards (all types). Used by cron jobs
-    /// to decide whether to skip a sync cycle.
+    /// 当前持有的写守卫数量（所有类型）。供 cron 任务判断
+    /// 是否跳过一轮同步。
     active_writes: Arc<AtomicUsize>,
 }
 
 impl WriteCoordinator {
-    /// Create a coordinator with file and entity locks, **without** a global
-    /// gate. Suitable when only single-file updates are expected and there
-    /// are no full-project rebuilds.
+    /// 创建仅带文件锁和实体锁的协调器，**不**带全局闸门。
+    /// 适用于只需单文件更新、无需全量重建的场景。
     pub fn new() -> Self {
         Self {
             file_locks: DashMap::new(),
@@ -86,12 +81,11 @@ impl WriteCoordinator {
         }
     }
 
-    /// Create a coordinator **with** a global gate. Use when full-project
-    /// rebuilds (`dt build --full`) must block all other writers.
+    /// 创建**带**全局闸门的协调器。当全量重建（`dt build --full`）
+    /// 必须阻塞所有其他写入方时使用。
     ///
-    /// File/entity ops consume 1 permit from the semaphore (allowing many
-    /// concurrent writers). `acquire_global()` consumes all permits,
-    /// blocking every new writer until the build finishes.
+    /// 文件/实体操作从信号量消耗 1 个许可（允许大量并发写入方）。
+    /// `acquire_global()` 消耗全部许可，在构建完成前阻塞所有新写入方。
     pub fn with_global_lock() -> Self {
         Self {
             file_locks: DashMap::new(),
@@ -103,27 +97,27 @@ impl WriteCoordinator {
         }
     }
 
-    /// Acquire an exclusive lock for writing a specific file.
+    /// 获取用于写入特定文件的独占锁。
     ///
-    /// 1. Consumes 1 global semaphore permit (if gate exists). If a full
-    ///    build holds all permits, this call blocks until the build finishes.
-    /// 2. Acquires the file-level mutex.
+    /// 1. 消耗 1 个全局信号量许可（若存在闸门）。若全量构建持有全部许可，
+    ///    此调用将阻塞直到构建完成。
+    /// 2. 获取文件级互斥锁。
     ///
-    /// The returned [`FileGuard`] releases both on drop.
+    /// 返回的 [`FileGuard`] 在 drop 时同时释放两者。
     pub async fn acquire_file(&self, path: &Path) -> FileGuard {
-        // Step 1: global gate (1 permit)
+        // 步骤 1：全局闸门（1 个许可）
         let global_permit = if let Some(sem) = &self.global_semaphore {
             Some(
                 sem.clone()
                     .acquire_owned()
                     .await
-                    .expect("WriteCoordinator semaphore closed"),
+                    .expect("WriteCoordinator 信号量已关闭"),
             )
         } else {
             None
         };
 
-        // Step 2: file-level lock
+        // 步骤 2：文件级锁
         let key = path.to_string_lossy().to_string();
         let lock = self
             .file_locks
@@ -140,24 +134,23 @@ impl WriteCoordinator {
         }
     }
 
-    /// Acquire an exclusive lock for writing a specific entity (e.g. a project
-    /// during deletion).
+    /// 获取用于写入特定实体（例如删除中的项目）的独占锁。
     ///
-    /// Same two-step gating as [`acquire_file`]: global permit → entity lock.
+    /// 与 [`acquire_file`] 相同的两步闸门：全局许可 → 实体锁。
     pub async fn acquire_entity(&self, entity_id: &str) -> EntityGuard {
-        // Step 1: global gate (1 permit)
+        // 步骤 1：全局闸门（1 个许可）
         let global_permit = if let Some(sem) = &self.global_semaphore {
             Some(
                 sem.clone()
                     .acquire_owned()
                     .await
-                    .expect("WriteCoordinator semaphore closed"),
+                    .expect("WriteCoordinator 信号量已关闭"),
             )
         } else {
             None
         };
 
-        // Step 2: entity-level lock
+        // 步骤 2：实体级锁
         let key = entity_id.to_string();
         let lock = self
             .entity_locks
@@ -174,19 +167,18 @@ impl WriteCoordinator {
         }
     }
 
-    /// Acquire the global serialization lock. Consumes ALL permits from the
-    /// semaphore, blocking every subsequent file/entity operation until the
-    /// returned guard is dropped.
+    /// 获取全局串行化锁。从信号量消耗全部许可，阻塞其后所有
+    /// 文件/实体操作，直到返回的守卫被 drop。
     ///
-    /// Returns `None` if this coordinator was created **without** a global
-    /// gate (i.e. via `new()`).
+    /// 若该协调器创建时**没有**全局闸门（即通过 `new()` 创建），
+    /// 则返回 `None`。
     pub async fn acquire_global(&self) -> Option<GlobalGuard> {
         if let Some(sem) = &self.global_semaphore {
             let permit = sem
                 .clone()
                 .acquire_many_owned(MAX_CONCURRENT_WRITES)
                 .await
-                .expect("WriteCoordinator semaphore closed");
+                .expect("WriteCoordinator 信号量已关闭");
             self.active_writes.fetch_add(1, Ordering::SeqCst);
             Some(GlobalGuard {
                 _permit: permit,
@@ -197,10 +189,9 @@ impl WriteCoordinator {
         }
     }
 
-    /// Returns `true` if any write guard is currently held (file, entity, or
-    /// global).
+    /// 若当前持有任何写守卫（文件、实体或全局），返回 `true`。
     ///
-    /// Cron sync jobs should call this before starting and skip if `true`.
+    /// cron 同步任务应在启动前调用此方法，若为 `true` 则跳过。
     /// ```ignore
     /// if coordinator.has_active_writes() {
     ///     tracing::warn!("skipped: {} active writes in progress", count);
@@ -211,7 +202,7 @@ impl WriteCoordinator {
         self.active_writes.load(Ordering::SeqCst) > 0
     }
 
-    /// Return the current count of active writes (for diagnostics / logging).
+    /// 返回当前活动写入数（用于诊断 / 日志）。
     pub fn active_write_count(&self) -> usize {
         self.active_writes.load(Ordering::SeqCst)
     }
@@ -224,12 +215,11 @@ impl Default for WriteCoordinator {
 }
 
 // ---------------------------------------------------------------------------
-// RAII Guards
+// RAII 守卫
 // ---------------------------------------------------------------------------
 
-/// Guard for a file-level lock. Holds both the global semaphore permit and
-/// the file mutex guard. Dropping releases both and decrements the active
-/// writes counter.
+/// 文件级锁的守卫。同时持有全局信号量许可与文件互斥锁守卫。
+/// drop 时释放两者并递减活动写入计数器。
 pub struct FileGuard {
     _file_guard: tokio::sync::OwnedMutexGuard<()>,
     _global_permit: Option<tokio::sync::OwnedSemaphorePermit>,
@@ -242,8 +232,7 @@ impl Drop for FileGuard {
     }
 }
 
-/// Guard for an entity-level lock. Holds both the global semaphore permit
-/// and the entity mutex guard.
+/// 实体级锁的守卫。同时持有全局信号量许可与实体互斥锁守卫。
 pub struct EntityGuard {
     _entity_guard: tokio::sync::OwnedMutexGuard<()>,
     _global_permit: Option<tokio::sync::OwnedSemaphorePermit>,
@@ -256,8 +245,8 @@ impl Drop for EntityGuard {
     }
 }
 
-/// Guard for the global serialization lock. Holds all semaphore permits,
-/// blocking every new file/entity writer until this guard is dropped.
+/// 全局串行化锁的守卫。持有全部信号量许可，
+/// 在守卫被 drop 前阻塞所有新的文件/实体写入方。
 pub struct GlobalGuard {
     _permit: tokio::sync::OwnedSemaphorePermit,
     active_writes: Arc<AtomicUsize>,
@@ -270,7 +259,7 @@ impl Drop for GlobalGuard {
 }
 
 // ---------------------------------------------------------------------------
-// CoordinatedBuildService — Wrap pattern
+// CoordinatedBuildService——包装模式
 // ---------------------------------------------------------------------------
 
 use crate::domain::error::DtError;
@@ -278,23 +267,23 @@ use crate::domain::traits::BuildService;
 use crate::domain::types::BuildReport;
 use async_trait::async_trait;
 
-/// A `BuildService` decorator that acquires [`WriteCoordinator`] locks
-/// before delegating to the inner service.
+/// 一个 `BuildService` 装饰器，在委托给内部服务之前
+/// 获取 [`WriteCoordinator`] 锁。
 ///
-/// # Locking strategy
+/// # 加锁策略
 ///
-/// | Method            | Lock acquired                           |
-/// |-------------------|-----------------------------------------|
-/// | `build()`         | Global gate (all semaphore permits)     |
-/// | `update_file()`   | 1 global permit + file-level lock       |
-/// | `delete_project()`| 1 global permit + entity-level lock     |
+/// | 方法               | 获取的锁                            |
+/// |--------------------|--------------------------------------|
+/// | `build()`          | 全局闸门（全部信号量许可）          |
+/// | `update_file()`    | 1 个全局许可 + 文件级锁             |
+/// | `delete_project()` | 1 个全局许可 + 实体级锁             |
 pub struct CoordinatedBuildService {
     inner: Arc<dyn BuildService>,
     coordinator: Arc<WriteCoordinator>,
 }
 
 impl CoordinatedBuildService {
-    /// Wrap an existing `BuildService` with write coordination.
+    /// 为已有的 `BuildService` 包装写协调能力。
     pub fn new(inner: Arc<dyn BuildService>, coordinator: Arc<WriteCoordinator>) -> Self {
         Self { inner, coordinator }
     }
@@ -302,23 +291,21 @@ impl CoordinatedBuildService {
 
 #[async_trait]
 impl BuildService for CoordinatedBuildService {
-    /// Full/incremental build — acquires the global gate (all semaphore
-    /// permits) so that no file-level or entity-level writer can interleave
-    /// during the bulk write phase.
+    /// 全量/增量构建——获取全局闸门（全部信号量许可），
+    /// 以确保批量写入阶段不会有任何文件级或实体级写入方插入。
     async fn build(&self, project: &str, root: &Path) -> Result<BuildReport, DtError> {
         let _guard = self.coordinator.acquire_global().await;
         self.inner.build(project, root).await
     }
 
-    /// Single-file update — acquires 1 global permit + file-level lock to
-    /// prevent concurrent updates to the same file.
+    /// 单文件更新——获取 1 个全局许可 + 文件级锁，
+    /// 以防止对同一文件的并发更新。
     async fn update_file(&self, project: &str, path: &Path) -> Result<(), DtError> {
         let _guard = self.coordinator.acquire_file(path).await;
         self.inner.update_file(project, path).await
     }
 
-    /// Project deletion — acquires 1 global permit + entity-level lock for
-    /// the project.
+    /// 项目删除——获取 1 个全局许可 + 项目实体级锁。
     async fn delete_project(&self, project: &str) -> Result<(), DtError> {
         let _guard = self.coordinator.acquire_entity(project).await;
         self.inner.delete_project(project).await
@@ -326,7 +313,7 @@ impl BuildService for CoordinatedBuildService {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -335,7 +322,7 @@ mod tests {
     use std::path::PathBuf;
 
     // ------------------------------------------------------------------
-    // Constructor tests
+    // 构造函数测试
     // ------------------------------------------------------------------
 
     #[test]
@@ -357,7 +344,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Basic acquire / release tests
+    // 基本获取 / 释放测试
     // ------------------------------------------------------------------
 
     #[tokio::test]
@@ -373,7 +360,7 @@ mod tests {
             assert_eq!(c.active_write_count(), 1);
         }
 
-        // Guard dropped → count decremented
+        // 守卫已 drop → 计数递减
         assert!(!c.has_active_writes());
         assert_eq!(c.active_write_count(), 0);
     }
@@ -408,12 +395,12 @@ mod tests {
         let c = WriteCoordinator::new();
         let guard = c.acquire_global().await;
         assert!(guard.is_none());
-        // No global lock → no active write
+        // 无全局锁 → 无活动写入
         assert!(!c.has_active_writes());
     }
 
     // ------------------------------------------------------------------
-    // Concurrent access tests
+    // 并发访问测试
     // ------------------------------------------------------------------
 
     #[tokio::test]
@@ -421,7 +408,7 @@ mod tests {
         let c = Arc::new(WriteCoordinator::new());
         let path = PathBuf::from("/tmp/shared.rs");
 
-        // Track execution order
+        // 跟踪执行顺序
         let order = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
         let c1 = Arc::clone(&c);
@@ -432,14 +419,14 @@ mod tests {
         let order2 = Arc::clone(&order);
         let path2 = path.clone();
 
-        // Task 1: acquires file lock, sleeps briefly, then records
+        // 任务 1：获取文件锁，短暂休眠，然后记录
         let t1 = tokio::spawn(async move {
             let _guard = c1.acquire_file(&path1).await;
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             order1.lock().await.push(1);
         });
 
-        // Task 2: same file — must wait for t1
+        // 任务 2：同一文件——必须等待 t1
         let t2 = tokio::spawn(async move {
             let _guard = c2.acquire_file(&path2).await;
             order2.lock().await.push(2);
@@ -450,7 +437,7 @@ mod tests {
         r2.unwrap();
 
         let final_order = order.lock().await;
-        assert_eq!(*final_order, vec![1, 2], "task 2 must execute after task 1");
+        assert_eq!(*final_order, vec![1, 2], "任务 2 必须在任务 1 之后执行");
     }
 
     #[tokio::test]
@@ -476,14 +463,14 @@ mod tests {
             barrier2.wait().await;
         });
 
-        // Both should complete without deadlock (different files)
+        // 两者都应无死锁地完成（不同文件）
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let (r1, r2) = tokio::join!(t1, t2);
             r1.unwrap();
             r2.unwrap();
         })
         .await
-        .expect("different file locks should not deadlock");
+        .expect("不同文件锁不应死锁");
     }
 
     #[tokio::test]
@@ -491,39 +478,39 @@ mod tests {
         let c = Arc::new(WriteCoordinator::with_global_lock());
         let path = PathBuf::from("/tmp/x.rs");
 
-        // Acquire global lock first (consumes all 1024 semaphore permits)
+        // 先获取全局锁（消耗全部 1024 个信号量许可）
         let global_guard = c.acquire_global().await.unwrap();
         assert!(c.has_active_writes());
 
-        // Attempt to acquire file lock — should not complete until global
-        // lock is dropped (semaphore has 0 permits).
+        // 尝试获取文件锁——在全局锁被 drop（信号量 0 许可）之前
+        // 不应完成。
         let c_clone = Arc::clone(&c);
         let path_clone = path.clone();
         let file_task = tokio::spawn(async move {
             let _guard = c_clone.acquire_file(&path_clone).await;
         });
 
-        // The file task should be blocked (global lock held)
+        // 文件任务应被阻塞（全局锁被持有）
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert!(
             !file_task.is_finished(),
-            "file task should be blocked by global lock"
+            "文件任务应被全局锁阻塞"
         );
 
-        // Drop global lock → release all permits
+        // drop 全局锁 → 释放全部许可
         drop(global_guard);
 
-        // Now file task should complete
+        // 现在文件任务应完成
         tokio::time::timeout(std::time::Duration::from_secs(3), file_task)
             .await
-            .expect("file task should complete after global lock released")
+            .expect("全局锁释放后文件任务应完成")
             .unwrap();
     }
 
     #[tokio::test]
     async fn multiple_file_locks_concurrent_with_global_gate() {
-        // With global gate, multiple file operations should still be concurrent
-        // (each consumes 1 permit out of 1024).
+        // 带全局闸门时，多个文件操作仍应并发执行
+        // （每个操作消耗 1024 个许可中的 1 个）。
         let c = Arc::new(WriteCoordinator::with_global_lock());
 
         let barrier = Arc::new(tokio::sync::Barrier::new(3));
@@ -555,7 +542,7 @@ mod tests {
             })
         };
 
-        // All three should complete without deadlock
+        // 三者都应无死锁地完成
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let (r1, r2, r3) = tokio::join!(t1, t2, t3);
             r1.unwrap();
@@ -563,11 +550,11 @@ mod tests {
             r3.unwrap();
         })
         .await
-        .expect("multiple file locks with global gate should not deadlock");
+        .expect("带全局闸门的多个文件锁不应死锁");
     }
 
     // ------------------------------------------------------------------
-    // has_active_writes tests
+    // has_active_writes 测试
     // ------------------------------------------------------------------
 
     #[tokio::test]
@@ -593,10 +580,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // CoordinatedBuildService tests
+    // CoordinatedBuildService 测试
     // ------------------------------------------------------------------
 
-    /// A simple stub BuildService for testing the wrapper.
+    /// 用于测试包装器的简单 BuildService 桩。
     struct StubBuildService;
 
     #[async_trait]
@@ -645,7 +632,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Guard should have been dropped after the call returned
+        // 调用返回后守卫应已被 drop
         assert!(!coordinator.has_active_writes());
     }
 }
