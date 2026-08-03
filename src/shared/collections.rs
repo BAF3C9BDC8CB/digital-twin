@@ -13,6 +13,9 @@ pub const DOC_CHUNKS: &str = "doc_chunks";
 /// Global collection for KG business node vectors.
 pub const KG_NODES: &str = "kg_nodes";
 
+/// Global collection for config chunk vectors (dt sync --config-chunks 写入).
+pub const CONFIG_CHUNKS: &str = "config_chunks";
+
 /// Vector dimension (BGE-M3 = 1024).
 pub const VECTOR_DIM: u32 = 1024;
 

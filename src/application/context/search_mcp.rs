@@ -158,6 +158,21 @@ impl CrossWorldSearch {
         }
     }
 
+    /// 供同 crate 扩展方法（search_config/search_memory）访问图后端。
+    pub(crate) fn graph_ref(&self) -> &Option<Arc<dyn GraphRepository>> {
+        &self.graph
+    }
+
+    /// 供同 crate 扩展方法（search_config）访问向量后端。
+    pub(crate) fn vector_ref(&self) -> &Option<Arc<dyn VectorRepository>> {
+        &self.vector
+    }
+
+    /// 供同 crate 扩展方法（search_config）访问 embed 后端。
+    pub(crate) fn embed_ref(&self) -> &Option<Arc<dyn EmbedService>> {
+        &self.embed
+    }
+
     /// Search the Reality World (code entities) via Qdrant vector search.
     ///
     /// Queries `{project}_methods` collections (or all `*_methods` when no project
@@ -458,7 +473,12 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
                     .search_doc(&request.query, project, request.doc_id.as_deref(), limit)
                     .await
                     .unwrap_or_default(),
-                // config / memory 分支由 Task 3 / Task 4 加入
+                "config" => {
+                    let (h, dgr) = self.search_config(&request.query, project, limit).await;
+                    degraded.extend(dgr);
+                    h
+                }
+                // memory 分支由 Task 4 加入
                 _ => Vec::new(),
             };
             per_world.insert(world.to_string(), hits.len());
