@@ -197,7 +197,7 @@ impl Default for EcosystemConfig {
 }
 
 /// 提供方路由与模型配置。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvidersConfig {
     /// 哪个提供方处理 embedding（"siliconflow" 或 "xinference"）。
     #[serde(default = "default_embed_provider")]

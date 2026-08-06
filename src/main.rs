@@ -1094,8 +1094,32 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // ── dt build --source knowledge: 替代 dt kg-sync ──
+            // ── dt build --source nacos: Nacos 配置同步 ──
+            // ── dt build --source jenkins: Jenkins 构建同步 ──
             if let Some(ref src) = source {
+                let remote_sources = ["nacos", "jenkins"];
+                if remote_sources.contains(&src.as_str()) {
+                    // F5: 启动自检——远程源要求 xinference llm provider + localhost:9997 可达
+                    match dt_daemon::interfaces::cli::build::validate_xinference_for_remote_source() {
+                        Ok(()) => {
+                            tracing::info!(
+                                "dt build --source {src}: xinference 自检通过，继续执行"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("错误: {e}");
+                            std::process::exit(1);
+                        }
+                    }
+
+                    // TODO: 实际 Nacos/Jenkins 虚拟文件源的构建流水线
+                    // 当前占位——provider 已验证，后续 Phase 实现具体逻辑。
+                    tracing::warn!(
+                        "dt build --source {src}: provider 已验证，但完整流水线尚未实现"
+                    );
+                    return Ok(());
+                }
+
                 if src == "knowledge" {
                     tracing::info!("dt build --source knowledge: 同步 KG 节点到向量库");
                     let graph = connect_graph().await;

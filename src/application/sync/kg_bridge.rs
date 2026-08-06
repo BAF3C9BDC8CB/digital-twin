@@ -336,13 +336,15 @@ impl KgBridge {
                         "id": format!("{}#{}", config_id, section_name),
                         "vector": vec,
                         "payload": {
+                            // ---- 区块 ----
+                            "section_name": section_name,
+                            "config_type": config_type,
                             // ---- 来源 ----
                             "namespace": namespace,
                             "data_id": data_id,
                             "group": group,
+                            "environment": "",  // F6: 与 ConfigChunkVectorizer schema 对齐
                             // ---- 内容 ----
-                            "section_name": section_name,
-                            "config_type": config_type,
                             "text": text,
                             "key_count": pairs.len(),
                             // ---- 元数据 ----
@@ -351,6 +353,20 @@ impl KgBridge {
                     })
                 })
                 .collect();
+
+            // F6: 写入前按 namespace/data_id purge 旧点（与 ConfigChunkVectorizer 行为一致）
+            let _ = self
+                .vector
+                .delete_by_filter(
+                    collection,
+                    serde_json::json!({
+                        "must": [
+                            {"key": "namespace", "match": {"value": namespace}},
+                            {"key": "data_id", "match": {"value": data_id}},
+                        ]
+                    }),
+                )
+                .await;
 
             if let Err(e) = self.vector.upsert(collection, points.clone()).await {
                 tracing::warn!("[config_chunks] {} upsert 失败: {}", data_id, e);
