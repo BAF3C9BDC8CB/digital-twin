@@ -212,6 +212,14 @@ enum Commands {
         /// 限定到某个项目名称。
         #[arg(long = "project", short = 'p')]
         project: Option<String>,
+
+        /// 按文件类型过滤：类别名（document/code/config）或具体后缀（md/yaml/java…）。
+        #[arg(long = "file-type")]
+        file_type: Option<String>,
+
+        /// 按内容类型过滤：LLM 语义类型（Config/Service/Standard…）或 AST 类型（Method/Class…）。
+        #[arg(long = "content-type", alias = "type")]
+        content_type: Option<String>,
     },
 
     /// 环境感知：定位目录所属项目，输出索引状态与内容简报。
@@ -378,8 +386,6 @@ struct ServiceConfig {
     jenkins: JenkinsEndpointConfig,
     #[serde(default)]
     sqlite: SqliteConfig,
-    #[serde(default)]
-    hanlp: HanlpConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -458,17 +464,6 @@ impl Default for SqliteConfig {
 
 fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
-}
-
-/// 来自 config.yaml `services.hanlp` 的 HanLP 服务配置。
-#[derive(Debug, Deserialize, Default)]
-struct HanlpConfig {
-    /// 基础 URL（如 http://localhost:8765）。
-    #[serde(default)]
-    url: String,
-    /// API key（可选，本地部署时通常为空）。
-    #[serde(default)]
-    api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -698,22 +693,6 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
     ))
 }
 
-/// 从 config.yaml 连接 HanLP 本地 NLP 服务。
-async fn connect_hanlp() -> Option<Arc<dt_daemon::infrastructure::hanlp::HanlpClient>> {
-    let cfg = load_config()?;
-    let url = cfg.services.hanlp.url.clone();
-    let api_key = cfg.services.hanlp.api_key.clone();
-    if url.is_empty() {
-        tracing::info!("HanLP 未配置 — 跳过");
-        return None;
-    }
-    let client = Arc::new(dt_daemon::infrastructure::hanlp::HanlpClient::new(
-        url, api_key,
-    ));
-    tracing::info!("HanLP 客户端已创建");
-    Some(client)
-}
-
 /// 构建可选的 KgBridge，用于写入后自动将节点同步到 Qdrant。
 ///
 /// 需要同时具备 `graph` 与 `vector`；`queue` 提供带优先级的嵌入能力。
@@ -806,9 +785,7 @@ async fn main() -> anyhow::Result<()> {
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
-                        eprintln!(
-                            "错误: Memgraph 不可用 — clean --test 需要真实后端"
-                        );
+                        eprintln!("错误: Memgraph 不可用 — clean --test 需要真实后端");
                         std::process::exit(1);
                     }
                 };
@@ -817,9 +794,7 @@ async fn main() -> anyhow::Result<()> {
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
-                        eprintln!(
-                            "错误: Qdrant 不可用 — clean --test 需要真实后端"
-                        );
+                        eprintln!("错误: Qdrant 不可用 — clean --test 需要真实后端");
                         std::process::exit(1);
                     }
                 };
@@ -1051,9 +1026,7 @@ async fn main() -> anyhow::Result<()> {
                 let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
                     Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
                     None => {
-                        eprintln!(
-                            "错误: Memgraph 不可用 — build --test 需要真实后端"
-                        );
+                        eprintln!("错误: Memgraph 不可用 — build --test 需要真实后端");
                         std::process::exit(1);
                     }
                 };
@@ -1062,9 +1035,7 @@ async fn main() -> anyhow::Result<()> {
                 let vector: Arc<dyn VectorRepository> = match connect_vector().await {
                     Some(c) => c,
                     None => {
-                        eprintln!(
-                            "错误: Qdrant 不可用 — build --test 需要真实后端"
-                        );
+                        eprintln!("错误: Qdrant 不可用 — build --test 需要真实后端");
                         std::process::exit(1);
                     }
                 };
@@ -1105,7 +1076,6 @@ async fn main() -> anyhow::Result<()> {
                     Some(embed.clone()),
                     Some(snapshot.clone()),
                     BatchConfig::default(),
-                    connect_hanlp().await,
                 )
                 .await?;
 
@@ -1133,7 +1103,9 @@ async fn main() -> anyhow::Result<()> {
                     let vector = connect_vector().await;
 
                     if graph.is_none() || embed.is_none() || vector.is_none() {
-                        eprintln!("错误: build --source knowledge 需要 Memgraph + Qdrant + embed 后端");
+                        eprintln!(
+                            "错误: build --source knowledge 需要 Memgraph + Qdrant + embed 后端"
+                        );
                         std::process::exit(1);
                     }
 
@@ -1236,7 +1208,6 @@ async fn main() -> anyhow::Result<()> {
                 embed,
                 snapshot,
                 batch_config,
-                connect_hanlp().await,
             )
             .await?;
             return Ok(());
@@ -1249,11 +1220,13 @@ async fn main() -> anyhow::Result<()> {
             limit,
             json,
             project,
+            file_type,
+            content_type,
         }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             dt_daemon::interfaces::cli::build::handle_search(
-                query, world, limit, json, project, graph, vector,
+                query, world, limit, json, project, file_type, content_type, graph, vector,
             )
             .await?;
             return Ok(());
@@ -1262,10 +1235,7 @@ async fn main() -> anyhow::Result<()> {
         // ---- CLI 模式: dt sense ----
         Some(Commands::Sense { path, json }) => {
             let cfg = load_config();
-            let projects = cfg
-                .as_ref()
-                .map(resolve_project_paths)
-                .unwrap_or_default();
+            let projects = cfg.as_ref().map(resolve_project_paths).unwrap_or_default();
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;

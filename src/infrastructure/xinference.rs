@@ -164,9 +164,7 @@ impl XInferenceClient {
             .as_str()
             .filter(|s| !s.is_empty())
             .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
-            .ok_or_else(|| {
-                DtError::Repository("XInference: chat 响应中缺少 content".into())
-            })?;
+            .ok_or_else(|| DtError::Repository("XInference: chat 响应中缺少 content".into()))?;
 
         Ok(content.to_string())
     }
@@ -189,9 +187,9 @@ impl XInferenceClient {
             .await
             .map_err(|e| DtError::Repository(format!("XInference rerank 解析: {e}")))?;
 
-        let results = json["results"].as_array().ok_or_else(|| {
-            DtError::Repository("XInference: rerank 响应中缺少 'results'".into())
-        })?;
+        let results = json["results"]
+            .as_array()
+            .ok_or_else(|| DtError::Repository("XInference: rerank 响应中缺少 'results'".into()))?;
 
         let mut scores: Vec<(usize, f32)> = Vec::with_capacity(results.len());
         for item in results {
@@ -227,18 +225,16 @@ impl EmbedService for XInferenceClient {
             .await
             .map_err(|e| DtError::Repository(format!("XInference embed 解析: {e}")))?;
 
-        let data = json["data"].as_array().ok_or_else(|| {
-            DtError::Repository("XInference: embed 响应中缺少 'data'".into())
-        })?;
+        let data = json["data"]
+            .as_array()
+            .ok_or_else(|| DtError::Repository("XInference: embed 响应中缺少 'data'".into()))?;
 
         let mut embeddings: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
         for item in data {
             let index = item["index"].as_i64().unwrap_or(0) as usize;
             let embedding: Vec<f32> = item["embedding"]
                 .as_array()
-                .ok_or_else(|| {
-                    DtError::Repository("XInference: 响应中缺少 'embedding'".into())
-                })?
+                .ok_or_else(|| DtError::Repository("XInference: 响应中缺少 'embedding'".into()))?
                 .iter()
                 .map(|v| v.as_f64().unwrap_or(0.0) as f32)
                 .collect();

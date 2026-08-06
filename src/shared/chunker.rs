@@ -1915,7 +1915,12 @@ mod tests {
         let text =
             "server:\n  port: 8080\n  host: localhost\n\nredis:\n  host: 127.0.0.1\n  port: 6379";
         let result = chunk_config_by_sections(text, "doc1", &config, true);
-        assert_eq!(result.len(), 2, "预期 2 个 section，实际得到 {}", result.len());
+        assert_eq!(
+            result.len(),
+            2,
+            "预期 2 个 section，实际得到 {}",
+            result.len()
+        );
         let names: Vec<&str> = result.iter().map(|(n, _)| n.as_str()).collect();
         assert!(names.contains(&"server"));
         assert!(names.contains(&"redis"));
@@ -2009,10 +2014,7 @@ spring:
         assert!(text.contains("boot:"), "必须包含 boot: 祖先");
         assert!(text.contains("admin:"), "必须包含 admin: 祖先");
         assert!(text.contains("client:"), "必须包含 client: 祖先");
-        assert!(
-            text.contains("instance:"),
-            "必须包含 instance: 祖先"
-        );
+        assert!(text.contains("instance:"), "必须包含 instance: 祖先");
         assert!(
             text.contains("service-url: http://doctor-center"),
             "必须包含叶子值"
@@ -2208,7 +2210,12 @@ spring.datasource.username=admin\n\
 spring.datasource.password=secret";
         let sections = chunk_properties_adaptive(content);
         // 3 个 key 应都在一个 "spring.datasource" section 中
-        assert_eq!(sections.len(), 1, "预期 1 个 section，实际得到 {:?}", sections);
+        assert_eq!(
+            sections.len(),
+            1,
+            "预期 1 个 section，实际得到 {:?}",
+            sections
+        );
         assert_eq!(sections[0].0, "spring.datasource");
         assert_eq!(sections[0].1.len(), 3);
     }

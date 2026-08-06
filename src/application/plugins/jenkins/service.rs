@@ -80,8 +80,7 @@ impl Plugin for JenkinsPluginService {
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
-        ctx.log
-            .info("[jenkins] 插件已初始化（原生 HTTP 客户端）");
+        ctx.log.info("[jenkins] 插件已初始化（原生 HTTP 客户端）");
         Ok(())
     }
 

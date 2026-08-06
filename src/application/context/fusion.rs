@@ -84,12 +84,28 @@ mod tests {
 
     fn hit(world: &str, id: &str, score: f64) -> SearchHit {
         SearchHit {
-            id: id.into(), title: id.into(), snippet: String::new(),
-            source_world: world.into(), entity_type: "X".into(), score,
-            source_ref: None, file_path: None, start_line: None, end_line: None,
-            signature: None, calls: vec![], element_id: None,
-            llm_analysis: None, score_breakdown: None, hop: None,
-            via_same_as: None, relations: None, evidence: None, rerank_degraded: None,
+            id: id.into(),
+            title: id.into(),
+            snippet: String::new(),
+            source_world: world.into(),
+            entity_type: "X".into(),
+            file_type: None,
+            file_type_label: None,
+            score,
+            source_ref: None,
+            file_path: None,
+            start_line: None,
+            end_line: None,
+            signature: None,
+            calls: vec![],
+            element_id: None,
+            llm_analysis: None,
+            score_breakdown: None,
+            hop: None,
+            via_same_as: None,
+            relations: None,
+            evidence: None,
+            rerank_degraded: None,
         }
     }
 
@@ -106,7 +122,9 @@ mod tests {
 
     #[test]
     fn rrf_hits_respects_limit() {
-        let l1 = (0..5).map(|i| hit("code", &format!("x{i}"), 0.9)).collect::<Vec<_>>();
+        let l1 = (0..5)
+            .map(|i| hit("code", &format!("x{i}"), 0.9))
+            .collect::<Vec<_>>();
         assert_eq!(rrf_hits(vec![l1], 60.0, 3).len(), 3);
     }
 }

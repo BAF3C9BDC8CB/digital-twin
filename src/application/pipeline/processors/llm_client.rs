@@ -5,8 +5,7 @@
 //! - 上下文包含 `tree_sitter` 输出 → `"code_with_ast"`
 //!   （单次调用、不解析响应——旧代码路径，保持不变）
 //! - 上下文包含 `chunk` 输出       → `"document_with_nlp"`
-//!   （块级提取循环，方案 §5.2：每个 chunk 一次 LLM 调用，
-//!   HanLP 候选按对齐的 `block_index` 注入）
+//!   （块级提取循环，方案 §5.2：每个 chunk 一次 LLM 调用）
 //! - 其他情况                     → `"raw_text"`
 //!   （单次调用、不解析响应——保持不变）
 //!
@@ -23,7 +22,6 @@
 //! "model"}`——逐字节不变。
 
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -145,8 +143,8 @@ impl LlmClientProcessor {
 
     /// 块级提取循环（§5.2）：每个 chunk 一次 LLM 调用，串行执行。
     ///
-    /// 每个块的提示词使用块文本与按 `block_index` 对齐的 HanLP 候选渲染
-    /// （HanLP 缺席时使用空占位符）。每个响应解析为 [`ExtractedGraph`]；
+    /// 每个块的提示词使用块文本渲染（候选字段为空占位）。
+    /// 每个响应解析为 [`ExtractedGraph`]；
     /// 即使重试一次后解析仍失败的块，降级为 `degraded = true` 的空图（§5.5）。
     async fn execute_block_extraction(
         &self,
@@ -174,22 +172,6 @@ impl LlmClientProcessor {
             .and_then(|v| v.as_array())
             .unwrap_or(&empty_chunks);
 
-        // 按 block_index 索引的 HanLP 候选，用于逐块注入。
-        let hanlp_map: HashMap<u64, &serde_json::Value> = ctx
-            .get_output("hanlp")
-            .and_then(|o| o.get("hanlp_blocks"))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|b| {
-                        b.get("block_index")
-                            .and_then(|v| v.as_u64())
-                            .map(|i| (i, b))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
         let mut graphs: Vec<ExtractedGraph> = Vec::with_capacity(chunks.len());
         let mut raw_responses: Vec<String> = Vec::with_capacity(chunks.len());
 
@@ -203,13 +185,13 @@ impl LlmClientProcessor {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
 
-            let (entities, keywords) =
-                format_hanlp_candidates(hanlp_map.get(&block_index).copied());
+            // 候选字段使用空占位（HanLP 已移除）。
+            let (entities, keywords) = ("（无）".to_string(), "（无）".to_string());
             let render_ctx = build_block_render_context(ctx, block_text, &entities, &keywords);
             let (system_prompt, user_prompt) = self
                 .prompt_registry
                 .render("document_with_nlp", &render_ctx)
-            .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
+                .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
             let (raw, graph) = self
                 .extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32)
@@ -328,42 +310,6 @@ fn build_block_render_context(
     })
 }
 
-/// 将一个 HanLP 块的候选渲染为可读的提示词字符串
-/// （例如 `- 支付网关 (NN, 频次3)`）。缺失或空候选变为
-/// `"（无）"`，使渲染后不会残留任何 `${...}` 占位符。
-fn format_hanlp_candidates(block: Option<&serde_json::Value>) -> (String, String) {
-    let entities = block
-        .and_then(|b| b.get("entities"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    let text = e.get("text").and_then(|v| v.as_str())?;
-                    let tag = e.get("tag").and_then(|v| v.as_str()).unwrap_or("");
-                    let freq = e.get("frequency").and_then(|v| v.as_u64()).unwrap_or(0);
-                    Some(format!("- {text} ({tag}, 频次{freq})"))
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "（无）".to_string());
-
-    let keywords = block
-        .and_then(|b| b.get("keywords"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|k| k.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "（无）".to_string());
-
-    (entities, keywords)
-}
-
 // ---------------------------------------------------------------------------
 // 测试
 // ---------------------------------------------------------------------------
@@ -435,7 +381,7 @@ mod tests {
 
     fn test_registry() -> Arc<PromptRegistry> {
         Arc::new(
-            PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts 必须能加载"),
+            PromptRegistry::load_default().expect("config/prompts 必须能加载"),
         )
     }
 
@@ -479,13 +425,6 @@ mod tests {
         out.set("chunks", chunks);
         out.set("doc_id", "dt://doc/test/doc.md");
         out.set("chunk_count", texts.len());
-        out
-    }
-
-    fn make_hanlp_output(blocks: Vec<serde_json::Value>) -> ProcessorOutput {
-        let mut out = ProcessorOutput::new();
-        out.set("hanlp_blocks", blocks);
-        out.set("status", "ok");
         out
     }
 
@@ -537,31 +476,6 @@ mod tests {
         assert_eq!(json["project_name"], "test");
     }
 
-    #[test]
-    fn format_hanlp_candidates_renders_readable_list() {
-        let block = serde_json::json!({
-            "block_index": 0,
-            "entities": [{"text": "支付网关", "tag": "NN", "frequency": 3}],
-            "keywords": ["支付", "路由"]
-        });
-        let (entities, keywords) = format_hanlp_candidates(Some(&block));
-        assert_eq!(entities, "- 支付网关 (NN, 频次3)");
-        assert_eq!(keywords, "支付, 路由");
-    }
-
-    #[test]
-    fn format_hanlp_candidates_absent_or_empty_uses_placeholder() {
-        assert_eq!(
-            format_hanlp_candidates(None),
-            ("（无）".to_string(), "（无）".to_string())
-        );
-        let empty = serde_json::json!({"block_index": 0, "entities": [], "keywords": []});
-        assert_eq!(
-            format_hanlp_candidates(Some(&empty)),
-            ("（无）".to_string(), "（无）".to_string())
-        );
-    }
-
     // ── 块级提取（document_with_nlp 路径） ─────────────────────
 
     #[tokio::test]
@@ -600,59 +514,6 @@ mod tests {
 
         // 每个 chunk 一次串行 LLM 调用。
         assert_eq!(mock.calls().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn block_extraction_injects_aligned_hanlp_candidates() {
-        let chunk_out = make_chunk_output(&[(0, "块0文本"), (1, "块1文本")]);
-        let hanlp_out = make_hanlp_output(vec![
-            serde_json::json!({
-                "block_index": 0,
-                "entities": [{"text": "支付网关", "tag": "NN", "frequency": 3}],
-                "keywords": ["支付", "路由"]
-            }),
-            serde_json::json!({"block_index": 1, "entities": [], "keywords": []}),
-        ]);
-        let ctx = make_context(
-            "doc.md",
-            "全文",
-            vec![("chunk", chunk_out), ("hanlp", hanlp_out)],
-        );
-        let mock = Arc::new(MockChatClient::new(vec![
-            Ok(VALID_JSON_0.to_string()),
-            Ok(VALID_JSON_1.to_string()),
-        ]));
-        let processor = make_processor(mock.clone());
-
-        processor.execute(&ctx).await.unwrap();
-        let calls = mock.calls();
-
-        // 块 0 获得自己的候选；块 1 获得占位符。
-        assert!(calls[0].1.contains("- 支付网关 (NN, 频次3)"));
-        assert!(calls[0].1.contains("支付, 路由"));
-        assert!(calls[1].1.contains("（无）"));
-        // 注入的是块文本——而非整个文件——逐块注入。
-        assert!(calls[0].1.contains("块0文本"));
-        assert!(!calls[0].1.contains("块1文本"));
-        assert!(calls[1].1.contains("块1文本"));
-        // 渲染后不应残留未解析的模板占位符。
-        for (_, user) in &calls {
-            assert!(!user.contains("${"), "模板残留: {user}");
-        }
-    }
-
-    #[tokio::test]
-    async fn block_extraction_without_hanlp_uses_placeholder() {
-        let chunk_out = make_chunk_output(&[(0, "块0文本")]);
-        let ctx = make_context("doc.md", "全文", vec![("chunk", chunk_out)]);
-        let mock = Arc::new(MockChatClient::new(vec![Ok(VALID_JSON_0.to_string())]));
-        let processor = make_processor(mock.clone());
-
-        processor.execute(&ctx).await.unwrap();
-        let calls = mock.calls();
-        assert_eq!(calls.len(), 1);
-        assert!(calls[0].1.contains("（无）"));
-        assert!(!calls[0].1.contains("${"));
     }
 
     #[tokio::test]

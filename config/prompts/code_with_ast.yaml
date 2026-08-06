@@ -8,7 +8,7 @@ system: |
     "summary": "代码功能概述（20字以内）",
     "service_role": "该模块在系统中的角色（如：支付服务、订单处理、工具类等）",
     "entities": [
-      {"name": "类名/函数名", "type": "class|function|method", "purpose": "用途说明"}
+      {"name": "实体名", "type": "Service|Channel|Config|Table|Api|Concept|Standard|Person|Org|Product|Other", "purpose": "用途说明"}
     ],
     "relations": [
       {"from": "调用方", "to": "被调用方", "type": "calls|extends|implements"}
@@ -18,6 +18,8 @@ system: |
   规则：
   - 仅输出JSON，不要markdown，不要额外说明
   - 如果不确定某个字段，设为null
+  - type 必须从给定词表中选择，词表外一律 Other
+  - 类型定义：Concept=类/函数/方法/接口/结构体/枚举/宏/抽象概念（如 PayChannelService、doPay、MockGraph、HashMap）；Service=服务类模块（如支付服务、订单处理）；Config=配置文件/参数/环境设置项；Standard=规范/标准/流程/格式约定；Other=无法归类的（如路径引用、文件引用）
 prompt: |
   文件：${file_path}
 

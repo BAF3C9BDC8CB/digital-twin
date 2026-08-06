@@ -170,7 +170,10 @@ mod tests {
     use super::*;
 
     fn pl(paths: &[&str]) -> Vec<serde_json::Value> {
-        paths.iter().map(|p| serde_json::json!({"file_path": p})).collect()
+        paths
+            .iter()
+            .map(|p| serde_json::json!({"file_path": p}))
+            .collect()
     }
 
     #[test]

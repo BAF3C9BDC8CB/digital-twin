@@ -27,11 +27,29 @@ impl CrossWorldSearch {
             .map(|rows| {
                 rows.iter()
                     .map(|row| SearchHit {
-                        id: row.get("eid").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-                        title: row.get("name").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
-                        snippet: row.get("desc").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        id: row
+                            .get("eid")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                        title: row
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                        snippet: row
+                            .get("desc")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         source_world: "memory".into(),
-                        entity_type: row.get("type").and_then(|v| v.as_str()).unwrap_or("?").to_string(),
+                        entity_type: row
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_string(),
+                        file_type: None,
+                        file_type_label: None,
                         score: 0.0,
                         source_ref: None,
                         file_path: None,
@@ -39,7 +57,10 @@ impl CrossWorldSearch {
                         end_line: None,
                         signature: None,
                         calls: vec![],
-                        element_id: row.get("eid").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        element_id: row
+                            .get("eid")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
                         llm_analysis: None,
                         score_breakdown: None,
                         hop: None,
@@ -108,8 +129,16 @@ mod tests {
         let graph = Arc::new(MockGraph::new());
         let cws = CrossWorldSearch::new(Some(graph.clone()), None, None, None);
         let req = SearchRequest {
-            query: "S5".into(), world: Some("memory".into()), limit: Some(5),
-            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+            query: "S5".into(),
+            world: Some("memory".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.per_world_counts.get("memory"), Some(&1));

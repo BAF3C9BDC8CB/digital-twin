@@ -1018,11 +1018,7 @@ mod tests {
             .iter()
             .find(|(cname, _)| cname == KG_NODES)
             .expect("kg_nodes upsert 必须执行");
-        assert_eq!(
-            kg.1.len(),
-            1,
-            "实体 upsert 必须逐实体进行，不得批量"
-        );
+        assert_eq!(kg.1.len(), 1, "实体 upsert 必须逐实体进行，不得批量");
         assert_eq!(
             kg.1[0]["payload"]["business_id"].as_str(),
             Some(existing_id)

@@ -19,6 +19,193 @@ use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, GraphRepository, RerankService, VectorRepository};
 
 // ---------------------------------------------------------------------------
+// 查询增强与多路召回(搜索准确率升级:1A 标识符精确通道 / 1B 拆词扩写 /
+// 2B 关键词兜底 / 4 长查询关键词)
+// ---------------------------------------------------------------------------
+
+/// 判定查询是否为"标识符型"(短 ASCII 代码标识符,如 saveToDb、_accept_embed)。
+/// 要求含驼峰大写或蛇形下划线——纯小写长串(乱码)不算。
+/// 中文查询与长句子天然不匹配,走语义通道。
+fn is_identifier_query(query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() || q.len() > 50 {
+        return false;
+    }
+    if q.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if !q.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    q.chars().any(|c| c.is_ascii_uppercase()) || q.contains('_')
+}
+
+/// 疑似乱码/无意义查询检测:全 ASCII 字母数字、无空格、无大写、无下划线、
+/// 长度 >= 12(如 asdfghjklqwertyuiop1234567890)。此类查询向量检索会产生
+/// 幻觉命中,直接短路返回空。
+fn is_gibberish(query: &str) -> bool {
+    let q = query.trim();
+    if q.len() < 12 {
+        return false;
+    }
+    if q.chars().any(char::is_whitespace) {
+        return false;
+    }
+    if !q.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    !q.chars().any(|c| c.is_ascii_uppercase()) && !q.contains('_')
+}
+
+/// 驼峰/蛇形标识符拆词:saveToDb → [save,to,db];_accept_embed → [accept,embed]。
+fn split_identifier(ident: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in ident.trim_start_matches('_').chars() {
+        if ch.is_ascii_uppercase() {
+            if !cur.is_empty() {
+                words.push(cur.clone());
+                cur.clear();
+            }
+            cur.push(ch.to_ascii_lowercase());
+        } else if ch == '_' || ch.is_ascii_digit() {
+            if !cur.is_empty() {
+                words.push(cur.clone());
+                cur.clear();
+            }
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
+
+/// 从查询提取关键词(英文按空白分词、中文按连续字符段),用于关键词兜底通道。
+fn extract_keywords(query: &str, max: usize) -> Vec<String> {
+    let mut kws: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in query.chars() {
+        if ch.is_alphanumeric() || !ch.is_ascii() {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            if cur.chars().count() >= 2 {
+                kws.push(cur.clone());
+            }
+            cur.clear();
+        }
+    }
+    if !cur.is_empty() && cur.chars().count() >= 2 {
+        kws.push(cur);
+    }
+    kws.truncate(max);
+    kws
+}
+
+/// 由 Qdrant 命中/滚动 payload 构造 code 世界 SearchHit。
+fn hit_from_payload(
+    payload: &serde_json::Value,
+    name: String,
+    id: String,
+    score: f64,
+) -> SearchHit {
+    let calls: Vec<String> = payload
+        .get("calls")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    SearchHit {
+        id,
+        title: name.clone(),
+        snippet: {
+            let fp = payload
+                .get("file_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sl = payload
+                .get("start_line")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let el = payload
+                .get("end_line")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if fp.is_empty() {
+                String::new()
+            } else {
+                format!("{}: L{}-{}", fp, sl, el)
+            }
+        },
+        source_world: "code".into(),
+        entity_type: "Method".into(),
+        file_type: None,
+        file_type_label: None,
+        score,
+        source_ref: None,
+        file_path: payload
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        start_line: payload
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        end_line: payload
+            .get("end_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32),
+        signature: payload
+            .get("signature")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        llm_analysis: payload
+            .get("llm_analysis")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        calls,
+        element_id: payload
+            .get("method_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        score_breakdown: None,
+        hop: None,
+        via_same_as: None,
+        relations: None,
+        evidence: None,
+        rerank_degraded: None,
+    }
+}
+
+/// 由 Qdrant 命中解析稳定 id(优先 point id,回退 payload 身份)。
+fn hit_id(hit: &serde_json::Value, payload: &serde_json::Value) -> String {
+    match hit.get("id") {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        _ => payload
+            .get("entity_id")
+            .or(payload.get("method_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                format!(
+                    "{}:{}",
+                    payload
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?"),
+                    payload.get("name").and_then(|v| v.as_str()).unwrap_or("?")
+                )
+            }),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response
 // ---------------------------------------------------------------------------
 
@@ -41,6 +228,10 @@ pub struct SearchRequest {
     pub origin: Option<String>,
     /// 仅 world=doc：限定单文档内检索证据块。
     pub doc_id: Option<String>,
+    /// 按文件类型过滤（`--file-type`）：类别名（document/code/config）或具体后缀（md/yaml/java…）。
+    pub file_type: Option<String>,
+    /// 按内容类型过滤（`--content-type`）：LLM 语义类型（Config/Service/Standard…）或 AST 类型（Method/Class…）。
+    pub entity_type_filter: Option<String>,
 }
 
 /// 来自任意世界的单个搜索命中。
@@ -56,6 +247,12 @@ pub struct SearchHit {
     pub source_world: String,
     /// 实体类型（Method、Class、Knowledge、Document 等）。
     pub entity_type: String,
+    /// 文件类型（文件后缀决定的类别：文档/代码/配置）。由 file_path/source_ref/doc_id 推断。
+    #[serde(default)]
+    pub file_type: Option<String>,
+    /// 文件类型类别显示名（文档/代码/配置/其他）。
+    #[serde(default)]
+    pub file_type_label: Option<String>,
     /// 相关度分数 [0.0, 1.0]。
     pub score: f64,
     /// 源文件或引用 URL。
@@ -189,7 +386,20 @@ impl CrossWorldSearch {
             return Ok(Vec::new());
         };
 
-        let embeddings = embed.embed_batch(&[query.to_string()]).await?;
+        // 1B:标识符查询做拆词扩写,让向量通道"看见"字面结构
+        let ident_mode = is_identifier_query(query);
+        let search_text = if ident_mode {
+            let words = split_identifier(query);
+            if words.len() > 1 {
+                format!("{} {}", query, words.join(" "))
+            } else {
+                query.to_string()
+            }
+        } else {
+            query.to_string()
+        };
+
+        let embeddings = embed.embed_batch(&[search_text]).await?;
         let Some(query_vec) = embeddings.into_iter().next() else {
             return Ok(Vec::new());
         };
@@ -207,9 +417,59 @@ impl CrossWorldSearch {
             .and_then(|s| s.parse::<f64>().ok())
             .unwrap_or(0.3);
 
-        let mut all_hits = Vec::new();
+        // 1D:内部 TopK 放大,给精确通道/关键词兜底留出空间
+        let internal_limit = (limit * 2).max(10);
+
+        let mut all_hits: Vec<SearchHit> = Vec::new();
+        // 精确通道命中的 id,向量通道跳过避免重复
+        let mut exact_ids: Vec<String> = Vec::new();
+
         for col in &method_cols {
-            match vector.search(col, query_vec.clone(), limit as u64).await {
+            // 1A:标识符精确匹配通道——payload name 精确过滤,命中强制置顶
+            if ident_mode {
+                let filter = serde_json::json!({
+                    "must": [{"key": "name", "match": {"value": query}}]
+                });
+                match vector
+                    .search_with_filter(col, query_vec.clone(), internal_limit as u64, filter)
+                    .await
+                {
+                    Ok(results) => {
+                        for hit in results {
+                            let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            if score < min_score {
+                                continue;
+                            }
+                            let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
+                            let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            if name.is_empty() || name == "?" {
+                                continue;
+                            }
+                            if let Some(p) = project {
+                                let pp = payload
+                                    .get("project")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if pp != p {
+                                    continue;
+                                }
+                            }
+                            let id = hit_id(&hit, payload);
+                            exact_ids.push(id.clone());
+                            // 精确标识符完全匹配是强信号,给 0.95 高分确保 search()
+                            // 主体重排序后仍居首(与 doc 关键词通道 0.90 同思路)
+                            all_hits.push(hit_from_payload(payload, name.to_string(), id, 0.95));
+                        }
+                    }
+                    Err(e) => tracing::warn!("标识符精确通道 {col} 搜索失败: {e}"),
+                }
+            }
+
+            // 向量通道(语义召回)
+            match vector
+                .search(col, query_vec.clone(), internal_limit as u64)
+                .await
+            {
                 Ok(results) => {
                     for hit in results {
                         let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -222,112 +482,81 @@ impl CrossWorldSearch {
                             continue;
                         }
                         if let Some(p) = project {
-                            let pp = payload.get("project").and_then(|v| v.as_str()).unwrap_or("");
+                            let pp = payload
+                                .get("project")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
                             if pp != p {
                                 continue;
                             }
                         }
-
-                        let calls: Vec<String> = payload
-                            .get("calls")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|c| c.as_str().map(|s| s.to_string()))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                        all_hits.push(SearchHit {
-                            // Qdrant point id 可能是数值或 UUID 字符串，均须保留；
-                            // 缺失时回退 payload 身份，保证 RRF 键唯一（防 "code:?" 坍缩）。
-                            id: match hit.get("id") {
-                                Some(serde_json::Value::String(s)) => s.clone(),
-                                Some(serde_json::Value::Number(n)) => n.to_string(),
-                                _ => payload
-                                    .get("entity_id")
-                                    .or(payload.get("method_id"))
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_else(|| {
-                                        format!(
-                                            "{}:{}",
-                                            payload
-                                                .get("file_path")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("?"),
-                                            name
-                                        )
-                                    }),
-                            },
-                            title: name.to_string(),
-                            snippet: {
-                                let fp = payload
-                                    .get("file_path")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let sl = payload
-                                    .get("start_line")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                let el = payload
-                                    .get("end_line")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                if fp.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!("{}: L{}-{}", fp, sl, el)
-                                }
-                            },
-                            source_world: "code".into(),
-                            entity_type: "Method".into(),
-                            score,
-                            source_ref: None,
-                            file_path: payload
-                                .get("file_path")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            start_line: payload
-                                .get("start_line")
-                                .and_then(|v| v.as_u64())
-                                .map(|v| v as u32),
-                            end_line: payload
-                                .get("end_line")
-                                .and_then(|v| v.as_u64())
-                                .map(|v| v as u32),
-                            signature: payload
-                                .get("signature")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            llm_analysis: payload
-                                .get("llm_analysis")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            calls,
-                            element_id: payload
-                                .get("method_id")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string()),
-                            score_breakdown: None,
-                            hop: None,
-                            via_same_as: None,
-                            relations: None,
-                            evidence: None,
-                            rerank_degraded: None,
-                        });
+                        let id = hit_id(&hit, payload);
+                        if exact_ids.contains(&id) {
+                            continue;
+                        }
+                        all_hits.push(hit_from_payload(payload, name.to_string(), id, score));
                     }
                 }
                 Err(e) => tracing::warn!("对 {col} 的 Qdrant 搜索失败: {e}"),
             }
         }
 
-        // 按分数降序排序，截断到 limit
-        all_hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // 2B/4:结果不足时关键词兜底(scroll payload + 本地 CONTAINS 匹配)
+        if all_hits.len() < limit {
+            match vector.scroll_payloads(&method_cols[0], None, 5000).await {
+                Ok(payloads) => {
+                    let kws = extract_keywords(query, 3);
+                    'outer: for kw in kws {
+                        let lkw = kw.to_lowercase();
+                        for p in &payloads {
+                            if all_hits.len() >= limit {
+                                break 'outer;
+                            }
+                            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            if name.is_empty() || name == "?" {
+                                continue;
+                            }
+                            if !name.to_lowercase().contains(&lkw) {
+                                continue;
+                            }
+                            if let Some(pr) = project {
+                                if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr {
+                                    continue;
+                                }
+                            }
+                            let id = p
+                                .get("entity_id")
+                                .or(p.get("method_id"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| {
+                                    format!(
+                                        "{}:{}",
+                                        p.get("file_path").and_then(|v| v.as_str()).unwrap_or("?"),
+                                        name
+                                    )
+                                });
+                            if exact_ids.contains(&id) || all_hits.iter().any(|h| h.id == id) {
+                                continue;
+                            }
+                            // 兜底命中固定低分(低于向量阈值,仅保证可达)
+                            all_hits.push(hit_from_payload(p, name.to_string(), id, 0.28));
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("关键词兜底 scroll 失败: {e}"),
+            }
+        }
+
+        // 精确通道命中保持前置,其余按分数降序,截断到 limit
+        let exact_count = exact_ids.len();
+        if exact_count < all_hits.len() {
+            all_hits[exact_count..].sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         all_hits.truncate(limit);
         Ok(all_hits)
     }
@@ -397,10 +626,15 @@ impl CrossWorldSearch {
         let filter = serde_json::json!({ "must": must });
 
         let results = vector
-            .search_with_filter(crate::shared::collections::DOC_CHUNKS, query_vec, limit as u64, filter)
+            .search_with_filter(
+                crate::shared::collections::DOC_CHUNKS,
+                query_vec,
+                limit as u64,
+                filter,
+            )
             .await?;
         let threshold = crate::application::knowledge::extract::retrieve::min_score();
-        let hits = results
+        let mut hits: Vec<SearchHit> = results
             .into_iter()
             .filter_map(|hit| {
                 let score = hit.get("score")?.as_f64()?;
@@ -411,12 +645,20 @@ impl CrossWorldSearch {
                 let doc = payload.get("doc_id")?.as_str()?;
                 let block = payload.get("block_index")?.as_u64()? as u32;
                 let text = payload.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                // 文件类型：从 doc_id 后缀推断；内容类型：配置文件后缀启发式为 Config，其余 Doc。
+                let (file_type, file_type_label) = infer_file_type(Some(doc));
+                let entity_type = match file_type.as_deref() {
+                    Some("config") => "Config".to_string(),
+                    _ => "Doc".to_string(),
+                };
                 Some(SearchHit {
                     id: format!("{doc}:{block}"),
                     title: doc.rsplit('/').next().unwrap_or(doc).to_string(),
                     snippet: text.chars().take(200).collect(),
                     source_world: "doc".into(),
-                    entity_type: "Doc".into(),
+                    entity_type,
+                    file_type,
+                    file_type_label,
                     score,
                     source_ref: Some(doc.to_string()),
                     file_path: None,
@@ -435,6 +677,87 @@ impl CrossWorldSearch {
                 })
             })
             .collect();
+
+        // 4.1:长查询关键词通道(与向量并行,关键词命中前置——向量对长多关键词
+        // 查询会泛化,关键词字面匹配保证设计文档/术语类文档可达)
+        let kws = extract_keywords(query, 3);
+        let is_long_query =
+            query.chars().count() > 20 || kws.iter().any(|k| k.chars().count() >= 4);
+        if is_long_query {
+            match vector
+                .scroll_payloads(crate::shared::collections::DOC_CHUNKS, None, 5000)
+                .await
+            {
+                Ok(payloads) => {
+                    let mut kw_hits: Vec<SearchHit> = Vec::new();
+                    let mut seen: std::collections::HashSet<String> =
+                        hits.iter().map(|h| h.id.clone()).collect();
+                    'outer: for kw in &kws {
+                        let lkw = kw.to_lowercase();
+                        for p in &payloads {
+                            if kw_hits.len() >= limit {
+                                break 'outer;
+                            }
+                            if let Some(pr) = project {
+                                if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr {
+                                    continue;
+                                }
+                            }
+                            let text = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                            if text.is_empty() || !text.to_lowercase().contains(&lkw) {
+                                continue;
+                            }
+                            let doc = p.get("doc_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let block =
+                                p.get("block_index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            let id = format!("{doc}:{block}");
+                            if !seen.insert(id.clone()) {
+                                continue;
+                            }
+                            // 文件类型：从 doc_id 后缀推断；内容类型：配置文件后缀启发式为 Config。
+                            let (file_type, file_type_label) = infer_file_type(Some(&doc));
+                            let entity_type = match file_type.as_deref() {
+                                Some("config") => "Config".to_string(),
+                                _ => "Doc".to_string(),
+                            };
+                            kw_hits.push(SearchHit {
+                                id,
+                                title: doc.rsplit('/').next().unwrap_or(doc).to_string(),
+                                snippet: text.chars().take(200).collect(),
+                                source_world: "doc".into(),
+                                entity_type,
+                                file_type,
+                                file_type_label,
+                                // 关键词字面命中是强信号,给高分确保在 search() 主体
+                                // 重排序后仍排在向量泛化结果之前
+                                score: 0.90,
+                                source_ref: Some(doc.to_string()),
+                                file_path: None,
+                                start_line: None,
+                                end_line: None,
+                                signature: None,
+                                llm_analysis: None,
+                                calls: vec![],
+                                element_id: None,
+                                score_breakdown: None,
+                                hop: None,
+                                via_same_as: None,
+                                relations: None,
+                                evidence: None,
+                                rerank_degraded: None,
+                            });
+                        }
+                    }
+                    // 关键词命中前置,向量结果补位
+                    if !kw_hits.is_empty() {
+                        let mut merged = kw_hits;
+                        merged.extend(hits);
+                        hits = merged;
+                    }
+                }
+                Err(e) => tracing::warn!("doc 关键词通道 scroll 失败: {e}"),
+            }
+        }
         Ok(hits)
     }
 }
@@ -445,6 +768,18 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
         let world = request.world.as_deref().unwrap_or("all");
         let limit = request.limit.unwrap_or(20);
         let project = request.project.as_deref();
+
+        // 乱码/无意义查询直接返回空(避免 embed 幻觉命中)
+        if is_gibberish(&request.query) {
+            return Ok(CrossWorldResult {
+                query: request.query.clone(),
+                world: world.to_string(),
+                hits: vec![],
+                total: 0,
+                per_world_counts: std::collections::HashMap::new(),
+                degraded: vec![],
+            });
+        }
 
         let mut per_world = std::collections::HashMap::new();
         let mut degraded: Vec<String> = Vec::new();
@@ -508,6 +843,9 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
         };
 
         let total = all_hits.len();
+        // 统一后处理：推断 file_type + 按 file_type/entity_type 过滤（U-5 新能力）。
+        let all_hits = postprocess_hits(all_hits, request);
+        let total = all_hits.len();
         Ok(CrossWorldResult {
             query: request.query.clone(),
             world: world.to_string(),
@@ -517,6 +855,69 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
             degraded,
         })
     }
+}
+
+/// 从路径（file_path / source_ref / doc_id）推断文件类别显示信息。
+fn infer_file_type(path: Option<&str>) -> (Option<String>, Option<String>) {
+    infer_file_type_pub(path)
+}
+
+/// 公开版：从路径推断文件类别（供 retrieve.rs 等外部模块调用）。
+pub fn infer_file_type_pub(path: Option<&str>) -> (Option<String>, Option<String>) {
+    let Some(p) = path else {
+        return (None, None);
+    };
+    let cat = crate::domain::file_type::categorize_path(p);
+    match cat {
+        crate::domain::file_type::FileCategory::Other => (None, None),
+        c => (Some(c.slug().to_string()), Some(c.label().to_string())),
+    }
+}
+
+/// 搜索命中后处理：填充 file_type 字段，并按 file_type/entity_type 过滤。
+fn postprocess_hits(hits: Vec<SearchHit>, req: &SearchRequest) -> Vec<SearchHit> {
+    // 1) 填充 file_type（未填充的命中从路径推断）
+    let mut enriched: Vec<SearchHit> = hits
+        .into_iter()
+        .map(|mut h| {
+            if h.file_type.is_none() {
+                let path = h
+                    .file_path
+                    .as_deref()
+                    .or(h.source_ref.as_deref())
+                    .or(Some(h.id.as_str()));
+                let (ft, ftl) = infer_file_type(path);
+                h.file_type = ft;
+                h.file_type_label = ftl;
+            }
+            h
+        })
+        .collect();
+
+    // 2) 按文件类型过滤
+    if let Some(ft_spec) = req.file_type.as_deref() {
+        let cats = crate::domain::file_type::resolve_file_types(ft_spec);
+        if !cats.is_empty() {
+            enriched.retain(|h| {
+                h.file_type
+                    .as_deref()
+                    .map(|ft| {
+                        cats.iter().any(|c| c.slug() == ft)
+                    })
+                    .unwrap_or(false)
+            });
+        }
+    }
+
+    // 3) 按内容类型过滤（大小写不敏感）
+    if let Some(et_spec) = req.entity_type_filter.as_deref() {
+        let want = et_spec.trim().to_lowercase();
+        if !want.is_empty() {
+            enriched.retain(|h| h.entity_type.to_lowercase() == want);
+        }
+    }
+
+    enriched
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +936,8 @@ mod tests {
             snippet: "Handles payment processing".into(),
             source_world: "code".into(),
             entity_type: "Service".into(),
+            file_type: None,
+            file_type_label: None,
             score: 0.95,
             source_ref: Some("src/payment.rs".into()),
             file_path: Some("src/payment.rs".into()),
@@ -614,6 +1017,8 @@ mod tests {
                 snippet: "manages auth".into(),
                 source_world: "code".into(),
                 entity_type: "Service".into(),
+                file_type: None,
+                file_type_label: None,
                 score: 0.98,
                 source_ref: None,
                 file_path: None,
@@ -650,6 +1055,8 @@ mod tests {
             with_evidence: None,
             origin: None,
             doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         assert_eq!(req.query, "payment");
         assert_eq!(req.world, None);
@@ -667,6 +1074,8 @@ mod tests {
             with_evidence: None,
             origin: None,
             doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.hits.len(), 0);
@@ -765,10 +1174,23 @@ mod tests {
             hits: vec![method],
             captured_filter: std::sync::Mutex::new(None),
         });
-        let cws = CrossWorldSearch::new(None, Some(vector), Some(std::sync::Arc::new(StubEmbed)), None);
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(vector),
+            Some(std::sync::Arc::new(StubEmbed)),
+            None,
+        );
         let req = SearchRequest {
-            query: "createApp".into(), world: Some("code".into()), limit: Some(5),
-            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+            query: "createApp".into(),
+            world: Some("code".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.hits.len(), 1);
@@ -799,10 +1221,23 @@ mod tests {
             hits: vec![m1, m2],
             captured_filter: std::sync::Mutex::new(None),
         });
-        let cws = CrossWorldSearch::new(None, Some(vector), Some(std::sync::Arc::new(StubEmbed)), None);
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(vector),
+            Some(std::sync::Arc::new(StubEmbed)),
+            None,
+        );
         let req = SearchRequest {
-            query: "q".into(), world: Some("code".into()), limit: Some(5),
-            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+            query: "q".into(),
+            world: Some("code".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.hits.len(), 2);
@@ -845,6 +1280,8 @@ mod tests {
             with_evidence: None,
             origin: None,
             doc_id: Some("dt://doc/offen-pay/pay-design.md".into()),
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.per_world_counts.get("doc"), Some(&1));
@@ -897,6 +1334,8 @@ mod tests {
             with_evidence: None,
             origin: None,
             doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.hits.len(), 0);

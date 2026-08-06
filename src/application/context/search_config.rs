@@ -120,13 +120,21 @@ fn get_keywords(query: &str) -> Vec<String> {
     terms
 }
 
-fn blank_hit(id: String, title: String, snippet: String, entity_type: String, score: f64) -> SearchHit {
+fn blank_hit(
+    id: String,
+    title: String,
+    snippet: String,
+    entity_type: String,
+    score: f64,
+) -> SearchHit {
     SearchHit {
         id,
         title,
         snippet,
         source_world: "config".into(),
         entity_type,
+        file_type: None,
+        file_type_label: None,
         score,
         source_ref: None,
         file_path: None,
@@ -309,7 +317,15 @@ impl CrossWorldSearch {
             let hits: Vec<SearchHit> = fused
                 .into_iter()
                 .filter(|item| seen.insert(item.title.clone()))
-                .map(|item| blank_hit(item.id, item.title, item.snippet, item.entity_type, item.score))
+                .map(|item| {
+                    blank_hit(
+                        item.id,
+                        item.title,
+                        item.snippet,
+                        item.entity_type,
+                        item.score,
+                    )
+                })
                 .collect();
             return (hits, degraded);
         }
@@ -418,7 +434,9 @@ impl CrossWorldSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::context::search_mcp::{CrossWorldSearch, CrossWorldSearchTrait, SearchRequest};
+    use crate::application::context::search_mcp::{
+        CrossWorldSearch, CrossWorldSearchTrait, SearchRequest,
+    };
     use crate::domain::error::DtError;
     use crate::domain::traits::{EmbedService, VectorRepository};
     use std::sync::Arc;
@@ -503,8 +521,16 @@ mod tests {
             None,
         );
         let req = SearchRequest {
-            query: "redis 配置".into(), world: Some("config".into()), limit: Some(5),
-            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+            query: "redis 配置".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.per_world_counts.get("config"), Some(&1));
@@ -518,13 +544,23 @@ mod tests {
     async fn config_world_empty_backends_degrades_gracefully() {
         let cws = CrossWorldSearch::empty();
         let req = SearchRequest {
-            query: "q".into(), world: Some("config".into()), limit: Some(5),
-            project: None, max_hops: None, with_evidence: None, origin: None, doc_id: None,
+            query: "q".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
         };
         let result = cws.search(&req).await.unwrap();
         assert_eq!(result.hits.len(), 0);
-        assert!(result.degraded.contains(&"embed_unavailable".to_string())
-            || result.degraded.contains(&"graph_unavailable".to_string()));
+        assert!(
+            result.degraded.contains(&"embed_unavailable".to_string())
+                || result.degraded.contains(&"graph_unavailable".to_string())
+        );
     }
 
     #[test]

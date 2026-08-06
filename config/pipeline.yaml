@@ -43,7 +43,6 @@ inference_server:
 # ── Per-processor feature flags ────────────────────────────────────────────
 processors:
   tree_sitter: true    # AST parsing
-  hanlp: true          # Chinese NLP (HanLP)
   llm: true            # LLM-based analysis
   chunk: true          # Text chunking / splitting
   extract_text: true   # Raw text extraction

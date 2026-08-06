@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -78,8 +78,8 @@ impl PromptRegistry {
                 continue;
             }
 
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("无法读取 {:?}: {e}", path))?;
+            let content =
+                std::fs::read_to_string(&path).map_err(|e| format!("无法读取 {:?}: {e}", path))?;
 
             let prompt: Prompt = serde_yaml::from_str(&content)
                 .map_err(|e| format!("解析 {:?} 时出错: {e}", path))?;
@@ -89,6 +89,60 @@ impl PromptRegistry {
         }
 
         Ok(Self { prompts })
+    }
+
+    /// 默认提示词目录加载：多路径搜索，按优先级取第一个存在者。
+    ///
+    /// 查找顺序：
+    /// 1. 环境变量 `DT_PROMPTS_DIR`
+    /// 2. 当前工作目录的 `config/prompts`
+    /// 3. `~/.config/digital-twin/prompts`
+    /// 4. 可执行文件所在目录的 `config/prompts`
+    ///
+    /// 所有候选均不存在时返回错误。
+    pub fn load_default() -> Result<Self, String> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        // 1) 环境变量
+        if let Ok(dir) = std::env::var("DT_PROMPTS_DIR") {
+            candidates.push(PathBuf::from(dir));
+        }
+
+        // 2) CWD 的 config/prompts
+        candidates.push(PathBuf::from("config/prompts"));
+
+        // 3) 用户级固定路径（与 pipeline.yaml 一致约定）
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(
+                PathBuf::from(home)
+                    .join(".config")
+                    .join("digital-twin")
+                    .join("prompts"),
+            );
+        }
+
+        // 4) 可执行文件所在目录的 config/prompts
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                candidates.push(exe_dir.join("config").join("prompts"));
+            }
+        }
+
+        for dir in &candidates {
+            if dir.is_dir() {
+                tracing::debug!(path = %dir.display(), "PromptRegistry 使用提示词目录");
+                return Self::load(dir);
+            }
+        }
+
+        Err(format!(
+            "未找到提示词目录（已尝试: {}）",
+            candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     }
 
     /// 按名称获取提示词。

@@ -120,10 +120,7 @@ pub async fn handle_memorize(
                 crate::application::knowledge::knowledge::domain_from_details(&entity_id, &details);
             if let Some(ref svc) = svc {
                 match svc.write_domain(&domain).await {
-                    Ok(()) => println!(
-                        "领域已写入: id={} name={}",
-                        domain.domain_id, domain.name,
-                    ),
+                    Ok(()) => println!("领域已写入: id={} name={}", domain.domain_id, domain.name,),
                     Err(e) => eprintln!("领域写入失败: {e}"),
                 }
             } else {

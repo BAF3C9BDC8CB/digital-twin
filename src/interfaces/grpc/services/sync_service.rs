@@ -20,8 +20,7 @@ pub async fn handle_sync(
 
     let graph = graph.ok_or_else(|| Status::unavailable("图后端不可用"))?;
 
-    let vector =
-        vector.ok_or_else(|| Status::unavailable("Qdrant 向量后端不可用"))?;
+    let vector = vector.ok_or_else(|| Status::unavailable("Qdrant 向量后端不可用"))?;
 
     // 若可用则使用真实的 SiliconFlow embed API，否则回退到零向量 noop。
     let embed: Arc<dyn EmbedService> = embed.unwrap_or_else(|| {

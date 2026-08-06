@@ -154,7 +154,11 @@ impl SyncSource for JobSyncSource {
             return Ok(report);
         }
 
-        println!("Jenkins 同步: {} 个视图, {} 个作业", views.len(), jobs.len(),);
+        println!(
+            "Jenkins 同步: {} 个视图, {} 个作业",
+            views.len(),
+            jobs.len(),
+        );
 
         // ── 4. 逐个处理作业 ──────────────────────────────────────────
         for job in &jobs {

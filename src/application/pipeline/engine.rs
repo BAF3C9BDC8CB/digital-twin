@@ -11,7 +11,7 @@
 //!   操作，如语言检测、tree-sitter 解析与文本分块。这些在文件间完全并行运行。
 //!
 //! * **GPU 密集型阶段**（优先级 < [`CPU_PRIORITY_THRESHOLD`]）——命中
-//!   推理服务器的操作，如 LLM chat completions、HanLP NLP 分析与 embedding。
+//!   推理服务器的操作，如 LLM chat completions、embedding 与 rerank。
 //!   并发由 [`Semaphore`] 限制，以避免压垮 GPU 服务器。
 
 use crate::application::pipeline::context::PipelineContext;
@@ -35,7 +35,7 @@ use tokio::sync::Semaphore;
 ///
 /// 现有代码库中的约定：
 /// - tree_sitter = 100, chunk = 90 —— CPU 密集型
-/// - hanlp = 80, llm = 60 —— GPU 密集型
+/// - llm = 60 —— GPU 密集型
 pub const CPU_PRIORITY_THRESHOLD: i32 = 85;
 
 /// 当 `std::thread::available_parallelism` 无法确定时，
@@ -956,11 +956,7 @@ mod tests {
             )
             .await;
 
-        assert!(
-            result.success,
-            "应成功，但得到错误: {:?}",
-            result.errors
-        );
+        assert!(result.success, "应成功，但得到错误: {:?}", result.errors);
         assert_eq!(result.file_path.to_string_lossy(), "src/main.rs");
 
         // 两个处理器都应产生输出。

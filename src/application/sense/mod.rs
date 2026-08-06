@@ -364,7 +364,10 @@ mod status_tests {
     use stubs::*;
 
     fn projects() -> Vec<(String, PathBuf)> {
-        vec![("dt".into(), PathBuf::from("/data/myProject/digital-twin-v2"))]
+        vec![(
+            "dt".into(),
+            PathBuf::from("/data/myProject/digital-twin-v2"),
+        )]
     }
 
     fn svc(vectors: usize, methods: u64) -> SenseService {
@@ -418,7 +421,9 @@ mod status_tests {
 
     #[tokio::test]
     async fn unregistered_when_no_match() {
-        let r = svc(0, 0).sense(Path::new("/home/luis/x"), &projects()).await;
+        let r = svc(0, 0)
+            .sense(Path::new("/home/luis/x"), &projects())
+            .await;
         assert_eq!(r.status, SenseStatus::Unregistered);
         assert!(r.project.is_none());
     }

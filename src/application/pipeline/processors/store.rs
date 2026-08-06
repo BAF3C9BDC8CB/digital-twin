@@ -93,10 +93,8 @@ impl Processor for StoreProcessor {
         let Some(graphs_val) = llm_out.get("graphs") else {
             return Ok(output);
         };
-        let graphs: Vec<ExtractedGraph> =
-            serde_json::from_value(graphs_val.clone()).map_err(|e| {
-                DtError::General(format!("store: llm graphs 输出契约被破坏: {e}"))
-            })?;
+        let graphs: Vec<ExtractedGraph> = serde_json::from_value(graphs_val.clone())
+            .map_err(|e| DtError::General(format!("store: llm graphs 输出契约被破坏: {e}")))?;
 
         // 三个后端是整合所必需的。
         let (Some(graph), Some(vector), Some(embed)) = (&self.graph, &self.vector, &self.embed)
@@ -106,9 +104,10 @@ impl Processor for StoreProcessor {
         };
 
         // ── 来自 chunk 处理器输出的块文本 + 文档标识。 ──
-        let chunk_out = ctx.outputs.get("chunk").ok_or_else(|| {
-            DtError::General("store: 存在 graphs 但缺少 chunk 输出".to_string())
-        })?;
+        let chunk_out = ctx
+            .outputs
+            .get("chunk")
+            .ok_or_else(|| DtError::General("store: 存在 graphs 但缺少 chunk 输出".to_string()))?;
         let doc_id = chunk_out
             .get("doc_id")
             .and_then(|v| v.as_str())

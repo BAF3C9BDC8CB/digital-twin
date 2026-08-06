@@ -50,6 +50,8 @@ message SearchRequest {
   bool with_evidence = 8;  // knowledge top-5 证据回填
   string origin = 9;       // knowledge 召回 origin 过滤
   string doc_id = 10;      // doc 世界单文档限定
+  string file_type = 11;           // 文件类型过滤：类别名(document/code/config)或后缀(md/yaml/java)
+  string entity_type_filter = 12;  // 内容类型过滤：LLM 语义类型(Config/Service/Standard)或 AST 类型(Method/Class)
 }
 
 message ScoreBreakdown {

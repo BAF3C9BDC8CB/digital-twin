@@ -850,7 +850,10 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultReasoningService::new(repo);
 
-        let count = svc.mark_stale("2026-07-09-001").await.expect("mark_stale 应成功");
+        let count = svc
+            .mark_stale("2026-07-09-001")
+            .await
+            .expect("mark_stale 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
         assert_eq!(count, 1);
     }
@@ -942,7 +945,10 @@ mod tests {
         assert!(read.load(Ordering::SeqCst) >= 3);
 
         // 将会话标记为过期
-        let count = svc.mark_stale("pipeline-session").await.expect("stale 应成功");
+        let count = svc
+            .mark_stale("pipeline-session")
+            .await
+            .expect("stale 应成功");
         assert!(count >= 1);
     }
 }

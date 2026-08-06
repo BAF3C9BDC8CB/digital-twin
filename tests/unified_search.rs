@@ -41,7 +41,13 @@ fn u_all_world_finds_createapp_with_analysis_and_location() {
 #[test]
 #[ignore]
 fn u_knowledge_ifcode_semantic_hit_via_cli() {
-    let v = search_json(&["search", "新增渠道的唯一代码标识", "--world", "knowledge", "--json"]);
+    let v = search_json(&[
+        "search",
+        "新增渠道的唯一代码标识",
+        "--world",
+        "knowledge",
+        "--json",
+    ]);
     let hits = v["hits"].as_array().unwrap();
     assert!(!hits.is_empty(), "knowledge 世界无命中结果");
     let top3: Vec<String> = hits
@@ -49,7 +55,10 @@ fn u_knowledge_ifcode_semantic_hit_via_cli() {
         .take(3)
         .map(|h| h["title"].as_str().unwrap_or("").to_lowercase())
         .collect();
-    assert!(top3.iter().any(|t| t.contains("ifcode")), "ifCode 未进入前 3: {top3:?}");
+    assert!(
+        top3.iter().any(|t| t.contains("ifcode")),
+        "ifCode 未进入前 3: {top3:?}"
+    );
 }
 
 /// memory 世界：当前 Memgraph 无预置事件节点（S5 Task 0 清库重建后事件为空），
@@ -71,7 +80,10 @@ async fn u_memory_world_finds_seeded_event() {
     let repo: Arc<dyn GraphRepository> = Arc::new(graph);
 
     let mut params = HashMap::new();
-    params.insert("name".into(), serde_json::Value::String("unified-search-live-probe".into()));
+    params.insert(
+        "name".into(),
+        serde_json::Value::String("unified-search-live-probe".into()),
+    );
     params.insert(
         "details".into(),
         serde_json::Value::String("UNIFIED_PROBE_7X9 事件检索探针".into()),
@@ -86,17 +98,14 @@ async fn u_memory_world_finds_seeded_event() {
     let v = search_json(&["search", "UNIFIED_PROBE_7X9", "--world", "memory", "--json"]);
     let hits = v["hits"].as_array().unwrap();
     assert!(
-        hits.iter().any(|h| h["entity_type"] == "Decision"
-            && h["title"] == "unified-search-live-probe"),
+        hits.iter()
+            .any(|h| h["entity_type"] == "Decision" && h["title"] == "unified-search-live-probe"),
         "未找到已创建的探针事件: {hits:?}"
     );
 
-    repo.write_query(
-        "MATCH (n:Decision {name: $name}) DELETE n",
-        params,
-    )
-    .await
-    .expect("清理探针事件失败");
+    repo.write_query("MATCH (n:Decision {name: $name}) DELETE n", params)
+        .await
+        .expect("清理探针事件失败");
 }
 
 #[test]

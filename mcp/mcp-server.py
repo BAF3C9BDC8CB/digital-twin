@@ -62,6 +62,14 @@ def _resolve_dt_bin() -> str:
 
 DT_BIN = _resolve_dt_bin()
 
+# dt 读取 pipeline 配置的相对路径为 config/pipeline.yaml(基于 cwd)。
+# MCP 进程的工作目录不固定,必须让子进程在项目根下执行,
+# 否则 providers 配置(xinference)加载不到,embed 会回退到默认 siliconflow。
+if "target/release" in DT_BIN:
+    _DT_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(DT_BIN)))
+else:
+    _DT_PROJECT_ROOT = "/data/myProject/digital-twin-v2"
+
 
 # ====== Post-Execute 事件自动写入框架 ======
 
@@ -247,7 +255,7 @@ def run_cmd(cmd: list, timeout: int = 120) -> str:
     import shutil
     resolved = shutil.which(cmd[0]) or cmd[0]
     print(f"[CMD] {' '.join(cmd)}  (解析: {resolved})", file=sys.stderr, flush=True)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=_DT_PROJECT_ROOT)
     output = (result.stdout + result.stderr).strip()
     # 清理 ANSI 颜色码
     output = re.sub(r'\x1b\[[0-9;]*m', '', output)

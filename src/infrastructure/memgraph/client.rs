@@ -118,10 +118,7 @@ impl GraphRepository for MemgraphClient {
     async fn health_check(&self) -> Result<HealthStatus, DtError> {
         match self.graph.run(bolt_driver::query("RETURN 1")).await {
             Ok(_) => Ok(HealthStatus::Healthy),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!(
-                "Memgraph 不可达: {}",
-                e
-            ))),
+            Err(e) => Ok(HealthStatus::Unhealthy(format!("Memgraph 不可达: {}", e))),
         }
     }
 }

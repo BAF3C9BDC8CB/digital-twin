@@ -124,9 +124,9 @@ pub async fn handle_jcli(
                                         "jcli build: 记录 {job_name} 在 {env} 环境中的部署事件",
                                     );
                                 }
-                                Err(e) => tracing::warn!(
-                                    "jcli build: 对 {job_name} 的增量同步失败: {e}",
-                                ),
+                                Err(e) => {
+                                    tracing::warn!("jcli build: 对 {job_name} 的增量同步失败: {e}",)
+                                }
                             }
                         }
                     }

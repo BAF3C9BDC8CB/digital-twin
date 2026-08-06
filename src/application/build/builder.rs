@@ -24,10 +24,7 @@ use crate::infrastructure::siliconflow::SiliconFlowClient;
 /// dt build /path/to/project --name my-project --full
 /// ```
 #[derive(Parser, Debug, Clone)]
-#[command(
-    name = "build",
-    about = "将项目源代码索引到知识图谱"
-)]
+#[command(name = "build", about = "将项目源代码索引到知识图谱")]
 pub struct BuildCommand {
     /// 项目根目录路径。
     #[arg(value_name = "PATH")]

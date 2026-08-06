@@ -65,6 +65,7 @@ pub enum EntityType {
     Table,
     Api,
     Concept,
+    Standard,
     Person,
     Org,
     Product,
@@ -83,6 +84,7 @@ impl EntityType {
             Self::Table => "Table",
             Self::Api => "Api",
             Self::Concept => "Concept",
+            Self::Standard => "Standard",
             Self::Person => "Person",
             Self::Org => "Org",
             Self::Product => "Product",
@@ -99,17 +101,23 @@ impl<'de> Deserialize<'de> for EntityType {
         D: Deserializer<'de>,
     {
         let value = Option::<String>::deserialize(deserializer)?;
-        Ok(match value.as_deref() {
-            Some("Service") => Self::Service,
-            Some("Channel") => Self::Channel,
-            Some("Config") => Self::Config,
-            Some("Table") => Self::Table,
-            Some("Api") => Self::Api,
-            Some("Concept") => Self::Concept,
-            Some("Person") => Self::Person,
-            Some("Org") => Self::Org,
-            Some("Product") => Self::Product,
-            Some("Other") => Self::Other,
+        Ok(match value.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
+            Some("service") => Self::Service,
+            Some("channel") => Self::Channel,
+            Some("config") => Self::Config,
+            Some("table") => Self::Table,
+            Some("api") => Self::Api,
+            Some("concept") | Some("tech") | Some("database") | Some("technology") | Some("module")
+            | Some("component") | Some("process") | Some("procedure")
+            | Some("function") | Some("class") | Some("method") | Some("interface")
+            | Some("trait") | Some("struct") | Some("enum") | Some("macro")
+            | Some("command") | Some("task") | Some("tool") | Some("step") | Some("job")
+            | Some("type") | Some("namespace") | Some("library") | Some("model") => Self::Concept,
+            Some("standard") => Self::Standard,
+            Some("person") | Some("people") | Some("human") => Self::Person,
+            Some("org") | Some("organization") | Some("organisation") | Some("company") => Self::Org,
+            Some("product") => Self::Product,
+            Some("other") | Some("unknown") | Some("misc") | Some("project") => Self::Other,
             Some(other) => {
                 tracing::warn!("LLM 返回词表外实体类型 '{other}'，归一为 Other");
                 Self::Other

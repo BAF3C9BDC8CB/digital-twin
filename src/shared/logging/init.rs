@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
 /// 使用本地时区（而非 UTC）记录时间戳。
 struct LocalTimer;
@@ -37,11 +38,12 @@ const LOG_FILE: &str = "dt-daemon.log";
 ///
 /// # 环境变量
 ///
-/// | 变量            | 默认值                | 说明                               |
-/// |-----------------|----------------------|------------------------------------|
-/// | `DT_LOG_DIR`    | `/var/log/digital-twin` | 覆盖日志目录                   |
-/// | `RUST_LOG`      | `info`               | 按模块过滤（tracing EnvFilter）    |
-/// | `DT_LOG_LEVEL`  | `info`               | RUST_LOG 未设置时的兜底值          |
+/// | 变量             | 默认值                | 说明                               |
+/// |------------------|----------------------|------------------------------------|
+/// | `DT_LOG_DIR`     | `/var/log/digital-twin` | 覆盖日志目录                   |
+/// | `RUST_LOG`       | `info`               | 按模块过滤（tracing EnvFilter）    |
+/// | `DT_LOG_LEVEL`   | `info`               | RUST_LOG 未设置时的兜底值          |
+/// | `DT_LOG_STDERR`  | `warn`               | stderr 层级别（debug 恢复详细输出）|
 pub fn init_logging() -> anyhow::Result<()> {
     // 解析日志目录，必要时创建
     let log_dir = std::env::var("DT_LOG_DIR")
@@ -51,10 +53,7 @@ pub fn init_logging() -> anyhow::Result<()> {
     let log_file = if log_dir.exists() || fs::create_dir_all(&log_dir).is_ok() {
         log_dir.join(LOG_FILE)
     } else {
-        eprintln!(
-            "[dt-log] 无法创建 {}，回退到 /tmp/dt-daemon.log",
-            log_dir.display()
-        );
+        // 静默回退到 /tmp，不污染终端输出
         PathBuf::from("/tmp/dt-daemon.log")
     };
 
@@ -83,14 +82,19 @@ pub fn init_logging() -> anyhow::Result<()> {
         .with_timer(LocalTimer);
 
     // ── stderr 层（紧凑、人类可读）──────────────────────────
+    // 默认只输出 WARN 及以上，INFO 走日志文件；DT_LOG_STDERR 可覆盖。
     // 注意：fmt layer 默认写 stdout——必须显式指定 stderr（U-D4 stdout 纯净约束）。
+    let stderr_filter_str = std::env::var("DT_LOG_STDERR").unwrap_or_else(|_| "warn".into());
+    let stderr_filter = tracing_subscriber::EnvFilter::try_new(&stderr_filter_str)
+        .unwrap_or_else(|_| "warn".into());
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
         .with_ansi(true)
         .compact()
         .with_writer(std::io::stderr)
-        .with_timer(LocalTimer);
+        .with_timer(LocalTimer)
+        .with_filter(stderr_filter);
 
     // ── 组装 ────────────────────────────────────────────────────
     tracing_subscriber::registry()

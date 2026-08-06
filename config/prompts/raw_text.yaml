@@ -8,7 +8,7 @@ system: |
     "summary": "文本内容概述（20字以内）",
     "tags": ["标签1", "标签2"],
     "entities": [
-      {"name": "实体名称", "type": "person|org|tech|product|other", "description": "说明"}
+      {"name": "实体名称", "type": "person|org|tech|standard|product|other", "description": "说明"}
     ],
     "relations": [
       {"from": "实体A", "to": "实体B", "type": "depends|contains|relates"}

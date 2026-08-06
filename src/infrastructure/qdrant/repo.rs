@@ -195,8 +195,8 @@ impl VectorRepository for QdrantRepo {
                 .await
                 .map_err(|e| DtError::Repository(format!("Qdrant scroll_payloads: {e}")))?;
             for point in resp.result {
-                let payload: serde_json::Value = serde_json::to_value(&point.payload)
-                    .unwrap_or_else(|_| serde_json::json!({}));
+                let payload: serde_json::Value =
+                    serde_json::to_value(&point.payload).unwrap_or_else(|_| serde_json::json!({}));
                 out.push(payload);
                 if out.len() >= max {
                     return Ok(out);
@@ -368,10 +368,7 @@ impl VectorRepository for QdrantRepo {
             }
             Err(e) => {
                 tracing::error!("Qdrant 健康检查失败: {}", e);
-                Ok(HealthStatus::Unhealthy(format!(
-                    "Qdrant 健康检查: {}",
-                    e
-                )))
+                Ok(HealthStatus::Unhealthy(format!("Qdrant 健康检查: {}", e)))
             }
         }
     }
@@ -448,9 +445,7 @@ fn json_to_condition(
     let value = cond
         .get("match")
         .and_then(|m| m.get("value"))
-        .ok_or_else(|| {
-            DtError::General(format!("过滤条件缺少 'match.value': {cond}"))
-        })?;
+        .ok_or_else(|| DtError::General(format!("过滤条件缺少 'match.value': {cond}")))?;
 
     match value {
         serde_json::Value::String(s) => {
@@ -458,9 +453,9 @@ fn json_to_condition(
         }
         serde_json::Value::Bool(b) => Ok(qdrant_client::qdrant::Condition::matches(key, *b)),
         serde_json::Value::Number(n) => {
-            let i = n.as_i64().ok_or_else(|| {
-                DtError::General(format!("过滤匹配值不是整数: {n}"))
-            })?;
+            let i = n
+                .as_i64()
+                .ok_or_else(|| DtError::General(format!("过滤匹配值不是整数: {n}")))?;
             Ok(qdrant_client::qdrant::Condition::matches(key, i))
         }
         other => Err(DtError::General(format!(

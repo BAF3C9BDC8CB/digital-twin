@@ -91,10 +91,7 @@ async fn extract_real_docs_meets_quality_gates() {
 
     let (client, model) = build_client();
     let healthy = client.health_check().await.unwrap_or(false);
-    assert!(
-        healthy,
-        "LLM 端点不可达 — 请先启动模型服务"
-    );
+    assert!(healthy, "LLM 端点不可达 — 请先启动模型服务");
     println!("== provider healthy, model: {model} ==");
 
     let registry = Arc::new(

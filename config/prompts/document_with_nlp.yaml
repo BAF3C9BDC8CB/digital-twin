@@ -8,7 +8,7 @@ system: |
     "block_summary": "本块内容概述（50字以内）",
     "entities": [
       {"mention": "原文提法", "canonical_name": "规范名",
-       "type": "Service|Channel|Config|Table|Api|Concept|Person|Org|Product|Other",
+       "type": "Service|Channel|Config|Table|Api|Concept|Standard|Person|Org|Product|Other",
        "summary": "一句话说明它是什么/做什么", "keywords": ["关键词"]}
     ],
     "relations": [
@@ -20,6 +20,9 @@ system: |
   规则：
   - 仅输出 JSON，不要 markdown，不要额外说明
   - type 必须从给定词表中选择，词表外的归入 Other
+  - 类型定义：Standard=规范/标准/流程/格式约定（如提交规范、命名规范、CommitMessageFormat、branch 命名约定）；
+    Config=配置文件/参数/环境设置项（如 pipeline.yaml、config.yaml、端口/地址/超时参数）；
+    Concept=抽象概念/术语/模式（如 RRF、Embedding、向量检索）
   - canonical_name 用于跨块指同一实体，同一实体必须使用同一个规范名
   - relation 的 head/tail 必须引用 entities 里的 canonical_name
   - NLP 候选仅供召回参考，你可确认、合并、补充或丢弃

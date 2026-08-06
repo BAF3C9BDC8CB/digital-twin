@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 
 /// config.yaml 项目列表中最长前缀匹配；path 必须先 canonicalize（调用方负责）。
-pub fn match_project<'a>(path: &Path, projects: &'a [(String, PathBuf)]) -> Option<(&'a str, &'a Path)> {
+pub fn match_project<'a>(
+    path: &Path,
+    projects: &'a [(String, PathBuf)],
+) -> Option<(&'a str, &'a Path)> {
     projects
         .iter()
         .filter(|(_, root)| path.starts_with(root))
@@ -34,7 +37,10 @@ mod tests {
                 "warehouse-api".into(),
                 PathBuf::from("/data/aflm/warehouse/warehouse-api"),
             ),
-            ("dt".into(), PathBuf::from("/data/myProject/digital-twin-v2")),
+            (
+                "dt".into(),
+                PathBuf::from("/data/myProject/digital-twin-v2"),
+            ),
         ]
     }
 

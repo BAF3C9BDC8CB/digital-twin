@@ -241,10 +241,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
     let dump_path = backup_dir.join("memgraph.dump");
 
     if !dump_path.exists() {
-        tracing::warn!(
-            "在 {} 未找到 Memgraph dump — 已跳过",
-            dump_path.display()
-        );
+        tracing::warn!("在 {} 未找到 Memgraph dump — 已跳过", dump_path.display());
         return Ok(());
     }
 
@@ -254,10 +251,7 @@ pub async fn restore_graph(backup_dir: &Path) -> anyhow::Result<()> {
         .await
         .unwrap_or_default();
     if peek.starts_with("//") {
-        tracing::info!(
-            "Memgraph dump 是占位符，跳过恢复: {}",
-            dump_path.display()
-        );
+        tracing::info!("Memgraph dump 是占位符，跳过恢复: {}", dump_path.display());
         return Ok(());
     }
 

@@ -134,9 +134,7 @@ mod tests {
     #[tokio::test]
     async fn copy_database_writes_file() {
         let dir = TempDir::new().unwrap();
-        let (_ok, size) = copy_database(dir.path())
-            .await
-            .expect("复制应成功");
+        let (_ok, size) = copy_database(dir.path()).await.expect("复制应成功");
         // 若未找到 sqlite 数据库，ok 可能为 false（已写入占位符）
         assert!(size > 0);
 

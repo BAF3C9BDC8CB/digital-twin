@@ -102,10 +102,7 @@ pub async fn handle_k8s_sync(
         println!("K8s 同步: server={}, dry_run={}", k8s.server, dry_run);
 
         if dry_run {
-            println!(
-                "演练模式——将同步命名空间: {:?}",
-                k8s.effective_namespaces()
-            );
+            println!("演练模式——将同步命名空间: {:?}", k8s.effective_namespaces());
             tracing::info!("k8s-sync 演练完成");
             return Ok(());
         }

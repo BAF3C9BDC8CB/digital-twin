@@ -122,10 +122,7 @@ pub async fn restore_collections(backup_dir: &Path) -> anyhow::Result<()> {
     let snapshot_path = backup_dir.join("qdrant.snapshot");
 
     if !snapshot_path.exists() {
-        tracing::warn!(
-            "在 {} 未找到 Qdrant 快照 — 已跳过",
-            snapshot_path.display()
-        );
+        tracing::warn!("在 {} 未找到 Qdrant 快照 — 已跳过", snapshot_path.display());
         return Ok(());
     }
 
@@ -198,9 +195,7 @@ mod tests {
     #[tokio::test]
     async fn snapshot_collections_writes_file() {
         let dir = TempDir::new().unwrap();
-        let (_ok, size) = snapshot_collections(dir.path())
-            .await
-            .expect("快照应成功");
+        let (_ok, size) = snapshot_collections(dir.path()).await.expect("快照应成功");
         // 若 Qdrant 不可达，ok 可能为 false（已写入占位符）
         assert!(size > 0);
 

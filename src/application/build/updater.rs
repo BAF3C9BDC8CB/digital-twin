@@ -42,10 +42,7 @@ use crate::shared::coordinator::WriteCoordinator;
 /// dt update --file /path/to/PayService.java --type delete
 /// ```
 #[derive(Parser, Debug, Clone)]
-#[command(
-    name = "update",
-    about = "将单文件增量更新到知识图谱"
-)]
+#[command(name = "update", about = "将单文件增量更新到知识图谱")]
 pub struct UpdateCommand {
     /// 待更新文件的绝对路径。
     #[arg(long = "file")]

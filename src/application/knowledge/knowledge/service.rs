@@ -884,7 +884,9 @@ mod tests {
         let svc = DefaultKnowledgeService::new(repo);
 
         let k = make_knowledge();
-        svc.write_knowledge(&k).await.expect("write_knowledge 应成功");
+        svc.write_knowledge(&k)
+            .await
+            .expect("write_knowledge 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -905,7 +907,9 @@ mod tests {
             project: "test".into(),
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        svc.write_experience(&e).await.expect("write_experience 应成功");
+        svc.write_experience(&e)
+            .await
+            .expect("write_experience 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
     }
 
@@ -1213,7 +1217,9 @@ mod tests {
             project: "test".into(),
             created_at: "2026-07-09T00:00:00Z".into(),
         };
-        svc.write_experience(&e).await.expect("write_experience 应成功");
+        svc.write_experience(&e)
+            .await
+            .expect("write_experience 应成功");
 
         // 图写入应已发生
         assert!(write.load(Ordering::SeqCst) >= 1);
@@ -1241,7 +1247,9 @@ mod tests {
             created_at: "2026-07-09T00:00:00Z".into(),
         };
         // 无向量化也应成功
-        svc.write_experience(&e).await.expect("write_experience 应成功");
+        svc.write_experience(&e)
+            .await
+            .expect("write_experience 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
         // 读计数不变（未涉及图调用）
     }

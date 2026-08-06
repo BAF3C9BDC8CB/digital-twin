@@ -181,9 +181,9 @@ impl SiliconFlowClient {
             }
 
             // 每次构建一个全新的请求（reqwest::RequestBuilder 不可 Clone）
-            let req_built = req.try_clone().ok_or_else(|| {
-                DtError::Repository("SiliconFlow: 请求克隆失败".into())
-            })?;
+            let req_built = req
+                .try_clone()
+                .ok_or_else(|| DtError::Repository("SiliconFlow: 请求克隆失败".into()))?;
 
             match req_built.send().await {
                 Ok(resp) => {
@@ -311,9 +311,7 @@ impl SiliconFlowClient {
             .filter(|s| !s.is_empty())
             .or_else(|| msg["reasoning_content"].as_str().filter(|s| !s.is_empty()))
             .ok_or_else(|| {
-                DtError::Repository(
-                    "SiliconFlow: chat 响应中缺少 content/reasoning_content".into(),
-                )
+                DtError::Repository("SiliconFlow: chat 响应中缺少 content/reasoning_content".into())
             })?;
 
         Ok(content.to_string())
@@ -347,18 +345,16 @@ impl EmbedService for SiliconFlowClient {
             .await
             .map_err(|e| DtError::Repository(format!("SiliconFlow embed 解析: {e}")))?;
 
-        let data = json["data"].as_array().ok_or_else(|| {
-            DtError::Repository("SiliconFlow: embed 响应中缺少 'data'".into())
-        })?;
+        let data = json["data"]
+            .as_array()
+            .ok_or_else(|| DtError::Repository("SiliconFlow: embed 响应中缺少 'data'".into()))?;
 
         let mut embeddings: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
         for item in data {
             let index = item["index"].as_i64().unwrap_or(0) as usize;
             let embedding: Vec<f32> = item["embedding"]
                 .as_array()
-                .ok_or_else(|| {
-                    DtError::Repository("SiliconFlow: 响应中缺少 'embedding'".into())
-                })?
+                .ok_or_else(|| DtError::Repository("SiliconFlow: 响应中缺少 'embedding'".into()))?
                 .iter()
                 .map(|v| v.as_f64().unwrap_or(0.0) as f32)
                 .collect();
@@ -385,7 +381,9 @@ impl EmbedService for SiliconFlowClient {
                 "SiliconFlow 健康检查: HTTP {}",
                 resp.status()
             ))),
-            Err(e) => Ok(HealthStatus::Unhealthy(format!("SiliconFlow 健康检查: {e}"))),
+            Err(e) => Ok(HealthStatus::Unhealthy(format!(
+                "SiliconFlow 健康检查: {e}"
+            ))),
         }
     }
 }

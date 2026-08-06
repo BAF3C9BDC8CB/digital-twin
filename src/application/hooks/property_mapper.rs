@@ -21,11 +21,7 @@ impl PropertyMapper {
             let value = Self::resolve_value(prop, ctx, event_id, &now);
 
             if value.is_null() && prop.required {
-                tracing::warn!(
-                    "hook '{}' 缺少必填属性 '{}'",
-                    ctx.hook_name,
-                    prop.name
-                );
+                tracing::warn!("hook '{}' 缺少必填属性 '{}'", ctx.hook_name, prop.name);
             }
 
             if !value.is_null() {

@@ -137,7 +137,10 @@ async fn s5a_graph_expansion_brings_relates_neighbors() {
         .hits
         .iter()
         .find(|h| h.id.to_lowercase().ends_with("/ifcode"));
-    assert!(ifcode.is_some(), "ifCode 应被语义召回（向量分 0.81 实测 rank #1）");
+    assert!(
+        ifcode.is_some(),
+        "ifCode 应被语义召回（向量分 0.81 实测 rank #1）"
+    );
     assert_eq!(ifcode.unwrap().hop, Some(0));
 
     // 图扩展：alipay（向量 rank #128 > k=120，向量必召回不到）以 hop=1 出现，
@@ -241,7 +244,12 @@ async fn s5b_rerank_full_fusion_live() {
         eprintln!("SKIP: live backends unavailable");
         return;
     };
-    let cws = CrossWorldSearch::new(Some(graph), Some(vector), Some(embed), Some(rerank_router(XINFERENCE)));
+    let cws = CrossWorldSearch::new(
+        Some(graph),
+        Some(vector),
+        Some(embed),
+        Some(rerank_router(XINFERENCE)),
+    );
     let result = cws.search(&same_query()).await.expect("搜索必须成功");
     print_hits(&result);
 
@@ -254,10 +262,11 @@ async fn s5b_rerank_full_fusion_live() {
     );
     assert!(result.hits.iter().all(|h| h.rerank_degraded.is_none()));
     // rerank 分必须非零且 [0,1]
-    assert!(result
-        .hits
-        .iter()
-        .all(|h| h.score_breakdown.as_ref().map(|b| b.rerank > 0.0 && b.rerank <= 1.0) == Some(true)));
+    assert!(result.hits.iter().all(|h| h
+        .score_breakdown
+        .as_ref()
+        .map(|b| b.rerank > 0.0 && b.rerank <= 1.0)
+        == Some(true)));
     // 融合分公式抽查：final = 0.6·rerank + 0.3·semantic + 0.1·boost
     let h0 = &result.hits[0];
     let b = h0.score_breakdown.as_ref().unwrap();
@@ -270,7 +279,10 @@ async fn s5b_rerank_full_fusion_live() {
         .iter()
         .position(|h| h.id.to_lowercase().contains("/org/alipay"))
         .map(|i| i + 1);
-    println!("S5b: alipay position = {:?} (S5a degraded 时为 #31)", alipay);
+    println!(
+        "S5b: alipay position = {:?} (S5a degraded 时为 #31)",
+        alipay
+    );
     assert!(alipay.is_some(), "alipay 应保留在 rerank 后的结果中");
 }
 
@@ -328,14 +340,23 @@ async fn s5c_doc_world_returns_chunk_text() {
 
     assert!(!result.hits.is_empty(), "doc 世界应返回证据块");
     for h in &result.hits {
-        assert!(h.id.starts_with("dt://doc/"), "id 应为 doc_id:block_index 形态");
+        assert!(
+            h.id.starts_with("dt://doc/"),
+            "id 应为 doc_id:block_index 形态"
+        );
         assert!(h.id.rsplit(':').next().unwrap().parse::<u32>().is_ok());
-        assert!(!h.snippet.is_empty(), "snippet 应含原文 text（nacos 点无 text 会被剔除）");
+        assert!(
+            !h.snippet.is_empty(),
+            "snippet 应含原文 text（nacos 点无 text 会被剔除）"
+        );
         assert_eq!(h.source_world, "doc");
         assert_eq!(h.entity_type, "Doc");
         assert!(h.source_ref.is_some());
     }
-    println!("ACCEPT: doc world returned {} chunk(s) with原文 text", result.hits.len());
+    println!(
+        "ACCEPT: doc world returned {} chunk(s) with原文 text",
+        result.hits.len()
+    );
 }
 
 /// §9.5：with_evidence 时 top-5 实体各附 ≤2 段证据。
@@ -365,15 +386,28 @@ async fn s5c_with_evidence_backfills_top5_entities() {
 
     assert!(!result.hits.is_empty());
     // 至少 ifCode（top-1）拿到证据；每实体 ≤2 段
-    let with_ev: Vec<_> = result.hits.iter().take(5).filter(|h| h.evidence.is_some()).collect();
+    let with_ev: Vec<_> = result
+        .hits
+        .iter()
+        .take(5)
+        .filter(|h| h.evidence.is_some())
+        .collect();
     assert!(!with_ev.is_empty(), "top-5 至少一个实体应回填到证据");
     assert!(with_ev
         .iter()
         .all(|h| h.evidence.as_ref().unwrap().len() <= 2));
-    let ifcode = result.hits.iter().find(|h| h.id.to_lowercase().ends_with("/ifcode"));
+    let ifcode = result
+        .hits
+        .iter()
+        .find(|h| h.id.to_lowercase().ends_with("/ifcode"));
     assert!(
-        ifcode.and_then(|h| h.evidence.as_ref()).is_some_and(|e| !e.is_empty()),
+        ifcode
+            .and_then(|h| h.evidence.as_ref())
+            .is_some_and(|e| !e.is_empty()),
         "ifCode 应有证据段落"
     );
-    println!("ACCEPT: with_evidence backfilled {} top-5 entitie(s)", with_ev.len());
+    println!(
+        "ACCEPT: with_evidence backfilled {} top-5 entitie(s)",
+        with_ev.len()
+    );
 }

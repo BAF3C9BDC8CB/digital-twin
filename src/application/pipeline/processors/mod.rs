@@ -10,18 +10,15 @@
 //! |--------|------------------|----------------------------|
 //! | 100    | `TreeSitter`     | AST 解析（代码文件）       |
 //! | 90     | `Chunk`          | 文本分块（文档文件）       |
-//! | 80     | `HanlpClient`    | NLP 分析（占位）           |
 //! | 60     | `LlmClient`      | LLM 分析                   |
 //! | 10     | `Store`          | 持久化到图 + 向量数据库    |
 
 pub mod chunk;
-pub mod hanlp_client;
 pub mod llm_client;
 pub mod store;
 pub mod tree_sitter;
 
 pub use chunk::ChunkProcessor;
-pub use hanlp_client::HanlpClientProcessor;
 pub use llm_client::LlmClientProcessor;
 pub use store::StoreProcessor;
 pub use tree_sitter::TreeSitterProcessor;

@@ -382,7 +382,10 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let svc = DefaultMemoryService::new(repo, None);
 
-        let day = svc.ensure_day("2026-07-09").await.expect("ensure_day 应成功");
+        let day = svc
+            .ensure_day("2026-07-09")
+            .await
+            .expect("ensure_day 应成功");
         assert_eq!(day.day_id, "2026-07-09");
         assert_eq!(day.date, "2026-07-09");
         assert!(read.load(Ordering::SeqCst) >= 1);
@@ -405,7 +408,9 @@ mod tests {
             ended_at: None,
         };
 
-        svc.create_session(&session).await.expect("create_session 应成功");
+        svc.create_session(&session)
+            .await
+            .expect("create_session 应成功");
         assert!(read.load(Ordering::SeqCst) >= 1);
         assert!(write.load(Ordering::SeqCst) >= 1);
     }

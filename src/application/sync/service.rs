@@ -64,9 +64,7 @@ pub trait SyncService: Send + Sync {
     /// 为 `NULL` 的节点。默认实现返回错误——请为可访问向量化器和
     /// 向量仓库的同步服务覆写该方法。
     async fn kg_sync(&self, _incremental: bool) -> Result<SyncReport, DtError> {
-        Err(DtError::Config(
-            "该同步服务未实现 kg_sync".into(),
-        ))
+        Err(DtError::Config("该同步服务未实现 kg_sync".into()))
     }
 }
 

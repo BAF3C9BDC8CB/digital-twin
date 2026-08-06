@@ -642,7 +642,7 @@ pub async fn verify_test_data(
 
     // ── 步骤 8：知识图谱验证（Extract + Consolidate） ─────
     // R11：LLM 提取是非确定性的，因此期望值为下界计数（>=）加上抽样存在 /
-    // 字段形状检查——不做精确相等。旧的 HanLP 关键词-实体检查已移除（§10.1）。
+    // 字段形状检查——不做精确相等。旧的 NLP 关键词-实体检查已移除（§10.1）。
     verify_knowledge_graph(&graph, &vector, &expected, &params, &mut report).await;
 
     report.set_duration(start.elapsed().as_millis() as u64);

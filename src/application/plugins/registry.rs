@@ -28,10 +28,7 @@ impl PluginRegistry {
     pub fn register(&mut self, plugin: Arc<dyn Plugin>) -> Result<(), PluginError> {
         let id = plugin.id();
         if self.index.contains_key(id) {
-            return Err(PluginError::InitFailed(format!(
-                "插件 id 重复: {}",
-                id
-            )));
+            return Err(PluginError::InitFailed(format!("插件 id 重复: {}", id)));
         }
         let idx = self.plugins.len();
         self.plugins.push(plugin);

@@ -13,9 +13,18 @@ fn truncate(s: &str) -> String {
 }
 
 fn render_hit(h: &SearchHit) -> String {
-    let mut out = format!("[{:.4}] [{}] {}\n", h.score, h.entity_type, h.title);
+    let type_tag = match (&h.file_type_label, h.entity_type.as_str()) {
+        (Some(ftl), et) if !et.is_empty() && et != "?" => format!("{ftl}/{et}"),
+        (Some(ftl), _) => ftl.to_string(),
+        (None, et) if !et.is_empty() => et.to_string(),
+        _ => "?".to_string(),
+    };
+    let mut out = format!("[{:.4}] [{}] {}\n", h.score, type_tag, h.title);
     let (label, body) = match h.entity_type.as_str() {
-        "Method" => ("分析", h.llm_analysis.clone().unwrap_or_else(|| h.snippet.clone())),
+        "Method" => (
+            "分析",
+            h.llm_analysis.clone().unwrap_or_else(|| h.snippet.clone()),
+        ),
         "Doc" => ("原文", h.snippet.clone()),
         _ => ("摘要", h.snippet.clone()),
     };
@@ -70,22 +79,37 @@ mod tests {
 
     fn base_hit() -> SearchHit {
         SearchHit {
-            id: "1".into(), title: "createApp".into(), snippet: String::new(),
-            source_world: "code".into(), entity_type: "Method".into(), score: 0.9412,
-            source_ref: None, file_path: Some("test/project/app.js".into()),
-            start_line: Some(32), end_line: Some(36),
-            signature: Some("function createApp(port)".into()), calls: vec![],
+            id: "1".into(),
+            title: "createApp".into(),
+            snippet: String::new(),
+            source_world: "code".into(),
+            entity_type: "Method".into(),
+            file_type: None,
+            file_type_label: None,
+            score: 0.9412,
+            source_ref: None,
+            file_path: Some("test/project/app.js".into()),
+            start_line: Some(32),
+            end_line: Some(36),
+            signature: Some("function createApp(port)".into()),
+            calls: vec![],
             element_id: None,
             llm_analysis: Some("用途：创建服务器实例。\n逻辑：实例化服务器对象。".into()),
-            score_breakdown: None, hop: None, via_same_as: None,
-            relations: None, evidence: None, rerank_degraded: None,
+            score_breakdown: None,
+            hop: None,
+            via_same_as: None,
+            relations: None,
+            evidence: None,
+            rerank_degraded: None,
         }
     }
 
     fn result_with(hits: Vec<SearchHit>, degraded: Vec<String>) -> CrossWorldResult {
         CrossWorldResult {
-            query: "q".into(), world: "all".into(),
-            total: hits.len(), hits,
+            query: "q".into(),
+            world: "all".into(),
+            total: hits.len(),
+            hits,
             per_world_counts: std::collections::HashMap::new(),
             degraded,
         }
@@ -108,7 +132,10 @@ mod tests {
         h.title = "ifCode".into();
         h.snippet = "支付渠道编码，决定路由".into();
         h.llm_analysis = None;
-        h.file_path = None; h.start_line = None; h.end_line = None; h.signature = None;
+        h.file_path = None;
+        h.start_line = None;
+        h.end_line = None;
+        h.signature = None;
         h.source_ref = Some("dt://doc/支付架构决策.md".into());
         h.hop = Some(0);
         let out = render_human(&result_with(vec![h], vec![]));
@@ -119,7 +146,10 @@ mod tests {
 
     #[test]
     fn human_render_degraded_footer() {
-        let out = render_human(&result_with(vec![base_hit()], vec!["rerank_unavailable".into()]));
+        let out = render_human(&result_with(
+            vec![base_hit()],
+            vec!["rerank_unavailable".into()],
+        ));
         assert!(out.contains("降级") && out.contains("rerank_unavailable"));
     }
 
@@ -127,7 +157,10 @@ mod tests {
     fn json_render_is_pure_parseable_json() {
         let out = render_json(&result_with(vec![base_hit()], vec![]));
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["hits"][0]["llm_analysis"], "用途：创建服务器实例。\n逻辑：实例化服务器对象。");
+        assert_eq!(
+            v["hits"][0]["llm_analysis"],
+            "用途：创建服务器实例。\n逻辑：实例化服务器对象。"
+        );
         assert_eq!(v["hits"][0]["start_line"], 32);
     }
 }

@@ -83,10 +83,7 @@ pub async fn cleanup_test_data(
                 }
             }
             if !test_cols.is_empty() {
-                tracing::info!(
-                    count = test_cols.len(),
-                    "已清理测试 Qdrant 集合"
-                );
+                tracing::info!(count = test_cols.len(), "已清理测试 Qdrant 集合");
             }
         }
         Err(e) => tracing::warn!("cleanup: 列出 Qdrant 集合失败: {e}"),

@@ -128,15 +128,11 @@ impl EmbedProviderRouter {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("embed 未配置 siliconflow provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("embed 未配置 siliconflow provider".into())),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("embed 未配置 xinference provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("embed 未配置 xinference provider".into())),
             other => Err(DtError::Config(format!("未知的 embed provider: {other}"))),
         }
     }
@@ -147,15 +143,11 @@ impl EmbedProviderRouter {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("rerank 未配置 siliconflow provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("rerank 未配置 siliconflow provider".into())),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("rerank 未配置 xinference provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("rerank 未配置 xinference provider".into())),
             other => Err(DtError::Config(format!("未知的 rerank provider: {other}"))),
         }
     }
@@ -166,15 +158,11 @@ impl EmbedProviderRouter {
             "siliconflow" => self
                 .sf()
                 .map(|c| EmbedProviderRef::SiliconFlow(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("llm 未配置 siliconflow provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("llm 未配置 siliconflow provider".into())),
             "xinference" => self
                 .xi()
                 .map(|c| EmbedProviderRef::XInference(c.as_ref()))
-                .ok_or_else(|| {
-                    DtError::Repository("llm 未配置 xinference provider".into())
-                }),
+                .ok_or_else(|| DtError::Repository("llm 未配置 xinference provider".into())),
             other => Err(DtError::Config(format!("未知的 llm provider: {other}"))),
         }
     }

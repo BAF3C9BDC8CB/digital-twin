@@ -25,7 +25,7 @@ use crate::domain::error::DtError;
 /// 流水线运行器可以并行执行独立的处理器。
 #[async_trait]
 pub trait Processor: Send + Sync {
-    /// 该处理器的人类可读名称（例如 `"tree_sitter"`、`"hanlp"`、
+    /// 该处理器的人类可读名称（例如 `"tree_sitter"`、`"chunk"`、
     /// `"code_embedder"`）。
     ///
     /// 该名称用作处理器在 [`PipelineContext`] 中存储其输出时的键。

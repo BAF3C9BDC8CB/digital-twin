@@ -492,10 +492,7 @@ mod tests {
 
         // 文件任务应被阻塞（全局锁被持有）
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert!(
-            !file_task.is_finished(),
-            "文件任务应被全局锁阻塞"
-        );
+        assert!(!file_task.is_finished(), "文件任务应被全局锁阻塞");
 
         // drop 全局锁 → 释放全部许可
         drop(global_guard);

@@ -137,10 +137,7 @@ impl LifecycleManager for DefaultLifecycleManager {
         let affected = result.as_array().map(|rows| rows.len()).unwrap_or(0);
 
         if affected == 0 {
-            return Err(DtError::NotFound(format!(
-                "未找到决策：{}",
-                decision_id
-            )));
+            return Err(DtError::NotFound(format!("未找到决策：{}", decision_id)));
         }
 
         Ok(())
@@ -237,7 +234,10 @@ mod tests {
         let repo = Arc::new(CountingRepo::new(write.clone(), read.clone()));
         let mgr = DefaultLifecycleManager::new(repo);
 
-        let count = mgr.mark_stale("2026-07-09-001").await.expect("mark_stale 应成功");
+        let count = mgr
+            .mark_stale("2026-07-09-001")
+            .await
+            .expect("mark_stale 应成功");
         assert!(write.load(Ordering::SeqCst) >= 1);
         assert_eq!(count, 3);
     }
@@ -321,7 +321,10 @@ mod tests {
         }
 
         let mgr = DefaultLifecycleManager::new(Arc::new(EmptyRepo));
-        let count = mgr.mark_stale("no-such-session").await.expect("mark_stale 应成功");
+        let count = mgr
+            .mark_stale("no-such-session")
+            .await
+            .expect("mark_stale 应成功");
         assert_eq!(count, 0);
     }
 }

@@ -215,9 +215,6 @@ mod tests {
         writer.write(&rels, &ctx, "evt-1").await.unwrap();
 
         let queries = repo.queries.lock().unwrap();
-        assert!(
-            queries.is_empty(),
-            "目标缺失时不应写入关系"
-        );
+        assert!(queries.is_empty(), "目标缺失时不应写入关系");
     }
 }

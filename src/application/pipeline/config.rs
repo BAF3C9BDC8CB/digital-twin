@@ -5,7 +5,7 @@
 //! 以及使用哪些 LLM 预设。
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
 // 顶层配置
@@ -97,10 +97,6 @@ pub struct ProcessorsConfig {
     #[serde(default = "default_true")]
     pub tree_sitter: bool,
 
-    /// HanLP NLP 分析（中文 NLP）。
-    #[serde(default = "default_true")]
-    pub hanlp: bool,
-
     /// 基于 LLM 的分析（chat completions）。
     #[serde(default = "default_true")]
     pub llm: bool,
@@ -135,7 +131,6 @@ impl Default for ProcessorsConfig {
     fn default() -> Self {
         Self {
             tree_sitter: true,
-            hanlp: true,
             llm: true,
             chunk: true,
             extract_text: true,
@@ -302,22 +297,39 @@ impl Default for XInferenceProviderConfig {
 // ---------------------------------------------------------------------------
 
 impl PipelineConfig {
-    /// 从当前工作目录相对路径 `config/pipeline.yaml` 加载
-    /// [`PipelineConfig`]。
+    /// 从 `~/.config/digital-twin/pipeline.yaml` 加载 [`PipelineConfig`]。
     ///
-    /// 如果文件不存在，则静默返回默认配置。如果文件存在但格式错误，
+    /// 固定使用用户级路径(与 config.yaml 一致),不依赖进程当前工作目录——
+    /// 否则在非项目根目录执行 dt 会丢失 providers 配置并回退到默认
+    /// SiliconFlow(无 API key → embed 401/0 命中)。
+    ///
+    /// 如果文件不存在,则静默返回默认配置。如果文件存在但格式错误,
     /// 则返回错误字符串。
     pub fn load() -> Result<Self, String> {
-        let path = Path::new("config/pipeline.yaml");
+        let Some(path) = home_pipeline_config() else {
+            tracing::warn!("无法确定 HOME 环境变量,使用默认流水线配置");
+            return Ok(Self::default());
+        };
         if !path.exists() {
+            tracing::warn!(
+                "{} 不存在(请执行 `ln -s <项目根>/config/pipeline.yaml {}` 或手动创建),使用默认配置",
+                path.display(),
+                path.display()
+            );
             return Ok(Self::default());
         }
 
         let content =
-            std::fs::read_to_string(path).map_err(|e| format!("无法读取 {path:?}: {e}"))?;
+            std::fs::read_to_string(&path).map_err(|e| format!("无法读取 {path:?}: {e}"))?;
 
         serde_yaml::from_str(&content).map_err(|e| format!("流水线配置解析错误: {e}"))
     }
+}
+
+/// 解析 `~/.config/digital-twin/pipeline.yaml` 路径,不引入 `dirs` crate。
+fn home_pipeline_config() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(".config/digital-twin/pipeline.yaml"))
 }
 
 impl Default for PipelineConfig {
@@ -363,7 +375,6 @@ inference_server:
   max_concurrent: 8
 processors:
   tree_sitter: true
-  hanlp: false
   llm: true
   chunk: true
   extract_text: true
@@ -381,7 +392,6 @@ ecosystem:
         let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(cfg.enabled);
         assert_eq!(cfg.inference_server.url, "http://infer:50052");
-        assert!(!cfg.processors.hanlp);
         assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.5);
 
         let eco = cfg.ecosystem.unwrap();

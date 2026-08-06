@@ -17,7 +17,7 @@ pub struct PipelineContext {
     pub file_text: String,
     /// 该文件所属的项目。
     pub project_name: String,
-    /// 按处理器名索引的输出（例如 `"tree_sitter"`、`"hanlp"`）。
+    /// 按处理器名索引的输出（例如 `"tree_sitter"`、`"chunk"`）。
     pub outputs: HashMap<String, ProcessorOutput>,
 }
 

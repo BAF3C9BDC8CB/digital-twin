@@ -77,7 +77,29 @@ pub fn clamp_max_hops(h: u32) -> u32 {
 /// 二次 sigmoid 会把分布压向 0.5、架空 0.6 权重。故只做防御性 clamp；
 /// 若未来接入返回裸 logit 的 provider，需重新评估归一方式）。
 pub fn clamp_unit(x: f32) -> f64 {
-    (x as f64).clamp(0.0, 1.0)
+    x.clamp(0.0, 1.0) as f64
+}
+
+/// 从查询提取关键词(英文按空白/符号分词、中文按连续字符段)。
+/// 供 3.3 关键词补召回使用。
+pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
+    let mut kws: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in query.chars() {
+        if ch.is_alphanumeric() || !ch.is_ascii() {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            if cur.chars().count() >= 2 {
+                kws.push(cur.clone());
+            }
+            cur.clear();
+        }
+    }
+    if !cur.is_empty() && cur.chars().count() >= 2 {
+        kws.push(cur);
+    }
+    kws.truncate(max);
+    kws
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +146,10 @@ impl Retriever {
             .search_with_filter(KG_NODES, qvec, k, recall_filter(project, origin))
             .await?;
         let threshold = min_score();
-        Ok(hits.iter().filter_map(|h| parse_seed(h, threshold)).collect())
+        Ok(hits
+            .iter()
+            .filter_map(|h| parse_seed(h, threshold))
+            .collect())
     }
 }
 
@@ -329,9 +354,21 @@ fn parse_entity_rows(rows: Vec<serde_json::Value>, original: &HashSet<&str>) -> 
         let path_min = edges.iter().map(edge_confidence).fold(1.0_f64, f64::min);
         for e in &edges {
             result.edges.push(RawEdge {
-                head: e.get("head").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                tail: e.get("tail").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                rel_type: e.get("type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                head: e
+                    .get("head")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tail: e
+                    .get("tail")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                rel_type: e
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 confidence: edge_confidence(e),
                 evidence: e.get("evidence").and_then(|v| v.as_str()).map(String::from),
                 doc_id: e.get("doc_id").and_then(|v| v.as_str()).map(String::from),
@@ -351,7 +388,11 @@ fn parse_entity_rows(rows: Vec<serde_json::Value>, original: &HashSet<&str>) -> 
                 .get("neighbor_element_id")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            name: nb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            name: nb
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             summary: nb
                 .get("summary")
                 .and_then(|v| v.as_str())
@@ -401,12 +442,12 @@ impl Retriever {
         let Some(ref graph) = self.graph else {
             return Ok(ExpansionResult::default());
         };
-        // 无 elementId 的种子无法定位，静默跳过（payload 恒应携带；缺失记 warn）
+        // 无 elementId 的种子无法定位，静默跳过（payload 恒应携带；缺失记 debug，不刷屏）
         let located: Vec<&Seed> = seeds
             .iter()
             .filter(|s| {
                 if s.element_id.is_none() {
-                    tracing::warn!("种子 {} 缺少 elementId，跳过图扩展", s.business_id);
+                    tracing::debug!("种子 {} 缺少 elementId，跳过图扩展", s.business_id);
                 }
                 s.element_id.is_some()
             })
@@ -461,8 +502,14 @@ impl Retriever {
         let mut result = ExpansionResult::default();
         for (seed_eid, mut group) in per_seed {
             group.sort_by(|a, b| {
-                let ca = a.get("rel_confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
-                let cb = b.get("rel_confidence").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                let ca = a
+                    .get("rel_confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
+                let cb = b
+                    .get("rel_confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
                 cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
             });
             group.truncate(PER_SEED_NEIGHBOR_CAP);
@@ -476,7 +523,8 @@ impl Retriever {
                     .get("neighbor_element_id")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let nb_bid = crate::application::sync::kg_bridge::business_id_from_props(nb, nb_eid);
+                let nb_bid =
+                    crate::application::sync::kg_bridge::business_id_from_props(nb, nb_eid);
                 let labels: Vec<String> = nb
                     .get("labels")
                     .and_then(|v| v.as_array())
@@ -502,7 +550,11 @@ impl Retriever {
                         .get("neighbor_element_id")
                         .and_then(|v| v.as_str())
                         .map(String::from),
-                    name: nb.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    name: nb
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     summary: nb
                         .get("summary")
                         .and_then(|v| v.as_str())
@@ -515,7 +567,11 @@ impl Retriever {
                     path_min_confidence: conf,
                 });
                 // 边端点 elementId → business_id（端点非种子即邻居）
-                let rel_type = row.get("rel_type").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let rel_type = row
+                    .get("rel_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !rel_type.is_empty() {
                     let head_eid = row.get("rel_head").and_then(|v| v.as_str()).unwrap_or("");
                     let tail_eid = row.get("rel_tail").and_then(|v| v.as_str()).unwrap_or("");
@@ -750,8 +806,7 @@ pub(crate) fn bucket_truncate(candidates: &mut Vec<Candidate>, top_n: usize) {
     });
     seeds.truncate(seed_cap);
     let neighbor_cap = top_n.saturating_sub(seeds.len());
-    let mut neighbors: Vec<Candidate> =
-        candidates.iter().filter(|c| c.hop >= 1).cloned().collect();
+    let mut neighbors: Vec<Candidate> = candidates.iter().filter(|c| c.hop >= 1).cloned().collect();
     neighbors.sort_by(|a, b| {
         b.pre_rank
             .partial_cmp(&a.pre_rank)
@@ -833,6 +888,98 @@ impl Retriever {
         }
     }
 
+    /// 3.3:关键词补召回——向量召回不足时,用 Memgraph 按 name/summary/keywords
+    /// CONTAINS 补种子(解决专有名词节点不进向量 TopK 的问题,如 Q8 Redis 缓存)。
+    pub(crate) async fn keyword_recall(&self, query: &str, limit: usize) -> Vec<Seed> {
+        let Some(ref graph) = self.graph else {
+            return Vec::new();
+        };
+        let kws = keywords_of(query, 3);
+        if kws.is_empty() {
+            return Vec::new();
+        }
+        let mut seeds: Vec<Seed> = Vec::new();
+        for kw in kws {
+            // 注意:bolt 参数化的 toLower($kw) 在 Memgraph 上返回 0 行(客户端差异),
+            // 这里用转义后的字符串字面量拼接,已验证字面量 CONTAINS 正常。
+            let kw_lit = kw.replace('\'', "''");
+            // 注意:WHERE 只查 name 属性——summary/keywords 可能是非字符串类型,
+            // toString 对 List/Map 返回 null 会导致整条 WHERE 失效(0 行)。
+            let cypher = format!(
+                r#"
+MATCH (e:Entity)
+WHERE toLower(toString(coalesce(e.name, ''))) CONTAINS toLower('{kw}')
+RETURN e.entity_id AS seed_id,
+       e.name AS seed_name, toString(coalesce(e.summary, '')) AS seed_summary,
+       coalesce(e.type, 'Entity') AS seed_type
+LIMIT 10
+"#,
+                kw = kw_lit
+            );
+            match graph
+                .read_query(&cypher, std::collections::HashMap::new())
+                .await
+            {
+                Ok(rows) => {
+                    tracing::info!(
+                        "keyword_recall: kw={} 查询返回 rows={:?}",
+                        kw,
+                        rows.as_array().map(|a| a.len())
+                    );
+                    if let Some(arr) = rows.as_array() {
+                        for row in arr {
+                            let seed_id = row.get("seed_id").and_then(|v| v.as_str()).unwrap_or("");
+                            if seed_id.is_empty() {
+                                continue;
+                            }
+                            if seeds.iter().any(|s| s.business_id == seed_id) {
+                                continue;
+                            }
+                            seeds.push(Seed {
+                                business_id: seed_id.to_string(),
+                                element_id: row
+                                    .get("seed_element_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                labels: vec![row
+                                    .get("seed_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Entity")
+                                    .to_string()],
+                                name: row
+                                    .get("seed_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                summary: row
+                                    .get("seed_summary")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                entity_type: row
+                                    .get("seed_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Entity")
+                                    .to_string(),
+                                // 关键词命中给予高语义分(0.8),确保能进 bucket_truncate
+                                // 的种子桶(seed_cap=top_n×0.6),不被向量泛化种子挤掉
+                                semantic: 0.80,
+                            });
+                            if seeds.len() >= limit {
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("keyword_recall: kw={} 查询失败: {e}", kw),
+            }
+            if seeds.len() >= limit {
+                break;
+            }
+        }
+        seeds
+    }
+
     /// source_ref 回退：无边 Entity 候选查 MENTIONED_IN（§5.7.2；best-effort 静默失败）。
     async fn fill_source_refs(&self, candidates: &mut [Candidate]) {
         let Some(ref graph) = self.graph else {
@@ -865,7 +1012,9 @@ ORDER BY eid, d.doc_id
             ) else {
                 continue;
             };
-            first.entry(eid.to_string()).or_insert_with(|| doc.to_string());
+            first
+                .entry(eid.to_string())
+                .or_insert_with(|| doc.to_string());
         }
         for c in candidates.iter_mut() {
             if c.source_ref.is_none() {
@@ -875,12 +1024,15 @@ ORDER BY eid, d.doc_id
     }
 
     /// knowledge 世界混合检索全流程（§3）。
-    pub async fn search_knowledge(&self, req: &RetrieveRequest<'_>) -> Result<RetrieveOutcome, DtError> {
+    pub async fn search_knowledge(
+        &self,
+        req: &RetrieveRequest<'_>,
+    ) -> Result<RetrieveOutcome, DtError> {
         let mut degraded: Vec<String> = Vec::new();
         let limit = req.limit.max(1);
 
         // ① 召回（embed/vector 失败 → 空结果 + embed_unavailable）
-        let seeds = match self
+        let mut seeds = match self
             .recall(req.query, req.project, req.origin, (limit * 3) as u64)
             .await
         {
@@ -893,6 +1045,21 @@ ORDER BY eid, d.doc_id
                 });
             }
         };
+
+        // 3.3:关键词补召回(与向量召回取并集,无条件执行——向量可能返回足够数量但
+        // 质量差,专有名词节点仍进不来;关键词通道保证 redis/nacos 类节点必进候选)
+        let mut kw_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        {
+            let kw_seeds = self.keyword_recall(req.query, limit).await;
+            let known: std::collections::HashSet<String> =
+                seeds.iter().map(|s| s.business_id.clone()).collect();
+            for s in kw_seeds {
+                if !known.contains(&s.business_id) {
+                    kw_ids.insert(s.business_id.clone());
+                    seeds.push(s);
+                }
+            }
+        }
 
         // ② 图扩展（失败 → 仅向量召回 + graph_expansion_failed）
         let mut expansion = ExpansionResult::default();
@@ -932,6 +1099,19 @@ ORDER BY eid, d.doc_id
         attach_relations(&mut candidates, &expansion.edges);
         bucket_truncate(&mut candidates, rerank_top_n());
 
+        // 3.3:关键词补召回种子强制保留——分桶截断可能把它们挤出,
+        // 保证 redis/nacos 类专有名词节点必进 rerank 候选
+        if !kw_ids.is_empty() {
+            let existing: std::collections::HashSet<String> =
+                candidates.iter().map(|c| c.business_id.clone()).collect();
+            for s in seeds.iter() {
+                if kw_ids.contains(&s.business_id) && !existing.contains(&s.business_id) {
+                    let extra = merge_candidates(std::slice::from_ref(s), vec![]);
+                    candidates.extend(extra);
+                }
+            }
+        }
+
         // ④ rerank（Task 9；桩恒 false → 降级）
         let reranked = self.apply_rerank(req.query, &mut candidates).await;
         if !reranked {
@@ -957,12 +1137,20 @@ ORDER BY eid, d.doc_id
 
         let hits = scored
             .into_iter()
-            .map(|(c, b)| SearchHit {
+            .map(|(c, b)| {
+                // 文件类型：从 source_ref（doc_id）推断。
+                let (file_type, file_type_label) =
+                    crate::application::context::search_mcp::infer_file_type_pub(
+                        c.source_ref.as_deref(),
+                    );
+                SearchHit {
                 id: c.business_id,
                 title: c.name,
                 snippet: c.summary,
                 source_world: "knowledge".into(),
                 entity_type: c.entity_type,
+                file_type,
+                file_type_label,
                 score: b.final_score,
                 source_ref: c.source_ref,
                 file_path: None,
@@ -982,6 +1170,7 @@ ORDER BY eid, d.doc_id
                 },
                 evidence: None,
                 rerank_degraded: if reranked { None } else { Some(true) },
+            }
             })
             .collect();
         Ok(RetrieveOutcome { hits, degraded })
@@ -1095,7 +1284,10 @@ mod tests {
             query: &str,
             params: HashMap<String, serde_json::Value>,
         ) -> Result<serde_json::Value, DtError> {
-            self.captured.lock().unwrap().push((query.to_string(), params));
+            self.captured
+                .lock()
+                .unwrap()
+                .push((query.to_string(), params));
             Ok(self
                 .responses
                 .lock()
@@ -1276,7 +1468,10 @@ mod tests {
         let mut doc_hit = seed_hit(0.95, "dt://doc/p/a.md", &["Document"]);
         doc_hit["payload"]["type"] = json!("document");
         let vector = MockVector {
-            hits: vec![doc_hit, seed_hit(0.9, "dt://entity/p/Channel/ifcode", &["Entity"])],
+            hits: vec![
+                doc_hit,
+                seed_hit(0.9, "dt://entity/p/Channel/ifcode", &["Entity"]),
+            ],
             captured_filter: Mutex::new(None),
             captured_limit: Mutex::new(None),
         };
@@ -1362,7 +1557,12 @@ mod tests {
                        {"type":"routes_to","confidence":0.7,"evidence":"e2","doc_id":"d2","head":"A","tail":"B"}]),
             ),
             // SAME_AS 别名 C（不在原始种子集）→ 无邻居
-            entity_row("C", serde_json::Value::Null, serde_json::Value::Null, json!([])),
+            entity_row(
+                "C",
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                json!([]),
+            ),
         ];
         let result = parse_entity_rows(rows, &original);
         // 别名节点：hop=0、via_same_as=true
@@ -1437,7 +1637,7 @@ mod tests {
         assert!(result.nodes.iter().all(|n| n.entity_type != "Document"));
         assert!(result.nodes.iter().any(|n| n.business_id == "k-10")); // 最高分保留
         assert!(!result.nodes.iter().any(|n| n.business_id == "k-0")); // 最低分被截
-        // Cypher 用 elementId 定位，参数为 payload elementId 列表
+                                                                       // Cypher 用 elementId 定位，参数为 payload elementId 列表
         let (cypher, params) = graph.captured.lock().unwrap()[0].clone();
         assert!(cypher.contains("elementId(n) = eid"));
         assert_eq!(params["seed_eids"], json!(["eid-seed"]));
@@ -1497,8 +1697,7 @@ mod tests {
 
     #[test]
     fn attach_relations_dedups_triple_and_fills_source_ref() {
-        let mut candidates =
-            merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], vec![]);
+        let mut candidates = merge_candidates(&[mk_seed("A", 0.9), mk_seed("B", 0.8)], vec![]);
         let edges = vec![
             RawEdge {
                 head: "A".into(),
@@ -1544,16 +1743,16 @@ mod tests {
             let mut c = merge_candidates(
                 &[],
                 vec![ExpandedNode {
-                        business_id: format!("N{i}"),
-                        element_id: None,
-                        name: "n".into(),
-                        summary: "s".into(),
-                        entity_type: "Service".into(),
-                        from_seed: "S0".into(),
-                        hop: 1,
-                        via_same_as: false,
-                        path_min_confidence: *pr,
-                    }],
+                    business_id: format!("N{i}"),
+                    element_id: None,
+                    name: "n".into(),
+                    summary: "s".into(),
+                    entity_type: "Service".into(),
+                    from_seed: "S0".into(),
+                    hop: 1,
+                    via_same_as: false,
+                    path_min_confidence: *pr,
+                }],
             );
             // 手动设 pre_rank 便于断言（merge 会算成 seed.semantic×conf，此处无种子 → 用构造值）
             c[0].pre_rank = *pr;
@@ -1569,7 +1768,8 @@ mod tests {
     }
 
     #[test]
-    fn fuse_degraded_uses_one_hop_boost() {        // 降级：0.75·semantic + 0.25·boost(一阶)
+    fn fuse_degraded_uses_one_hop_boost() {
+        // 降级：0.75·semantic + 0.25·boost(一阶)
         let c = merge_candidates(&[mk_seed("A", 0.8)], vec![mk_node("N", "A", 2, 0.9)]);
         let n = c.iter().find(|x| x.business_id == "N").unwrap();
         let b = fuse(n, false);
@@ -1769,7 +1969,7 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert!((got[0] - 0.9993).abs() < 1e-4);
         assert_eq!(got[1], 1.0); // 1.5 → clamp 到 1.0
-        // 失败路径：fails-open → false，候选无分数
+                                 // 失败路径：fails-open → false，候选无分数
         let mut c2 = merge_candidates(&[mk_seed("A", 0.9)], vec![]);
         let r2 = Retriever::new(
             None,
@@ -1827,6 +2027,8 @@ mod tests {
             snippet: "s".into(),
             source_world: "knowledge".into(),
             entity_type: "Channel".into(),
+            file_type: None,
+            file_type_label: None,
             score: 0.9,
             source_ref: None,
             file_path: None,

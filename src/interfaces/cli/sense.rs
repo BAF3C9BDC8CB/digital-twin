@@ -107,8 +107,8 @@ mod live_tests {
     #[tokio::test]
     #[ignore]
     async fn sense_live_returns_valid_json_shape() {
-        let bin = std::env::var("CARGO_BIN_EXE_dt")
-            .unwrap_or_else(|_| "./target/release/dt".to_string());
+        let bin =
+            std::env::var("CARGO_BIN_EXE_dt").unwrap_or_else(|_| "./target/release/dt".to_string());
         let out = std::process::Command::new(bin)
             .args(["sense", "--json"])
             .output()

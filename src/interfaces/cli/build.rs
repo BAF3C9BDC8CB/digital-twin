@@ -13,13 +13,12 @@ use crate::application::pipeline::infer_client::{
     ChatClient, SiliconFlowChatClient, XInferenceChatClient,
 };
 use crate::application::pipeline::processors::{
-    ChunkProcessor, HanlpClientProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
+    ChunkProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
 };
 use crate::application::pipeline::prompt::PromptRegistry;
 use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BatchConfig, HealthStatus};
-use crate::infrastructure::hanlp::HanlpClient;
 use crate::infrastructure::parser::ParserRegistry;
 use sha2::{Digest, Sha256};
 
@@ -38,7 +37,6 @@ pub async fn handle_build(
     embed: Option<Arc<dyn EmbedService>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     batch_config: BatchConfig,
-    hanlp: Option<Arc<HanlpClient>>,
 ) -> anyhow::Result<()> {
     // 确定项目名
     let project_name = name.unwrap_or_else(|| {
@@ -167,7 +165,6 @@ pub async fn handle_build(
             pipeline_graph,
             pipeline_vector,
             pipeline_embed,
-            hanlp.clone(),
             pipeline_snapshot,
         )
         .await
@@ -336,7 +333,6 @@ async fn run_pipeline_analysis(
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
-    hanlp: Option<Arc<HanlpClient>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
 ) -> anyhow::Result<()> {
     // ── 1. Load pipeline config — skip if disabled ────────────────
@@ -347,23 +343,7 @@ async fn run_pipeline_analysis(
     }
     tracing::info!("正在为 {project_name} 启动流水线分析...");
 
-    // ── 2. Check HanLP availability ──────────────────────────────
-    let hanlp_available = if let Some(ref hanlp_client) = hanlp {
-        match hanlp_client.health_check().await {
-            Ok(HealthStatus::Healthy) => {
-                tracing::info!("HanLP 服务器可用");
-                true
-            }
-            _ => {
-                tracing::info!("HanLP 服务器不可达 — 跳过 NLP 处理器");
-                false
-            }
-        }
-    } else {
-        false
-    };
-
-    // ── 3. 根据 llm_provider 配置连接推理服务器 ────────────────
+    // ── 2. 根据 llm_provider 配置连接推理服务器 ────────────────
     let infer_max_concurrent = pipeline_config.inference_server.max_concurrent;
 
     // 从配置中获取 LLM provider
@@ -447,14 +427,8 @@ async fn run_pipeline_analysis(
         registry.register(Box::new(ChunkProcessor::default()));
         tracing::info!("  处理器: Chunk");
     }
-    if pipeline_config.processors.hanlp && hanlp_available {
-        if let Some(ref hanlp_client) = hanlp {
-            registry.register(Box::new(HanlpClientProcessor::new(hanlp_client.clone())));
-            tracing::info!("  处理器: Hanlp");
-        }
-    }
     if pipeline_config.processors.llm && inference_available {
-        match PromptRegistry::load(Path::new("config/prompts")) {
+        match PromptRegistry::load_default() {
             Ok(prompts) => {
                 let llm_config = pipeline_config.llm.unwrap_or_default();
                 registry.register(Box::new(LlmClientProcessor::new(
@@ -499,9 +473,6 @@ async fn run_pipeline_analysis(
         }
         if pipeline_config.processors.chunk {
             steps.push("chunk");
-        }
-        if pipeline_config.processors.hanlp && hanlp_available {
-            steps.push("hanlp");
         }
         if pipeline_config.processors.llm && inference_available {
             steps.push("llm");
@@ -555,15 +526,11 @@ async fn run_pipeline_analysis(
 
                 // ── 依赖级联：汇点步骤（store）依赖上游生产者。
                 // 若下游步骤需要运行，其上游生产者也必须运行。
-                // 链条：store → {hanlp, llm} → chunk → tree_sitter
+                // 链条：store → llm → chunk → tree_sitter
                 {
                     let active_set: HashSet<&str> = active_steps.iter().copied().collect();
                     if active_set.contains("store") && !steps_to_skip.contains("store") {
-                        steps_to_skip.remove("hanlp");
                         steps_to_skip.remove("llm");
-                    }
-                    if active_set.contains("hanlp") && !steps_to_skip.contains("hanlp") {
-                        steps_to_skip.remove("chunk");
                     }
                     if active_set.contains("llm") && !steps_to_skip.contains("llm") {
                         steps_to_skip.remove("chunk");
@@ -661,7 +628,11 @@ async fn run_pipeline_analysis(
                         .mark_step_done(project_name, rel_path, step, file_hash)
                         .await
                     {
-                        tracing::warn!("对 {} 的 mark_step_done 失败, 步骤 {}: {e}", rel_path, step,);
+                        tracing::warn!(
+                            "对 {} 的 mark_step_done 失败, 步骤 {}: {e}",
+                            rel_path,
+                            step,
+                        );
                     }
                 }
             }
@@ -726,7 +697,6 @@ pub async fn handle_build_all(
             embed.clone(),
             snapshot.clone(),
             batch_config.clone(),
-            None, // hanlp——build-all 场景下不传入
         )
         .await
         {
@@ -758,10 +728,14 @@ pub async fn handle_search(
     limit: usize,
     json: bool,
     project: Option<String>,
+    file_type: Option<String>,
+    content_type: Option<String>,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
-    tracing::info!("搜索: query={query} world={world} limit={limit} json={json} project={project:?}");
+    tracing::info!(
+        "搜索: query={query} world={world} limit={limit} json={json} project={project:?}"
+    );
 
     if !json {
         println!("搜索: query=\"{query}\" world={world} limit={limit}");
@@ -783,16 +757,22 @@ pub async fn handle_search(
         with_evidence: None,
         origin: None,
         doc_id: None,
+        file_type,
+        entity_type_filter: content_type,
     };
     let result = cws.search(&req).await?;
 
     if json {
         // U-D4：--json 时 stdout 仅含 JSON（header 行已抑制，日志走 stderr）
-        println!("{}", crate::interfaces::cli::search_render::render_json(&result));
+        println!(
+            "{}",
+            crate::interfaces::cli::search_render::render_json(&result)
+        );
     } else {
-        print!("{}", crate::interfaces::cli::search_render::render_human(&result));
+        print!(
+            "{}",
+            crate::interfaces::cli::search_render::render_human(&result)
+        );
     }
     Ok(())
 }
-
-

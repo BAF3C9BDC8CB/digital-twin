@@ -314,11 +314,7 @@ mod tests {
             .expect("解析");
 
         assert_eq!(result.methods.len(), 3, "期望有 3 个方法");
-        assert_eq!(
-            result.classes.len(),
-            1,
-            "期望有 1 个类（PaymentGateway）"
-        );
+        assert_eq!(result.classes.len(), 1, "期望有 1 个类（PaymentGateway）");
 
         let pp = result
             .methods

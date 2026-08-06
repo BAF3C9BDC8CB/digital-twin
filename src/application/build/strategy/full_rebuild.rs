@@ -52,9 +52,7 @@ impl BuildStrategy for FullRebuildStrategy {
                     .delete_by_filter(collection, project_filter.clone())
                     .await
                 {
-                    tracing::warn!(
-                        "[full_rebuild] 清空 {collection} 中 {project} 的向量失败: {e}"
-                    );
+                    tracing::warn!("[full_rebuild] 清空 {collection} 中 {project} 的向量失败: {e}");
                 }
             }
         }

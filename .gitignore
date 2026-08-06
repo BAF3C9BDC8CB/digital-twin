@@ -42,3 +42,5 @@ services/embed-server/models/
 *.log
 /tmp/
 config/config.yaml.bak
+test/.weave/
+test/project/.weave/

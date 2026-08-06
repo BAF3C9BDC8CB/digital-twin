@@ -40,9 +40,9 @@ impl K8sPluginService {
 
     /// 获取客户端引用的私有辅助方法。
     fn client(&self) -> Result<&KuboardClient, DtError> {
-        self.client.as_ref().ok_or_else(|| {
-            DtError::General("K8s 客户端未连接——请先调用 connect()".into())
-        })
+        self.client
+            .as_ref()
+            .ok_or_else(|| DtError::General("K8s 客户端未连接——请先调用 connect()".into()))
     }
 
     // ── 面向 CLI 的方法 ──────────────────────────────────────────────────
@@ -275,8 +275,7 @@ impl Plugin for K8sPluginService {
     }
 
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
-        ctx.log
-            .info("[k8s] 插件已初始化（原生 Kuboard 客户端）");
+        ctx.log.info("[k8s] 插件已初始化（原生 Kuboard 客户端）");
         Ok(())
     }
 

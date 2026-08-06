@@ -198,7 +198,7 @@ pub trait SnapshotRepository: Send + Sync + 'static {
     async fn clear_llm_progress(&self, project: &str) -> Result<(), DtError>;
 
     /// 以文件内容哈希为键，将文件的某个流水线步骤标记为已完成。
-    /// 步骤：`"tree_sitter"`、`"chunk"`、`"hanlp"`、`"llm"`、`"embed"`、`"store"`。
+    /// 步骤：`"tree_sitter"`、`"chunk"`、`"llm"`、`"embed"`、`"store"`。
     ///
     /// 默认为空操作：未实现步骤进度跟踪的仓库只会永不跳过任何步骤
     /// （安全回退——全量重新处理）。

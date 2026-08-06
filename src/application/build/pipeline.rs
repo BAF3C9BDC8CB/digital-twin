@@ -131,7 +131,7 @@ impl PipelineTemplate {
         // 步骤 3b（§6.5，任务 3）：文档生命周期 — 清理已删除的
         // 文档，保留快照基线用于变更/删除检测。
         // 文档提取/合并本身在流水线引擎中执行
-        // （tree_sitter → chunk → hanlp → llm → store），不在此处。
+        // （tree_sitter → chunk → llm → store），不在此处。
         //
         // 快照表按项目混合存放代码与文档行，因此只对文档文件集
         // 做差异比对会把每条代码路径都报为"已删除"——仅按扩展名
@@ -197,9 +197,7 @@ impl PipelineTemplate {
         // 步骤 7b：嵌入方法并写入 Qdrant（processors.embed=false 时跳过）
         if let (Some(embed_svc), Some(vector_repo)) = (&embed, &vector) {
             if self.skip_embed {
-                tracing::info!(
-                    "跳过嵌入步骤（processors.embed=false）— 保留已有的 Qdrant 向量"
-                );
+                tracing::info!("跳过嵌入步骤（processors.embed=false）— 保留已有的 Qdrant 向量");
             } else if !extraction.methods.is_empty() {
                 let texts: Vec<String> = extraction
                     .methods
@@ -292,10 +290,7 @@ impl PipelineTemplate {
 
         // 步骤 8：重建调用图
         if let Some(graph) = graph {
-            tracing::info!(
-                "正在为 {} 个方法重建调用图...",
-                extraction.methods.len()
-            );
+            tracing::info!("正在为 {} 个方法重建调用图...", extraction.methods.len());
             self.rebuild_call_graph(graph, project, &extraction.methods)
                 .await?;
             tracing::info!("调用图重建完成");
@@ -480,10 +475,7 @@ impl PipelineTemplate {
                         );
                     });
 
-                    tracing::info!(
-                        "Phase 2: 已提交 {} 个方法进行后台 LLM 分析",
-                        total
-                    );
+                    tracing::info!("Phase 2: 已提交 {} 个方法进行后台 LLM 分析", total);
                 }
             }
         }

@@ -74,18 +74,12 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     };
 
     println!("Memgraph:");
-    println!(
-        "  删除的节点          : {}",
-        memgraph_report.nodes_deleted
-    );
+    println!("  删除的节点          : {}", memgraph_report.nodes_deleted);
     println!(
         "  删除的关系          : {}",
         memgraph_report.relationships_deleted
     );
-    println!(
-        "  耗时                : {} ms",
-        memgraph_report.elapsed_ms
-    );
+    println!("  耗时                : {} ms", memgraph_report.elapsed_ms);
 
     // --- Qdrant ---
     // NoopVectorRepo 不暴露集合管理方法；在真实实现中，
@@ -95,10 +89,7 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     let qdrant_removed: usize = 0;
     println!();
     println!("Qdrant:");
-    println!(
-        "  移除的集合          : {} (noop 后端)",
-        qdrant_removed
-    );
+    println!("  移除的集合          : {} (noop 后端)", qdrant_removed);
 
     // --- SQLite ---
     // 尚未接入真实的 SnapshotRepository；在完整实现中，
@@ -160,23 +151,16 @@ macro_rules! check_health {
         let status = $repo.health_check().await;
         let latency_ms = start.elapsed().as_millis() as u64;
         match status {
-            Ok(HealthStatus::Healthy) => (
-                true,
-                format!("✅ {:<8}: 健康 ({} ms)", $name, latency_ms),
-            ),
+            Ok(HealthStatus::Healthy) => {
+                (true, format!("✅ {:<8}: 健康 ({} ms)", $name, latency_ms))
+            }
             Ok(HealthStatus::Degraded(reason)) => (
                 false,
-                format!(
-                    "⚠️  {:<8}: 降级 — {} ({} ms)",
-                    $name, reason, latency_ms
-                ),
+                format!("⚠️  {:<8}: 降级 — {} ({} ms)", $name, reason, latency_ms),
             ),
             Ok(HealthStatus::Unhealthy(reason)) => (
                 false,
-                format!(
-                    "❌ {:<8}: 不健康 — {} ({} ms)",
-                    $name, reason, latency_ms
-                ),
+                format!("❌ {:<8}: 不健康 — {} ({} ms)", $name, reason, latency_ms),
             ),
             Err(e) => (
                 false,
@@ -244,10 +228,7 @@ pub async fn run_health(
     let (healthy, detail) = if let Some(e) = embed {
         check_health!("SiliconFlow", e)
     } else {
-        (
-            false,
-            "  ❌ SiliconFlow : 未配置后端".to_string(),
-        )
+        (false, "  ❌ SiliconFlow : 未配置后端".to_string())
     };
     println!("  {detail}");
     if !healthy {
@@ -283,28 +264,18 @@ mod tests {
     async fn run_clean_without_confirm_prints_warning() {
         // 不应 panic 或报错——它只是警告并退出。
         let result = run_clean(false, None).await;
-        assert!(
-            result.is_ok(),
-            "不带 --confirm 的 clean 应成功（仅警告）"
-        );
+        assert!(result.is_ok(), "不带 --confirm 的 clean 应成功（仅警告）");
     }
 
     #[tokio::test]
     async fn run_clean_with_confirm_succeeds() {
         let result = run_clean(true, None).await;
-        assert!(
-            result.is_ok(),
-            "使用 noop 仓库时 clean --confirm 应成功"
-        );
+        assert!(result.is_ok(), "使用 noop 仓库时 clean --confirm 应成功");
     }
 
     #[tokio::test]
     async fn run_health_succeeds() {
         let result = run_health(None, None, None, None).await;
-        assert!(
-            result.is_ok(),
-            "使用 noop 仓库时健康检查应成功"
-        );
+        assert!(result.is_ok(), "使用 noop 仓库时健康检查应成功");
     }
-
 }

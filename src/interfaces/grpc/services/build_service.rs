@@ -4,7 +4,9 @@
 //! 并负责 gRPC 消息与领域类型之间的转换。
 
 use crate::application::context::search_mcp::CrossWorldSearchTrait;
-use crate::domain::traits::{BuildService, EmbedService, GraphRepository, RerankService, VectorRepository};
+use crate::domain::traits::{
+    BuildService, EmbedService, GraphRepository, RerankService, VectorRepository,
+};
 use crate::domain::types::BatchConfig;
 use crate::proto::dt::core::*;
 use std::sync::Arc;
@@ -36,10 +38,7 @@ pub async fn handle_build(
     let project_path = std::path::PathBuf::from(&req.path);
 
     if !project_path.exists() {
-        return Err(Status::not_found(format!(
-            "路径不存在: {}",
-            req.path
-        )));
+        return Err(Status::not_found(format!("路径不存在: {}", req.path)));
     }
 
     // 构建应用层服务
@@ -113,14 +112,14 @@ pub async fn handle_search(
     let embed: Option<Arc<dyn EmbedService>> = Some(embed_svc);
 
     // Build CrossWorldSearch and delegate（rerank 经 provider 路由，S5 首个业务调用点）
-    let rerank: Option<Arc<dyn RerankService>> = Some(
-        crate::infrastructure::embedder::create_rerank_router(
+    let rerank: Option<Arc<dyn RerankService>> =
+        Some(crate::infrastructure::embedder::create_rerank_router(
             crate::infrastructure::embedder::ProviderConfig {
                 siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
                 siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
                 siliconflow_model_embed: crate::infrastructure::siliconflow::embed_model_from_env(),
-                siliconflow_model_reranker: crate::infrastructure::siliconflow::reranker_model_from_env(
-                ),
+                siliconflow_model_reranker:
+                    crate::infrastructure::siliconflow::reranker_model_from_env(),
                 siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
                 xinference_url: String::new(),
                 xinference_api_key: String::new(),
@@ -131,22 +130,49 @@ pub async fn handle_search(
                 rerank_provider: "siliconflow".into(),
                 llm_provider: "siliconflow".into(),
             },
-        ),
+        ));
+    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(
+        graph, vector, embed, rerank,
     );
-    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(graph, vector, embed, rerank);
     let cws_req = crate::application::context::search_mcp::SearchRequest {
         query: req.query,
-        world: if req.world.is_empty() { None } else { Some(req.world) },
+        world: if req.world.is_empty() {
+            None
+        } else {
+            Some(req.world)
+        },
         limit: Some(limit),
         project: if req.project.is_empty() {
             None
         } else {
             Some(req.project)
         },
-        max_hops: if req.max_hops == 0 { None } else { Some(req.max_hops) },
+        max_hops: if req.max_hops == 0 {
+            None
+        } else {
+            Some(req.max_hops)
+        },
         with_evidence: Some(req.with_evidence),
-        origin: if req.origin.is_empty() { None } else { Some(req.origin) },
-        doc_id: if req.doc_id.is_empty() { None } else { Some(req.doc_id) },
+        origin: if req.origin.is_empty() {
+            None
+        } else {
+            Some(req.origin)
+        },
+        doc_id: if req.doc_id.is_empty() {
+            None
+        } else {
+            Some(req.doc_id)
+        },
+        file_type: if req.file_type.is_empty() {
+            None
+        } else {
+            Some(req.file_type)
+        },
+        entity_type_filter: if req.entity_type_filter.is_empty() {
+            None
+        } else {
+            Some(req.entity_type_filter)
+        },
     };
 
     let cws_result = cws
@@ -204,8 +230,6 @@ fn hit_to_proto(hit: crate::application::context::search_mcp::SearchHit) -> Sear
     }
 }
 
-
-
 // ---------------------------------------------------------------------------
 // 测试
 // ---------------------------------------------------------------------------
@@ -251,10 +275,10 @@ mod tests {
             with_evidence: false,
             origin: String::new(),
             doc_id: String::new(),
+            file_type: String::new(),
+            entity_type_filter: String::new(),
         };
-        let resp = handle_search(req, None, None)
-            .await
-            .expect("应成功");
+        let resp = handle_search(req, None, None).await.expect("应成功");
         assert_eq!(resp.total, 0);
         assert!(resp.results.is_empty());
     }
@@ -273,10 +297,10 @@ mod tests {
             with_evidence: false,
             origin: String::new(),
             doc_id: String::new(),
+            file_type: String::new(),
+            entity_type_filter: String::new(),
         };
-        let resp = handle_search(req, Some(graph), None)
-            .await
-            .expect("应成功");
+        let resp = handle_search(req, Some(graph), None).await.expect("应成功");
         assert!(resp.results.is_empty());
     }
 
@@ -294,28 +318,44 @@ mod tests {
 
     #[test]
     fn hit_to_proto_maps_all_new_fields() {
+        use crate::application::context::search_mcp::SearchHit;
         use crate::application::knowledge::extract::retrieve::{
             RelationSnippet as RsRelationSnippet, ScoreBreakdown as RsScoreBreakdown,
         };
-        use crate::application::context::search_mcp::SearchHit;
 
         let hit = SearchHit {
-            id: "1".into(), title: "ifCode".into(), snippet: "支付渠道编码".into(),
-            source_world: "knowledge".into(), entity_type: "Entity".into(), score: 0.94,
+            id: "1".into(),
+            title: "ifCode".into(),
+            snippet: "支付渠道编码".into(),
+            source_world: "knowledge".into(),
+            entity_type: "Entity".into(),
+            file_type: None,
+            file_type_label: None,
+            score: 0.94,
             source_ref: Some("dt://doc/pay.md".into()),
-            file_path: None, start_line: None, end_line: None,
-            signature: None, calls: vec![],
+            file_path: None,
+            start_line: None,
+            end_line: None,
+            signature: None,
+            calls: vec![],
             element_id: Some("4:0:1".into()),
             llm_analysis: None,
             score_breakdown: Some(RsScoreBreakdown {
-                semantic: 0.71, rerank: 0.92, graph_boost: 1.0, final_score: 0.83,
+                semantic: 0.71,
+                rerank: 0.92,
+                graph_boost: 1.0,
+                final_score: 0.83,
             }),
             hop: Some(1),
             via_same_as: None,
             relations: Some(vec![RsRelationSnippet {
-                rel_type: "relates".into(), other_end_id: "dt://entity/p/Config/waycode".into(),
-                other_end_name: "wayCode".into(), direction: "out".into(),
-                confidence: 0.9, evidence: None, supplementary_count: 0,
+                rel_type: "relates".into(),
+                other_end_id: "dt://entity/p/Config/waycode".into(),
+                other_end_name: "wayCode".into(),
+                direction: "out".into(),
+                confidence: 0.9,
+                evidence: None,
+                supplementary_count: 0,
             }]),
             evidence: Some(vec!["证据段A".into()]),
             rerank_degraded: Some(false),

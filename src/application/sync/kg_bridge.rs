@@ -551,9 +551,7 @@ impl KgBridge {
 
         let elapsed = start.elapsed().as_millis() as u64;
 
-        tracing::info!(
-            "[kg-sync] 完成——{synced}/{total} 已同步，{failed} 失败（{elapsed}ms）",
-        );
+        tracing::info!("[kg-sync] 完成——{synced}/{total} 已同步，{failed} 失败（{elapsed}ms）",);
 
         Ok(SyncReport {
             source: format!("kg-sync/{mode}"),
@@ -1141,7 +1139,10 @@ const ID_KEYS: &[&str] = &[
 ///
 /// 与 [`business_id`] 相同的 21 键优先级顺序；retrieve.rs 用它为
 /// 从不物化为 `KgNode` 的图展开邻居派生 ID。
-pub(crate) fn business_id_from_props(props: &serde_json::Value, element_id_fallback: &str) -> String {
+pub(crate) fn business_id_from_props(
+    props: &serde_json::Value,
+    element_id_fallback: &str,
+) -> String {
     for key in ID_KEYS {
         if let Some(s) = props.get(key).and_then(|v| v.as_str()) {
             if !s.is_empty() {
@@ -1367,10 +1368,7 @@ mod tests {
     fn make_point_id_different_per_input() {
         let id_a = make_point_id("4:aaa");
         let id_b = make_point_id("4:bbb");
-        assert_ne!(
-            id_a, id_b,
-            "不同的 elementIds 必须生成不同的 UUID"
-        );
+        assert_ne!(id_a, id_b, "不同的 elementIds 必须生成不同的 UUID");
     }
 
     #[test]
@@ -1850,11 +1848,7 @@ mod tests {
         labels.sort_unstable();
         let orig_len = labels.len();
         labels.dedup();
-        assert_eq!(
-            labels.len(),
-            orig_len,
-            "BUSINESS_LABELS 不得有重复"
-        );
+        assert_eq!(labels.len(), orig_len, "BUSINESS_LABELS 不得有重复");
     }
 
     #[test]
@@ -2108,11 +2102,7 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_ok(),
-            "embed_kg_node 应成功: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "embed_kg_node 应成功: {:?}", result.err());
 
         // 1. write_query 必须被调用一次（用于标记 _kg_synced_at）。
         assert_eq!(

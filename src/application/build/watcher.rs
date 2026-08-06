@@ -263,9 +263,8 @@ impl FileWatcher {
     /// 在 Unix 上，该函数调用 `kill -TERM <pid>`。在非 Unix 目标上
     /// 返回错误。
     pub fn stop(&self) -> anyhow::Result<()> {
-        let pid_str = fs::read_to_string(&self.pid_file).map_err(|e| {
-            anyhow::anyhow!("无法读取 PID 文件 {}: {e}", self.pid_file.display())
-        })?;
+        let pid_str = fs::read_to_string(&self.pid_file)
+            .map_err(|e| anyhow::anyhow!("无法读取 PID 文件 {}: {e}", self.pid_file.display()))?;
         let pid: i32 = pid_str
             .trim()
             .parse()
@@ -478,10 +477,7 @@ mod tests {
     fn source_file_recognised_by_extension() {
         for ext in SOURCE_EXTENSIONS {
             let path = PathBuf::from(format!("src/main.{ext}"));
-            assert!(
-                FileWatcher::is_source_file(&path),
-                "扩展名 .{ext} 应被识别"
-            );
+            assert!(FileWatcher::is_source_file(&path), "扩展名 .{ext} 应被识别");
         }
     }
 
