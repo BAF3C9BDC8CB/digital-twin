@@ -18,7 +18,7 @@ pub trait BuildStrategy: Send + Sync {
     /// 返回策略名称（用于日志/报告）。
     fn name(&self) -> &'static str;
 
-    /// 选择需要处理的文件。
+    /// 选择需要处理的文件（磁盘路径）。
     ///
     /// 返回 `(files_to_process, files_to_delete)`。
     async fn select_files(
@@ -28,6 +28,29 @@ pub trait BuildStrategy: Send + Sync {
         snapshot_repo: Option<&dyn crate::domain::traits::SnapshotRepository>,
         project: &str,
     ) -> Result<(Vec<std::path::PathBuf>, Vec<String>), DtError>;
+
+    /// 从 VirtualFile 列表中选取需要处理的文件。
+    ///
+    /// F2 要求：mtime 快速路径仅对 `source == Fs` 生效；
+    /// `source != Fs` 直接对比 `content_hash`（SHA256），不设 mtime 捷径。
+    ///
+    /// 返回 `(virtual_files_to_process, virtual_paths_to_delete)`。
+    async fn select_virtual_files(
+        &self,
+        virtual_files: &[crate::application::pipeline::virtual_file::VirtualFile],
+        snapshot_repo: Option<&dyn crate::domain::traits::SnapshotRepository>,
+        project: &str,
+    ) -> Result<
+        (
+            Vec<crate::application::pipeline::virtual_file::VirtualFile>,
+            Vec<String>,
+        ),
+        DtError,
+    > {
+        let _ = (virtual_files, snapshot_repo, project);
+        // 默认实现：全部处理，无删除。
+        Ok((virtual_files.to_vec(), Vec::new()))
+    }
 
     /// 写入前准备存储（如删除旧数据）。
     async fn prepare(

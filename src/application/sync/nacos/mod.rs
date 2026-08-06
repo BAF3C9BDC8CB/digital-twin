@@ -8,7 +8,9 @@
 pub mod client;
 pub mod config_sync;
 pub mod service_sync;
+pub mod virtual_file_source;
 
 pub use client::NacosClient;
 pub use config_sync::ConfigSyncSource;
 pub use service_sync::ServiceSyncSource;
+pub use virtual_file_source::NacosVirtualFileSource;

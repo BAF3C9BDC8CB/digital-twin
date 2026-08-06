@@ -359,7 +359,20 @@ impl PipelineTemplate {
                     let mut hasher = Sha256::new();
                     hasher.update(source_text.as_bytes());
                     let hash = format!("{:x}", hasher.finalize());
-                    let prog_key = format!("method:{}", m.method_id);
+                    // Nacos 虚拟文件使用 nacos:{data_id} 作为去重 key；
+                    // 普通文件使用 method:{method_id} 保持兼容。
+                    let prog_key = if m.file_path.starts_with("dt://nacos/") {
+                        // 从 virtual_path 提取 data_id：dt://nacos/{ns}/{data_id}.yaml
+                        let data_id = m
+                            .file_path
+                            .strip_prefix("dt://nacos/")
+                            .and_then(|s| s.split('/').nth(1))
+                            .and_then(|s| s.strip_suffix(".yaml"))
+                            .unwrap_or(&m.method_id);
+                        format!("nacos:{}", data_id)
+                    } else {
+                        format!("method:{}", m.method_id)
+                    };
                     if repo
                         .is_llm_analyzed(project, &prog_key, &hash)
                         .await
