@@ -10,7 +10,6 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::knowledge::extract::{Consolidator, ExtractedGraph};
@@ -78,7 +77,7 @@ impl Processor for StoreProcessor {
         10
     }
 
-    fn matches(&self, _file_path: &Path) -> bool {
+    fn matches(&self, _ctx: &PipelineContext) -> bool {
         // 始终运行——链中的最后一环；跳过没有 graphs 的文件。
         true
     }
@@ -162,8 +161,9 @@ impl Processor for StoreProcessor {
 mod tests {
     use super::*;
     use crate::application::pipeline::output::ProcessorOutput;
+    use crate::application::pipeline::FileSourceKind;
     use crate::domain::types::{CollectionInfo, HealthStatus};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     fn make_context(
@@ -175,6 +175,9 @@ mod tests {
             PathBuf::from(file_name),
             text.to_string(),
             "test".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         );
         for (name, out) in outputs {
             ctx.add_output(name, out);
@@ -303,9 +306,30 @@ mod tests {
     #[tokio::test]
     async fn always_matches() {
         let processor = StoreProcessor::new(None, None, None);
-        assert!(processor.matches(Path::new("anything.bin")));
-        assert!(processor.matches(Path::new("no_extension")));
-        assert!(processor.matches(Path::new("")));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("anything.bin"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("no_extension"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from(""),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
     }
 
     #[tokio::test]

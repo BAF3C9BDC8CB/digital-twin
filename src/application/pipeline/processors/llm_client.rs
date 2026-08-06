@@ -22,7 +22,6 @@
 //! "model"}`——逐字节不变。
 
 use async_trait::async_trait;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::knowledge::extract::{
@@ -78,9 +77,9 @@ impl Processor for LlmClientProcessor {
         60
     }
 
-    fn matches(&self, file_path: &Path) -> bool {
+    fn matches(&self, ctx: &PipelineContext) -> bool {
         matches!(
-            file_path.extension().and_then(|e| e.to_str()),
+            ctx.file_path.extension().and_then(|e| e.to_str()),
             Some(
                 "java"
                     | "py"
@@ -320,9 +319,10 @@ mod tests {
     use crate::application::knowledge::extract::ExtractedGraph;
     use crate::application::pipeline::infer_client::{ChatResponse, Choice, Message};
     use crate::application::pipeline::output::ProcessorOutput;
+    use crate::application::pipeline::FileSourceKind;
 
     use std::collections::VecDeque;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
     // ── Mock ChatClient ───────────────────────────────────────────────
@@ -403,6 +403,9 @@ mod tests {
             PathBuf::from(file_name),
             text.to_string(),
             "test".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         );
         for (name, out) in outputs {
             ctx.add_output(name, out);

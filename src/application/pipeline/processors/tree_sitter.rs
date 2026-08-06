@@ -7,7 +7,6 @@
 //!   提取器的语言可能为空）
 
 use async_trait::async_trait;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::application::pipeline::context::PipelineContext;
@@ -41,9 +40,9 @@ impl Processor for TreeSitterProcessor {
         100
     }
 
-    fn matches(&self, file_path: &Path) -> bool {
+    fn matches(&self, ctx: &PipelineContext) -> bool {
         matches!(
-            file_path.extension().and_then(|e| e.to_str()),
+            ctx.file_path.extension().and_then(|e| e.to_str()),
             Some("java" | "py" | "rs" | "go" | "ts" | "tsx" | "js" | "jsx" | "php")
         )
     }
@@ -119,6 +118,7 @@ impl Processor for TreeSitterProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::pipeline::FileSourceKind;
     use std::path::PathBuf;
 
     fn make_context(file_name: &str, text: &str) -> PipelineContext {
@@ -126,23 +126,103 @@ mod tests {
             PathBuf::from(file_name),
             text.to_string(),
             "test_project".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         )
     }
 
     #[tokio::test]
     async fn matches_code_extensions() {
         let processor = TreeSitterProcessor::new(Arc::new(ParserRegistry::new()));
-        assert!(processor.matches(Path::new("main.rs")));
-        assert!(processor.matches(Path::new("Main.java")));
-        assert!(processor.matches(Path::new("app.py")));
-        assert!(processor.matches(Path::new("server.go")));
-        assert!(processor.matches(Path::new("component.ts")));
-        assert!(processor.matches(Path::new("component.tsx")));
-        assert!(processor.matches(Path::new("app.js")));
-        assert!(processor.matches(Path::new("app.jsx")));
-        assert!(processor.matches(Path::new("index.php")));
-        assert!(!processor.matches(Path::new("README.md")));
-        assert!(!processor.matches(Path::new("config.yaml")));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("main.rs"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("Main.java"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("app.py"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("server.go"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("component.ts"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("component.tsx"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("app.js"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("app.jsx"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("index.php"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(!processor.matches(&PipelineContext::new(
+            PathBuf::from("README.md"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(!processor.matches(&PipelineContext::new(
+            PathBuf::from("config.yaml"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
     }
 
     #[tokio::test]

@@ -18,6 +18,7 @@ use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::infer_client::SiliconFlowChatClient;
 use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::registry::ProcessorRegistry;
+use crate::application::pipeline::virtual_file::FileSourceKind;
 use futures::stream::{self, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -153,9 +154,16 @@ impl ProcessorEngine {
         project_name: String,
     ) -> FileAnalysis {
         let file_path_buf: PathBuf = file_path.into();
-        let mut ctx = PipelineContext::new(file_path_buf.clone(), file_text, project_name);
+        let mut ctx = PipelineContext::new(
+            file_path_buf.clone(),
+            file_text,
+            project_name,
+            FileSourceKind::Fs,
+            None,
+            None,
+        );
 
-        let matching = self.registry.matching(&file_path_buf);
+        let matching = self.registry.matching(&ctx);
         let mut errors: Vec<String> = Vec::new();
 
         // 阶段 1：CPU 密集型阶段（优先级 >= 阈值）。
@@ -240,14 +248,21 @@ impl ProcessorEngine {
             let skip = skip_steps.clone();
 
             async move {
-                let mut ctx = PipelineContext::new(path_clone, text, (*proj).clone());
+                let mut ctx = PipelineContext::new(
+                    path_clone,
+                    text,
+                    (*proj).clone(),
+                    FileSourceKind::Fs,
+                    None,
+                    None,
+                );
                 let mut errors: Vec<String> = Vec::new();
 
                 // 收集匹配该文件的 CPU 密集型处理器。
                 let cpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
-                    .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD && p.matches(&path))
+                    .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD && p.matches(&ctx))
                     .map(|p| p.as_ref())
                     .collect();
 
@@ -328,7 +343,7 @@ impl ProcessorEngine {
                 let gpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
-                    .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&path))
+                    .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&analysis.context))
                     .map(|p| p.as_ref())
                     .collect();
 
@@ -858,7 +873,6 @@ mod tests {
     use crate::application::pipeline::output::ProcessorOutput;
     use crate::domain::error::DtError;
     use async_trait::async_trait;
-    use std::path::Path;
 
     /// 处理 `.rs` 文件的 CPU 密集型处理器（优先级 = 100）。
     struct RsCpuProcessor;
@@ -873,8 +887,8 @@ mod tests {
             100
         }
 
-        fn matches(&self, file_path: &Path) -> bool {
-            file_path.extension().and_then(|e| e.to_str()) == Some("rs")
+        fn matches(&self, ctx: &PipelineContext) -> bool {
+            ctx.file_path.extension().and_then(|e| e.to_str()) == Some("rs")
         }
 
         async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
@@ -898,8 +912,8 @@ mod tests {
             60
         }
 
-        fn matches(&self, file_path: &Path) -> bool {
-            file_path.extension().and_then(|e| e.to_str()) == Some("rs")
+        fn matches(&self, ctx: &PipelineContext) -> bool {
+            ctx.file_path.extension().and_then(|e| e.to_str()) == Some("rs")
         }
 
         async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
@@ -928,7 +942,7 @@ mod tests {
             50
         }
 
-        fn matches(&self, _file_path: &Path) -> bool {
+        fn matches(&self, _ctx: &PipelineContext) -> bool {
             true
         }
 
@@ -1062,6 +1076,9 @@ mod tests {
             PathBuf::from("test.rs"),
             "fn x() {}".to_string(),
             "p".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         );
         let mut cpu_out = ProcessorOutput::new();
         cpu_out.set("language", "Rust");
@@ -1200,6 +1217,9 @@ mod tests {
             PathBuf::from(file_path),
             String::new(),
             "test_project".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         );
 
         let mut ts_out = ProcessorOutput::new();

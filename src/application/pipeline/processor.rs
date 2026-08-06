@@ -2,11 +2,10 @@
 //!
 //! 一个处理器负责文件分析的一个阶段（例如语言检测、tree-sitter 解析、
 //! NLP 分析、embedding）。处理器通过 [`Processor::matches`] 声明自己能处理
-//! 哪些文件，并产生一个合并到共享 [`PipelineContext`](super::context::PipelineContext)
-//! 中的 [`ProcessorOutput`] 结构。
+//! 哪些文件（依据 [`PipelineContext`] 中的路径或来源类型），并产生一个合并到共享
+//! [`PipelineContext`](super::context::PipelineContext) 中的 [`ProcessorOutput`] 结构。
 
 use async_trait::async_trait;
-use std::path::Path;
 
 use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::output::ProcessorOutput;
@@ -40,11 +39,12 @@ pub trait Processor: Send + Sync {
     /// - `300+`   —— embedding / 向量化（通常依赖前置阶段）
     fn priority(&self) -> i32;
 
-    /// 如果该处理器可以处理给定文件则返回 `true`。
+    /// 如果该处理器可以处理给定上下文对应的文件则返回 `true`。
     ///
     /// 该检查在 [`execute`](Processor::execute) **之前**进行，以便流水线
-    /// 廉价地跳过不合适的处理器。
-    fn matches(&self, file_path: &Path) -> bool;
+    /// 廉价地跳过不合适的处理器。实现可通过 `ctx.file_path` 或
+    /// `ctx.source_kind` 判定。
+    fn matches(&self, ctx: &PipelineContext) -> bool;
 
     /// 针对共享的 [`PipelineContext`] 执行该处理器。
     ///
@@ -65,6 +65,7 @@ pub trait Processor: Send + Sync {
 mod tests {
     use super::*;
     use crate::application::pipeline::context::PipelineContext;
+    use crate::application::pipeline::virtual_file::FileSourceKind;
     use std::path::PathBuf;
 
     struct DummyProcessor;
@@ -79,8 +80,11 @@ mod tests {
             100
         }
 
-        fn matches(&self, file_path: &Path) -> bool {
-            file_path.extension().and_then(|e| e.to_str()) == Some("rs")
+        fn matches(&self, ctx: &PipelineContext) -> bool {
+            ctx.file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                == Some("rs")
         }
 
         async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
@@ -96,8 +100,26 @@ mod tests {
         let p = DummyProcessor;
         assert_eq!(p.name(), "dummy");
         assert_eq!(p.priority(), 100);
-        assert!(p.matches(Path::new("main.rs")));
-        assert!(!p.matches(Path::new("main.py")));
+
+        let ctx_rs = PipelineContext::new(
+            PathBuf::from("main.rs"),
+            "fn main() {}".to_string(),
+            "my_project".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        );
+        assert!(p.matches(&ctx_rs));
+
+        let ctx_py = PipelineContext::new(
+            PathBuf::from("main.py"),
+            "print(1)".to_string(),
+            "my_project".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        );
+        assert!(!p.matches(&ctx_py));
     }
 
     #[tokio::test]
@@ -107,6 +129,9 @@ mod tests {
             PathBuf::from("main.rs"),
             "fn main() {}".to_string(),
             "my_project".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         );
         let out = p.execute(&ctx).await.unwrap();
         let file_name = out.get("file_name").and_then(|v| v.as_str()).unwrap();

@@ -10,7 +10,6 @@
 //! - `"chunk_count"` —— 产生的 chunk 数量
 
 use async_trait::async_trait;
-use std::path::Path;
 
 use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::output::ProcessorOutput;
@@ -62,9 +61,9 @@ impl Processor for ChunkProcessor {
         90
     }
 
-    fn matches(&self, file_path: &Path) -> bool {
+    fn matches(&self, ctx: &PipelineContext) -> bool {
         matches!(
-            file_path.extension().and_then(|e| e.to_str()),
+            ctx.file_path.extension().and_then(|e| e.to_str()),
             Some("md" | "txt" | "yaml" | "yml" | "properties")
         )
     }
@@ -132,6 +131,7 @@ impl DocType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::pipeline::FileSourceKind;
     use std::path::PathBuf;
 
     fn make_context(file_name: &str, text: &str) -> PipelineContext {
@@ -139,19 +139,71 @@ mod tests {
             PathBuf::from(file_name),
             text.to_string(),
             "test".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
         )
     }
 
     #[tokio::test]
     async fn matches_doc_extensions() {
         let processor = ChunkProcessor::new();
-        assert!(processor.matches(Path::new("README.md")));
-        assert!(processor.matches(Path::new("notes.txt")));
-        assert!(processor.matches(Path::new("config.yaml")));
-        assert!(processor.matches(Path::new("config.yml")));
-        assert!(processor.matches(Path::new("app.properties")));
-        assert!(!processor.matches(Path::new("main.rs")));
-        assert!(!processor.matches(Path::new("Main.java")));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("README.md"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("notes.txt"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("config.yaml"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("config.yml"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(processor.matches(&PipelineContext::new(
+            PathBuf::from("app.properties"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(!processor.matches(&PipelineContext::new(
+            PathBuf::from("main.rs"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
+        assert!(!processor.matches(&PipelineContext::new(
+            PathBuf::from("Main.java"),
+            String::new(),
+            "test".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        )));
     }
 
     #[tokio::test]

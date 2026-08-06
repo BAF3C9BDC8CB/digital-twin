@@ -501,6 +501,30 @@ impl PipelineTemplate {
         root: &Path,
         files: &[std::path::PathBuf],
     ) -> Result<ExtractionResult, DtError> {
+        // 预读所有文件内容，将 I/O 提到函数入口
+        let file_entries: Vec<(String, String, String, f64)> = files
+            .iter()
+            .filter_map(|fp| {
+                let rel_path = scanner::rel_path(root, fp);
+                let (file_hash, file_mtime) =
+                    scanner::compute_file_hash(fp).unwrap_or_default();
+                let source = std::fs::read_to_string(fp).ok()?;
+                Some((rel_path, source, file_hash, file_mtime))
+            })
+            .collect();
+        self.extract_entities_content(project, &file_entries)
+    }
+
+    /// 从预读内容中提取实体（方法、类、模块）—— F3 要求。
+    ///
+    /// 参数为 `(相对路径, 文件内容, SHA1 哈希, mtime)` 元组切片，
+    /// 不调用 `fs::read_to_string`。对于 `source == Fs`，调用方
+    /// 预读磁盘；对于远程源（Nacos/Jenkins），内容由 API 直接提供。
+    fn extract_entities_content(
+        &self,
+        project: &str,
+        file_entries: &[(String, String, String, f64)],
+    ) -> Result<ExtractionResult, DtError> {
         let all_methods = Arc::new(std::sync::Mutex::new(Vec::new()));
         let all_classes = Arc::new(std::sync::Mutex::new(Vec::new()));
         let all_snapshots = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -509,50 +533,28 @@ impl PipelineTemplate {
         let num_threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        let chunk_size = (files.len() + num_threads - 1) / num_threads;
+        let chunk_size = (file_entries.len() + num_threads - 1) / num_threads;
         let registry = self.parser_registry.clone();
 
         std::thread::scope(|s| {
-            for file_chunk in files.chunks(chunk_size.max(1)) {
+            for entry_chunk in file_entries.chunks(chunk_size.max(1)) {
                 let registry = registry.clone();
                 let project = project.to_string();
-                let root = root.to_path_buf();
-                let chunk = file_chunk.to_vec();
+                let chunk = entry_chunk.to_vec();
                 let methods = all_methods.clone();
                 let classes = all_classes.clone();
                 let snapshots = all_snapshots.clone();
                 let modules = module_set.clone();
                 s.spawn(move || {
-                    for file_path in &chunk {
-                        // 先计算哈希（字节级，适用于所有文件），
-                        // 这样即使文件 UTF-8 读取或解析失败也会保存快照。
-                        // 否则无法解析的文件每次运行都会被检测为"已变更"。
-                        let rel_path = scanner::rel_path(&root, file_path);
-                        let (file_hash, file_mtime) =
-                            scanner::compute_file_hash(file_path).unwrap_or_default();
-
-                        let source = match std::fs::read_to_string(file_path) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                snapshots.lock().unwrap().push(FileSnapshot {
-                                    file_path: rel_path,
-                                    project: project.clone(),
-                                    file_sha1: file_hash,
-                                    file_mtime,
-                                    method_count: 0,
-                                    updated_at: chrono::Utc::now().to_rfc3339(),
-                                });
-                                continue;
-                            }
-                        };
-                        let result = match registry.parse_file(&source, file_path, &project) {
+                    for (rel_path, source, file_hash, file_mtime) in &chunk {
+                        let result = match registry.parse_file(source, std::path::Path::new(rel_path), &project) {
                             Ok(r) => r,
                             Err(_) => {
                                 snapshots.lock().unwrap().push(FileSnapshot {
-                                    file_path: rel_path,
+                                    file_path: rel_path.clone(),
                                     project: project.clone(),
-                                    file_sha1: file_hash,
-                                    file_mtime,
+                                    file_sha1: file_hash.clone(),
+                                    file_mtime: *file_mtime,
                                     method_count: 0,
                                     updated_at: chrono::Utc::now().to_rfc3339(),
                                 });
@@ -573,10 +575,10 @@ impl PipelineTemplate {
                         methods.lock().unwrap().extend(result.methods);
                         classes.lock().unwrap().extend(result.classes);
                         snapshots.lock().unwrap().push(FileSnapshot {
-                            file_path: rel_path,
+                            file_path: rel_path.clone(),
                             project: project.clone(),
-                            file_sha1: file_hash,
-                            file_mtime,
+                            file_sha1: file_hash.clone(),
+                            file_mtime: *file_mtime,
                             method_count,
                             updated_at: chrono::Utc::now().to_rfc3339(),
                         });

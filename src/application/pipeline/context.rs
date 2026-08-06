@@ -5,6 +5,7 @@
 //! 字符串做简单的变量插值。
 
 use crate::application::pipeline::output::ProcessorOutput;
+use crate::application::pipeline::virtual_file::FileSourceKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -17,17 +18,33 @@ pub struct PipelineContext {
     pub file_text: String,
     /// 该文件所属的项目。
     pub project_name: String,
+    /// 文件来源类型（Fs / Nacos / Jenkins / 自定义）。
+    pub source_kind: FileSourceKind,
+    /// 文件修改时间（Fs 有真实 mtime；远程源为 None）。
+    pub mtime: Option<f64>,
+    /// 内容哈希（远程源必填，作为增量对比唯一依据）。
+    pub content_hash: Option<String>,
     /// 按处理器名索引的输出（例如 `"tree_sitter"`、`"chunk"`）。
     pub outputs: HashMap<String, ProcessorOutput>,
 }
 
 impl PipelineContext {
     /// 为给定文件创建新的流水线上下文。
-    pub fn new(file_path: impl Into<PathBuf>, file_text: String, project_name: String) -> Self {
+    pub fn new(
+        file_path: impl Into<PathBuf>,
+        file_text: String,
+        project_name: String,
+        source_kind: FileSourceKind,
+        mtime: Option<f64>,
+        content_hash: Option<String>,
+    ) -> Self {
         Self {
             file_path: file_path.into(),
             file_text,
             project_name,
+            source_kind,
+            mtime,
+            content_hash,
             outputs: HashMap::new(),
         }
     }
@@ -192,6 +209,9 @@ mod tests {
             PathBuf::from("src/main.rs"),
             "fn main() {}".to_string(),
             "my_project".to_string(),
+            FileSourceKind::Fs,
+            Some(1723001234.0),
+            Some("abc123".into()),
         );
 
         let mut lang_out = ProcessorOutput::new();
@@ -214,7 +234,14 @@ mod tests {
 
     #[test]
     fn context_new() {
-        let ctx = PipelineContext::new("/tmp/test.rs", "content".into(), "p".into());
+        let ctx = PipelineContext::new(
+            "/tmp/test.rs",
+            "content".into(),
+            "p".into(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        );
         assert_eq!(ctx.file_path.to_string_lossy(), "/tmp/test.rs");
         assert_eq!(ctx.file_text, "content");
         assert_eq!(ctx.project_name, "p");

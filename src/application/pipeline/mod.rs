@@ -40,6 +40,7 @@ pub mod processors;
 pub mod prompt;
 pub mod registry;
 pub mod test;
+pub mod virtual_file;
 
 pub use config::PipelineConfig;
 pub use context::PipelineContext;
@@ -49,3 +50,4 @@ pub use output::ProcessorOutput;
 pub use processor::Processor;
 pub use prompt::PromptRegistry;
 pub use registry::ProcessorRegistry;
+pub use virtual_file::{FileSourceKind, VirtualFile};

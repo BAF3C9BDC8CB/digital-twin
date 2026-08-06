@@ -2,8 +2,8 @@
 //!
 //! 注册表存储处理器实例列表，并提供按文件路径查询或获取全部处理器的方法。
 
+use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::processor::Processor;
-use std::path::Path;
 
 /// 可用流水线处理器的注册表。
 ///
@@ -31,14 +31,14 @@ impl ProcessorRegistry {
         &self.processors
     }
 
-    /// 返回与给定文件路径匹配的处理器排序向量。
+    /// 返回与给定上下文匹配的处理器排序向量。
     ///
     /// 处理器按优先级顺序返回（最低优先）。
-    pub fn matching(&self, file_path: &Path) -> Vec<&dyn Processor> {
+    pub fn matching(&self, ctx: &PipelineContext) -> Vec<&dyn Processor> {
         let mut matching: Vec<&dyn Processor> = self
             .processors
             .iter()
-            .filter(|p| p.matches(file_path))
+            .filter(|p| p.matches(ctx))
             .map(|p| p.as_ref())
             .collect();
         matching.sort_by_key(|p| p.priority());
