@@ -107,6 +107,8 @@ async fn s5a_graph_expansion_brings_relates_neighbors() {
         with_evidence: None,
         origin: None,
         doc_id: None,
+        file_type: None,
+        entity_type_filter: None,
     };
     let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
@@ -185,6 +187,8 @@ async fn s5a_canonical_query_attribution() {
         with_evidence: None,
         origin: None,
         doc_id: None,
+        file_type: None,
+        entity_type_filter: None,
     };
     let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
@@ -233,6 +237,8 @@ fn same_query() -> SearchRequest {
         with_evidence: None,
         origin: None,
         doc_id: None,
+        file_type: None,
+        entity_type_filter: None,
     }
 }
 
@@ -334,6 +340,8 @@ async fn s5c_doc_world_returns_chunk_text() {
         with_evidence: None,
         origin: None,
         doc_id: None,
+        file_type: None,
+        entity_type_filter: None,
     };
     let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);
@@ -377,6 +385,8 @@ async fn s5c_with_evidence_backfills_top5_entities() {
         with_evidence: Some(true),
         origin: None,
         doc_id: None,
+        file_type: None,
+        entity_type_filter: None,
     };
     let result = cws.search(&req).await.expect("搜索必须成功");
     print_hits(&result);

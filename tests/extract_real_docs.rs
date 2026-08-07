@@ -39,6 +39,7 @@ use dt_daemon::application::pipeline::infer_client::{
 use dt_daemon::application::pipeline::processor::Processor;
 use dt_daemon::application::pipeline::processors::{ChunkProcessor, LlmClientProcessor};
 use dt_daemon::application::pipeline::prompt::PromptRegistry;
+use dt_daemon::application::pipeline::FileSourceKind;
 
 const FIXTURE_DIR: &str = "test/fixtures/knowledge";
 
@@ -115,7 +116,14 @@ async fn extract_real_docs_meets_quality_gates() {
         let text = std::fs::read_to_string(doc)
             .unwrap_or_else(|e| panic!("无法读取 {}: {e}", doc.display()));
 
-        let mut ctx = PipelineContext::new(doc.clone(), text, "knowledge-fixtures".to_string());
+        let mut ctx = PipelineContext::new(
+            doc.clone(),
+            text,
+            "knowledge-fixtures".to_string(),
+            FileSourceKind::Fs,
+            None, // mtime：本测试无增量对比需求
+            None, // content_hash：本测试无增量对比需求
+        );
         let chunk_out = chunk.execute(&ctx).await.expect("分块处理器执行失败");
         ctx.add_output("chunk", chunk_out);
 
