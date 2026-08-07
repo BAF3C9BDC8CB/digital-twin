@@ -237,8 +237,8 @@ impl CrossWorldSearch {
                                                 .unwrap_or("");
                                             Some(RankedItem {
                                                 content: Some(text.to_string()),
-                                                source_ref: Some(format!("dt://nacos/{}/{}/{}/{}#section={}", payload.get("environment").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("test"), payload.get("namespace").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("public"), payload.get("group").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("DEFAULT_GROUP"), data_id, section)),
-                                                metadata: Some(serde_json::json!({"environment": payload.get("environment").and_then(|v| v.as_str()).unwrap_or(""), "namespace": payload.get("namespace").and_then(|v| v.as_str()).unwrap_or(""), "data_id": data_id, "group": payload.get("group").and_then(|v| v.as_str()).unwrap_or(""), "section": section})),
+                                                source_ref: Some(format!("dt://nacos/{}/{}/{}#{}", payload.get("namespace").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("public"), payload.get("group").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("DEFAULT_GROUP"), data_id, section)),
+                                                metadata: Some(serde_json::json!({"namespace": payload.get("namespace").and_then(|v| v.as_str()).unwrap_or(""), "data_id": data_id, "group": payload.get("group").and_then(|v| v.as_str()).unwrap_or(""), "section": section})),
                                                 llm_analysis: Some(config_purpose_summary(section)),
                                                 id: r
                                                     .get("id")
@@ -293,8 +293,8 @@ impl CrossWorldSearch {
                                             let snippet = format!("{}\n{}", text, display_line);
                                             Some(RankedItem {
                                                 content: Some(text.to_string()),
-                                                source_ref: Some(format!("dt://nacos/test/public/DEFAULT_GROUP/config#section={}", section_name)),
-                                                metadata: Some(serde_json::json!({"environment": "test", "namespace": "public", "group": "DEFAULT_GROUP", "section": section_name})),
+                                                source_ref: Some(format!("dt://nacos/public/DEFAULT_GROUP/config#{}", section_name)),
+                                                metadata: Some(serde_json::json!({"namespace": "public", "group": "DEFAULT_GROUP", "section": section_name})),
                                                 llm_analysis: Some(config_purpose_summary(&section_name)),
                                                 id: r
                                                     .get("id")
@@ -574,6 +574,86 @@ mod tests {
         assert_eq!(hit.entity_type, "ConfigChunk");
         assert!(hit.title.contains("app.yaml"));
         assert!(hit.snippet.contains("redis"));
+        // T2: 无 namespace/group 的 payload → 兜底 public/DEFAULT_GROUP, 锚点裸 section
+        assert_eq!(
+            hit.source_ref.as_deref(),
+            Some("dt://nacos/public/DEFAULT_GROUP/app.yaml#spring")
+        );
+    }
+
+    #[tokio::test]
+    async fn config_world_source_ref_uses_payload_namespace_and_group() {
+        let chunk = serde_json::json!({
+            "id": "pt-c2", "score": 0.9,
+            "payload": { "section_name": "spring.cloud", "data_id": "uvp-common.yaml",
+                         "namespace": "test", "group": "CUSTOM_GROUP",
+                         "text": "discovery:\n  server-addr: nacos:8848", "key_count": 2 }
+        });
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(Arc::new(StubVector { hits: vec![chunk] })),
+            Some(Arc::new(StubEmbed)),
+            None,
+        );
+        let req = SearchRequest {
+            query: "server-addr".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        let hit = &result.hits[0];
+        // T2: 含 namespace/group → 原样拼接, 无 environment 段
+        assert_eq!(
+            hit.source_ref.as_deref(),
+            Some("dt://nacos/test/CUSTOM_GROUP/uvp-common.yaml#spring.cloud")
+        );
+        assert!(!hit.source_ref.as_deref().unwrap().contains("environment"));
+    }
+
+    #[tokio::test]
+    async fn config_world_doc_chunk_source_ref_excludes_environment() {
+        let chunk = serde_json::json!({
+            "id": "pt-d1", "score": 0.8,
+            "payload": { "doc_id": "dt://doc/proj/common.yaml#section-spring.cloud",
+                         "text": "spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: nacos:8848" }
+        });
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(Arc::new(StubVector { hits: vec![chunk] })),
+            Some(Arc::new(StubEmbed)),
+            None,
+        );
+        let req = SearchRequest {
+            query: "spring.cloud".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        // doc_chunks 分支的噪声项(keyword 过滤后无匹配)被剔除, 仅剩 Config 命中
+        let hit = result
+            .hits
+            .iter()
+            .find(|h| h.entity_type == "Config")
+            .expect("doc-chunk hit");
+        // T2: 硬编码路径去掉 environment 段, 锚点 #section= → 裸 section
+        assert_eq!(
+            hit.source_ref.as_deref(),
+            Some("dt://nacos/public/DEFAULT_GROUP/config#spring.cloud")
+        );
     }
 
     #[tokio::test]
