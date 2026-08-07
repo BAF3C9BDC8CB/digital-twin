@@ -19,6 +19,8 @@ pub enum FileCategory {
     Code,
     /// 配置类（yaml、yml、properties、json、toml、ini…）。
     Config,
+    /// Nacos 配置（`dt://nacos/` 来源，来源优先于后缀映射）。
+    NacosConfig,
     /// 未知类别。
     Other,
 }
@@ -30,6 +32,7 @@ impl FileCategory {
             FileCategory::Document => "document",
             FileCategory::Code => "code",
             FileCategory::Config => "config",
+            FileCategory::NacosConfig => "nacos_config",
             FileCategory::Other => "other",
         }
     }
@@ -40,6 +43,7 @@ impl FileCategory {
             FileCategory::Document => "文档",
             FileCategory::Code => "代码",
             FileCategory::Config => "配置",
+            FileCategory::NacosConfig => "nacos配置",
             FileCategory::Other => "其他",
         }
     }
@@ -51,22 +55,37 @@ fn suffix_map() -> &'static HashMap<&'static str, FileCategory> {
     MAP.get_or_init(|| {
         let mut m = HashMap::new();
         // 文档类
-        for s in ["md", "markdown", "doc", "docs", "docx", "txt", "rtf", "pdf", "rst", "adoc", "textile", "org"] {
+        for s in [
+            "md", "markdown", "doc", "docs", "docx", "txt", "rtf", "pdf", "rst", "adoc", "textile",
+            "org",
+        ] {
             m.insert(s, FileCategory::Document);
         }
         // 代码类
         for s in [
             "java", "go", "rs", "php", "py", "js", "ts", "jsx", "tsx", "c", "h", "cpp", "hpp",
-            "cc", "cs", "rb", "kt", "kts", "swift", "scala", "sh", "bash", "zsh", "lua", "pl",
-            "r", "m", "mm", "vue", "svelte", "sql", "dart", "zig", "nim", "ex", "exs", "erl",
-            "hs", "ml", "clj", "groovy", "gradle", "tf", "proto",
+            "cc", "cs", "rb", "kt", "kts", "swift", "scala", "sh", "bash", "zsh", "lua", "pl", "r",
+            "m", "mm", "vue", "svelte", "sql", "dart", "zig", "nim", "ex", "exs", "erl", "hs",
+            "ml", "clj", "groovy", "gradle", "tf", "proto",
         ] {
             m.insert(s, FileCategory::Code);
         }
         // 配置类
         for s in [
-            "yaml", "yml", "properties", "json", "toml", "ini", "conf", "cfg", "config",
-            "env", "xml", "tml", "editorconfig", "lock",
+            "yaml",
+            "yml",
+            "properties",
+            "json",
+            "toml",
+            "ini",
+            "conf",
+            "cfg",
+            "config",
+            "env",
+            "xml",
+            "tml",
+            "editorconfig",
+            "lock",
         ] {
             m.insert(s, FileCategory::Config);
         }
@@ -81,7 +100,10 @@ pub fn categorize_path(path: &str) -> FileCategory {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
     match ext {
-        Some(e) => suffix_map().get(e.as_str()).copied().unwrap_or(FileCategory::Other),
+        Some(e) => suffix_map()
+            .get(e.as_str())
+            .copied()
+            .unwrap_or(FileCategory::Other),
         None => FileCategory::Other,
     }
 }
@@ -89,7 +111,10 @@ pub fn categorize_path(path: &str) -> FileCategory {
 /// 根据后缀字符串推断文件类别（`categorize_path` 的便捷包装，输入已是扩展名）。
 pub fn categorize_ext(ext: &str) -> FileCategory {
     let e = ext.trim_start_matches('.').to_lowercase();
-    suffix_map().get(e.as_str()).copied().unwrap_or(FileCategory::Other)
+    suffix_map()
+        .get(e.as_str())
+        .copied()
+        .unwrap_or(FileCategory::Other)
 }
 
 /// 将 `--file-type` 参数归一化为类别集合。
@@ -108,11 +133,13 @@ pub fn resolve_file_types(spec: &str) -> Vec<FileCategory> {
         "document" | "doc" | "docs" | "text" | "txt" => vec![FileCategory::Document],
         "code" | "src" | "source" => vec![FileCategory::Code],
         "config" | "conf" | "cfg" | "配置" => vec![FileCategory::Config],
+        "nacos_config" | "nacos" | "nacos配置" => vec![FileCategory::NacosConfig],
         "other" | "其他" => vec![FileCategory::Other],
         "all" | "*" => vec![
             FileCategory::Document,
             FileCategory::Code,
             FileCategory::Config,
+            FileCategory::NacosConfig,
             FileCategory::Other,
         ],
         _ => {
@@ -155,5 +182,31 @@ mod tests {
         assert_eq!(FileCategory::Document.slug(), "document");
         assert_eq!(FileCategory::Config.label(), "配置");
         assert_eq!(FileCategory::Code.label(), "代码");
+    }
+
+    #[test]
+    fn nacos_config_category_mapping() {
+        assert_eq!(FileCategory::NacosConfig.slug(), "nacos_config");
+        assert_eq!(FileCategory::NacosConfig.label(), "nacos配置");
+        // resolve 三形态：slug / 简写 / 中文
+        assert_eq!(
+            resolve_file_types("nacos_config"),
+            vec![FileCategory::NacosConfig]
+        );
+        assert_eq!(resolve_file_types("nacos"), vec![FileCategory::NacosConfig]);
+        assert_eq!(
+            resolve_file_types("nacos配置"),
+            vec![FileCategory::NacosConfig]
+        );
+        // all 集合包含新类别
+        assert!(resolve_file_types("all").contains(&FileCategory::NacosConfig));
+        // 后缀解析不受影响（yaml 仍属 Config，而非 NacosConfig）
+        assert_eq!(resolve_file_types("yaml"), vec![FileCategory::Config]);
+        assert_eq!(categorize_path("common.yaml"), FileCategory::Config);
+        // dt://nacos 前缀路径本身按后缀解析不到 NacosConfig（来源判定在 infer_file_type）
+        assert_eq!(
+            categorize_path("dt://nacos/test/DEFAULT_GROUP/common.yaml"),
+            FileCategory::Config
+        );
     }
 }

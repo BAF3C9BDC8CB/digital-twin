@@ -519,8 +519,7 @@ impl PipelineTemplate {
             .iter()
             .filter_map(|fp| {
                 let rel_path = scanner::rel_path(root, fp);
-                let (file_hash, file_mtime) =
-                    scanner::compute_file_hash(fp).unwrap_or_default();
+                let (file_hash, file_mtime) = scanner::compute_file_hash(fp).unwrap_or_default();
                 let source = std::fs::read_to_string(fp).ok()?;
                 Some((rel_path, source, file_hash, file_mtime))
             })
@@ -560,7 +559,11 @@ impl PipelineTemplate {
                 let modules = module_set.clone();
                 s.spawn(move || {
                     for (rel_path, source, file_hash, file_mtime) in &chunk {
-                        let result = match registry.parse_file(source, std::path::Path::new(rel_path), &project) {
+                        let result = match registry.parse_file(
+                            source,
+                            std::path::Path::new(rel_path),
+                            &project,
+                        ) {
                             Ok(r) => r,
                             Err(_) => {
                                 snapshots.lock().unwrap().push(FileSnapshot {

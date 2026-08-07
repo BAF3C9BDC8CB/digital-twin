@@ -81,10 +81,7 @@ mod tests {
         }
 
         fn matches(&self, ctx: &PipelineContext) -> bool {
-            ctx.file_path
-                .extension()
-                .and_then(|e| e.to_str())
-                == Some("rs")
+            ctx.file_path.extension().and_then(|e| e.to_str()) == Some("rs")
         }
 
         async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {

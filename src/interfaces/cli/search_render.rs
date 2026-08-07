@@ -12,7 +12,7 @@ fn truncate(s: &str) -> String {
     }
 }
 
-fn render_hit(h: &SearchHit) -> String {
+fn render_hit(h: &SearchHit, show_content: bool) -> String {
     let type_tag = match (&h.file_type_label, h.entity_type.as_str()) {
         (Some(ftl), et) if !et.is_empty() && et != "?" => format!("{ftl}/{et}"),
         (Some(ftl), _) => ftl.to_string(),
@@ -25,16 +25,29 @@ fn render_hit(h: &SearchHit) -> String {
             "分析",
             h.llm_analysis.clone().unwrap_or_else(|| h.snippet.clone()),
         ),
-        "Doc" => ("原文", h.content.clone().unwrap_or_else(|| h.snippet.clone())),
+        "Doc" => (
+            "原文",
+            h.content.clone().unwrap_or_else(|| h.snippet.clone()),
+        ),
         "Config" | "ConfigChunk" | "ConfigKey" => (
             "分析",
             h.llm_analysis.clone().unwrap_or_else(|| "暂无摘要".into()),
         ),
         _ => ("摘要", h.snippet.clone()),
     };
-    if matches!(h.entity_type.as_str(), "Config" | "ConfigChunk" | "ConfigKey") {
+    // 正文展开：仅 --show-content 开启且 content 存在时输出原文块（Config/Method/Doc 通用）。
+    if show_content {
         if let Some(content) = &h.content {
-            out.push_str(&format!("  正文:\n{}\n", content.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n")));
+            if !content.is_empty() {
+                out.push_str(&format!(
+                    "  正文:\n{}\n",
+                    content
+                        .lines()
+                        .map(|l| format!("    {}", l))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ));
+            }
         }
     }
     if !body.is_empty() {
@@ -63,13 +76,14 @@ fn render_hit(h: &SearchHit) -> String {
 }
 
 /// 人类格式：类型感知三行制（标题 / 分析·摘要·原文 / 位置·来源）+ 降级尾行。
-pub fn render_human(result: &CrossWorldResult) -> String {
+/// `show_content` 开启时展开正文原文块（`--show-content`）。
+pub fn render_human(result: &CrossWorldResult, show_content: bool) -> String {
     let mut out = String::new();
     if result.hits.is_empty() {
         out.push_str("  (无结果)\n");
     }
     for h in &result.hits {
-        out.push_str(&render_hit(h));
+        out.push_str(&render_hit(h, show_content));
     }
     if !result.degraded.is_empty() {
         out.push_str(&format!("  ⚠️ 降级: {}\n", result.degraded.join(", ")));
@@ -128,7 +142,7 @@ mod tests {
 
     #[test]
     fn human_render_method_three_lines() {
-        let out = render_human(&result_with(vec![base_hit()], vec![]));
+        let out = render_human(&result_with(vec![base_hit()], vec![]), false);
         assert!(out.contains("[0.9412] [Method] createApp"));
         assert!(out.contains("分析: 用途：创建服务器实例。"));
         assert!(out.contains("位置: test/project/app.js:L32-36"));
@@ -149,7 +163,7 @@ mod tests {
         h.signature = None;
         h.source_ref = Some("dt://doc/支付架构决策.md".into());
         h.hop = Some(0);
-        let out = render_human(&result_with(vec![h], vec![]));
+        let out = render_human(&result_with(vec![h], vec![]), false);
         assert!(out.contains("摘要: 支付渠道编码，决定路由"));
         assert!(out.contains("来源: dt://doc/支付架构决策.md"));
         assert!(out.contains("[hop=0]"));
@@ -157,11 +171,90 @@ mod tests {
 
     #[test]
     fn human_render_degraded_footer() {
-        let out = render_human(&result_with(
-            vec![base_hit()],
-            vec!["rerank_unavailable".into()],
-        ));
+        let out = render_human(
+            &result_with(vec![base_hit()], vec!["rerank_unavailable".into()]),
+            false,
+        );
         assert!(out.contains("降级") && out.contains("rerank_unavailable"));
+    }
+
+    #[test]
+    fn human_render_default_hides_content_for_all_types() {
+        // ConfigKey：默认不显示正文
+        let mut c = base_hit();
+        c.entity_type = "ConfigKey".into();
+        c.file_type = Some("nacos_config".into());
+        c.file_type_label = Some("nacos配置".into());
+        c.content = Some("spring:\n  cloud:\n    nacos:\n      server-addr: x".into());
+        c.file_path = None;
+        c.start_line = None;
+        c.end_line = None;
+        c.signature = None;
+        c.source_ref = Some("dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud".into());
+        c.llm_analysis = Some("用途：配置 Nacos 服务发现。".into());
+        let out = render_human(&result_with(vec![c], vec![]), false);
+        assert!(out.contains("[nacos配置/ConfigKey]"));
+        assert!(out.contains("分析: 用途：配置 Nacos 服务发现。"));
+        assert!(out.contains("来源: dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud"));
+        assert!(!out.contains("正文:"));
+
+        // Method：默认不显示正文
+        let mut m = base_hit();
+        m.content = Some("function createApp(port) {\n  return port;\n}".into());
+        let out_m = render_human(&result_with(vec![m], vec![]), false);
+        assert!(!out_m.contains("正文:"));
+
+        // Doc：默认不显示正文
+        let mut d = base_hit();
+        d.entity_type = "Doc".into();
+        d.content = Some("第一行\n第二行".into());
+        d.file_path = None;
+        d.start_line = None;
+        d.end_line = None;
+        d.signature = None;
+        let out_d = render_human(&result_with(vec![d], vec![]), false);
+        assert!(!out_d.contains("正文:"));
+    }
+
+    #[test]
+    fn human_render_show_content_expands_all_three_types() {
+        // ConfigKey：正文展开，保留原始缩进
+        let mut c = base_hit();
+        c.entity_type = "ConfigKey".into();
+        c.file_type = Some("nacos_config".into());
+        c.file_type_label = Some("nacos配置".into());
+        c.content =
+            Some("spring:\n  cloud:\n    nacos:\n      server-addr: nacos:8848  #注释".into());
+        c.file_path = None;
+        c.start_line = None;
+        c.end_line = None;
+        c.signature = None;
+        c.source_ref = Some("dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud".into());
+        let out = render_human(&result_with(vec![c], vec![]), true);
+        assert!(out.contains("正文:"));
+        assert!(out.contains("    spring:"));
+        assert!(out.contains("      server-addr: nacos:8848  #注释"));
+
+        // Method：展开代码片段原文
+        let mut m = base_hit();
+        m.content = Some("function createApp(port) {\n  return port;\n}".into());
+        let out_m = render_human(&result_with(vec![m], vec![]), true);
+        assert!(out_m.contains("正文:"));
+        assert!(out_m.contains("    function createApp(port) {"));
+        assert!(out_m.contains("      return port;"));
+
+        // Doc：展开原文
+        let mut d = base_hit();
+        d.entity_type = "Doc".into();
+        d.content = Some("第一行\n第二行".into());
+        d.file_path = None;
+        d.start_line = None;
+        d.end_line = None;
+        d.signature = None;
+        let out_d = render_human(&result_with(vec![d], vec![]), true);
+        assert!(out_d.contains("正文:"));
+        assert!(out_d.contains("    第一行"));
+        assert!(out_d.contains("    第二行"));
     }
 
     #[test]

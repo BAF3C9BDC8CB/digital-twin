@@ -221,10 +221,7 @@ mod tests {
         assert_eq!(FileSourceKind::Fs.to_string(), "Fs");
         assert_eq!(FileSourceKind::Nacos.to_string(), "Nacos");
         assert_eq!(FileSourceKind::Jenkins.to_string(), "Jenkins");
-        assert_eq!(
-            FileSourceKind::Other("k8s".into()).to_string(),
-            "k8s"
-        );
+        assert_eq!(FileSourceKind::Other("k8s".into()).to_string(), "k8s");
     }
 
     #[test]

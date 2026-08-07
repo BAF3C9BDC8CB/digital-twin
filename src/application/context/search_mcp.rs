@@ -879,6 +879,11 @@ pub fn infer_file_type_pub(path: Option<&str>) -> (Option<String>, Option<String
     let Some(p) = path else {
         return (None, None);
     };
+    // 来源优先：dt://nacos/ 前缀 → NacosConfig（不走后缀映射）。
+    if p.starts_with("dt://nacos/") {
+        let c = crate::domain::file_type::FileCategory::NacosConfig;
+        return (Some(c.slug().to_string()), Some(c.label().to_string()));
+    }
     let cat = crate::domain::file_type::categorize_path(p);
     match cat {
         crate::domain::file_type::FileCategory::Other => (None, None),
@@ -913,9 +918,7 @@ fn postprocess_hits(hits: Vec<SearchHit>, req: &SearchRequest) -> Vec<SearchHit>
             enriched.retain(|h| {
                 h.file_type
                     .as_deref()
-                    .map(|ft| {
-                        cats.iter().any(|c| c.slug() == ft)
-                    })
+                    .map(|ft| cats.iter().any(|c| c.slug() == ft))
                     .unwrap_or(false)
             });
         }
@@ -1036,8 +1039,8 @@ mod tests {
                 file_type_label: None,
                 score: 0.98,
                 source_ref: None,
-                           metadata: None,
-                           file_path: None,
+                metadata: None,
+                file_path: None,
                 start_line: None,
                 end_line: None,
                 signature: None,
@@ -1076,6 +1079,32 @@ mod tests {
         };
         assert_eq!(req.query, "payment");
         assert_eq!(req.world, None);
+    }
+
+    #[test]
+    fn infer_file_type_nacos_prefix_wins_over_suffix() {
+        // dt://nacos/ 前缀 → NacosConfig（来源优先，即使带 .yaml 后缀）
+        assert_eq!(
+            infer_file_type_pub(Some(
+                "dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud"
+            )),
+            (Some("nacos_config".into()), Some("nacos配置".into()))
+        );
+        assert_eq!(
+            infer_file_type_pub(Some("dt://nacos/test/DEFAULT_GROUP/common.yaml")),
+            (Some("nacos_config".into()), Some("nacos配置".into()))
+        );
+        // 普通路径仍走后缀映射
+        assert_eq!(
+            infer_file_type_pub(Some("src/main.rs")),
+            (Some("code".into()), Some("代码".into()))
+        );
+        assert_eq!(
+            infer_file_type_pub(Some("a/b/config.yaml")),
+            (Some("config".into()), Some("配置".into()))
+        );
+        // 空路径
+        assert_eq!(infer_file_type_pub(None), (None, None));
     }
 
     #[tokio::test]

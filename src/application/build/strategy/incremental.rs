@@ -122,8 +122,10 @@ impl BuildStrategy for IncrementalStrategy {
                 if let Some((stored_hash, stored_mtime)) = stored_map.get(&vf.virtual_path) {
                     if (current_mtime - stored_mtime).abs() < 1.0 {
                         // mtime 未变 → 复用已存哈希
-                        current_map
-                            .insert(vf.virtual_path.clone(), (stored_hash.clone(), current_mtime));
+                        current_map.insert(
+                            vf.virtual_path.clone(),
+                            (stored_hash.clone(), current_mtime),
+                        );
                         continue;
                     }
                 }

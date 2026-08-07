@@ -885,11 +885,12 @@ pub async fn handle_search(
     project: Option<String>,
     file_type: Option<String>,
     content_type: Option<String>,
+    show_content: bool,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "搜索: query={query} world={world} limit={limit} json={json} project={project:?}"
+        "搜索: query={query} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
     );
 
     if !json {
@@ -926,7 +927,7 @@ pub async fn handle_search(
     } else {
         print!(
             "{}",
-            crate::interfaces::cli::search_render::render_human(&result)
+            crate::interfaces::cli::search_render::render_human(&result, show_content)
         );
     }
     Ok(())

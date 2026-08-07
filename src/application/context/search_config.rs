@@ -347,20 +347,18 @@ impl CrossWorldSearch {
                 .into_iter()
                 .filter(|item| seen.insert(item.title.clone()))
                 .map(|item| {
-                    {
-                        let mut h = blank_hit(
-                            item.id,
-                            item.title,
-                            item.snippet,
-                            item.entity_type,
-                            item.score,
-                        );
-                        h.content = item.content;
-                        h.source_ref = item.source_ref;
-                        h.metadata = item.metadata;
-                        h.llm_analysis = item.llm_analysis;
-                        h
-                    }
+                    let mut h = blank_hit(
+                        item.id,
+                        item.title,
+                        item.snippet,
+                        item.entity_type,
+                        item.score,
+                    );
+                    h.content = item.content;
+                    h.source_ref = item.source_ref;
+                    h.metadata = item.metadata;
+                    h.llm_analysis = item.llm_analysis;
+                    h
                 })
                 .collect();
             return (hits, degraded);

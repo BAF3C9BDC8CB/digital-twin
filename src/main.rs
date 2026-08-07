@@ -230,6 +230,10 @@ enum Commands {
         /// 按内容类型过滤：LLM 语义类型（Config/Service/Standard…）或 AST 类型（Method/Class…）。
         #[arg(long = "content-type", alias = "type")]
         content_type: Option<String>,
+
+        /// 展开命中正文原文块（Config/Method/Doc 的 content 原样逐行显示）。
+        #[arg(long = "show-content")]
+        show_content: bool,
     },
 
     /// 环境感知：定位目录所属项目，输出索引状态与内容简报。
@@ -1301,6 +1305,7 @@ async fn main() -> anyhow::Result<()> {
             project,
             file_type,
             content_type,
+            show_content,
         }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
@@ -1312,6 +1317,7 @@ async fn main() -> anyhow::Result<()> {
                 project,
                 file_type,
                 content_type,
+                show_content,
                 graph,
                 vector,
             )

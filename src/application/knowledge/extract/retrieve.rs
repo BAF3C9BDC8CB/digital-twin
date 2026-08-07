@@ -1144,35 +1144,35 @@ ORDER BY eid, d.doc_id
                         c.source_ref.as_deref(),
                     );
                 SearchHit {
-                id: c.business_id,
-                title: c.name,
-                snippet: c.summary,
-                content: None,
-                source_world: "knowledge".into(),
-                entity_type: c.entity_type,
-                file_type,
-                file_type_label,
-                score: b.final_score,
-                source_ref: c.source_ref,
-                metadata: None,
-                file_path: None,
-                start_line: None,
-                end_line: None,
-                signature: None,
-                llm_analysis: None,
-                calls: vec![],
-                element_id: c.element_id,
-                score_breakdown: Some(b),
-                hop: Some(c.hop),
-                via_same_as: if c.via_same_as { Some(true) } else { None },
-                relations: if c.relations.is_empty() {
-                    None
-                } else {
-                    Some(c.relations)
-                },
-                evidence: None,
-                rerank_degraded: if reranked { None } else { Some(true) },
-            }
+                    id: c.business_id,
+                    title: c.name,
+                    snippet: c.summary,
+                    content: None,
+                    source_world: "knowledge".into(),
+                    entity_type: c.entity_type,
+                    file_type,
+                    file_type_label,
+                    score: b.final_score,
+                    source_ref: c.source_ref,
+                    metadata: None,
+                    file_path: None,
+                    start_line: None,
+                    end_line: None,
+                    signature: None,
+                    llm_analysis: None,
+                    calls: vec![],
+                    element_id: c.element_id,
+                    score_breakdown: Some(b),
+                    hop: Some(c.hop),
+                    via_same_as: if c.via_same_as { Some(true) } else { None },
+                    relations: if c.relations.is_empty() {
+                        None
+                    } else {
+                        Some(c.relations)
+                    },
+                    evidence: None,
+                    rerank_degraded: if reranked { None } else { Some(true) },
+                }
             })
             .collect();
         Ok(RetrieveOutcome { hits, degraded })
