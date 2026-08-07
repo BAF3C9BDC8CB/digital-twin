@@ -481,6 +481,10 @@ impl Consolidator {
                     "degraded": block.degraded,
                     "source": "doc",
                     "text": raw_text,
+                    // T3: 统一 LLM 分析契约——块级 LLM 分析（配置 chunk 的
+                    // nacos_config 摘要、文档块的 block_summary）写入与代码方法
+                    // 同一 `llm_analysis` 字段；空值由检索侧归一为 None。
+                    "llm_analysis": block.block_summary.clone(),
                 },
             });
             self.vector.upsert(DOC_CHUNKS, vec![point]).await?;
@@ -1329,6 +1333,8 @@ mod tests {
             .expect("doc_chunks upsert 必须执行");
         assert_eq!(doc.1[0]["payload"]["degraded"], serde_json::json!(true));
         assert_eq!(doc.1[0]["payload"]["text"].as_str(), Some("原文块文本"));
+        // T3: 降级块无 LLM 分析 → llm_analysis 为空串（检索侧归一为 None）
+        assert_eq!(doc.1[0]["payload"]["llm_analysis"].as_str(), Some(""));
         assert_eq!(
             doc.1[0]["payload"]["entity_ids"].as_array().unwrap().len(),
             0
@@ -1454,6 +1460,8 @@ mod tests {
         assert_eq!(payload["degraded"], serde_json::json!(false));
         assert_eq!(payload["source"].as_str(), Some("doc"));
         assert_eq!(payload["text"].as_str(), Some("原文块文本"));
+        // T3: 统一 LLM 分析契约——块级分析写入 llm_analysis（配置 chunk 与代码方法同一字段）
+        assert_eq!(payload["llm_analysis"].as_str(), Some("块摘要"));
 
         // 点 ID 确定性：make_point_id("{doc_id}:{block_index}")
         let expected_pid =

@@ -120,23 +120,15 @@ fn get_keywords(query: &str) -> Vec<String> {
     terms
 }
 
-fn config_purpose_summary(title: &str) -> String {
-    let t = title.to_ascii_lowercase();
-    if t.contains("nacos") && (t.contains("discovery") || t.contains("service")) {
-        "配置应用连接 Nacos 注册中心并启用服务发现。".into()
-    } else if t.contains("datasource") || t.contains("database") {
-        "配置应用的数据源连接和数据库访问参数。".into()
-    } else if t.contains("redis") || t.contains("cache") {
-        "配置应用的缓存服务连接和缓存行为。".into()
-    } else if t.contains("kafka") || t.contains("rocketmq") || t.contains("rabbit") {
-        "配置应用的消息队列连接和消息通信行为。".into()
-    } else if t.contains("log") {
-        "配置应用的日志输出级别和日志行为。".into()
-    } else if t.contains("spring") {
-        "配置 Spring 应用的运行参数和组件行为。".into()
-    } else {
-        "配置应用相关组件的运行参数。".into()
-    }
+/// 从 Qdrant payload 读取统一 `llm_analysis` 字段（T3：配置 chunk 与代码方法
+/// 同一 LLM 分析契约）。字段缺失或为空 → `None`，渲染层回退"暂无摘要"。
+fn payload_llm_analysis(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("llm_analysis")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
 }
 
 fn blank_hit(
@@ -239,7 +231,7 @@ impl CrossWorldSearch {
                                                 content: Some(text.to_string()),
                                                 source_ref: Some(format!("dt://nacos/{}/{}/{}#{}", payload.get("namespace").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("public"), payload.get("group").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("DEFAULT_GROUP"), data_id, section)),
                                                 metadata: Some(serde_json::json!({"namespace": payload.get("namespace").and_then(|v| v.as_str()).unwrap_or(""), "data_id": data_id, "group": payload.get("group").and_then(|v| v.as_str()).unwrap_or(""), "section": section})),
-                                                llm_analysis: Some(config_purpose_summary(section)),
+                                                llm_analysis: payload_llm_analysis(payload),
                                                 id: r
                                                     .get("id")
                                                     .map(|v| v.to_string())
@@ -295,7 +287,7 @@ impl CrossWorldSearch {
                                                 content: Some(text.to_string()),
                                                 source_ref: Some(format!("dt://nacos/public/DEFAULT_GROUP/config#{}", section_name)),
                                                 metadata: Some(serde_json::json!({"namespace": "public", "group": "DEFAULT_GROUP", "section": section_name})),
-                                                llm_analysis: Some(config_purpose_summary(&section_name)),
+                                                llm_analysis: payload_llm_analysis(payload),
                                                 id: r
                                                     .get("id")
                                                     .map(|v| v.to_string())
@@ -652,6 +644,87 @@ mod tests {
             hit.source_ref.as_deref(),
             Some("dt://nacos/public/DEFAULT_GROUP/config#spring.cloud")
         );
+    }
+
+    #[tokio::test]
+    async fn config_world_config_chunk_llm_analysis_reads_payload() {
+        // T3: config_chunks payload 携带 llm_analysis → 透传到 SearchHit
+        //（与代码方法同一契约字段，不再硬编码摘要）。
+        let chunk = serde_json::json!({
+            "id": "pt-c3", "score": 0.9,
+            "payload": { "section_name": "spring.datasource", "data_id": "app.yaml",
+                         "text": "url: jdbc:mysql://127.0.0.1:3306/app", "key_count": 1,
+                         "llm_analysis": "用途：配置应用的数据源连接。\n逻辑：数据源参数。" }
+        });
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(Arc::new(StubVector { hits: vec![chunk] })),
+            Some(Arc::new(StubEmbed)),
+            None,
+        );
+        let req = SearchRequest {
+            query: "datasource 配置".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        let hit = &result.hits[0];
+        assert_eq!(
+            hit.llm_analysis.as_deref(),
+            Some("用途：配置应用的数据源连接。\n逻辑：数据源参数。")
+        );
+    }
+
+    #[tokio::test]
+    async fn config_world_missing_or_empty_llm_analysis_is_none() {
+        // T3: payload 缺 llm_analysis 或为空 → None（渲染层回退"暂无摘要"）。
+        // 两条命中：config_chunks（无字段）与 doc_chunks（空串）。
+        let chunk = serde_json::json!({
+            "id": "pt-c4", "score": 0.9,
+            "payload": { "section_name": "spring.redis", "data_id": "app.yaml",
+                         "text": "host: 127.0.0.1", "key_count": 1 }
+        });
+        let doc_chunk = serde_json::json!({
+            "id": "pt-d2", "score": 0.7,
+            "payload": { "doc_id": "dt://doc/proj/common.yaml#section-server",
+                         "text": "port: 8080", "llm_analysis": "" }
+        });
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(Arc::new(StubVector {
+                hits: vec![chunk, doc_chunk],
+            })),
+            Some(Arc::new(StubEmbed)),
+            None,
+        );
+        let req = SearchRequest {
+            query: "redis 配置".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        assert!(!result.hits.is_empty());
+        for hit in &result.hits {
+            assert!(
+                hit.llm_analysis.is_none(),
+                "llm_analysis 缺失或为空时应为 None，实际: {:?}",
+                hit.llm_analysis
+            );
+        }
     }
 
     #[tokio::test]
