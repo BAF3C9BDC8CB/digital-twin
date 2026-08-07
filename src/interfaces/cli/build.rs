@@ -719,6 +719,161 @@ pub async fn handle_build_all(
     Ok(())
 }
 
+/// 处理 `dt build --source nacos`——从 Nacos 配置中心拉取配置，
+/// 走虚拟文件管线（chunk → LLM(nacos_config 词表) → store）。
+///
+/// G1: 接通 NacosVirtualFileSource → IncrementalStrategy::select_virtual_files
+/// → 管线。支持 `--env`（test|prod，默认 prod）与 `--dry-run`
+/// （只列出选中文件，不执行抽取）。
+///
+/// 增量快照以 `virtual_path → content_hash` 记录；非 Fs 来源
+/// （Nacos）不做 mtime 捷径（F2），内容哈希变更即重新处理。
+pub async fn handle_nacos_build(
+    project: &str,
+    env: &str,
+    dry_run: bool,
+    nacos_url: &str,
+    graph: Option<Arc<dyn GraphRepository>>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
+    snapshot: Option<Arc<dyn SnapshotRepository>>,
+) -> anyhow::Result<()> {
+    use crate::application::build::strategy::incremental::IncrementalStrategy;
+    use crate::application::build::strategy::BuildStrategy;
+    use crate::application::sync::nacos::client::NacosClient;
+    use crate::application::sync::nacos::virtual_file_source::NacosVirtualFileSource;
+    use crate::domain::types::FileSnapshot;
+
+    tracing::info!("dt build --source nacos: env={env} project={project} dry_run={dry_run}");
+
+    // 1. 拉取所有命名空间配置为虚拟文件。
+    let source = NacosVirtualFileSource::new(NacosClient::new(nacos_url));
+    let vfiles = source
+        .fetch_virtual_files(project)
+        .await
+        .map_err(|e| anyhow::anyhow!("Nacos 拉取失败: {e}"))?;
+    tracing::info!("Nacos 拉取 {} 条配置", vfiles.len());
+
+    // 2. 增量选择：只处理内容哈希变更的配置。
+    let strategy = IncrementalStrategy;
+    let (selected, deleted) = strategy
+        .select_virtual_files(&vfiles, snapshot.as_deref(), project)
+        .await
+        .map_err(|e| anyhow::anyhow!("增量选择失败: {e}"))?;
+    tracing::info!(
+        "选中 {} 条待处理, 删除 {} 条",
+        selected.len(),
+        deleted.len()
+    );
+
+    // 3. dry-run：只列出选中文件。
+    if dry_run {
+        println!("[dry-run] 选中 {} 条 Nacos 配置:", selected.len());
+        for vf in &selected {
+            println!("  {}", vf.virtual_path);
+        }
+        return Ok(());
+    }
+
+    if selected.is_empty() {
+        tracing::info!("Nacos 配置均未变更，跳过管线");
+        return Ok(());
+    }
+
+    // 4. 管线：注册 chunk → llm → store 处理器。
+    let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let llm_config = pipeline_config.llm.unwrap_or_default();
+
+    // LLM 客户端（F5 已断言 llm_provider == xinference）。
+    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = {
+        let xi_cfg = pipeline_config
+            .providers
+            .as_ref()
+            .and_then(|p| p.xinference.as_ref());
+        let base_url = xi_cfg
+            .map(|c| c.url.as_str())
+            .unwrap_or("http://localhost:9997/v1")
+            .to_string();
+        let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
+        let model = xi_cfg
+            .map(|c| c.model_llm.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("qwen3.5")
+            .to_string();
+        (
+            Arc::new(XInferenceChatClient::new(
+                base_url,
+                api_key,
+                pipeline_config.inference_server.max_concurrent,
+            )) as Arc<dyn ChatClient>,
+            model,
+        )
+    };
+
+    let mut registry = ProcessorRegistry::new();
+    if pipeline_config.processors.chunk {
+        registry.register(Box::new(ChunkProcessor::default()));
+    }
+    if pipeline_config.processors.llm {
+        match PromptRegistry::load_default() {
+            Ok(prompts) => {
+                registry.register(Box::new(LlmClientProcessor::new(
+                    infer_client.clone(),
+                    infer_model.clone(),
+                    Arc::new(prompts),
+                    llm_config,
+                )));
+            }
+            Err(e) => tracing::warn!("提示词注册表不可用: {e} — 跳过 LLM 处理器"),
+        }
+    }
+    if pipeline_config.processors.store {
+        registry.register(Box::new(StoreProcessor::new(graph, vector, embed)));
+    }
+
+    let registry = Arc::new(registry);
+    let engine = ProcessorEngine::new(registry, pipeline_config.inference_server.max_concurrent);
+
+    // 5. 执行虚拟文件管线（Nacos 源 → select_prompt 路由 nacos_config 词表）。
+    let selected_for_snapshot = selected.clone();
+    let analyses = engine
+        .analyze_virtual_batch(selected, project.to_string())
+        .await;
+    let success = analyses.iter().filter(|a| a.success).count();
+    tracing::info!("Nacos 管线完成: {success}/{} 成功", analyses.len());
+
+    // 6. 更新快照：只记录成功处理（管线完整跑通）的虚拟文件。
+    if let Some(repo) = snapshot {
+        let snapshots: Vec<FileSnapshot> = analyses
+            .iter()
+            .filter(|a| a.success)
+            .map(|a| {
+                let content_hash = selected_for_snapshot
+                    .iter()
+                    .find(|vf| vf.virtual_path == a.file_path.to_string_lossy())
+                    .map(|vf| vf.content_hash.clone())
+                    .unwrap_or_default();
+                FileSnapshot {
+                    file_path: a.file_path.to_string_lossy().to_string(),
+                    project: project.to_string(),
+                    file_sha1: content_hash,
+                    file_mtime: 0.0,
+                    method_count: 0,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                }
+            })
+            .collect();
+        if !snapshots.is_empty() {
+            strategy
+                .update_snapshots(repo.as_ref(), project, &snapshots)
+                .await
+                .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// 从可能混合的字符串中提取内嵌的 ASCII 单词序列
 
 /// 处理 `dt search`——统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
@@ -788,7 +943,8 @@ pub async fn handle_search(
 /// 任一条件不满足则返回错误（上游应打印消息后退出）。
 pub fn validate_xinference_for_remote_source() -> Result<(), String> {
     // 加载 pipeline 配置
-    let pipeline_cfg = PipelineConfig::load().map_err(|e| format!("无法加载 pipeline.yaml: {e}"))?;
+    let pipeline_cfg =
+        PipelineConfig::load().map_err(|e| format!("无法加载 pipeline.yaml: {e}"))?;
 
     let llm_provider = pipeline_cfg
         .providers
@@ -819,20 +975,39 @@ pub fn validate_xinference_for_remote_source() -> Result<(), String> {
         .trim_end_matches("/v1")
         .trim_end_matches('/');
 
-    std::net::TcpStream::connect_timeout(
-        &addr
-            .parse::<std::net::SocketAddr>()
-            .map_err(|_| format!("无效的 xinference 地址: {addr}"))?,
-        std::time::Duration::from_secs(5),
-    )
-    .map_err(|e| {
-        format!(
-            "无法连接 xinference 服务 ({addr}): {e}。\
-             请确认 xinference 已在 localhost:9997 启动。"
-        )
-    })?;
+    // G2: 用 ToSocketAddrs 解析——支持主机名（localhost 等），
+    // 不再要求 IP 字面量（SocketAddr::parse 会拒绝 localhost）。
+    let addrs = resolve_xinference_addr(addr)?;
+    if addrs.is_empty() {
+        return Err(format!(
+            "无效的 xinference 地址: {addr}（无法解析出任何 IP）"
+        ));
+    }
 
-    Ok(())
+    // localhost 常同时解析出 ::1 与 127.0.0.1，而 xinference 可能只监听
+    // IPv4——逐个尝试，任一地址连上即通过。
+    let mut last_err = String::new();
+    for socket_addr in &addrs {
+        match std::net::TcpStream::connect_timeout(socket_addr, std::time::Duration::from_secs(5)) {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    Err(format!(
+        "无法连接 xinference 服务 ({addr}): {last_err}。\
+         请确认 xinference 已在 localhost:9997 启动。"
+    ))
+}
+
+/// 将 `host:port` 地址解析为 [`std::net::SocketAddr`] 列表。
+///
+/// 使用 [`std::net::ToSocketAddrs`] 而非 `SocketAddr::parse`，从而支持
+/// 主机名（`localhost`、内网域名等），不只接受 IP 字面量。
+fn resolve_xinference_addr(addr: &str) -> Result<Vec<std::net::SocketAddr>, String> {
+    use std::net::ToSocketAddrs;
+    addr.to_socket_addrs()
+        .map(|iter| iter.collect())
+        .map_err(|_| format!("无效的 xinference 地址: {addr}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -896,5 +1071,58 @@ mod validate_tests {
         let is_xinference = llm_provider == "xinference";
         // 默认值不是 xinference——验证检查逻辑能捕获
         assert!(!is_xinference);
+    }
+
+    // ── G2: hostname 解析（ToSocketAddrs） ────────────────────────
+
+    /// G2 回归：`localhost:9997`（主机名）必须能解析为 SocketAddr。
+    /// 修复前 `addr.parse::<SocketAddr>()` 拒绝主机名，导致正确配置被误拒。
+    #[test]
+    fn resolves_localhost_hostname() {
+        let addrs = resolve_xinference_addr("localhost:9997").expect("localhost 应可解析");
+        assert!(!addrs.is_empty(), "localhost:9997 应解析出至少一个 IP");
+        // 至少一个地址的端口是 9997
+        assert!(
+            addrs.iter().any(|a| a.port() == 9997),
+            "解析出的地址应保留端口 9997: {addrs:?}"
+        );
+    }
+
+    /// G2: IP 字面量仍可解析（既有行为不回退）。
+    #[test]
+    fn resolves_ip_literal() {
+        let addrs = resolve_xinference_addr("127.0.0.1:9997").expect("IP 字面量应可解析");
+        assert_eq!(addrs[0].ip().to_string(), "127.0.0.1");
+        assert_eq!(addrs[0].port(), 9997);
+    }
+
+    /// G2: 不带端口的地址被拒绝（无法解析为 SocketAddr）。
+    #[test]
+    fn rejects_address_without_port() {
+        assert!(resolve_xinference_addr("localhost").is_err());
+    }
+
+    /// G2: 非法地址（无 host:port 结构）被拒绝并给出中文错误。
+    #[test]
+    fn rejects_garbage_address() {
+        let err = resolve_xinference_addr("not-an-address-###").unwrap_err();
+        assert!(
+            err.contains("无效的 xinference 地址"),
+            "错误信息应可读: {err}"
+        );
+    }
+
+    /// G2: validate 的 URL 提取逻辑——完整 URL 被裁剪为 host:port 后仍可解析。
+    #[test]
+    fn extracts_host_port_from_full_url() {
+        let url = "http://localhost:9997/v1";
+        let addr = url
+            .trim_start_matches("http://")
+            .trim_start_matches("https://")
+            .trim_end_matches("/v1")
+            .trim_end_matches('/');
+        assert_eq!(addr, "localhost:9997");
+        let addrs = resolve_xinference_addr(addr).expect("裁剪后的 host:port 应可解析");
+        assert!(addrs.iter().any(|a| a.port() == 9997));
     }
 }

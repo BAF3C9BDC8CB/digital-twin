@@ -69,6 +69,16 @@ pub enum EntityType {
     Person,
     Org,
     Product,
+    /// Nacos 配置文件的整体实体（F4 词表）。
+    NacosConfig,
+    /// Nacos 配置中的单个键值对（F4 词表）。
+    ConfigKey,
+    /// Nacos 配置中的独立区块（F4 词表）。
+    ConfigSection,
+    /// 数据库/缓存/消息队列连接（F4 词表）。
+    Database,
+    /// 服务运行时信息：端口、主机、环境标识（F4 词表）。
+    Server,
     #[default]
     Other,
 }
@@ -88,6 +98,11 @@ impl EntityType {
             Self::Person => "Person",
             Self::Org => "Org",
             Self::Product => "Product",
+            Self::NacosConfig => "NacosConfig",
+            Self::ConfigKey => "ConfigKey",
+            Self::ConfigSection => "ConfigSection",
+            Self::Database => "Database",
+            Self::Server => "Server",
             Self::Other => "Other",
         }
     }
@@ -101,29 +116,39 @@ impl<'de> Deserialize<'de> for EntityType {
         D: Deserializer<'de>,
     {
         let value = Option::<String>::deserialize(deserializer)?;
-        Ok(match value.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
-            Some("service") => Self::Service,
-            Some("channel") => Self::Channel,
-            Some("config") => Self::Config,
-            Some("table") => Self::Table,
-            Some("api") => Self::Api,
-            Some("concept") | Some("tech") | Some("database") | Some("technology") | Some("module")
-            | Some("component") | Some("process") | Some("procedure")
-            | Some("function") | Some("class") | Some("method") | Some("interface")
-            | Some("trait") | Some("struct") | Some("enum") | Some("macro")
-            | Some("command") | Some("task") | Some("tool") | Some("step") | Some("job")
-            | Some("type") | Some("namespace") | Some("library") | Some("model") => Self::Concept,
-            Some("standard") => Self::Standard,
-            Some("person") | Some("people") | Some("human") => Self::Person,
-            Some("org") | Some("organization") | Some("organisation") | Some("company") => Self::Org,
-            Some("product") => Self::Product,
-            Some("other") | Some("unknown") | Some("misc") | Some("project") => Self::Other,
-            Some(other) => {
-                tracing::warn!("LLM 返回词表外实体类型 '{other}'，归一为 Other");
-                Self::Other
-            }
-            None => Self::Other,
-        })
+        Ok(
+            match value.as_deref().map(|s| s.to_ascii_lowercase()).as_deref() {
+                Some("service") => Self::Service,
+                Some("channel") => Self::Channel,
+                Some("config") => Self::Config,
+                Some("table") => Self::Table,
+                Some("api") => Self::Api,
+                Some("concept") | Some("tech") | Some("technology") | Some("module")
+                | Some("component") | Some("process") | Some("procedure") | Some("function")
+                | Some("class") | Some("method") | Some("interface") | Some("trait")
+                | Some("struct") | Some("enum") | Some("macro") | Some("command")
+                | Some("task") | Some("tool") | Some("step") | Some("job") | Some("type")
+                | Some("namespace") | Some("library") | Some("model") => Self::Concept,
+                Some("standard") => Self::Standard,
+                Some("nacosconfig") => Self::NacosConfig,
+                Some("configkey") => Self::ConfigKey,
+                Some("configsection") => Self::ConfigSection,
+                // "database" 从 Concept 别名迁移到专用变体（F4 词表：数据库/缓存/消息队列连接）。
+                Some("database") | Some("db") => Self::Database,
+                Some("server") => Self::Server,
+                Some("person") | Some("people") | Some("human") => Self::Person,
+                Some("org") | Some("organization") | Some("organisation") | Some("company") => {
+                    Self::Org
+                }
+                Some("product") => Self::Product,
+                Some("other") | Some("unknown") | Some("misc") | Some("project") => Self::Other,
+                Some(other) => {
+                    tracing::warn!("LLM 返回词表外实体类型 '{other}'，归一为 Other");
+                    Self::Other
+                }
+                None => Self::Other,
+            },
+        )
     }
 }
 
@@ -167,14 +192,65 @@ mod tests {
             ("Table", EntityType::Table),
             ("Api", EntityType::Api),
             ("Concept", EntityType::Concept),
+            ("Standard", EntityType::Standard),
             ("Person", EntityType::Person),
             ("Org", EntityType::Org),
             ("Product", EntityType::Product),
+            ("NacosConfig", EntityType::NacosConfig),
+            ("ConfigKey", EntityType::ConfigKey),
+            ("ConfigSection", EntityType::ConfigSection),
+            ("Database", EntityType::Database),
+            ("Server", EntityType::Server),
             ("Other", EntityType::Other),
         ];
         for (s, expected) in cases {
             let t: EntityType = serde_json::from_value(json!(s)).unwrap();
             assert_eq!(t, expected, "词表值 {s}");
+        }
+    }
+
+    /// F4 词表变体必须大小写不敏感（nacos_config prompt 返回首字母大写变体，
+    /// raw_text/code 路径可能返回小写）。
+    #[test]
+    fn entity_type_nacos_vocabulary_case_insensitive() {
+        let cases = [
+            ("nacosconfig", EntityType::NacosConfig),
+            ("configkey", EntityType::ConfigKey),
+            ("configsection", EntityType::ConfigSection),
+            ("database", EntityType::Database),
+            ("server", EntityType::Server),
+        ];
+        for (s, expected) in cases {
+            let t: EntityType = serde_json::from_value(json!(s)).unwrap();
+            assert_eq!(t, expected, "小写词表值 {s}");
+        }
+    }
+
+    /// "database" 别名已从 Concept 迁移到专用 Database 变体（F4 词表）。
+    #[test]
+    fn entity_type_database_maps_to_dedicated_variant() {
+        let t: EntityType = serde_json::from_value(json!("database")).unwrap();
+        assert_eq!(t, EntityType::Database);
+        let t2: EntityType = serde_json::from_value(json!("db")).unwrap();
+        assert_eq!(t2, EntityType::Database);
+        let t3: EntityType = serde_json::from_value(json!("Database")).unwrap();
+        assert_eq!(t3, EntityType::Database);
+    }
+
+    #[test]
+    fn entity_type_as_str_roundtrip() {
+        for ty in [
+            EntityType::Service,
+            EntityType::NacosConfig,
+            EntityType::ConfigKey,
+            EntityType::ConfigSection,
+            EntityType::Database,
+            EntityType::Server,
+            EntityType::Other,
+        ] {
+            let s = ty.as_str();
+            let t: EntityType = serde_json::from_value(json!(s)).unwrap();
+            assert_eq!(t, ty, "as_str 往返 {s}");
         }
     }
 

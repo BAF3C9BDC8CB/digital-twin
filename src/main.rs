@@ -186,8 +186,18 @@ enum Commands {
 
         /// 要构建的源类型: code（默认）、knowledge（将 KG 节点同步为向量）。
         /// 使用 "knowledge" 替代 `dt kg-sync`。
+        /// 使用 "nacos" 从 Nacos 配置中心构建（需 llm_provider=xinference）。
         #[arg(long = "source")]
         source: Option<String>,
+
+        /// Nacos 环境: test | prod（默认 prod，配合 --source nacos）。
+        #[arg(long = "env", default_value = "prod")]
+        env: String,
+
+        /// 仅列出选中文件不抽取（配合 --source nacos）。
+        /// 打印将进入管线的 dt://nacos/ 虚拟文件列表后退出。
+        #[arg(long = "dry-run")]
+        dry_run: bool,
     },
 
     /// 跨世界统一搜索。
@@ -1017,6 +1027,8 @@ async fn main() -> anyhow::Result<()> {
             no_pipeline,
             test,
             source,
+            env,
+            dry_run,
         }) => {
             // ── dt build --test: 运行自包含的流水线集成测试 ──
             if test {
@@ -1100,7 +1112,8 @@ async fn main() -> anyhow::Result<()> {
                 let remote_sources = ["nacos", "jenkins"];
                 if remote_sources.contains(&src.as_str()) {
                     // F5: 启动自检——远程源要求 xinference llm provider + localhost:9997 可达
-                    match dt_daemon::interfaces::cli::build::validate_xinference_for_remote_source() {
+                    match dt_daemon::interfaces::cli::build::validate_xinference_for_remote_source()
+                    {
                         Ok(()) => {
                             tracing::info!(
                                 "dt build --source {src}: xinference 自检通过，继续执行"
@@ -1112,10 +1125,52 @@ async fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    // TODO: 实际 Nacos/Jenkins 虚拟文件源的构建流水线
-                    // 当前占位——provider 已验证，后续 Phase 实现具体逻辑。
+                    // G1: Nacos 源落地真实管线（NacosVirtualFileSource →
+                    // select_virtual_files → chunk/LLM(nacos_config)/store）。
+                    if src == "nacos" {
+                        let config = load_config();
+                        let nacos_url = match env.as_str() {
+                            "test" => config
+                                .as_ref()
+                                .and_then(|c| c.services.nacos.test.as_deref())
+                                .unwrap_or("https://nacos.newoffen.net/nacos"),
+                            "prod" => config
+                                .as_ref()
+                                .and_then(|c| c.services.nacos.prod.as_deref())
+                                .unwrap_or("https://nacos.newoffen.com/nacos"),
+                            other => {
+                                eprintln!("错误: 未知环境 '{other}'，应为 test 或 prod");
+                                std::process::exit(1);
+                            }
+                        };
+
+                        let memgraph = connect_memgraph().await;
+                        let graph: Option<Arc<dyn GraphRepository>> =
+                            memgraph.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
+                        let embed = connect_embed().await;
+                        let vector = connect_vector().await;
+                        let snapshot = connect_snapshot().await;
+
+                        // 项目名：优先 --name，否则取默认 "nacos"。
+                        let project_name = name.clone().unwrap_or_else(|| "nacos".to_string());
+
+                        dt_daemon::interfaces::cli::build::handle_nacos_build(
+                            &project_name,
+                            &env,
+                            dry_run,
+                            nacos_url,
+                            graph,
+                            vector,
+                            embed,
+                            snapshot,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+
+                    // Jenkins 仍为占位——Phase 1 CLI 全家桶范围。
                     tracing::warn!(
-                        "dt build --source {src}: provider 已验证，但完整流水线尚未实现"
+                        "dt build --source {src}: provider 已验证，但 Jenkins 流水线尚未实现"
                     );
                     return Ok(());
                 }
@@ -1250,7 +1305,15 @@ async fn main() -> anyhow::Result<()> {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             dt_daemon::interfaces::cli::build::handle_search(
-                query, world, limit, json, project, file_type, content_type, graph, vector,
+                query,
+                world,
+                limit,
+                json,
+                project,
+                file_type,
+                content_type,
+                graph,
+                vector,
             )
             .await?;
             return Ok(());

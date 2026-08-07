@@ -40,10 +40,7 @@ impl NacosVirtualFileSource {
     /// - 每个配置条目构造为 `VirtualFile`，`virtual_path = dt://nacos/{namespace_id}/{data_id}.yaml`
     /// - `content_hash` 为内容的 SHA256 十六进制编码
     /// - `mtime` 为 `None`（Nacos 无文件修改时间概念）
-    pub async fn fetch_virtual_files(
-        &self,
-        project: &str,
-    ) -> Result<Vec<VirtualFile>, DtError> {
+    pub async fn fetch_virtual_files(&self, project: &str) -> Result<Vec<VirtualFile>, DtError> {
         // 1. 获取所有命名空间
         let ns_resp = self.client.list_namespaces().await?;
         let mut all_files: Vec<VirtualFile> = Vec::new();
@@ -83,8 +80,9 @@ impl NacosVirtualFileSource {
                     };
 
                     // 5. 构造 VirtualFile
-                    let virtual_path =
-                        format!("dt://nacos/{}/{}.yaml", ns_id, cfg_item.data_id);
+                    // G5: data_id 已含配置扩展名（.yaml/.yml/.properties/.json）时
+                    // 不再追加，避免 common.yaml → common.yaml.yaml。
+                    let virtual_path = nacos_virtual_path(ns_id, &cfg_item.data_id);
 
                     let vf = VirtualFile::new(
                         virtual_path,
@@ -103,6 +101,27 @@ impl NacosVirtualFileSource {
         }
 
         Ok(all_files)
+    }
+}
+
+/// G5: data_id 是否已带配置类扩展名（.yaml/.yml/.properties/.json）。
+///
+/// 已带扩展名的 data_id 不再追加 `.yaml`，避免 `common.yaml` → `common.yaml.yaml`。
+fn has_config_extension(data_id: &str) -> bool {
+    ["yaml", "yml", "properties", "json"]
+        .iter()
+        .any(|ext| data_id.to_ascii_lowercase().ends_with(&format!(".{ext}")))
+}
+
+/// 生成 Nacos 配置的虚拟路径：`dt://nacos/{namespace_id}/{data_id}`。
+///
+/// data_id 已带已知配置扩展名时原样拼接；否则追加 `.yaml`，
+/// 保证生成的虚拟路径不会出现 `common.yaml.yaml` 这类双扩展名。
+fn nacos_virtual_path(namespace_id: &str, data_id: &str) -> String {
+    if has_config_extension(data_id) {
+        format!("dt://nacos/{}/{}", namespace_id, data_id)
+    } else {
+        format!("dt://nacos/{}/{}.yaml", namespace_id, data_id)
     }
 }
 
@@ -154,5 +173,54 @@ mod tests {
         assert_eq!(hash.len(), 64);
         // 确认全部为 hex 字符
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ── G5: data_id 扩展名去重 ───────────────────────────────────
+
+    #[test]
+    fn has_config_extension_detects_known_exts() {
+        assert!(has_config_extension("common.yaml"));
+        assert!(has_config_extension("application.yml"));
+        assert!(has_config_extension("bootstrap.properties"));
+        assert!(has_config_extension("data.json"));
+        // 大小写不敏感
+        assert!(has_config_extension("common.YAML"));
+    }
+
+    #[test]
+    fn has_config_extension_rejects_bare_ids() {
+        assert!(!has_config_extension("common"));
+        assert!(!has_config_extension("application"));
+        assert!(!has_config_extension("data.txt"));
+        assert!(!has_config_extension("a.b.c"));
+    }
+
+    /// G5 回归: 已带扩展名的 data_id 不再追加 → 无双扩展名。
+    #[test]
+    fn virtual_path_does_not_double_extension() {
+        // 已带 .yaml → 原样保留
+        assert_eq!(
+            nacos_virtual_path("ns1", "common.yaml"),
+            "dt://nacos/ns1/common.yaml"
+        );
+        // 已带 .properties → 原样保留
+        assert_eq!(
+            nacos_virtual_path("ns1", "db.properties"),
+            "dt://nacos/ns1/db.properties"
+        );
+        // 裸 data_id → 追加 .yaml
+        assert_eq!(
+            nacos_virtual_path("ns1", "app-config"),
+            "dt://nacos/ns1/app-config.yaml"
+        );
+        // 任何路径都不得出现双扩展名
+        for data_id in ["common.yaml", "db.properties", "app-config"] {
+            let path = nacos_virtual_path("ns1", data_id);
+            assert!(
+                !path.ends_with(".yaml.yaml") && !path.ends_with(".properties.yaml"),
+                "unexpected double extension in {}",
+                path
+            );
+        }
     }
 }

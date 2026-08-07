@@ -2,6 +2,8 @@
 //! 提示词根据哪些上游处理器已运行来选择。
 //!
 //! 提示词选择逻辑：
+//! - Nacos 来源（`source_kind == Nacos` 或虚拟路径以 `dt://nacos/` 开头）
+//!   → `"nacos_config"`（F4 词表，块级提取）
 //! - 上下文包含 `tree_sitter` 输出 → `"code_with_ast"`
 //!   （单次调用、不解析响应——旧代码路径，保持不变）
 //! - 上下文包含 `chunk` 输出       → `"document_with_nlp"`
@@ -13,7 +15,7 @@
 //! - `"graphs"`         —— [`ExtractedGraph`] 数组，每个 chunk 一个
 //! - `"response"`       —— 所有块的原始响应以 `"\n\n"` 连接
 //!   （为旧 store 消费者保留；Task 2 会移除它）
-//! - `"prompt_name"`    —— `"document_with_nlp"`
+//! - `"prompt_name"`    —— `"document_with_nlp"` 或 `"nacos_config"`
 //! - `"model"`          —— 模型标识字符串
 //! - `"degraded_count"` —— 即使重试一次后 JSON 解析仍失败的块数
 //! - `"block_count"`    —— 已处理的 chunk 数
@@ -25,7 +27,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::application::knowledge::extract::{
-    degraded_graph, parse_block_response, ExtractedGraph,
+    degraded_graph, parse_block_response, parse_nacos_block_response, ExtractedGraph,
 };
 use crate::application::pipeline::config::LlmConfig;
 use crate::application::pipeline::context::PipelineContext;
@@ -33,6 +35,7 @@ use crate::application::pipeline::infer_client::ChatClient;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::prompt::PromptRegistry;
+use crate::application::pipeline::virtual_file::FileSourceKind;
 use crate::domain::error::DtError;
 
 /// JSON 解析失败后重试时附加到用户提示词中的修正提示（§5.5）。
@@ -103,9 +106,9 @@ impl Processor for LlmClientProcessor {
         // 1. 根据存在哪些上游输出来选择提示词。
         let prompt_name = select_prompt(ctx);
 
-        // 2. 文档走块级提取；其他情况走旧式单次调用。
-        if prompt_name == "document_with_nlp" {
-            self.execute_block_extraction(ctx).await
+        // 2. 文档/Nacos 配置走块级提取；其他情况走旧式单次调用。
+        if prompt_name == "document_with_nlp" || prompt_name == "nacos_config" {
+            self.execute_block_extraction(ctx, &prompt_name).await
         } else {
             self.execute_single_call(ctx, &prompt_name).await
         }
@@ -143,11 +146,14 @@ impl LlmClientProcessor {
     /// 块级提取循环（§5.2）：每个 chunk 一次 LLM 调用，串行执行。
     ///
     /// 每个块的提示词使用块文本渲染（候选字段为空占位）。
-    /// 每个响应解析为 [`ExtractedGraph`]；
+    /// 每个响应解析为 [`ExtractedGraph`]；`prompt_name == "nacos_config"`
+    /// 时使用 F4 专用解析（name/purpose schema → ExtractedEntity），
+    /// 否则使用通用 `parse_block_response`。
     /// 即使重试一次后解析仍失败的块，降级为 `degraded = true` 的空图（§5.5）。
     async fn execute_block_extraction(
         &self,
         ctx: &PipelineContext,
+        prompt_name: &str,
     ) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
 
@@ -189,11 +195,17 @@ impl LlmClientProcessor {
             let render_ctx = build_block_render_context(ctx, block_text, &entities, &keywords);
             let (system_prompt, user_prompt) = self
                 .prompt_registry
-                .render("document_with_nlp", &render_ctx)
+                .render(prompt_name, &render_ctx)
                 .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
             let (raw, graph) = self
-                .extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32)
+                .extract_block(
+                    &system_prompt,
+                    &user_prompt,
+                    &doc_id,
+                    block_index as u32,
+                    prompt_name,
+                )
                 .await;
             if let Some(raw) = raw {
                 raw_responses.push(raw);
@@ -205,7 +217,7 @@ impl LlmClientProcessor {
 
         output.set("graphs", &graphs);
         output.set("response", raw_responses.join("\n\n"));
-        output.set("prompt_name", "document_with_nlp");
+        output.set("prompt_name", prompt_name);
         output.set("model", self.model.clone());
         output.set("degraded_count", degraded_count);
         output.set("block_count", chunks.len());
@@ -222,7 +234,16 @@ impl LlmClientProcessor {
         user_prompt: &str,
         doc_id: &str,
         block_index: u32,
+        prompt_name: &str,
     ) -> (Option<String>, ExtractedGraph) {
+        let parse = |raw: &str| -> Result<ExtractedGraph, serde_json::Error> {
+            if prompt_name == "nacos_config" {
+                parse_nacos_block_response(raw, doc_id, block_index)
+            } else {
+                parse_block_response(raw, doc_id, block_index)
+            }
+        };
+
         let raw = match self.chat_content(system_prompt, user_prompt).await {
             Ok(r) => r,
             Err(e) => {
@@ -230,7 +251,7 @@ impl LlmClientProcessor {
                 return (None, degraded_graph(doc_id, block_index));
             }
         };
-        match parse_block_response(&raw, doc_id, block_index) {
+        match parse(&raw) {
             Ok(g) => return (Some(raw), g),
             Err(e) => tracing::warn!("块 {block_index} JSON 解析失败, 重试一次: {e}"),
         }
@@ -243,7 +264,7 @@ impl LlmClientProcessor {
                 return (Some(raw), degraded_graph(doc_id, block_index));
             }
         };
-        match parse_block_response(&retry_raw, doc_id, block_index) {
+        match parse(&retry_raw) {
             Ok(g) => (Some(retry_raw), g),
             Err(e) => {
                 tracing::warn!("块 {block_index} 重试后仍无法解析, 降级: {e}");
@@ -274,6 +295,14 @@ impl LlmClientProcessor {
 
 /// 根据流水线上下文中可用的上游输出选择最合适的提示词名。
 fn select_prompt(ctx: &PipelineContext) -> String {
+    // G3: Nacos 来源（source_kind == Nacos 或虚拟路径以 dt://nacos/ 开头）
+    // 路由到 F4 nacos_config 词表。优先级最高——Nacos 配置即使带 chunk 输出
+    // 也绝不能用 document_with_nlp（实测 12 实体全为 Config 类型）。
+    if ctx.source_kind == FileSourceKind::Nacos
+        || ctx.file_path.to_string_lossy().starts_with("dt://nacos/")
+    {
+        return "nacos_config".to_string();
+    }
     if ctx.outputs.contains_key("tree_sitter") {
         "code_with_ast".to_string()
     } else if ctx.outputs.contains_key("chunk") {
@@ -316,7 +345,7 @@ fn build_block_render_context(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::knowledge::extract::ExtractedGraph;
+    use crate::application::knowledge::extract::{EntityType, ExtractedGraph};
     use crate::application::pipeline::infer_client::{ChatResponse, Choice, Message};
     use crate::application::pipeline::output::ProcessorOutput;
     use crate::application::pipeline::FileSourceKind;
@@ -380,9 +409,7 @@ mod tests {
     // ── 辅助 ───────────────────────────────────────────────────────
 
     fn test_registry() -> Arc<PromptRegistry> {
-        Arc::new(
-            PromptRegistry::load_default().expect("config/prompts 必须能加载"),
-        )
+        Arc::new(PromptRegistry::load_default().expect("config/prompts 必须能加载"))
     }
 
     fn make_processor(client: Arc<MockChatClient>) -> LlmClientProcessor {
@@ -466,6 +493,52 @@ mod tests {
             vec![("tree_sitter", ts_out), ("chunk", chunk_out)],
         );
         assert_eq!(select_prompt(&ctx), "code_with_ast");
+    }
+
+    /// G3: Nacos 来源（source_kind == Nacos）路由到 nacos_config 词表，
+    /// 即使带 chunk 输出也优先于 document_with_nlp。
+    #[test]
+    fn nacos_source_routes_to_nacos_config() {
+        let chunk_out = ProcessorOutput::new();
+        let mut ctx = make_context(
+            "dt://nacos/prod/application.yaml",
+            "server.port: 8080",
+            vec![("chunk", chunk_out)],
+        );
+        // 手动改为 Nacos 来源
+        ctx.source_kind = FileSourceKind::Nacos;
+        assert_eq!(select_prompt(&ctx), "nacos_config");
+    }
+
+    /// G3: 虚拟路径以 dt://nacos/ 开头即路由（兼容 source_kind 未正确传播的场景）。
+    #[test]
+    fn nacos_virtual_path_routes_to_nacos_config() {
+        let chunk_out = ProcessorOutput::new();
+        let ctx = make_context(
+            "dt://nacos/prod/application.yaml",
+            "server.port: 8080",
+            vec![("chunk", chunk_out)],
+        );
+        assert_eq!(select_prompt(&ctx), "nacos_config");
+    }
+
+    /// G3: Fs 来源 + 非 nacos 路径不受影响（回归保护）。
+    #[test]
+    fn fs_yaml_still_uses_document_with_nlp() {
+        let chunk_out = ProcessorOutput::new();
+        let ctx = make_context(
+            "config/application.yaml",
+            "a: b",
+            vec![("chunk", chunk_out)],
+        );
+        assert_eq!(select_prompt(&ctx), "document_with_nlp");
+    }
+
+    /// G3: Jenkins 虚拟路径不误路由到 nacos_config。
+    #[test]
+    fn jenkins_path_does_not_route_to_nacos() {
+        let ctx = make_context("dt://jenkins/order-service-deploy", "build log", vec![]);
+        assert_eq!(select_prompt(&ctx), "raw_text");
     }
 
     // ── 渲染上下文 ────────────────────────────────────────────────
@@ -663,5 +736,66 @@ mod tests {
         assert!(matches(Path::new("main.rs")));
         assert!(matches(Path::new("readme.md")));
         assert!(!matches(Path::new("image.png")));
+    }
+
+    // ── G3: nacos_config 块级提取端到端 ─────────────────────────
+
+    /// Nacos 配置经块级提取应产出 F4 词表类型（NacosConfig/ConfigKey/...），
+    /// 不归一为 Other、无词表外 WARN。prompt_name 与解析均走 nacos_config。
+    #[tokio::test]
+    async fn nacos_block_extraction_uses_f4_vocabulary() {
+        let chunk_out = make_chunk_output(&[(
+            0,
+            "server.port: 8080\nspring.datasource.url: jdbc:mysql://db",
+        )]);
+        let mut ctx = make_context(
+            "dt://nacos/prod/application.yaml",
+            "server.port: 8080",
+            vec![("chunk", chunk_out)],
+        );
+        ctx.source_kind = FileSourceKind::Nacos;
+
+        let nacos_json = r#"{
+            "summary": "应用配置",
+            "entities": [
+                {"name": "application.yaml", "type": "NacosConfig", "purpose": "完整配置文件"},
+                {"name": "server.port", "type": "ConfigKey", "purpose": "服务端口"},
+                {"name": "order_db", "type": "Database", "purpose": "订单库连接"}
+            ],
+            "relations": [
+                {"from": "application.yaml", "to": "order_db", "type": "CONTAINS", "evidence": "spring.datasource.url"}
+            ]
+        }"#;
+        let mock = Arc::new(MockChatClient::new(vec![Ok(nacos_json.to_string())]));
+        let processor = make_processor(mock.clone());
+
+        let out = processor.execute(&ctx).await.unwrap();
+
+        assert_eq!(
+            out.get("prompt_name").and_then(|v| v.as_str()),
+            Some("nacos_config")
+        );
+        assert_eq!(out.get("block_count").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(out.get("degraded_count").and_then(|v| v.as_u64()), Some(0));
+        // 渲染使用 nacos_config 模板（system prompt 含词表说明）
+        assert!(mock.calls()[0].0.contains("Nacos 配置分析助手"));
+
+        let graphs: Vec<ExtractedGraph> =
+            serde_json::from_value(out.get("graphs").unwrap().clone()).unwrap();
+        assert_eq!(graphs.len(), 1);
+        let types: Vec<EntityType> = graphs[0].entities.iter().map(|e| e.entity_type).collect();
+        assert_eq!(
+            types,
+            vec![
+                EntityType::NacosConfig,
+                EntityType::ConfigKey,
+                EntityType::Database
+            ]
+        );
+        assert_eq!(graphs[0].entities[0].canonical_name, "application.yaml");
+        assert_eq!(graphs[0].relations[0].relation, "CONTAINS");
+        assert!(!graphs[0].degraded);
+        // 单次 LLM 调用（1 chunk）
+        assert_eq!(mock.calls().len(), 1);
     }
 }

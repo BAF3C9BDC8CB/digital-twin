@@ -219,6 +219,24 @@ impl ProcessorEngine {
         self.run_gpu_stages(cpu_results, skip_steps).await
     }
 
+    /// G1: 通过所有匹配的处理器处理一组虚拟文件（Nacos/Jenkins 远程源）。
+    ///
+    /// 与 [`Self::analyze_batch`] 相同执行模型（CPU 并行 → GPU 信号量节流），
+    /// 但 [`PipelineContext`] 携带 `VirtualFile` 的来源/哈希元数据
+    /// （`source_kind`/`mtime`/`content_hash`），使处理器能按来源路由
+    /// （如 `select_prompt` 将 Nacos 源路由到 nacos_config 词表）。
+    pub async fn analyze_virtual_batch(
+        &self,
+        files: Vec<crate::application::pipeline::virtual_file::VirtualFile>,
+        project_name: String,
+    ) -> Vec<FileAnalysis> {
+        // 阶段 1：在所有虚拟文件上并行运行 CPU 密集型处理器。
+        let cpu_results = self.run_cpu_virtual_stages(files, project_name).await;
+
+        // 阶段 2：在结果分析上运行 GPU 密集型处理器。
+        self.run_gpu_stages(cpu_results, None).await
+    }
+
     // ------------------------------------------------------------------
     // CPU 阶段
     // ------------------------------------------------------------------
@@ -304,6 +322,76 @@ impl ProcessorEngine {
         .await
     }
 
+    /// G1: 在所有虚拟文件上并行运行 CPU 密集型处理器（优先级 ≥
+    /// [`CPU_PRIORITY_THRESHOLD`]），构造携带 `VirtualFile` 元数据的
+    /// [`PipelineContext`]（`source_kind`/`mtime`/`content_hash`）。
+    pub async fn run_cpu_virtual_stages(
+        &self,
+        files: Vec<crate::application::pipeline::virtual_file::VirtualFile>,
+        project_name: String,
+    ) -> Vec<FileAnalysis> {
+        let concurrency = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(DEFAULT_CPU_CONCURRENCY);
+
+        let registry = Arc::clone(&self.registry);
+        let project_name = Arc::new(project_name);
+
+        stream::iter(files.into_iter().map(move |vf| {
+            let registry = Arc::clone(&registry);
+            let proj = Arc::clone(&project_name);
+            let path = PathBuf::from(&vf.virtual_path);
+            let path_clone = path.clone();
+
+            async move {
+                let mut ctx = PipelineContext::new(
+                    path_clone,
+                    vf.content,
+                    (*proj).clone(),
+                    vf.source,
+                    vf.mtime,
+                    Some(vf.content_hash),
+                );
+                let mut errors: Vec<String> = Vec::new();
+
+                // 收集匹配该虚拟文件的 CPU 密集型处理器。
+                let cpu_processors: Vec<&dyn Processor> = (*registry)
+                    .all()
+                    .iter()
+                    .filter(|p| p.priority() >= CPU_PRIORITY_THRESHOLD && p.matches(&ctx))
+                    .map(|p| p.as_ref())
+                    .collect();
+
+                for processor in &cpu_processors {
+                    match processor.execute(&ctx).await {
+                        Ok(output) => {
+                            ctx.add_output(processor.name(), output);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                processor = processor.name(),
+                                path = %path.display(),
+                                error = %e,
+                                "CPU 处理器执行失败"
+                            );
+                            errors.push(format!("{}: {}", processor.name(), e));
+                        }
+                    }
+                }
+
+                FileAnalysis {
+                    file_path: path,
+                    success: errors.is_empty(),
+                    errors,
+                    context: ctx,
+                }
+            }
+        }))
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await
+    }
+
     // ------------------------------------------------------------------
     // GPU 阶段
     // ------------------------------------------------------------------
@@ -343,7 +431,9 @@ impl ProcessorEngine {
                 let gpu_processors: Vec<&dyn Processor> = (*registry)
                     .all()
                     .iter()
-                    .filter(|p| p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&analysis.context))
+                    .filter(|p| {
+                        p.priority() < CPU_PRIORITY_THRESHOLD && p.matches(&analysis.context)
+                    })
                     .map(|p| p.as_ref())
                     .collect();
 
@@ -1057,6 +1147,101 @@ mod tests {
         for r in &results {
             assert!(r.context.get_output("rs_cpu").is_some());
         }
+    }
+
+    // ------------------------------------------------------------------
+    // analyze_virtual_batch（G1）
+    // ------------------------------------------------------------------
+
+    /// 处理任意来源的处理器（用于验证 VirtualFile 元数据透传）。
+    struct SourceAwareProcessor;
+
+    #[async_trait]
+    impl Processor for SourceAwareProcessor {
+        fn name(&self) -> &str {
+            "source_aware"
+        }
+
+        fn priority(&self) -> i32 {
+            90 // CPU 密集型
+        }
+
+        fn matches(&self, _ctx: &PipelineContext) -> bool {
+            true
+        }
+
+        async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
+            let mut out = ProcessorOutput::new();
+            out.set("source", ctx.source_kind.as_str());
+            out.set("hash", ctx.content_hash.clone().unwrap_or_default());
+            Ok(out)
+        }
+    }
+
+    /// G1: analyze_virtual_batch 构造携带 source_kind/content_hash 的上下文，
+    /// 处理器能感知来源（Nacos → nacos_config 路由的前提）。
+    #[tokio::test]
+    async fn analyze_virtual_batch_preserves_virtual_file_metadata() {
+        let mut registry = ProcessorRegistry::new();
+        registry.register(Box::new(SourceAwareProcessor));
+
+        let engine = ProcessorEngine::new(Arc::new(registry), 4);
+        let vf = crate::application::pipeline::virtual_file::VirtualFile::new(
+            "dt://nacos/prod/app.yaml",
+            "server.port: 8080",
+            "proj",
+            FileSourceKind::Nacos,
+            None,
+            "abc123hash",
+        );
+
+        let results = engine
+            .analyze_virtual_batch(vec![vf], "proj".to_string())
+            .await;
+        assert_eq!(results.len(), 1);
+        let r = &results[0];
+        assert!(r.success, "错误: {:?}", r.errors);
+        let out = r.context.get_output("source_aware").unwrap();
+        assert_eq!(out.get("source").and_then(|v| v.as_str()), Some("Nacos"));
+        assert_eq!(out.get("hash").and_then(|v| v.as_str()), Some("abc123hash"));
+        // 上下文路径保持 dt:// 虚拟路径
+        assert_eq!(
+            r.context.file_path.to_string_lossy(),
+            "dt://nacos/prod/app.yaml"
+        );
+    }
+
+    /// G1: analyze_virtual_batch 与 analyze_batch 相同两阶段执行——
+    /// CPU 处理器在虚拟文件上运行，GPU 处理器随后运行并读到 CPU 输出。
+    #[tokio::test]
+    async fn analyze_virtual_batch_runs_cpu_then_gpu() {
+        let mut registry = ProcessorRegistry::new();
+        registry.register(Box::new(RsCpuProcessor)); // 只匹配 .rs
+        registry.register(Box::new(RsGpuProcessor));
+
+        let engine = ProcessorEngine::new(Arc::new(registry), 4);
+        let vf = crate::application::pipeline::virtual_file::VirtualFile::new(
+            "dt://nacos/prod/script.rs",
+            "fn a() {}\nfn b() {}\nfn c() {}",
+            "proj",
+            FileSourceKind::Nacos,
+            None,
+            "hash1",
+        );
+
+        let results = engine
+            .analyze_virtual_batch(vec![vf], "proj".to_string())
+            .await;
+        let r = &results[0];
+        assert!(r.success, "错误: {:?}", r.errors);
+        // GPU 处理器读取 CPU 输出 → 两阶段都执行
+        assert_eq!(
+            r.context
+                .get_output("rs_gpu")
+                .and_then(|o| o.get("summary"))
+                .and_then(|v| v.as_str()),
+            Some("3 lines of Rust")
+        );
     }
 
     // ------------------------------------------------------------------
