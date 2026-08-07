@@ -25,9 +25,18 @@ fn render_hit(h: &SearchHit) -> String {
             "分析",
             h.llm_analysis.clone().unwrap_or_else(|| h.snippet.clone()),
         ),
-        "Doc" => ("原文", h.snippet.clone()),
+        "Doc" => ("原文", h.content.clone().unwrap_or_else(|| h.snippet.clone())),
+        "Config" | "ConfigChunk" | "ConfigKey" => (
+            "分析",
+            h.llm_analysis.clone().unwrap_or_else(|| "暂无摘要".into()),
+        ),
         _ => ("摘要", h.snippet.clone()),
     };
+    if matches!(h.entity_type.as_str(), "Config" | "ConfigChunk" | "ConfigKey") {
+        if let Some(content) = &h.content {
+            out.push_str(&format!("  正文:\n{}\n", content.lines().map(|l| format!("    {}", l)).collect::<Vec<_>>().join("\n")));
+        }
+    }
     if !body.is_empty() {
         let one_line = body.lines().collect::<Vec<_>>().join("；");
         out.push_str(&format!("  {label}: {}\n", truncate(&one_line)));
@@ -82,12 +91,14 @@ mod tests {
             id: "1".into(),
             title: "createApp".into(),
             snippet: String::new(),
+            content: None,
             source_world: "code".into(),
             entity_type: "Method".into(),
             file_type: None,
             file_type_label: None,
             score: 0.9412,
             source_ref: None,
+            metadata: None,
             file_path: Some("test/project/app.js".into()),
             start_line: Some(32),
             end_line: Some(36),

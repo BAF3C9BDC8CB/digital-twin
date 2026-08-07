@@ -120,6 +120,25 @@ fn get_keywords(query: &str) -> Vec<String> {
     terms
 }
 
+fn config_purpose_summary(title: &str) -> String {
+    let t = title.to_ascii_lowercase();
+    if t.contains("nacos") && (t.contains("discovery") || t.contains("service")) {
+        "配置应用连接 Nacos 注册中心并启用服务发现。".into()
+    } else if t.contains("datasource") || t.contains("database") {
+        "配置应用的数据源连接和数据库访问参数。".into()
+    } else if t.contains("redis") || t.contains("cache") {
+        "配置应用的缓存服务连接和缓存行为。".into()
+    } else if t.contains("kafka") || t.contains("rocketmq") || t.contains("rabbit") {
+        "配置应用的消息队列连接和消息通信行为。".into()
+    } else if t.contains("log") {
+        "配置应用的日志输出级别和日志行为。".into()
+    } else if t.contains("spring") {
+        "配置 Spring 应用的运行参数和组件行为。".into()
+    } else {
+        "配置应用相关组件的运行参数。".into()
+    }
+}
+
 fn blank_hit(
     id: String,
     title: String,
@@ -130,13 +149,15 @@ fn blank_hit(
     SearchHit {
         id,
         title,
-        snippet,
+        snippet: snippet.clone(),
+        content: Some(snippet),
         source_world: "config".into(),
         entity_type,
         file_type: None,
         file_type_label: None,
         score,
         source_ref: None,
+        metadata: None,
         file_path: None,
         start_line: None,
         end_line: None,
@@ -215,6 +236,10 @@ impl CrossWorldSearch {
                                                 .and_then(|v| v.as_str())
                                                 .unwrap_or("");
                                             Some(RankedItem {
+                                                content: Some(text.to_string()),
+                                                source_ref: Some(format!("dt://nacos/{}/{}/{}/{}#section={}", payload.get("environment").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("test"), payload.get("namespace").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("public"), payload.get("group").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("DEFAULT_GROUP"), data_id, section)),
+                                                metadata: Some(serde_json::json!({"environment": payload.get("environment").and_then(|v| v.as_str()).unwrap_or(""), "namespace": payload.get("namespace").and_then(|v| v.as_str()).unwrap_or(""), "data_id": data_id, "group": payload.get("group").and_then(|v| v.as_str()).unwrap_or(""), "section": section})),
+                                                llm_analysis: Some(config_purpose_summary(section)),
                                                 id: r
                                                     .get("id")
                                                     .map(|v| v.to_string())
@@ -267,6 +292,10 @@ impl CrossWorldSearch {
                                             );
                                             let snippet = format!("{}\n{}", text, display_line);
                                             Some(RankedItem {
+                                                content: Some(text.to_string()),
+                                                source_ref: Some(format!("dt://nacos/test/public/DEFAULT_GROUP/config#section={}", section_name)),
+                                                metadata: Some(serde_json::json!({"environment": "test", "namespace": "public", "group": "DEFAULT_GROUP", "section": section_name})),
+                                                llm_analysis: Some(config_purpose_summary(&section_name)),
                                                 id: r
                                                     .get("id")
                                                     .map(|v| v.to_string())
@@ -318,13 +347,20 @@ impl CrossWorldSearch {
                 .into_iter()
                 .filter(|item| seen.insert(item.title.clone()))
                 .map(|item| {
-                    blank_hit(
-                        item.id,
-                        item.title,
-                        item.snippet,
-                        item.entity_type,
-                        item.score,
-                    )
+                    {
+                        let mut h = blank_hit(
+                            item.id,
+                            item.title,
+                            item.snippet,
+                            item.entity_type,
+                            item.score,
+                        );
+                        h.content = item.content;
+                        h.source_ref = item.source_ref;
+                        h.metadata = item.metadata;
+                        h.llm_analysis = item.llm_analysis;
+                        h
+                    }
                 })
                 .collect();
             return (hits, degraded);

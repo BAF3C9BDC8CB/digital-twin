@@ -142,12 +142,14 @@ fn hit_from_payload(
                 format!("{}: L{}-{}", fp, sl, el)
             }
         },
+        content: None,
         source_world: "code".into(),
         entity_type: "Method".into(),
         file_type: None,
         file_type_label: None,
         score,
         source_ref: None,
+        metadata: None,
         file_path: payload
             .get("file_path")
             .and_then(|v| v.as_str())
@@ -243,6 +245,9 @@ pub struct SearchHit {
     pub title: String,
     /// 内容或摘要片段。
     pub snippet: String,
+    /// 原始正文片段（配置世界保留 Nacos 返回的原格式）。
+    #[serde(default)]
+    pub content: Option<String>,
     /// 来源世界（"code"、"knowledge"、"doc"、"vector"）。
     pub source_world: String,
     /// 实体类型（Method、Class、Knowledge、Document 等）。
@@ -257,6 +262,9 @@ pub struct SearchHit {
     pub score: f64,
     /// 源文件或引用 URL。
     pub source_ref: Option<String>,
+    /// 配置来源元数据（namespace/dataId/group/environment 等）。
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
     /// 源文件路径（code 世界）。
     pub file_path: Option<String>,
     /// 起始行号（code 世界）。
@@ -655,12 +663,14 @@ impl CrossWorldSearch {
                     id: format!("{doc}:{block}"),
                     title: doc.rsplit('/').next().unwrap_or(doc).to_string(),
                     snippet: text.chars().take(200).collect(),
+                    content: Some(text.to_string()),
                     source_world: "doc".into(),
                     entity_type,
                     file_type,
                     file_type_label,
                     score,
                     source_ref: Some(doc.to_string()),
+                    metadata: None,
                     file_path: None,
                     start_line: None,
                     end_line: None,
@@ -724,6 +734,7 @@ impl CrossWorldSearch {
                                 id,
                                 title: doc.rsplit('/').next().unwrap_or(doc).to_string(),
                                 snippet: text.chars().take(200).collect(),
+                                content: Some(text.to_string()),
                                 source_world: "doc".into(),
                                 entity_type,
                                 file_type,
@@ -732,6 +743,7 @@ impl CrossWorldSearch {
                                 // 重排序后仍排在向量泛化结果之前
                                 score: 0.90,
                                 source_ref: Some(doc.to_string()),
+                                metadata: None,
                                 file_path: None,
                                 start_line: None,
                                 end_line: None,
@@ -934,12 +946,14 @@ mod tests {
             id: "4:abc".into(),
             title: "PaymentService".into(),
             snippet: "Handles payment processing".into(),
+            content: None,
             source_world: "code".into(),
             entity_type: "Service".into(),
             file_type: None,
             file_type_label: None,
             score: 0.95,
             source_ref: Some("src/payment.rs".into()),
+            metadata: None,
             file_path: Some("src/payment.rs".into()),
             start_line: Some(10),
             end_line: Some(45),
@@ -1015,13 +1029,15 @@ mod tests {
                 id: "1".into(),
                 title: "AuthService".into(),
                 snippet: "manages auth".into(),
+                content: None,
                 source_world: "code".into(),
                 entity_type: "Service".into(),
                 file_type: None,
                 file_type_label: None,
                 score: 0.98,
                 source_ref: None,
-                file_path: None,
+                           metadata: None,
+                           file_path: None,
                 start_line: None,
                 end_line: None,
                 signature: None,

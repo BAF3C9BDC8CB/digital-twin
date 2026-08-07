@@ -42,6 +42,7 @@ impl CrossWorldSearch {
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
+                        content: None,
                         source_world: "memory".into(),
                         entity_type: row
                             .get("type")
@@ -52,6 +53,7 @@ impl CrossWorldSearch {
                         file_type_label: None,
                         score: 0.0,
                         source_ref: None,
+                        metadata: None,
                         file_path: None,
                         start_line: None,
                         end_line: None,
