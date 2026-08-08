@@ -15,7 +15,7 @@ use crate::application::pipeline::context::PipelineContext;
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::processor::Processor;
 use crate::domain::error::DtError;
-use crate::shared::chunker::{chunk_by_type, ChunkConfig, DocType};
+use crate::shared::chunker::{chunk_by_type, merge_nacos_chunks, ChunkConfig, DocType};
 
 /// 将文档文件分割为语义块。
 ///
@@ -84,21 +84,30 @@ impl Processor for ChunkProcessor {
         );
 
         // 使用类型感知策略将文本分割为块。
-        let chunks = chunk_by_type(&ctx.file_text, &doc_id, doc_type, &self.config);
+        let mut chunks = chunk_by_type(&ctx.file_text, &doc_id, doc_type, &self.config);
         let max_chunks = std::env::var("DT_NACOS_MAX_CHUNKS")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v > 0);
+        let mut original_chunk_count = chunks.len();
+        let mut merge_strategy = "none";
         if ctx.source_kind == crate::application::pipeline::FileSourceKind::Nacos {
-            tracing::info!(target: "pipeline_diagnostics", event = "nacos.chunk_diagnostic", file = %ctx.file_path.display(), chunk_count = chunks.len(), max_chunks = ?max_chunks);
-            if let Some(max) = max_chunks {
-                if chunks.len() > max {
-                    return Err(DtError::General(format!(
-                        "Nacos file produced {} chunks, exceeding DT_NACOS_MAX_CHUNKS={}; original text retained and processing stopped",
-                        chunks.len(), max
-                    )));
-                }
-            }
+            let max = max_chunks.unwrap_or(20);
+            let target = std::env::var("DT_NACOS_TARGET_CHUNKS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(10);
+            original_chunk_count = chunks.len();
+            chunks = merge_nacos_chunks(&ctx.file_text, &doc_id, doc_type, target, max).map_err(
+                |e| {
+                    DtError::General(format!(
+                        "Nacos safe chunk merge failed; original text retained: {e}"
+                    ))
+                },
+            )?;
+            merge_strategy = "adjacent_sections";
+            tracing::info!(target: "pipeline_diagnostics", event = "nacos.chunk_diagnostic", file = %ctx.file_path.display(), original_chunk_count, chunk_count = chunks.len(), target_chunks = target, max_chunks = max, merge_strategy);
         }
 
         // 将块序列化为 JSON 数组。
@@ -121,6 +130,12 @@ impl Processor for ChunkProcessor {
         output.set("doc_type", doc_type.as_str());
         output.set("chunk_count", chunks.len());
         output.set("doc_id", doc_id);
+        if ctx.source_kind == crate::application::pipeline::FileSourceKind::Nacos {
+            output.set("source_kind", "nacos");
+            output.set("original_chunk_count", original_chunk_count);
+            output.set("merge_strategy", merge_strategy);
+            output.set("original_text_preserved", true);
+        }
 
         Ok(output)
     }

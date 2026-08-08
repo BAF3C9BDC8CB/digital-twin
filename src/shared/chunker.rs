@@ -918,6 +918,95 @@ pub fn chunk_by_type(
     }
 }
 
+/// Nacos 专用的安全合并器：仅合并相邻 section，直接切片原文，保留注释、缩进和键顺序。
+pub fn merge_nacos_chunks(
+    text: &str,
+    doc_id: &str,
+    doc_type: DocType,
+    target_chunks: usize,
+    max_chunks: usize,
+) -> Result<Vec<DocumentChunk>, String> {
+    if text.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    if target_chunks == 0 || max_chunks == 0 {
+        return Err("Nacos chunk limits must be positive".into());
+    }
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let mut starts = vec![0usize];
+    let mut offset = 0usize;
+    let mut previous = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        let raw = line.trim_end_matches(['\r', '\n']);
+        let trimmed = raw.trim();
+        let indent = raw.len() - raw.trim_start().len();
+        let section = if doc_type == DocType::Yaml
+            && indent == 0
+            && !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && trimmed.contains(':')
+        {
+            trimmed.split(':').next().unwrap_or("").to_string()
+        } else if doc_type == DocType::Properties
+            && !trimmed.is_empty()
+            && !trimmed.starts_with(['#', '!'])
+        {
+            parse_kv_line(trimmed)
+                .map(|(k, _)| k.split('.').take(2).collect::<Vec<_>>().join("."))
+                .unwrap_or_else(|| previous.clone())
+        } else {
+            previous.clone()
+        };
+        if i > 0 && !previous.is_empty() && !section.is_empty() && section != previous {
+            starts.push(offset);
+        }
+        if !section.is_empty() {
+            previous = section;
+        }
+        offset += line.len();
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    let mut atoms = Vec::new();
+    for (i, start) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(text.len());
+        if start < &end {
+            atoms.push((*start, end));
+        }
+    }
+    if atoms.is_empty() {
+        atoms.push((0, text.len()));
+    }
+    let groups = atoms.len().min(target_chunks.min(max_chunks).max(1));
+    let mut chunks = Vec::with_capacity(groups);
+    let mut pos = 0;
+    for group in 0..groups {
+        let remaining = atoms.len() - pos;
+        let take = (remaining + groups - group - 1) / (groups - group);
+        let start = atoms[pos].0;
+        let end = atoms[pos + take - 1].1;
+        chunks.push(DocumentChunk {
+            chunk_id: format!("{}#chunk{}", doc_id, group),
+            text: text[start..end].to_string(),
+            chunk_index: group,
+            prev_chunk_id: None,
+            next_chunk_id: None,
+            start_char: start,
+            end_char: end,
+        });
+        pos += take;
+    }
+    for i in 0..chunks.len() {
+        if i > 0 {
+            chunks[i].prev_chunk_id = Some(chunks[i - 1].chunk_id.clone());
+        }
+        if i + 1 < chunks.len() {
+            chunks[i].next_chunk_id = Some(chunks[i + 1].chunk_id.clone());
+        }
+    }
+    Ok(chunks)
+}
+
 // ===========================================================================
 // 自适应配置分块
 // ===========================================================================
@@ -2497,5 +2586,47 @@ spring:\n  cloud:\n    nacos:\n      discovery:\n        server-addr: http://nac
                 0.0
             }
         );
+    }
+}
+
+#[cfg(test)]
+mod nacos_merge_tests {
+    use super::*;
+
+    #[test]
+    fn merges_fifty_sections_under_limit_and_preserves_source() {
+        let source: String = (0..50)
+            .map(|i| format!("section{i}:\n  # note {i}\n  key:  value {i}\n"))
+            .collect();
+        let chunks = merge_nacos_chunks(&source, "doc", DocType::Yaml, 10, 20).unwrap();
+        assert_eq!(chunks.len(), 10);
+        assert_eq!(
+            chunks.iter().map(|c| c.text.as_str()).collect::<String>(),
+            source
+        );
+        assert!(chunks.iter().all(|c| c.text.contains("# note")));
+    }
+
+    #[test]
+    fn handles_empty_single_and_huge_section() {
+        assert!(merge_nacos_chunks("  \n", "doc", DocType::Yaml, 10, 20)
+            .unwrap()
+            .is_empty());
+        let one =
+            merge_nacos_chunks("# c\nkey=value\n", "doc", DocType::Properties, 10, 20).unwrap();
+        assert_eq!(one.len(), 1);
+        let huge = "root:\n  value: ".to_string() + &"x".repeat(100_000);
+        let chunks = merge_nacos_chunks(&huge, "doc", DocType::Yaml, 10, 20).unwrap();
+        assert_eq!(
+            chunks.iter().map(|c| c.text.as_str()).collect::<String>(),
+            huge
+        );
+    }
+
+    #[test]
+    fn does_not_split_non_nacos_behavior() {
+        let source = "a\n\nb\n\nc";
+        let normal = chunk_by_type(source, "doc", DocType::PlainText, &ChunkConfig::default());
+        assert!(!normal.is_empty());
     }
 }
