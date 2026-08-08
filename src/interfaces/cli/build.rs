@@ -18,8 +18,9 @@ use crate::application::pipeline::processors::{
 use crate::application::pipeline::prompt::PromptRegistry;
 use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
-use crate::domain::types::{BatchConfig, HealthStatus};
+use crate::domain::types::BatchConfig;
 use crate::infrastructure::parser::ParserRegistry;
+use crate::infrastructure::sqlite::TaskStore;
 use sha2::{Digest, Sha256};
 
 /// 处理 `dt build`——将项目索引到知识图谱。
@@ -874,54 +875,92 @@ pub async fn handle_nacos_build(
     };
     let engine = ProcessorEngine::new(registry, provider_concurrency);
 
-    // 5. 分批执行并在每批完成后保存快照，避免 175 条配置整批阻塞且进度长期为 0。
-    const NACOS_BATCH_SIZE: usize = 10;
-    let total = selected.len();
-    let mut completed = 0usize;
-    let mut succeeded = 0usize;
-    for batch in selected.chunks(NACOS_BATCH_SIZE) {
-        let batch_files = batch.to_vec();
-        let analyses = engine
-            .analyze_virtual_batch(batch_files, project.to_string())
-            .await;
-        let batch_success = analyses.iter().filter(|a| a.success).count();
-        succeeded += batch_success;
-        completed += analyses.len();
-        tracing::info!(
-            completed,
-            total,
-            succeeded,
-            failed = completed - succeeded,
-            "Nacos 批次完成"
+    // 5. Durable orchestration: this is the only task state source for this run.
+    // The path is deliberately shared with the existing snapshot DB default; deployments
+    // may override it without changing credentials or the public CLI API.
+    let task_db = std::env::var("DT_SQLITE_PATH")
+        .unwrap_or_else(|_| "/var/lib/digital-twin/snapshots.db".to_string());
+    let tasks = TaskStore::open(&task_db)
+        .map_err(|e| anyhow::anyhow!("无法打开 Nacos durable task store {task_db}: {e}"))?;
+    let recovered = tasks
+        .recover_stale()
+        .map_err(|e| anyhow::anyhow!("恢复过期 Nacos lease 失败: {e}"))?;
+    let task_id = tasks.start_run();
+    let dataset_version = task_id.clone();
+    for vf in &selected {
+        tasks
+            .enqueue(
+                &task_id,
+                &vf.virtual_path,
+                None,
+                &vf.content_hash,
+                &dataset_version,
+            )
+            .map_err(|e| anyhow::anyhow!("入队 Nacos 文件失败: {e}"))?;
+    }
+    if !deleted.is_empty() {
+        tracing::warn!(
+            count = deleted.len(),
+            "Nacos deleted 项未清理：当前源未提供安全删除 API，记录为 Phase 1A gap"
         );
+    }
+    tracing::info!(task_id = %task_id, dataset_version = %dataset_version, recovered, "Nacos durable task run started");
 
-        if let Some(repo) = snapshot.as_ref() {
-            let snapshots: Vec<FileSnapshot> = analyses
-                .iter()
-                .filter(|a| a.success)
-                .filter_map(|a| {
-                    batch
-                        .iter()
-                        .find(|vf| vf.virtual_path == a.file_path.to_string_lossy())
-                        .map(|vf| FileSnapshot {
-                            file_path: a.file_path.to_string_lossy().to_string(),
-                            project: project.to_string(),
-                            file_sha1: vf.content_hash.clone(),
-                            file_mtime: 0.0,
-                            method_count: 0,
-                            updated_at: chrono::Utc::now().to_rfc3339(),
-                        })
-                })
-                .collect();
-            if !snapshots.is_empty() {
-                strategy
-                    .update_snapshots(repo.as_ref(), project, &snapshots)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
+    for vf in &selected {
+        if !tasks.claim(
+            &task_id,
+            &vf.virtual_path,
+            None,
+            &format!("{}:{}", std::process::id(), task_id),
+        )? {
+            continue; // successful rows and leases held by another worker are not reprocessed.
+        }
+        let analyses = engine
+            .analyze_virtual_batch(vec![vf.clone()], project.to_string())
+            .await;
+        let analysis = analyses.into_iter().next();
+        match analysis {
+            Some(a) if a.success => {
+                if let Some(repo) = snapshot.as_ref() {
+                    let snap = FileSnapshot {
+                        file_path: vf.virtual_path.clone(),
+                        project: project.to_string(),
+                        file_sha1: vf.content_hash.clone(),
+                        file_mtime: 0.0,
+                        method_count: 0,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    };
+                    strategy
+                        .update_snapshots(repo.as_ref(), project, &[snap])
+                        .await
+                        .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
+                }
+                tasks.complete(&task_id, &vf.virtual_path, None)?;
+            }
+            Some(a) => {
+                let error = a.errors.join("; ");
+                tasks.fail(&task_id, &vf.virtual_path, None, &error, true)?;
+                tracing::error!(file = %vf.virtual_path, error = %error, "Nacos 文件失败，继续处理其他文件");
+            }
+            None => {
+                tasks.fail(
+                    &task_id,
+                    &vf.virtual_path,
+                    None,
+                    "pipeline returned no analysis",
+                    true,
+                )?;
             }
         }
+        let p = tasks.summary(&task_id)?;
+        tracing::info!(task_id = %task_id, total = p.total, pending = p.pending, running = p.running,
+            success = p.success, failed = p.failed, retry_wait = p.retry_wait, dead_letter = p.dead_letter,
+            "Nacos pipeline progress");
     }
-    tracing::info!("Nacos 管线完成: {succeeded}/{total} 成功");
+    let p = tasks.summary(&task_id)?;
+    tracing::info!(task_id = %task_id, total = p.total, pending = p.pending, running = p.running,
+        success = p.success, failed = p.failed, retry_wait = p.retry_wait, dead_letter = p.dead_letter,
+        "Nacos 管线完成");
 
     Ok(())
 }
