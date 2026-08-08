@@ -259,7 +259,10 @@ impl Consolidator {
                 //    然后逐实体 search → write → upsert。
                 let embed_texts: Vec<String> =
                     block.entities.iter().map(entity_embed_text).collect();
+                let io_started = std::time::Instant::now();
+                tracing::info!(task = "pipeline", run = "live", file = %file_path, chunk = block.block_index, attempt = 0u32, provider = "embed", model = "n/a", elapsed_ms = 0u128, stage = "embed_start", "embedding start");
                 let vectors = self.embed.embed_batch(&embed_texts).await?;
+                tracing::info!(task = "pipeline", run = "live", file = %file_path, chunk = block.block_index, attempt = 0u32, provider = "embed", model = "n/a", elapsed_ms = io_started.elapsed().as_millis(), total_ms = io_started.elapsed().as_millis(), stage = "embed_done", "embedding done");
 
                 for (entity, vector) in block.entities.iter().zip(vectors.iter()) {
                     let derived_id =

@@ -23,6 +23,7 @@ use futures::stream::{self, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Semaphore;
 
 // ---------------------------------------------------------------------------
@@ -266,6 +267,8 @@ impl ProcessorEngine {
             let skip = skip_steps.clone();
 
             async move {
+                let file_started = Instant::now();
+                tracing::info!(task = "pipeline", run = "live", file = %path_clone.display(), chunk = "all", attempt = 0u32, provider = "pipeline", model = "n/a", elapsed_ms = 0u128, stage = "file_cpu_start", "ProcessorEngine CPU start");
                 let mut ctx = PipelineContext::new(
                     path_clone,
                     text,
@@ -309,6 +312,7 @@ impl ProcessorEngine {
                     }
                 }
 
+                tracing::info!(task = "pipeline", run = "live", file = %path.display(), chunk = "all", attempt = 0u32, provider = "pipeline", model = "n/a", elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_cpu_done", "ProcessorEngine CPU done");
                 FileAnalysis {
                     file_path: path,
                     success: errors.is_empty(),
@@ -344,6 +348,8 @@ impl ProcessorEngine {
             let path_clone = path.clone();
 
             async move {
+                let file_started = Instant::now();
+                tracing::info!(task = "pipeline", run = "live", file = %path_clone.display(), chunk = "all", attempt = 0u32, provider = "pipeline", model = "n/a", elapsed_ms = 0u128, stage = "file_cpu_start", "ProcessorEngine CPU start");
                 let mut ctx = PipelineContext::new(
                     path_clone,
                     vf.content,
@@ -379,6 +385,7 @@ impl ProcessorEngine {
                     }
                 }
 
+                tracing::info!(task = "pipeline", run = "live", file = %path.display(), chunk = "all", attempt = 0u32, provider = "pipeline", model = "n/a", elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_cpu_done", "ProcessorEngine CPU done");
                 FileAnalysis {
                     file_path: path,
                     success: errors.is_empty(),

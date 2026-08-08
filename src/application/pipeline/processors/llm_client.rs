@@ -25,6 +25,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::application::knowledge::extract::{
     degraded_graph, parse_block_response, parse_nacos_block_response, ExtractedGraph,
@@ -180,7 +181,8 @@ impl LlmClientProcessor {
         let mut graphs: Vec<ExtractedGraph> = Vec::with_capacity(chunks.len());
         let mut raw_responses: Vec<String> = Vec::with_capacity(chunks.len());
 
-        tracing::info!(file = %ctx.file_path.display(), chunks = chunks.len(), "LLM 文件开始处理");
+        let file_started = Instant::now();
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
         for (pos, chunk) in chunks.iter().enumerate() {
             let block_index = chunk
                 .get("chunk_index")
@@ -199,7 +201,8 @@ impl LlmClientProcessor {
                 .render(prompt_name, &render_ctx)
                 .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
-            tracing::info!(file = %ctx.file_path.display(), block = block_index, "LLM 块开始处理");
+            let chunk_started = Instant::now();
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
             let (raw, graph) = self
                 .extract_block(
                     &system_prompt,
@@ -213,6 +216,7 @@ impl LlmClientProcessor {
                 raw_responses.push(raw);
             }
             graphs.push(graph);
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
         }
 
         let degraded_count = graphs.iter().filter(|g| g.degraded).count();
@@ -224,6 +228,7 @@ impl LlmClientProcessor {
         output.set("degraded_count", degraded_count);
         output.set("block_count", chunks.len());
 
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_done", degraded = degraded_count > 0, "LLM file_done");
         Ok(output)
     }
 

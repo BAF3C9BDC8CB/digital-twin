@@ -9,6 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::time::Instant;
 use uuid::Uuid;
 
 const STATES: [&str; 6] = [
@@ -123,8 +124,10 @@ impl TaskStore {
         file_hash: &str,
         dataset_version: &str,
     ) -> Result<bool, rusqlite::Error> {
+        let started = Instant::now();
         let now = Utc::now().timestamp();
         let n=self.conn.lock().unwrap().execute("INSERT OR IGNORE INTO pipeline_tasks (task_id,file_id,chunk_id,file_hash,dataset_version,state,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,'pending',?6,?6)",params![task_id,file_id,chunk_id.unwrap_or(""),file_hash,dataset_version,now])?;
+        tracing::info!(task = %task_id, run = %task_id, file = %file_id, chunk = chunk_id.unwrap_or("all"), attempt = 0u32, provider = "sqlite", model = "n/a", elapsed_ms = started.elapsed().as_millis(), total_ms = started.elapsed().as_millis(), stage = "checkpoint_enqueue_done", inserted = n == 1, "SQLite checkpoint enqueue");
         Ok(n == 1)
     }
     pub fn start_run(&self) -> String {
@@ -137,10 +140,12 @@ impl TaskStore {
         chunk_id: Option<&str>,
         owner: &str,
     ) -> Result<bool, rusqlite::Error> {
+        let started = Instant::now();
         let now = Utc::now().timestamp();
         let until = now + self.lease_seconds;
         let c = self.conn.lock().unwrap();
         let n=c.execute("UPDATE pipeline_tasks SET state='running',lease_owner=?4,lease_until=?5,updated_at=?6 WHERE task_id=?1 AND file_id=?2 AND chunk_id=?3 AND (state IN ('pending','retry_wait') OR (state='running' AND lease_until IS NOT NULL AND lease_until<=?6))",params![task_id,file_id,chunk_id.unwrap_or(""),owner,until,now])?;
+        tracing::info!(task = %task_id, run = %task_id, file = %file_id, chunk = chunk_id.unwrap_or("all"), attempt = 0u32, provider = "sqlite", model = "n/a", elapsed_ms = started.elapsed().as_millis(), total_ms = started.elapsed().as_millis(), stage = "checkpoint_claim_done", claimed = n == 1, "SQLite checkpoint claim");
         Ok(n == 1)
     }
     pub fn complete(

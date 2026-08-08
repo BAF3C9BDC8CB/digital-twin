@@ -83,6 +83,8 @@ impl Processor for StoreProcessor {
     }
 
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
+        let started = std::time::Instant::now();
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "storage", model = "n/a", elapsed_ms = 0u128, stage = "store_start", "StoreProcessor start");
         let mut output = ProcessorOutput::new();
 
         // ── R8：没有 graphs 输出的文件原样跳过。 ──
@@ -148,6 +150,7 @@ impl Processor for StoreProcessor {
         output.set("degraded_blocks", stats.degraded_blocks);
         output.set("blocks_processed", stats.blocks_processed);
         output.set("empty_blocks", stats.empty_blocks);
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "storage", model = "n/a", elapsed_ms = started.elapsed().as_millis(), total_ms = started.elapsed().as_millis(), stage = "store_done", "StoreProcessor done");
 
         Ok(output)
     }

@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Semaphore;
 
 /// 默认的 SiliconFlow API URL。
@@ -136,11 +137,15 @@ impl SiliconFlowChatClient {
         temperature: f32,
         max_tokens: u32,
     ) -> Result<ChatResponse, String> {
+        let started = Instant::now();
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = 0u128, stage = "request_start", "SiliconFlow request_start");
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "semaphore_wait_start", "SiliconFlow semaphore_wait_start");
         let _permit = self
             .semaphore
             .acquire()
             .await
             .map_err(|e| format!("信号量获取失败: {e}"))?;
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "semaphore_acquired", "SiliconFlow semaphore_acquired");
 
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
 
@@ -161,6 +166,7 @@ impl SiliconFlowChatClient {
             stream: false,
         };
 
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "send_start", "SiliconFlow send_start");
         let resp = self
             .client
             .post(&url)
@@ -171,14 +177,19 @@ impl SiliconFlowChatClient {
             .map_err(|e| format!("SiliconFlow 对话请求失败: {e}"))?;
 
         let status = resp.status();
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, status = %status, elapsed_ms = started.elapsed().as_millis(), stage = "response_received", "SiliconFlow response_received");
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("SiliconFlow 对话返回 HTTP {status}: {text}"));
+            tracing::warn!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, status = %status, response_body_bytes = text.len(), elapsed_ms = started.elapsed().as_millis(), retry_reason = "http_error", "SiliconFlow error (body omitted)");
+            return Err(format!("SiliconFlow 对话返回 HTTP {status}"));
         }
 
-        resp.json::<ChatResponse>()
+        let parsed = resp
+            .json::<ChatResponse>()
             .await
-            .map_err(|e| format!("对话响应解析失败: {e}"))
+            .map_err(|e| format!("对话响应解析失败: {e}"));
+        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), total_ms = started.elapsed().as_millis(), stage = "request_end", "SiliconFlow request_end");
+        parsed
     }
 
     /// 通过 POST /v1/embeddings 嵌入一批文本。
