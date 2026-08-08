@@ -463,6 +463,12 @@ impl ProcessorEngine {
                     }
                 }
 
+                tracing::info!(
+                    file = %path.display(),
+                    success = analysis.success,
+                    errors = analysis.errors.len(),
+                    "流水线文件处理完成"
+                );
                 analysis
             }
         }))

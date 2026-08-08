@@ -180,6 +180,7 @@ impl LlmClientProcessor {
         let mut graphs: Vec<ExtractedGraph> = Vec::with_capacity(chunks.len());
         let mut raw_responses: Vec<String> = Vec::with_capacity(chunks.len());
 
+        tracing::info!(file = %ctx.file_path.display(), chunks = chunks.len(), "LLM 文件开始处理");
         for (pos, chunk) in chunks.iter().enumerate() {
             let block_index = chunk
                 .get("chunk_index")
@@ -198,6 +199,7 @@ impl LlmClientProcessor {
                 .render(prompt_name, &render_ctx)
                 .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
+            tracing::info!(file = %ctx.file_path.display(), block = block_index, "LLM 块开始处理");
             let (raw, graph) = self
                 .extract_block(
                     &system_prompt,

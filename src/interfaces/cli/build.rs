@@ -793,6 +793,23 @@ pub async fn handle_nacos_build(
         deleted.len()
     );
 
+    // 小批量验收开关：仅用于验证远程源链路，正式运行不设置。
+    let selected = if let Ok(raw) = std::env::var("DT_NACOS_MAX_FILES") {
+        match raw.parse::<usize>() {
+            Ok(limit) if limit > 0 && limit < selected.len() => {
+                tracing::warn!(
+                    limit,
+                    original = selected.len(),
+                    "DT_NACOS_MAX_FILES 已限制本次构建规模"
+                );
+                selected.into_iter().take(limit).collect()
+            }
+            _ => selected,
+        }
+    } else {
+        selected
+    };
+
     // 3. dry-run：只列出选中文件。
     if dry_run {
         println!("[dry-run] 选中 {} 条 Nacos 配置:", selected.len());
