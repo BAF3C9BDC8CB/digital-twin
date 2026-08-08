@@ -18,6 +18,7 @@ use crate::application::pipeline::virtual_file::{FileSourceKind, VirtualFile};
 use crate::application::sync::nacos::client::NacosClient;
 use crate::domain::error::DtError;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 /// Nacos 配置的虚拟文件源。
 ///
@@ -44,6 +45,8 @@ impl NacosVirtualFileSource {
         // 1. 获取所有命名空间
         let ns_resp = self.client.list_namespaces().await?;
         let mut all_files: Vec<VirtualFile> = Vec::new();
+        // Stable identity across retried/overlapping pages: namespace + group + dataId.
+        let mut seen: HashSet<(String, String, String)> = HashSet::new();
 
         for ns in &ns_resp.data {
             let ns_id = &ns.namespace_id;
@@ -65,6 +68,13 @@ impl NacosVirtualFileSource {
                 };
 
                 for cfg_item in &list.page_items {
+                    if !seen.insert((
+                        ns_id.clone(),
+                        cfg_item.group.clone(),
+                        cfg_item.data_id.clone(),
+                    )) {
+                        continue;
+                    }
                     // 3. 获取配置详情（内容）
                     let detail = self
                         .client

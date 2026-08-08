@@ -775,7 +775,13 @@ pub async fn handle_nacos_build(
     tracing::info!("dt build --source nacos: env={env} project={project} dry_run={dry_run}");
 
     // 1. 拉取所有命名空间配置为虚拟文件。
-    let source = NacosVirtualFileSource::new(NacosClient::new(nacos_url));
+    let nacos_client = NacosClient::new(nacos_url);
+    tracing::info!(target: "pipeline_diagnostics", event = "nacos.preflight_start", endpoint = %nacos_url);
+    nacos_client
+        .health_check()
+        .await
+        .map_err(|e| anyhow::anyhow!("Nacos preflight failed (LLM not started): {e}"))?;
+    let source = NacosVirtualFileSource::new(nacos_client);
     let vfiles = source
         .fetch_virtual_files(project)
         .await
@@ -801,7 +807,7 @@ pub async fn handle_nacos_build(
                 tracing::warn!(
                     limit,
                     original = selected.len(),
-                    "DT_NACOS_MAX_FILES 已限制本次构建规模"
+                    "DT_NACOS_MAX_FILES 已限制本次构建规模；仅处理显式选择的前 N 个文件"
                 );
                 selected.into_iter().take(limit).collect()
             }

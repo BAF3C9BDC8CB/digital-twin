@@ -85,6 +85,21 @@ impl Processor for ChunkProcessor {
 
         // 使用类型感知策略将文本分割为块。
         let chunks = chunk_by_type(&ctx.file_text, &doc_id, doc_type, &self.config);
+        let max_chunks = std::env::var("DT_NACOS_MAX_CHUNKS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0);
+        if ctx.source_kind == crate::application::pipeline::FileSourceKind::Nacos {
+            tracing::info!(target: "pipeline_diagnostics", event = "nacos.chunk_diagnostic", file = %ctx.file_path.display(), chunk_count = chunks.len(), max_chunks = ?max_chunks);
+            if let Some(max) = max_chunks {
+                if chunks.len() > max {
+                    return Err(DtError::General(format!(
+                        "Nacos file produced {} chunks, exceeding DT_NACOS_MAX_CHUNKS={}; original text retained and processing stopped",
+                        chunks.len(), max
+                    )));
+                }
+            }
+        }
 
         // 将块序列化为 JSON 数组。
         let chunk_values: Vec<serde_json::Value> = chunks

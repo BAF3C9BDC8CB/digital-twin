@@ -14,7 +14,34 @@
 
 use crate::domain::error::DtError;
 use reqwest::Client as HttpClient;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use std::time::{Duration, Instant};
+
+const NACOS_MAX_RETRIES: u32 = 3;
+const NACOS_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const NACOS_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const NACOS_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const NACOS_RETRY_BASE_MS: u64 = 200;
+
+fn transient_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 429 | 502 | 503 | 504)
+}
+
+fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+fn backoff(attempt: u32, retry_after: Option<Duration>) -> Duration {
+    retry_after.unwrap_or_else(|| {
+        let base = NACOS_RETRY_BASE_MS.saturating_mul(1u64 << attempt.min(6));
+        Duration::from_millis(base + ((attempt as u64 * 37) % 101))
+    })
+}
 
 // ---------------------------------------------------------------------------
 // 响应类型
@@ -134,24 +161,93 @@ impl NacosClient {
     /// `base_url` 应为完整的 URL 前缀，例如
     /// `https://nacos.newoffen.net/nacos`。
     pub fn new(base_url: impl Into<String>) -> Self {
+        let http = HttpClient::builder()
+            .connect_timeout(NACOS_CONNECT_TIMEOUT)
+            .timeout(NACOS_REQUEST_TIMEOUT)
+            .build()
+            .expect("Nacos HTTP client configuration must be valid");
         Self {
-            base_url: base_url.into(),
-            http: HttpClient::new(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            http,
         }
+    }
+
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        page: Option<i64>,
+    ) -> Result<T, DtError> {
+        let started = Instant::now();
+        let mut last_error = String::new();
+        for attempt in 0..=NACOS_MAX_RETRIES {
+            let elapsed_ms = started.elapsed().as_millis() as u64;
+            tracing::info!(target: "pipeline_diagnostics", event = "nacos.request_start", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms);
+            let result =
+                tokio::time::timeout(NACOS_RESPONSE_TIMEOUT, self.http.get(endpoint).send()).await;
+            match result {
+                Ok(Ok(resp)) if resp.status().is_success() => {
+                    let status = resp.status();
+                    let parsed =
+                        tokio::time::timeout(NACOS_RESPONSE_TIMEOUT, resp.json::<T>()).await;
+                    match parsed {
+                        Ok(Ok(value)) => {
+                            tracing::info!(target: "pipeline_diagnostics", event = "nacos.response", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms = started.elapsed().as_millis() as u64, status = status.as_u16());
+                            return Ok(value);
+                        }
+                        Ok(Err(e)) => last_error = format!("response parse: {e}"),
+                        Err(_) => last_error = "response timeout".into(),
+                    }
+                }
+                Ok(Ok(resp)) => {
+                    let status = resp.status();
+                    let retryable = transient_status(status);
+                    last_error = format!("HTTP {}", status);
+                    tracing::warn!(target: "pipeline_diagnostics", event = "nacos.error", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms = started.elapsed().as_millis() as u64, status = status.as_u16(), retryable);
+                    if !retryable {
+                        break;
+                    }
+                    if attempt < NACOS_MAX_RETRIES {
+                        let delay = backoff(attempt, retry_after(resp.headers()));
+                        tracing::warn!(target: "pipeline_diagnostics", event = "nacos.retry", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms = started.elapsed().as_millis() as u64, delay_ms = delay.as_millis() as u64);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                Ok(Err(e)) => {
+                    last_error = e.to_string();
+                    let retryable = e.is_connect() || e.is_timeout() || e.is_request();
+                    tracing::warn!(target: "pipeline_diagnostics", event = "nacos.error", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms = started.elapsed().as_millis() as u64, retryable, error = %last_error);
+                    if retryable && attempt < NACOS_MAX_RETRIES {
+                        let delay = backoff(attempt, None);
+                        tracing::warn!(target: "pipeline_diagnostics", event = "nacos.retry", endpoint, page = ?page, attempt = attempt + 1, elapsed_ms = started.elapsed().as_millis() as u64, delay_ms = delay.as_millis() as u64);
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+                Err(_) => last_error = "response timeout".into(),
+            }
+        }
+        Err(DtError::Network(format!(
+            "Nacos request failed endpoint={} page={:?} attempts={} elapsed_ms={} error={}",
+            endpoint,
+            page,
+            NACOS_MAX_RETRIES + 1,
+            started.elapsed().as_millis(),
+            last_error
+        )))
+    }
+
+    /// Perform a lightweight connectivity preflight.
+    pub async fn health_check(&self) -> Result<(), DtError> {
+        let url = format!("{}/v1/console/namespaces", self.base_url);
+        let _: NamespaceListResponse = self.get_json(&url, None).await?;
+        Ok(())
     }
 
     /// 列出所有命名空间。
     pub async fn list_namespaces(&self) -> Result<NamespaceListResponse, DtError> {
         let url = format!("{}/v1/console/namespaces", self.base_url);
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| DtError::Network(e.to_string()))?;
-        resp.json()
-            .await
-            .map_err(|e| DtError::Network(format!("解析命名空间失败: {e}")))
+        self.get_json(&url, None).await
     }
 
     /// 获取一页配置元数据。
@@ -167,16 +263,7 @@ impl NacosClient {
             "{}/v1/cs/configs?dataId=&group=&appName=&config_tags=&pageNo={}&pageSize={}&search=blur&tenant={}",
             self.base_url, page_no, page_size, tenant
         );
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| DtError::Network(e.to_string()))?;
-        let body: ConfigListResponse = resp
-            .json()
-            .await
-            .map_err(|e| DtError::Network(format!("解析配置列表失败: {e}")))?;
+        let body: ConfigListResponse = self.get_json(&url, Some(page_no)).await?;
 
         if body.page_items.is_empty() {
             Ok(None)
@@ -294,6 +381,20 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_policy_is_bounded_and_safe() {
+        assert!(transient_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+        assert!(transient_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(transient_status(reqwest::StatusCode::SERVICE_UNAVAILABLE));
+        assert!(transient_status(reqwest::StatusCode::GATEWAY_TIMEOUT));
+        assert!(!transient_status(reqwest::StatusCode::BAD_REQUEST));
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "2".parse().unwrap());
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(2)));
+        assert_eq!(backoff(0, None), Duration::from_millis(200));
+        assert!(backoff(3, None) < Duration::from_secs(2));
+    }
 
     #[test]
     fn urlencode_simple() {
