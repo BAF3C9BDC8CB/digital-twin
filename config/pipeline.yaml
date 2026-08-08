@@ -56,7 +56,7 @@ processors:
 llm:
   temperature: 0.1     # Low = more deterministic
   max_tokens: 4096     # Max tokens per response
-  chunk_concurrency: 2 # 单文件 chunk 并发；仍受 providers.siliconflow.max_concurrent 限制
+  chunk_concurrency: 4 # 单文件 chunk 并发；仍受 providers.siliconflow.max_concurrent 限制
 
 # ── Ecosystem mode (optional) ──────────────────────────────────────────────
 # ecosystem:

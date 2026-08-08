@@ -48,6 +48,8 @@ struct ChatRequest {
     temperature: f32,
     max_tokens: u32,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enable_thinking: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,6 +166,10 @@ impl SiliconFlowChatClient {
             temperature,
             max_tokens,
             stream: false,
+            enable_thinking: model
+                .to_ascii_lowercase()
+                .contains("deepseek-v3.2")
+                .then_some(false),
         };
 
         tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "send_start", "SiliconFlow send_start");
