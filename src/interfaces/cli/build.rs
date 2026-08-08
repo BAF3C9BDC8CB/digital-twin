@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::application::pipeline::config::PipelineConfig;
 use crate::application::pipeline::engine::ProcessorEngine;
 use crate::application::pipeline::infer_client::{
-    ChatClient, SiliconFlowChatClient, XInferenceChatClient,
+    ChatClient, GLMCodingChatClient, SiliconFlowChatClient, XInferenceChatClient,
 };
 use crate::application::pipeline::processors::{
     ChunkProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
@@ -20,7 +20,6 @@ use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::BatchConfig;
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::sqlite::TaskStore;
 use sha2::{Digest, Sha256};
 
 /// 处理 `dt build`——将项目索引到知识图谱。
@@ -345,6 +344,24 @@ fn build_llm_client(
         .unwrap_or_else(|| "siliconflow".to_string());
 
     match llm_provider.as_str() {
+        "glmcoding" => {
+            let cfg = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.glmcoding.as_ref());
+            let base_url = cfg
+                .map(|c| c.url.clone())
+                .unwrap_or_else(|| "https://glmcoding.cn".into());
+            let api_key = cfg.map(|c| c.api_key.clone()).unwrap_or_default();
+            let model = cfg
+                .map(|c| c.model_llm.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "deepseek-v4-flash".into());
+            let concurrency = cfg.map(|c| c.max_concurrent).unwrap_or(32);
+            tracing::info!("使用 GLM Coding LLM: {} @ {} (OpenAI)", model, base_url);
+            let client = Arc::new(GLMCodingChatClient::new(base_url, api_key, concurrency));
+            (client as Arc<dyn ChatClient>, model)
+        }
         "xinference" => {
             let xi_cfg = pipeline_config
                 .providers
@@ -747,230 +764,6 @@ pub async fn handle_build_all(
     Ok(())
 }
 
-/// 处理 `dt build --source nacos`——从 Nacos 配置中心拉取配置，
-/// 走虚拟文件管线（chunk → LLM(nacos_config 词表) → store）。
-///
-/// G1: 接通 NacosVirtualFileSource → IncrementalStrategy::select_virtual_files
-/// → 管线。支持 `--env`（test|prod，默认 prod）与 `--dry-run`
-/// （只列出选中文件，不执行抽取）。
-///
-/// 增量快照以 `virtual_path → content_hash` 记录；非 Fs 来源
-/// （Nacos）不做 mtime 捷径（F2），内容哈希变更即重新处理。
-pub async fn handle_nacos_build(
-    project: &str,
-    env: &str,
-    dry_run: bool,
-    nacos_url: &str,
-    graph: Option<Arc<dyn GraphRepository>>,
-    vector: Option<Arc<dyn VectorRepository>>,
-    embed: Option<Arc<dyn EmbedService>>,
-    snapshot: Option<Arc<dyn SnapshotRepository>>,
-) -> anyhow::Result<()> {
-    use crate::application::build::strategy::incremental::IncrementalStrategy;
-    use crate::application::build::strategy::BuildStrategy;
-    use crate::application::sync::nacos::client::NacosClient;
-    use crate::application::sync::nacos::virtual_file_source::NacosVirtualFileSource;
-    use crate::domain::types::FileSnapshot;
-
-    tracing::info!("dt build --source nacos: env={env} project={project} dry_run={dry_run}");
-
-    // 1. 拉取所有命名空间配置为虚拟文件。
-    let nacos_client = NacosClient::new(nacos_url);
-    tracing::info!(target: "pipeline_diagnostics", event = "nacos.preflight_start", endpoint = %nacos_url);
-    nacos_client
-        .health_check()
-        .await
-        .map_err(|e| anyhow::anyhow!("Nacos preflight failed (LLM not started): {e}"))?;
-    let source = NacosVirtualFileSource::new(nacos_client);
-    let vfiles = source
-        .fetch_virtual_files(project)
-        .await
-        .map_err(|e| anyhow::anyhow!("Nacos 拉取失败: {e}"))?;
-    tracing::info!("Nacos 拉取 {} 条配置", vfiles.len());
-
-    // 2. 增量选择：只处理内容哈希变更的配置。
-    let strategy = IncrementalStrategy;
-    let (selected, deleted) = strategy
-        .select_virtual_files(&vfiles, snapshot.as_deref(), project)
-        .await
-        .map_err(|e| anyhow::anyhow!("增量选择失败: {e}"))?;
-    tracing::info!(
-        "选中 {} 条待处理, 删除 {} 条",
-        selected.len(),
-        deleted.len()
-    );
-
-    // 小批量验收开关：仅用于验证远程源链路，正式运行不设置。
-    let selected = if let Ok(raw) = std::env::var("DT_NACOS_MAX_FILES") {
-        match raw.parse::<usize>() {
-            Ok(limit) if limit > 0 && limit < selected.len() => {
-                tracing::warn!(
-                    limit,
-                    original = selected.len(),
-                    "DT_NACOS_MAX_FILES 已限制本次构建规模；仅处理显式选择的前 N 个文件"
-                );
-                selected.into_iter().take(limit).collect()
-            }
-            _ => selected,
-        }
-    } else {
-        selected
-    };
-
-    // 3. dry-run：只列出选中文件。
-    if dry_run {
-        println!("[dry-run] 选中 {} 条 Nacos 配置:", selected.len());
-        for vf in &selected {
-            println!("  {}", vf.virtual_path);
-        }
-        return Ok(());
-    }
-
-    if selected.is_empty() {
-        tracing::info!("Nacos 配置均未变更，跳过管线");
-        return Ok(());
-    }
-
-    // 4. 管线：注册 chunk → llm → store 处理器。
-    let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let llm_config = pipeline_config.llm.as_ref().cloned().unwrap_or_default();
-
-    // LLM 客户端——与普通文件管线共用同一 provider 路由
-    // （F5 自检已放行非 xinference provider，如 siliconflow 云 API）。
-    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = build_llm_client(
-        &pipeline_config,
-        pipeline_config.inference_server.max_concurrent,
-    );
-
-    let mut registry = ProcessorRegistry::new();
-    if pipeline_config.processors.chunk {
-        registry.register(Box::new(ChunkProcessor::default()));
-    }
-    if pipeline_config.processors.llm {
-        match PromptRegistry::load_default() {
-            Ok(prompts) => {
-                registry.register(Box::new(LlmClientProcessor::new(
-                    infer_client.clone(),
-                    infer_model.clone(),
-                    Arc::new(prompts),
-                    llm_config,
-                )));
-            }
-            Err(e) => tracing::warn!("提示词注册表不可用: {e} — 跳过 LLM 处理器"),
-        }
-    }
-    if pipeline_config.processors.store {
-        registry.register(Box::new(StoreProcessor::new(graph, vector, embed)));
-    }
-
-    let registry = Arc::new(registry);
-    let provider_concurrency = if pipeline_config
-        .providers
-        .as_ref()
-        .map(|p| p.llm_provider.as_str())
-        == Some("siliconflow")
-    {
-        pipeline_config
-            .providers
-            .as_ref()
-            .and_then(|p| p.siliconflow.as_ref())
-            .map(|p| p.max_concurrent)
-            .unwrap_or(8)
-    } else {
-        pipeline_config.inference_server.max_concurrent
-    };
-    let engine = ProcessorEngine::new(registry, provider_concurrency);
-
-    // 5. Durable orchestration: this is the only task state source for this run.
-    // The path is deliberately shared with the existing snapshot DB default; deployments
-    // may override it without changing credentials or the public CLI API.
-    let task_db = std::env::var("DT_SQLITE_PATH")
-        .unwrap_or_else(|_| "/var/lib/digital-twin/snapshots.db".to_string());
-    let tasks = TaskStore::open(&task_db)
-        .map_err(|e| anyhow::anyhow!("无法打开 Nacos durable task store {task_db}: {e}"))?;
-    let recovered = tasks
-        .recover_stale()
-        .map_err(|e| anyhow::anyhow!("恢复过期 Nacos lease 失败: {e}"))?;
-    let task_id = tasks.start_run();
-    let dataset_version = task_id.clone();
-    for vf in &selected {
-        tasks
-            .enqueue(
-                &task_id,
-                &vf.virtual_path,
-                None,
-                &vf.content_hash,
-                &dataset_version,
-            )
-            .map_err(|e| anyhow::anyhow!("入队 Nacos 文件失败: {e}"))?;
-    }
-    if !deleted.is_empty() {
-        tracing::warn!(
-            count = deleted.len(),
-            "Nacos deleted 项未清理：当前源未提供安全删除 API，记录为 Phase 1A gap"
-        );
-    }
-    tracing::info!(task_id = %task_id, dataset_version = %dataset_version, recovered, "Nacos durable task run started");
-
-    for vf in &selected {
-        if !tasks.claim(
-            &task_id,
-            &vf.virtual_path,
-            None,
-            &format!("{}:{}", std::process::id(), task_id),
-        )? {
-            continue; // successful rows and leases held by another worker are not reprocessed.
-        }
-        let analyses = engine
-            .analyze_virtual_batch(vec![vf.clone()], project.to_string())
-            .await;
-        let analysis = analyses.into_iter().next();
-        match analysis {
-            Some(a) if a.success => {
-                if let Some(repo) = snapshot.as_ref() {
-                    let snap = FileSnapshot {
-                        file_path: vf.virtual_path.clone(),
-                        project: project.to_string(),
-                        file_sha1: vf.content_hash.clone(),
-                        file_mtime: 0.0,
-                        method_count: 0,
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    };
-                    strategy
-                        .update_snapshots(repo.as_ref(), project, &[snap])
-                        .await
-                        .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
-                }
-                tasks.complete(&task_id, &vf.virtual_path, None)?;
-            }
-            Some(a) => {
-                let error = a.errors.join("; ");
-                tasks.fail(&task_id, &vf.virtual_path, None, &error, true)?;
-                tracing::error!(file = %vf.virtual_path, error = %error, "Nacos 文件失败，继续处理其他文件");
-            }
-            None => {
-                tasks.fail(
-                    &task_id,
-                    &vf.virtual_path,
-                    None,
-                    "pipeline returned no analysis",
-                    true,
-                )?;
-            }
-        }
-        let p = tasks.summary(&task_id)?;
-        tracing::info!(task_id = %task_id, total = p.total, pending = p.pending, running = p.running,
-            success = p.success, failed = p.failed, retry_wait = p.retry_wait, dead_letter = p.dead_letter,
-            "Nacos pipeline progress");
-    }
-    let p = tasks.summary(&task_id)?;
-    tracing::info!(task_id = %task_id, total = p.total, pending = p.pending, running = p.running,
-        success = p.success, failed = p.failed, retry_wait = p.retry_wait, dead_letter = p.dead_letter,
-        "Nacos 管线完成");
-
-    Ok(())
-}
-
 /// 从可能混合的字符串中提取内嵌的 ASCII 单词序列
 
 /// 处理 `dt search`——统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
@@ -1028,197 +821,4 @@ pub async fn handle_search(
         );
     }
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// F5: 远程源（Nacos/Jenkins）LLM provider 启动自检
-// ---------------------------------------------------------------------------
-
-/// 当 `--source nacos` 或 `--source jenkins` 时，验证 LLM provider 配置：
-///     - 非 xinference provider（如 siliconflow 云 API）直接放行——用户显式配置外部 LLM 时不强制本地服务
-///     - llm_provider 为 "xinference" 时，localhost:9997 必须可达（TCP 连接）
-///
-/// 任一条件不满足则返回错误（上游应打印消息后退出）。
-pub fn validate_xinference_for_remote_source() -> Result<(), String> {
-    // 加载 pipeline 配置
-    let pipeline_cfg =
-        PipelineConfig::load().map_err(|e| format!("无法加载 pipeline.yaml: {e}"))?;
-
-    let llm_provider = pipeline_cfg
-        .providers
-        .as_ref()
-        .map(|p| p.llm_provider.as_str())
-        .unwrap_or("siliconflow");
-
-    if llm_provider != "xinference" {
-        // 用户已显式配置外部 LLM provider（如 siliconflow），直接放行，
-        // 不再强制要求本地 xinference 服务。
-        return Ok(());
-    }
-
-    // 尝试连接 localhost:9997
-    let url = pipeline_cfg
-        .providers
-        .as_ref()
-        .and_then(|p| p.xinference.as_ref())
-        .map(|xi| xi.url.as_str())
-        .unwrap_or("http://localhost:9997/v1");
-
-    // 提取 host:port 进行 TCP 连接测试
-    let addr = url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches("/v1")
-        .trim_end_matches('/');
-
-    // G2: 用 ToSocketAddrs 解析——支持主机名（localhost 等），
-    // 不再要求 IP 字面量（SocketAddr::parse 会拒绝 localhost）。
-    let addrs = resolve_xinference_addr(addr)?;
-    if addrs.is_empty() {
-        return Err(format!(
-            "无效的 xinference 地址: {addr}（无法解析出任何 IP）"
-        ));
-    }
-
-    // localhost 常同时解析出 ::1 与 127.0.0.1，而 xinference 可能只监听
-    // IPv4——逐个尝试，任一地址连上即通过。
-    let mut last_err = String::new();
-    for socket_addr in &addrs {
-        match std::net::TcpStream::connect_timeout(socket_addr, std::time::Duration::from_secs(5)) {
-            Ok(_) => return Ok(()),
-            Err(e) => last_err = e.to_string(),
-        }
-    }
-    Err(format!(
-        "无法连接 xinference 服务 ({addr}): {last_err}。\
-         请确认 xinference 已在 localhost:9997 启动。"
-    ))
-}
-
-/// 将 `host:port` 地址解析为 [`std::net::SocketAddr`] 列表。
-///
-/// 使用 [`std::net::ToSocketAddrs`] 而非 `SocketAddr::parse`，从而支持
-/// 主机名（`localhost`、内网域名等），不只接受 IP 字面量。
-fn resolve_xinference_addr(addr: &str) -> Result<Vec<std::net::SocketAddr>, String> {
-    use std::net::ToSocketAddrs;
-    addr.to_socket_addrs()
-        .map(|iter| iter.collect())
-        .map_err(|_| format!("无效的 xinference 地址: {addr}"))
-}
-
-// ---------------------------------------------------------------------------
-// F5 单元测试
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod validate_tests {
-    use super::*;
-
-    /// 验证：非 xinference provider（如 siliconflow）会被放行
-    #[test]
-    fn allows_non_xinference_llm_provider() {
-        // 临时覆盖 pipeline.yaml 的读取路径——我们通过直接构造
-        // PipelineConfig 来测试，绕过文件系统依赖。核心逻辑是：
-        // llm_provider != "xinference" → Ok（放行）
-        let cfg = PipelineConfig {
-            providers: Some(crate::application::pipeline::config::ProvidersConfig {
-                llm_provider: "siliconflow".into(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let llm_provider = cfg
-            .providers
-            .as_ref()
-            .map(|p| p.llm_provider.as_str())
-            .unwrap_or("siliconflow");
-        // 不调用 validate_xinference_for_remote_source（它会读文件），
-        // 而是直接断言核心逻辑：非 xinference 即放行
-        assert_ne!(llm_provider, "xinference");
-    }
-
-    /// 验证：xinference provider 名通过 provider 名字检查
-    #[test]
-    fn accepts_xinference_llm_provider_name() {
-        let cfg = PipelineConfig {
-            providers: Some(crate::application::pipeline::config::ProvidersConfig {
-                llm_provider: "xinference".into(),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let llm_provider = cfg
-            .providers
-            .as_ref()
-            .map(|p| p.llm_provider.as_str())
-            .unwrap_or("siliconflow");
-        assert_eq!(llm_provider, "xinference");
-    }
-
-    /// 验证：未配置 providers 时回退到 siliconflow（同样放行）
-    #[test]
-    fn defaults_to_siliconflow_and_is_allowed() {
-        let cfg = PipelineConfig::default();
-        let llm_provider = cfg
-            .providers
-            .as_ref()
-            .map(|p| p.llm_provider.as_str())
-            .unwrap_or("siliconflow");
-        let is_xinference = llm_provider == "xinference";
-        // 默认值不是 xinference——非 xinference 即放行
-        assert!(!is_xinference);
-    }
-
-    // ── G2: hostname 解析（ToSocketAddrs） ────────────────────────
-
-    /// G2 回归：`localhost:9997`（主机名）必须能解析为 SocketAddr。
-    /// 修复前 `addr.parse::<SocketAddr>()` 拒绝主机名，导致正确配置被误拒。
-    #[test]
-    fn resolves_localhost_hostname() {
-        let addrs = resolve_xinference_addr("localhost:9997").expect("localhost 应可解析");
-        assert!(!addrs.is_empty(), "localhost:9997 应解析出至少一个 IP");
-        // 至少一个地址的端口是 9997
-        assert!(
-            addrs.iter().any(|a| a.port() == 9997),
-            "解析出的地址应保留端口 9997: {addrs:?}"
-        );
-    }
-
-    /// G2: IP 字面量仍可解析（既有行为不回退）。
-    #[test]
-    fn resolves_ip_literal() {
-        let addrs = resolve_xinference_addr("127.0.0.1:9997").expect("IP 字面量应可解析");
-        assert_eq!(addrs[0].ip().to_string(), "127.0.0.1");
-        assert_eq!(addrs[0].port(), 9997);
-    }
-
-    /// G2: 不带端口的地址被拒绝（无法解析为 SocketAddr）。
-    #[test]
-    fn rejects_address_without_port() {
-        assert!(resolve_xinference_addr("localhost").is_err());
-    }
-
-    /// G2: 非法地址（无 host:port 结构）被拒绝并给出中文错误。
-    #[test]
-    fn rejects_garbage_address() {
-        let err = resolve_xinference_addr("not-an-address-###").unwrap_err();
-        assert!(
-            err.contains("无效的 xinference 地址"),
-            "错误信息应可读: {err}"
-        );
-    }
-
-    /// G2: validate 的 URL 提取逻辑——完整 URL 被裁剪为 host:port 后仍可解析。
-    #[test]
-    fn extracts_host_port_from_full_url() {
-        let url = "http://localhost:9997/v1";
-        let addr = url
-            .trim_start_matches("http://")
-            .trim_start_matches("https://")
-            .trim_end_matches("/v1")
-            .trim_end_matches('/');
-        assert_eq!(addr, "localhost:9997");
-        let addrs = resolve_xinference_addr(addr).expect("裁剪后的 host:port 应可解析");
-        assert!(addrs.iter().any(|a| a.port() == 9997));
-    }
 }

@@ -186,18 +186,8 @@ enum Commands {
 
         /// 要构建的源类型: code（默认）、knowledge（将 KG 节点同步为向量）。
         /// 使用 "knowledge" 替代 `dt kg-sync`。
-        /// 使用 "nacos" 从 Nacos 配置中心构建（需 llm_provider=xinference）。
         #[arg(long = "source")]
         source: Option<String>,
-
-        /// Nacos 环境: test | prod（默认 prod，配合 --source nacos）。
-        #[arg(long = "env", default_value = "prod")]
-        env: String,
-
-        /// 仅列出选中文件不抽取（配合 --source nacos）。
-        /// 打印将进入管线的 dt://nacos/ 虚拟文件列表后退出。
-        #[arg(long = "dry-run")]
-        dry_run: bool,
     },
 
     /// 跨世界统一搜索。
@@ -248,22 +238,6 @@ enum Commands {
         json: bool,
     },
 
-    /// 将 Nacos 配置同步到知识图谱。
-    ///
-    /// 用法: dt nacos-sync [test|prod]
-    NacosSync {
-        /// 目标环境（默认: test）。
-        #[arg(default_value = "test")]
-        env: String,
-    },
-
-    /// 将 Kubernetes 资源同步到知识图谱。
-    K8sSync {
-        /// dry-run 模式。
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-    },
-
     /// 将 KG 节点同步到 Qdrant 向量存储。
     ///
     /// 默认: 增量（仅同步新增/未同步的节点）。
@@ -280,32 +254,6 @@ enum Commands {
         /// 将自适应配置分块同步到 Qdrant 的 config_chunks 集合。
         #[arg(long = "config-chunks")]
         config_chunks: bool,
-    },
-
-    /// Kubernetes 操作: pods、logs、download、status（经由 kublog）。
-    Kub {
-        /// 操作: pods、logs、download、status。
-        action: String,
-
-        /// K8s 命名空间。
-        #[arg(long = "ns", default_value = "default")]
-        namespace: String,
-
-        /// Pod 名称（用于 logs / download）。
-        #[arg(long = "pod")]
-        pod: Option<String>,
-
-        /// 日志时间窗口（如 "1h"、"30m"）。
-        #[arg(long = "since")]
-        since: Option<String>,
-
-        /// 输出文件路径（用于 download）。
-        #[arg(short = 'o', long = "output")]
-        output: Option<String>,
-
-        /// status 的资源类型（pods、deploy、svc）。
-        #[arg(long = "resource", default_value = "pods")]
-        resource: String,
     },
 
     /// Jenkins CI/CD 操作（经由 jcli）。
@@ -393,10 +341,6 @@ struct ServiceConfig {
     #[serde(default)]
     qdrant: QdrantServiceConfig,
     #[serde(default)]
-    nacos: NacosUrls,
-    #[serde(default)]
-    k8s: K8sEndpointConfig,
-    #[serde(default)]
     jenkins: JenkinsEndpointConfig,
     #[serde(default)]
     sqlite: SqliteConfig,
@@ -423,30 +367,6 @@ impl Default for GraphDbConfig {
 struct QdrantServiceConfig {
     #[serde(default)]
     url: Option<String>,
-}
-
-/// 来自 config.yaml `services.nacos` 的 Nacos 环境 URL。
-#[derive(Debug, Deserialize, Default)]
-struct NacosUrls {
-    #[serde(default)]
-    test: Option<String>,
-    #[serde(default)]
-    prod: Option<String>,
-}
-
-/// 来自 config.yaml `services.k8s` 的 K8s/Kuboard 连接信息。
-#[derive(Debug, Deserialize, Default)]
-struct K8sEndpointConfig {
-    #[serde(default)]
-    server: Option<String>,
-    #[serde(default)]
-    username: Option<String>,
-    #[serde(default)]
-    password: Option<String>,
-    #[serde(default)]
-    cluster_id: Option<String>,
-    #[serde(default)]
-    skip_tls_verify: Option<bool>,
 }
 
 /// 来自 config.yaml `services.jenkins` 的 Jenkins 连接信息。
@@ -756,27 +676,6 @@ async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::Snapsho
     }
 }
 
-/// 从 config.yaml 的 services.k8s 构建解析后的 K8sSyncConfig。
-fn resolve_k8s_config(
-    config: &Option<DaemonConfig>,
-) -> Option<dt_daemon::application::sync::k8s::K8sSyncConfig> {
-    config.as_ref().and_then(|c| {
-        let k8s = &c.services.k8s;
-        let server = k8s.server.as_deref().unwrap_or("");
-        if server.is_empty() {
-            return None;
-        }
-        Some(dt_daemon::application::sync::k8s::K8sSyncConfig {
-            server: server.to_string(),
-            username: k8s.username.clone().unwrap_or_default(),
-            password: k8s.password.clone().unwrap_or_default(),
-            cluster_id: k8s.cluster_id.clone().unwrap_or_default(),
-            skip_tls_verify: k8s.skip_tls_verify.unwrap_or(true),
-            namespaces: vec![],
-        })
-    })
-}
-
 // ---- 主函数 ----
 
 #[tokio::main]
@@ -1032,8 +931,6 @@ async fn main() -> anyhow::Result<()> {
             no_pipeline,
             test,
             source,
-            env,
-            dry_run,
         }) => {
             // ── dt build --test: 运行自包含的流水线集成测试 ──
             if test {
@@ -1111,75 +1008,7 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // ── dt build --source nacos: Nacos 配置同步 ──
-            // ── dt build --source jenkins: Jenkins 构建同步 ──
             if let Some(ref src) = source {
-                let remote_sources = ["nacos", "jenkins"];
-                if remote_sources.contains(&src.as_str()) {
-                    // F5: 启动自检——远程源要求 xinference llm provider + localhost:9997 可达
-                    match dt_daemon::interfaces::cli::build::validate_xinference_for_remote_source()
-                    {
-                        Ok(()) => {
-                            tracing::info!(
-                                "dt build --source {src}: xinference 自检通过，继续执行"
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("错误: {e}");
-                            std::process::exit(1);
-                        }
-                    }
-
-                    // G1: Nacos 源落地真实管线（NacosVirtualFileSource →
-                    // select_virtual_files → chunk/LLM(nacos_config)/store）。
-                    if src == "nacos" {
-                        let config = load_config();
-                        let nacos_url = match env.as_str() {
-                            "test" => config
-                                .as_ref()
-                                .and_then(|c| c.services.nacos.test.as_deref())
-                                .unwrap_or("https://nacos.newoffen.net/nacos"),
-                            "prod" => config
-                                .as_ref()
-                                .and_then(|c| c.services.nacos.prod.as_deref())
-                                .unwrap_or("https://nacos.newoffen.com/nacos"),
-                            other => {
-                                eprintln!("错误: 未知环境 '{other}'，应为 test 或 prod");
-                                std::process::exit(1);
-                            }
-                        };
-
-                        let memgraph = connect_memgraph().await;
-                        let graph: Option<Arc<dyn GraphRepository>> =
-                            memgraph.map(|c| Arc::new(c) as Arc<dyn GraphRepository>);
-                        let embed = connect_embed().await;
-                        let vector = connect_vector().await;
-                        let snapshot = connect_snapshot().await;
-
-                        // 项目名：优先 --name，否则取默认 "nacos"。
-                        let project_name = name.clone().unwrap_or_else(|| "nacos".to_string());
-
-                        dt_daemon::interfaces::cli::build::handle_nacos_build(
-                            &project_name,
-                            &env,
-                            dry_run,
-                            nacos_url,
-                            graph,
-                            vector,
-                            embed,
-                            snapshot,
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-
-                    // Jenkins 仍为占位——Phase 1 CLI 全家桶范围。
-                    tracing::warn!(
-                        "dt build --source {src}: provider 已验证，但 Jenkins 流水线尚未实现"
-                    );
-                    return Ok(());
-                }
-
                 if src == "knowledge" {
                     tracing::info!("dt build --source knowledge: 同步 KG 节点到向量库");
                     let graph = connect_graph().await;
@@ -1341,36 +1170,6 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI 模式: dt nacos-sync ----
-        Some(Commands::NacosSync { env }) => {
-            let config = load_config();
-            let nacos_url = match env.as_str() {
-                "test" => config
-                    .as_ref()
-                    .and_then(|c| c.services.nacos.test.as_deref())
-                    .unwrap_or("https://nacos.newoffen.net/nacos"),
-                "prod" => config
-                    .as_ref()
-                    .and_then(|c| c.services.nacos.prod.as_deref())
-                    .unwrap_or("https://nacos.newoffen.com/nacos"),
-                _ => anyhow::bail!("未知环境: {env}，应为 test 或 prod"),
-            };
-
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::sync::handle_nacos_sync(env, graph, nacos_url).await?;
-            return Ok(());
-        }
-
-        // ---- CLI 模式: dt k8s-sync ----
-        Some(Commands::K8sSync { dry_run }) => {
-            let config = load_config();
-            let k8s_cfg = resolve_k8s_config(&config);
-
-            let graph = connect_graph().await;
-            dt_daemon::interfaces::cli::sync::handle_k8s_sync(dry_run, graph, k8s_cfg).await?;
-            return Ok(());
-        }
-
         // ---- CLI 模式: dt kg-sync ----
         Some(Commands::KgSync {
             full,
@@ -1392,30 +1191,6 @@ async fn main() -> anyhow::Result<()> {
                 queue,
             )
             .await?;
-            return Ok(());
-        }
-
-        // ---- CLI 模式: dt kub ----
-        Some(Commands::Kub {
-            action,
-            namespace,
-            pod,
-            since,
-            output,
-            resource,
-        }) => {
-            let config = load_config();
-            match resolve_k8s_config(&config) {
-                Some(cfg) => {
-                    dt_daemon::interfaces::cli::kub::handle_kub(
-                        action, namespace, pod, since, output, resource, cfg,
-                    )
-                    .await?;
-                }
-                None => {
-                    eprintln!("config.yaml（services.k8s）中未配置 K8s。请添加 k8s 配置段以启用。");
-                }
-            }
             return Ok(());
         }
 

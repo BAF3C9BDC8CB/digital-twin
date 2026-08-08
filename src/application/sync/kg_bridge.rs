@@ -331,13 +331,9 @@ impl KgBridge {
                 .zip(vectors.iter())
                 .map(|((section_name, pairs), vec)| {
                     let text = Self::reconstruct_text(section_name, pairs, is_yaml);
-                    let (doc_id, source_ref) =
-                        crate::application::sync::nacos::config_sync::nacos_chunk_source(
-                            namespace,
-                            group,
-                            data_id,
-                            section_name,
-                        );
+                    let source_ref =
+                        format!("dt://config/{namespace}/{group}/{data_id}#{section_name}");
+                    let doc_id = format!("{source_ref}#0");
                     serde_json::json!({
                         "id": source_ref,
                         "vector": vec,

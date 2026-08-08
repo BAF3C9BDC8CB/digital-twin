@@ -10,7 +10,6 @@ pub mod build;
 pub mod event;
 pub mod jcli;
 pub mod jenkins_sync;
-pub mod kub;
 pub mod learn;
 pub mod memorize;
 pub mod search_render;

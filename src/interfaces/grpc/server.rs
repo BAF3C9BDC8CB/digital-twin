@@ -64,9 +64,7 @@ pub async fn run(config: AppConfig) -> Result<(), Box<dyn std::error::Error>> {
     let mut registry = PluginRegistry::new();
 
     // 注册内置插件（服务器模式的默认桩实现）
-    registry.register(Arc::new(
-        crate::application::plugins::k8s::service::K8sPluginService::default(),
-    ))?;
+
     registry.register(Arc::new(
         crate::application::plugins::svc::service::SvcPluginService::default(),
     ))?;

@@ -3,10 +3,9 @@
 //! 提供：
 //! - `Plugin` trait——所有插件的统一生命周期
 //! - `PluginRegistry`——注册、生命周期管理以及 gRPC 装配
-//! - 内置插件：`k8s`、`svc`、`jenkins`
+//! - 内置插件：`svc`、`jenkins`
 
 pub mod jenkins;
-pub mod k8s;
 pub mod registry;
 pub mod svc;
 
