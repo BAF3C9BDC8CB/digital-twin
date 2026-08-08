@@ -8,6 +8,25 @@ use crate::application::context::fusion::{reciprocal_rank_fusion, RankedItem};
 use crate::application::context::search_mcp::{CrossWorldSearch, SearchHit};
 use crate::shared::collections::{CONFIG_CHUNKS, DOC_CHUNKS};
 
+fn nacos_source_ref(payload: &serde_json::Value, section: &str) -> String {
+    let namespace = payload
+        .get("namespace")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("public");
+    let group = payload
+        .get("group")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("DEFAULT_GROUP");
+    let data_id = payload
+        .get("data_id")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .unwrap_or("config");
+    format!("dt://nacos/{namespace}/{group}/{data_id}#{section}")
+}
+
 /// 提取查询中的 ASCII 词（逐字搬移自 cli/build.rs:750-756）。
 ///
 /// 中英混合（如 "Redis集群配置信息" → ["redis"]、
@@ -229,7 +248,7 @@ impl CrossWorldSearch {
                                                 .unwrap_or("");
                                             Some(RankedItem {
                                                 content: Some(text.to_string()),
-                                                source_ref: Some(format!("dt://nacos/{}/{}/{}#{}", payload.get("namespace").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("public"), payload.get("group").and_then(|v| v.as_str()).filter(|v| !v.is_empty()).unwrap_or("DEFAULT_GROUP"), data_id, section)),
+                                                source_ref: Some(nacos_source_ref(payload, section)),
                                                 metadata: Some(serde_json::json!({"namespace": payload.get("namespace").and_then(|v| v.as_str()).unwrap_or(""), "data_id": data_id, "group": payload.get("group").and_then(|v| v.as_str()).unwrap_or(""), "section": section})),
                                                 llm_analysis: payload_llm_analysis(payload),
                                                 id: r
@@ -285,7 +304,14 @@ impl CrossWorldSearch {
                                             let snippet = format!("{}\n{}", text, display_line);
                                             Some(RankedItem {
                                                 content: Some(text.to_string()),
-                                                source_ref: Some(format!("dt://nacos/public/DEFAULT_GROUP/config#{}", section_name)),
+                                                source_ref: Some(nacos_source_ref(
+                                                    &serde_json::json!({
+                                                        "namespace": "public",
+                                                        "group": "DEFAULT_GROUP",
+                                                        "data_id": "config",
+                                                    }),
+                                                    &section_name,
+                                                )),
                                                 metadata: Some(serde_json::json!({"namespace": "public", "group": "DEFAULT_GROUP", "section": section_name})),
                                                 llm_analysis: payload_llm_analysis(payload),
                                                 id: r
@@ -315,10 +341,16 @@ impl CrossWorldSearch {
                             .filter(|w| w.len() >= 3)
                             .collect();
                         if !keywords.is_empty() {
+                            let require_all = keywords.iter().any(|kw| kw == "nacos")
+                                && keywords.iter().any(|kw| kw == "discovery");
                             f.retain(|item| {
                                 let combined =
                                     format!("{} {}", item.title, item.snippet).to_lowercase();
-                                keywords.iter().any(|kw| combined.contains(kw))
+                                if require_all {
+                                    keywords.iter().all(|kw| combined.contains(kw))
+                                } else {
+                                    keywords.iter().any(|kw| combined.contains(kw))
+                                }
                             });
                         }
                         fused = f;
@@ -605,6 +637,40 @@ mod tests {
             Some("dt://nacos/test/CUSTOM_GROUP/uvp-common.yaml#spring.cloud")
         );
         assert!(!hit.source_ref.as_deref().unwrap().contains("environment"));
+        assert_eq!(hit.file_type.as_deref(), Some("nacos_config"));
+    }
+
+    #[tokio::test]
+    async fn config_world_server_addr_keyword_is_recalled_exactly() {
+        let chunk = serde_json::json!({
+            "id": "pt-c-server-addr", "score": 0.9,
+            "payload": { "section_name": "spring.cloud.nacos.discovery", "data_id": "app.yaml",
+                         "namespace": "test", "group": "DEFAULT_GROUP",
+                         "text": "server-addr: nacos-headless:8848", "key_count": 1 }
+        });
+        let cws = CrossWorldSearch::new(
+            None,
+            Some(Arc::new(StubVector { hits: vec![chunk] })),
+            Some(Arc::new(StubEmbed)),
+            None,
+        );
+        let req = SearchRequest {
+            query: "server-addr".into(),
+            world: Some("config".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let result = cws.search(&req).await.unwrap();
+        assert_eq!(result.hits.len(), 1);
+        assert!(result.hits[0].snippet.contains("server-addr"));
+        assert_eq!(result.hits[0].entity_type, "ConfigChunk");
+        assert_eq!(result.hits[0].file_type.as_deref(), Some("nacos_config"));
     }
 
     #[tokio::test]
