@@ -85,11 +85,19 @@ pub struct SiliconFlowChatClient {
 
 impl SiliconFlowChatClient {
     /// 构建一个以 `base_url` 为目标、支持最大并发请求数的新客户端。
-    pub fn new(base_url: String, max_concurrent: usize) -> Self {
+    ///
+    /// `api_key` 为空时回退到 `SILICONFLOW_API_KEY` 环境变量。
+    pub fn new(base_url: String, api_key: String, max_concurrent: usize) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()
             .expect("reqwest::Client::builder() 不应失败");
+
+        let api_key = if api_key.is_empty() {
+            std::env::var("SILICONFLOW_API_KEY").unwrap_or_default()
+        } else {
+            api_key
+        };
 
         Self {
             client,
@@ -98,7 +106,7 @@ impl SiliconFlowChatClient {
             } else {
                 base_url
             },
-            api_key: std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
+            api_key,
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
         }
     }
@@ -375,7 +383,7 @@ mod tests {
 
     #[test]
     fn silicon_flow_chat_client_can_be_constructed() {
-        let client = SiliconFlowChatClient::new(SILICONFLOW_DEFAULT_URL.into(), 8);
+        let client = SiliconFlowChatClient::new(SILICONFLOW_DEFAULT_URL.into(), String::new(), 8);
         assert!(client.semaphore.available_permits() <= 16);
     }
 

@@ -323,6 +323,75 @@ fn load_siliconflow_api_key() -> String {
     String::new()
 }
 
+/// 根据 pipeline.yaml 的 `llm_provider` 构建 LLM 对话客户端。
+///
+/// - `xinference` → 本地 XInference 客户端
+/// - 其他（`siliconflow` 等）→ SiliconFlow 云 API 客户端
+///
+/// 返回 `(客户端, 模型名)`。两个调用方（普通文件管线与 Nacos/Jenkins
+/// 远程源管线）共用同一路由逻辑，保证 provider 配置一处生效。
+fn build_llm_client(
+    pipeline_config: &PipelineConfig,
+    max_concurrent: usize,
+) -> (Arc<dyn ChatClient>, String) {
+    let llm_provider = pipeline_config
+        .providers
+        .as_ref()
+        .map(|p| p.llm_provider.clone())
+        .unwrap_or_else(|| "siliconflow".to_string());
+
+    match llm_provider.as_str() {
+        "xinference" => {
+            let xi_cfg = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.xinference.as_ref());
+
+            let base_url = xi_cfg
+                .map(|c| c.url.as_str())
+                .unwrap_or("http://localhost:9997/v1")
+                .to_string();
+            let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
+            let model = xi_cfg
+                .map(|c| c.model_llm.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("qwen3.5")
+                .to_string();
+
+            tracing::info!("使用 XInference LLM: {} @ {}", model, base_url);
+            let client = Arc::new(XInferenceChatClient::new(
+                base_url.to_string(),
+                api_key,
+                max_concurrent,
+            ));
+            (client as Arc<dyn ChatClient>, model.to_string())
+        }
+        _ => {
+            let api_key = load_siliconflow_api_key();
+            let model = load_siliconflow_llm_model()
+                .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Qwen3-14B".to_string());
+
+            // R4：使用 SiliconFlow provider 的 URL——而非本地的
+            // inference_server.url。为空时回退到客户端的默认值。
+            let sf_url = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.siliconflow.as_ref())
+                .map(|s| s.url.clone())
+                .unwrap_or_default();
+            tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
+            let client = Arc::new(SiliconFlowChatClient::new(
+                sf_url,
+                api_key,
+                max_concurrent,
+            ));
+            (client as Arc<dyn ChatClient>, model)
+        }
+    }
+}
+
 /// 构建完成后对项目运行流水线分析。
 ///
 /// 这是纯粹的附加步骤——任何错误仅记录为警告，
@@ -346,59 +415,8 @@ async fn run_pipeline_analysis(
     // ── 2. 根据 llm_provider 配置连接推理服务器 ────────────────
     let infer_max_concurrent = pipeline_config.inference_server.max_concurrent;
 
-    // 从配置中获取 LLM provider
-    let llm_provider = pipeline_config
-        .providers
-        .as_ref()
-        .map(|p| p.llm_provider.clone())
-        .unwrap_or_else(|| "siliconflow".to_string());
-
-    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = match llm_provider.as_str() {
-        "xinference" => {
-            let xi_cfg = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.xinference.as_ref());
-
-            let base_url = xi_cfg
-                .map(|c| c.url.as_str())
-                .unwrap_or("http://localhost:9997/v1")
-                .to_string();
-            let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
-            let model = xi_cfg
-                .map(|c| c.model_llm.as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or("qwen3.5")
-                .to_string();
-
-            tracing::info!("使用 XInference LLM: {} @ {}", model, base_url);
-            let client = Arc::new(XInferenceChatClient::new(
-                base_url.to_string(),
-                api_key,
-                infer_max_concurrent,
-            ));
-            (client as Arc<dyn ChatClient>, model.to_string())
-        }
-        _ => {
-            let api_key = load_siliconflow_api_key();
-            let model = load_siliconflow_llm_model()
-                .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "Qwen3-14B".to_string());
-
-            // R4：使用 SiliconFlow provider 的 URL——而非本地的
-            // inference_server.url。为空时回退到客户端的默认值。
-            let sf_url = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|s| s.url.clone())
-                .unwrap_or_default();
-            tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
-            let client = Arc::new(SiliconFlowChatClient::new(sf_url, infer_max_concurrent));
-            (client as Arc<dyn ChatClient>, model)
-        }
-    };
+    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) =
+        build_llm_client(&pipeline_config, infer_max_concurrent);
 
     let inference_available = match infer_client.health_check().await {
         Ok(true) => {
@@ -430,7 +448,11 @@ async fn run_pipeline_analysis(
     if pipeline_config.processors.llm && inference_available {
         match PromptRegistry::load_default() {
             Ok(prompts) => {
-                let llm_config = pipeline_config.llm.unwrap_or_default();
+                let llm_config = pipeline_config
+        .llm
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
                 registry.register(Box::new(LlmClientProcessor::new(
                     infer_client.clone(),
                     infer_model.clone(),
@@ -782,33 +804,16 @@ pub async fn handle_nacos_build(
 
     // 4. 管线：注册 chunk → llm → store 处理器。
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let llm_config = pipeline_config.llm.unwrap_or_default();
+    let llm_config = pipeline_config
+        .llm
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
 
-    // LLM 客户端（F5 已断言 llm_provider == xinference）。
-    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = {
-        let xi_cfg = pipeline_config
-            .providers
-            .as_ref()
-            .and_then(|p| p.xinference.as_ref());
-        let base_url = xi_cfg
-            .map(|c| c.url.as_str())
-            .unwrap_or("http://localhost:9997/v1")
-            .to_string();
-        let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
-        let model = xi_cfg
-            .map(|c| c.model_llm.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("qwen3.5")
-            .to_string();
-        (
-            Arc::new(XInferenceChatClient::new(
-                base_url,
-                api_key,
-                pipeline_config.inference_server.max_concurrent,
-            )) as Arc<dyn ChatClient>,
-            model,
-        )
-    };
+    // LLM 客户端——与普通文件管线共用同一 provider 路由
+    // （F5 自检已放行非 xinference provider，如 siliconflow 云 API）。
+    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) =
+        build_llm_client(&pipeline_config, pipeline_config.inference_server.max_concurrent);
 
     let mut registry = ProcessorRegistry::new();
     if pipeline_config.processors.chunk {
