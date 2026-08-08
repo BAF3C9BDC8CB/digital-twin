@@ -33,6 +33,30 @@ const REQUEST_DEADLINE_SECS: u64 = 180;
 /// 指数退避的基础延迟（毫秒）（1s、2s、4s）。
 const RETRY_BASE_DELAY_MS: u64 = 1000;
 
+/// Failures safe to retry without replaying permanent client errors.
+pub fn is_transient_status(status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 429 | 502 | 503 | 504)
+}
+
+/// Parse Retry-After as delta-seconds (HTTP-date is intentionally left to the
+/// caller because provider clocks are not guaranteed to be synchronized).
+pub fn retry_after_delay(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+fn retry_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
+    retry_after.unwrap_or_else(|| {
+        let exponential = RETRY_BASE_DELAY_MS.saturating_mul(1u64 << attempt.min(6));
+        // Small deterministic jitter avoids synchronized workers without using
+        // a process-wide rate-limit claim.
+        Duration::from_millis(exponential + ((attempt as u64 * 37) % 101))
+    })
+}
+
 /// 默认模型名（可通过环境变量覆盖）。
 const DEFAULT_EMBED_MODEL: &str = "BAAI/bge-m3";
 const DEFAULT_RERANKER_MODEL: &str = "BAAI/bge-reranker-v2-m3";
@@ -172,6 +196,7 @@ impl SiliconFlowClient {
     ) -> Result<reqwest::Response, DtError> {
         let deadline = Instant::now() + Duration::from_secs(REQUEST_DEADLINE_SECS);
         let mut last_error = String::new();
+        let mut server_delay: Option<Duration> = None;
 
         for attempt in 0..=MAX_RETRIES {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -179,7 +204,7 @@ impl SiliconFlowClient {
                 break;
             }
             if attempt > 0 {
-                let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << (attempt - 1)));
+                let delay = retry_delay(attempt - 1, server_delay.take());
                 tracing::warn!(
                     "SiliconFlow {} 第 {}/{} 次尝试失败: {}，{:?} 后重试",
                     operation,
@@ -211,10 +236,11 @@ impl SiliconFlowClient {
                         return Ok(resp);
                     }
 
+                    server_delay = retry_after_delay(resp.headers());
                     let body = resp.text().await.unwrap_or_default();
 
                     // 速率受限——可重试
-                    if matches!(status.as_u16(), 429 | 502 | 503 | 504) {
+                    if is_transient_status(status) {
                         last_error = format!(
                             "HTTP {}: {}",
                             status,
@@ -464,6 +490,21 @@ impl RerankService for SiliconFlowClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_policy_classifies_status_and_retry_after() {
+        assert!(is_transient_status(reqwest::StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_transient_status(reqwest::StatusCode::BAD_GATEWAY));
+        assert!(!is_transient_status(reqwest::StatusCode::BAD_REQUEST));
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "7".parse().unwrap());
+        assert_eq!(retry_after_delay(&headers), Some(Duration::from_secs(7)));
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "not-a-duration".parse().unwrap(),
+        );
+        assert_eq!(retry_after_delay(&headers), None);
+    }
 
     #[test]
     fn new_sets_fields() {
