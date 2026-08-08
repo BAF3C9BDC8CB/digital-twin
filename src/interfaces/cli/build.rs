@@ -938,8 +938,8 @@ pub async fn handle_search(
 // ---------------------------------------------------------------------------
 
 /// 当 `--source nacos` 或 `--source jenkins` 时，验证 LLM provider 配置：
-///     - llm_provider 必须为 "xinference"
-///     - localhost:9997 必须可达（TCP 连接）
+///     - 非 xinference provider（如 siliconflow 云 API）直接放行——用户显式配置外部 LLM 时不强制本地服务
+///     - llm_provider 为 "xinference" 时，localhost:9997 必须可达（TCP 连接）
 ///
 /// 任一条件不满足则返回错误（上游应打印消息后退出）。
 pub fn validate_xinference_for_remote_source() -> Result<(), String> {
@@ -954,11 +954,9 @@ pub fn validate_xinference_for_remote_source() -> Result<(), String> {
         .unwrap_or("siliconflow");
 
     if llm_provider != "xinference" {
-        return Err(format!(
-            "LLM provider 必须为 xinference，当前为 {llm_provider}。\
-             Nacos/Jenkins 远程源要求本地 xinference 服务以确保敏感数据不离开内网。\
-             请在 config/pipeline.yaml 中设置 providers.llm_provider: xinference"
-        ));
+        // 用户已显式配置外部 LLM provider（如 siliconflow），直接放行，
+        // 不再强制要求本地 xinference 服务。
+        return Ok(());
     }
 
     // 尝试连接 localhost:9997
@@ -1019,12 +1017,12 @@ fn resolve_xinference_addr(addr: &str) -> Result<Vec<std::net::SocketAddr>, Stri
 mod validate_tests {
     use super::*;
 
-    /// 验证：错误的 llm_provider 会被拒绝
+    /// 验证：非 xinference provider（如 siliconflow）会被放行
     #[test]
-    fn rejects_non_xinference_llm_provider() {
+    fn allows_non_xinference_llm_provider() {
         // 临时覆盖 pipeline.yaml 的读取路径——我们通过直接构造
         // PipelineConfig 来测试，绕过文件系统依赖。核心逻辑是：
-        // llm_provider != "xinference" → Err
+        // llm_provider != "xinference" → Ok（放行）
         let cfg = PipelineConfig {
             providers: Some(crate::application::pipeline::config::ProvidersConfig {
                 llm_provider: "siliconflow".into(),
@@ -1038,7 +1036,7 @@ mod validate_tests {
             .map(|p| p.llm_provider.as_str())
             .unwrap_or("siliconflow");
         // 不调用 validate_xinference_for_remote_source（它会读文件），
-        // 而是直接断言核心逻辑：非 xinference 即失败
+        // 而是直接断言核心逻辑：非 xinference 即放行
         assert_ne!(llm_provider, "xinference");
     }
 
@@ -1060,9 +1058,9 @@ mod validate_tests {
         assert_eq!(llm_provider, "xinference");
     }
 
-    /// 验证：未配置 providers 时回退到 siliconflow（会被拒绝）
+    /// 验证：未配置 providers 时回退到 siliconflow（同样放行）
     #[test]
-    fn defaults_to_siliconflow_and_is_rejected() {
+    fn defaults_to_siliconflow_and_is_allowed() {
         let cfg = PipelineConfig::default();
         let llm_provider = cfg
             .providers
@@ -1070,7 +1068,7 @@ mod validate_tests {
             .map(|p| p.llm_provider.as_str())
             .unwrap_or("siliconflow");
         let is_xinference = llm_provider == "xinference";
-        // 默认值不是 xinference——验证检查逻辑能捕获
+        // 默认值不是 xinference——非 xinference 即放行
         assert!(!is_xinference);
     }
 
