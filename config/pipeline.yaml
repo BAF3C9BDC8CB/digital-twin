@@ -15,17 +15,18 @@ enabled: true
 # config.yaml.  Each capability (embed/rerank/llm) routes to a provider.
 providers:
   # Routing: which provider handles each capability
-  embed_provider: xinference
-  rerank_provider: xinference
-  llm_provider: xinference
+  embed_provider: siliconflow
+  rerank_provider: siliconflow
+  llm_provider: siliconflow
 
   # SiliconFlow (云 API)
   siliconflow:
+    max_concurrent: 20
     url: https://api.siliconflow.cn/v1
-    api_key: ""                    # Reads SILICONFLOW_API_KEY from env if empty
+    api_key: "sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip"                    # Reads SILICONFLOW_API_KEY from env if empty
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
-    model_llm: Qwen3-14B
+    model_llm: deepseek-ai/DeepSeek-V3.2
 
   # XInference (本地推理服务)
   xinference:

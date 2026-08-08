@@ -121,6 +121,7 @@ pub async fn handle_build(
                     String::new(), // embed 模型——聊天不需要
                     String::new(), // reranker 模型——聊天不需要
                     llm_model,
+                    20,
                 );
                 Some(Arc::new(client))
             }
@@ -139,6 +140,7 @@ pub async fn handle_build(
                     String::new(), // embed 模型——聊天不需要
                     String::new(), // reranker 模型——聊天不需要
                     llm_model,
+                    20,
                 );
                 Some(Arc::new(client))
             }
@@ -268,6 +270,7 @@ fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderC
         siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
         siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
         siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
         xinference_url: xi.map(|s| s.url.as_str()).unwrap_or("").to_string(),
         xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
         xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
@@ -382,10 +385,16 @@ fn build_llm_client(
                 .map(|s| s.url.clone())
                 .unwrap_or_default();
             tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
+            let sf_max_concurrent = pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.siliconflow.as_ref())
+                .map(|s| s.max_concurrent)
+                .unwrap_or(20);
             let client = Arc::new(SiliconFlowChatClient::new(
                 sf_url,
                 api_key,
-                max_concurrent,
+                sf_max_concurrent,
             ));
             (client as Arc<dyn ChatClient>, model)
         }
@@ -448,11 +457,7 @@ async fn run_pipeline_analysis(
     if pipeline_config.processors.llm && inference_available {
         match PromptRegistry::load_default() {
             Ok(prompts) => {
-                let llm_config = pipeline_config
-        .llm
-        .as_ref()
-        .cloned()
-        .unwrap_or_default();
+                let llm_config = pipeline_config.llm.as_ref().cloned().unwrap_or_default();
                 registry.register(Box::new(LlmClientProcessor::new(
                     infer_client.clone(),
                     infer_model.clone(),
@@ -804,16 +809,14 @@ pub async fn handle_nacos_build(
 
     // 4. 管线：注册 chunk → llm → store 处理器。
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let llm_config = pipeline_config
-        .llm
-        .as_ref()
-        .cloned()
-        .unwrap_or_default();
+    let llm_config = pipeline_config.llm.as_ref().cloned().unwrap_or_default();
 
     // LLM 客户端——与普通文件管线共用同一 provider 路由
     // （F5 自检已放行非 xinference provider，如 siliconflow 云 API）。
-    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) =
-        build_llm_client(&pipeline_config, pipeline_config.inference_server.max_concurrent);
+    let (infer_client, infer_model): (Arc<dyn ChatClient>, String) = build_llm_client(
+        &pipeline_config,
+        pipeline_config.inference_server.max_concurrent,
+    );
 
     let mut registry = ProcessorRegistry::new();
     if pipeline_config.processors.chunk {

@@ -191,6 +191,7 @@ pub async fn handle_kg_sync(
                     siliconflow_model_reranker:
                         crate::infrastructure::siliconflow::reranker_model_from_env(),
                     siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
+                    siliconflow_max_concurrent: 20,
                     xinference_url: String::new(),
                     xinference_api_key: String::new(),
                     xinference_model_embed: String::new(),

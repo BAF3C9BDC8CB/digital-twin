@@ -64,6 +64,7 @@ pub struct ProviderConfig {
     pub siliconflow_model_embed: String,
     pub siliconflow_model_reranker: String,
     pub siliconflow_model_llm: String,
+    pub siliconflow_max_concurrent: usize,
     /// XInference 客户端配置。
     pub xinference_url: String,
     pub xinference_api_key: String,
@@ -85,6 +86,7 @@ impl ProviderConfig {
             siliconflow_model_embed: "BAAI/bge-m3".into(),
             siliconflow_model_reranker: "BAAI/bge-reranker-v2-m3".into(),
             siliconflow_model_llm: "Qwen3-14B".into(),
+            siliconflow_max_concurrent: 20,
             xinference_url: String::new(),
             xinference_api_key: String::new(),
             xinference_model_embed: String::new(),
@@ -111,6 +113,7 @@ fn build_provider_router(
                 cfg.siliconflow_model_embed,
                 cfg.siliconflow_model_reranker,
                 cfg.siliconflow_model_llm,
+                cfg.siliconflow_max_concurrent,
             ),
         ))
     } else {

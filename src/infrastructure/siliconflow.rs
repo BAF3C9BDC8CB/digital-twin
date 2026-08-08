@@ -18,7 +18,9 @@
 //! 响应会以指数退避自动重试。
 
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmCapabilities, LlmService, RerankService};
@@ -124,6 +126,7 @@ pub struct SiliconFlowClient {
     model_reranker: String,
     /// Chat / LLM 模型名（如 `"Qwen/Qwen3-8B"`）。
     model_llm: String,
+    semaphore: Arc<Semaphore>,
 }
 
 impl SiliconFlowClient {
@@ -134,6 +137,7 @@ impl SiliconFlowClient {
         model_embed: impl Into<String>,
         model_reranker: impl Into<String>,
         model_llm: impl Into<String>,
+        max_concurrent: usize,
     ) -> Self {
         Self {
             http: build_http_client(),
@@ -142,6 +146,7 @@ impl SiliconFlowClient {
             model_embed: model_embed.into(),
             model_reranker: model_reranker.into(),
             model_llm: model_llm.into(),
+            semaphore: Arc::new(Semaphore::new(max_concurrent.max(1))),
         }
     }
 
@@ -164,6 +169,11 @@ impl SiliconFlowClient {
         req: reqwest::RequestBuilder,
         operation: &str,
     ) -> Result<reqwest::Response, DtError> {
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| DtError::Network(format!("SiliconFlow 并发信号量获取失败: {e}")))?;
         let mut last_error = String::new();
 
         for attempt in 0..=MAX_RETRIES {
@@ -448,6 +458,7 @@ mod tests {
             "BAAI/bge-m3",
             "BAAI/bge-reranker-v2-m3",
             "Qwen/Qwen3-8B",
+            20,
         );
         assert_eq!(client.base_url, "https://api.siliconflow.cn/v1");
         assert_eq!(client.api_key, "sk-test-key");
@@ -467,6 +478,7 @@ mod tests {
             "BAAI/bge-m3",
             "BAAI/bge-reranker-v2-m3",
             "Qwen/Qwen3-8B",
+            20,
         );
         assert_send(&client);
         assert_sync(&client);
@@ -480,6 +492,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "llm",
+            20,
         );
         // 通过内部方法检查 URL 构造
         let req = client.post("/embeddings");
@@ -508,6 +521,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "Qwen/Qwen3-8B",
+            20,
         );
         let caps = with_llm.capabilities();
         assert!(caps.embed);
@@ -521,6 +535,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "",
+            20,
         );
         assert!(!no_llm.capabilities().chat);
     }

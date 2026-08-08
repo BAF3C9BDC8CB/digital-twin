@@ -318,6 +318,7 @@ async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
         siliconflow_model_reranker: std::env::var("SILICONFLOW_RERANKER_MODEL")
             .unwrap_or_else(|_| "BAAI/bge-reranker-v2-m3".into()),
         siliconflow_model_llm: std::env::var("SILICONFLOW_LLM_MODEL").unwrap_or_default(),
+        siliconflow_max_concurrent: 20,
         xinference_url: String::new(),
         xinference_api_key: String::new(),
         xinference_model_embed: String::new(),

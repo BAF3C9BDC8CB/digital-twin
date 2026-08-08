@@ -693,6 +693,7 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
         siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
         siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
         siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
         xinference_url: xi_url.to_string(),
         xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
         xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),

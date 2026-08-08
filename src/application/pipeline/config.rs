@@ -243,10 +243,17 @@ pub struct SiliconFlowProviderConfig {
     pub model_reranker: String,
     #[serde(default)]
     pub model_llm: String,
+    /// SiliconFlow 云 API 最大并发请求数。
+    #[serde(default = "default_sf_max_concurrent")]
+    pub max_concurrent: usize,
 }
 
 fn default_sf_url() -> String {
     "https://api.siliconflow.cn/v1".into()
+}
+
+const fn default_sf_max_concurrent() -> usize {
+    20
 }
 
 impl Default for SiliconFlowProviderConfig {
@@ -257,6 +264,7 @@ impl Default for SiliconFlowProviderConfig {
             model_embed: String::new(),
             model_reranker: String::new(),
             model_llm: String::new(),
+            max_concurrent: default_sf_max_concurrent(),
         }
     }
 }
