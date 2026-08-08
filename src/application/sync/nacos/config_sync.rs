@@ -432,6 +432,19 @@ pub struct ConfigChunkVectorizer {
     vector: Arc<dyn VectorRepository>,
 }
 
+/// Canonical identity for a Nacos config chunk.
+/// `doc_id` identifies the config; `source_ref` identifies its section/key.
+pub fn nacos_chunk_source(
+    namespace: &str,
+    group: &str,
+    data_id: &str,
+    key: &str,
+) -> (String, String) {
+    let doc_id = format!("dt://nacos/{namespace}/{group}/{data_id}");
+    let source_ref = format!("{doc_id}#{key}");
+    (doc_id, source_ref)
+}
+
 impl ConfigChunkVectorizer {
     pub const COLLECTION: &str = "config_chunks";
     pub const VECTOR_DIM: u32 = 1024;
@@ -477,12 +490,10 @@ impl ConfigChunkVectorizer {
             .iter()
             .zip(vectors.iter())
             .map(|(chunk, vec)| {
-                let id = format!(
-                    "dt://nacos/{}/{}#{}",
-                    namespace, data_id, chunk.section_name
-                );
+                let (doc_id, source_ref) =
+                    nacos_chunk_source(namespace, group, data_id, &chunk.section_name);
                 serde_json::json!({
-                    "id": id,
+                    "id": source_ref,
                     "vector": vec,
                     "payload": {
                         // ---- 区块 ----
@@ -492,6 +503,9 @@ impl ConfigChunkVectorizer {
                         "namespace": namespace,
                         "data_id": data_id,
                         "group": group,
+                        "source": "nacos",
+                        "doc_id": doc_id,
+                        "source_ref": source_ref,
                         "environment": environment.unwrap_or(""),
                         // ---- 内容 ----
                         "text": build_chunk_text(chunk),
@@ -1249,6 +1263,13 @@ mod tests {
         assert_eq!(count, 0);
     }
 
+    #[test]
+    fn nacos_chunk_source_contract_is_canonical() {
+        let (doc_id, source_ref) = nacos_chunk_source("ns", "GROUP", "app.yaml", "spring.cloud");
+        assert_eq!(doc_id, "dt://nacos/ns/GROUP/app.yaml");
+        assert_eq!(source_ref, "dt://nacos/ns/GROUP/app.yaml#spring.cloud");
+    }
+
     #[tokio::test]
     async fn chunk_vectorizer_upserts_to_config_chunks() {
         let embed = Arc::new(MockEmbed);
@@ -1284,6 +1305,15 @@ mod tests {
         assert_eq!(upserted[0]["payload"]["section_name"], "spring.datasource");
         assert_eq!(upserted[0]["payload"]["key_count"], 2);
         assert_eq!(upserted[0]["payload"]["source_type"], "config_chunk");
+        assert_eq!(upserted[0]["payload"]["source"], "nacos");
+        assert_eq!(
+            upserted[0]["payload"]["doc_id"],
+            "dt://nacos/prod/DEFAULT/app.properties"
+        );
+        assert_eq!(
+            upserted[0]["payload"]["source_ref"],
+            "dt://nacos/prod/DEFAULT/app.properties#spring.datasource"
+        );
         assert_eq!(upserted[0]["payload"]["environment"], "test");
         assert!(upserted[0]["payload"]["text"]
             .as_str()

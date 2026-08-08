@@ -293,7 +293,6 @@ impl KgBridge {
 
         for cfg in &configs {
             let content = cfg.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let config_id = cfg.get("config_id").and_then(|v| v.as_str()).unwrap_or("");
             let data_id = cfg.get("data_id").and_then(|v| v.as_str()).unwrap_or("");
             let group = cfg
                 .get("group")
@@ -332,8 +331,15 @@ impl KgBridge {
                 .zip(vectors.iter())
                 .map(|((section_name, pairs), vec)| {
                     let text = Self::reconstruct_text(section_name, pairs, is_yaml);
+                    let (doc_id, source_ref) =
+                        crate::application::sync::nacos::config_sync::nacos_chunk_source(
+                            namespace,
+                            group,
+                            data_id,
+                            section_name,
+                        );
                     serde_json::json!({
-                        "id": format!("{}#{}", config_id, section_name),
+                        "id": source_ref,
                         "vector": vec,
                         "payload": {
                             // ---- 区块 ----
@@ -343,6 +349,9 @@ impl KgBridge {
                             "namespace": namespace,
                             "data_id": data_id,
                             "group": group,
+                            "source": "nacos",
+                            "doc_id": doc_id,
+                            "source_ref": source_ref,
                             "environment": "",  // F6: 与 ConfigChunkVectorizer schema 对齐
                             // ---- 内容 ----
                             "text": text,
