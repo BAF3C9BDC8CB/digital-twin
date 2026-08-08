@@ -368,6 +368,7 @@ impl ConfigVectorizer {
                         // ---- 元数据 ----
                         "source_type": "nacos_config",
                         "project": project,
+                        "llm_analysis": crate::application::knowledge::extract::NO_LLM_ANALYSIS,
                     }
                 })
             })
@@ -510,6 +511,7 @@ impl ConfigChunkVectorizer {
                         // ---- 内容 ----
                         "text": build_chunk_text(chunk),
                         "key_count": chunk.key_values.len(),
+                        "llm_analysis": crate::application::knowledge::extract::NO_LLM_ANALYSIS,
                         // ---- 元数据 ----
                         "source_type": "config_chunk",
                     }
@@ -1306,6 +1308,10 @@ mod tests {
         assert_eq!(upserted[0]["payload"]["key_count"], 2);
         assert_eq!(upserted[0]["payload"]["source_type"], "config_chunk");
         assert_eq!(upserted[0]["payload"]["source"], "nacos");
+        assert_eq!(
+            upserted[0]["payload"]["llm_analysis"],
+            crate::application::knowledge::extract::NO_LLM_ANALYSIS
+        );
         assert_eq!(
             upserted[0]["payload"]["doc_id"],
             "dt://nacos/prod/DEFAULT/app.properties"

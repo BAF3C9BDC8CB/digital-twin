@@ -15,6 +15,18 @@ pub use consolidate::{
     Consolidator,
 };
 pub use model::{EntityType, ExtractedEntity, ExtractedGraph, ExtractedRelation};
+
+/// 统一检索契约使用的明确空摘要。
+pub const NO_LLM_ANALYSIS: &str = "暂无摘要";
+
+fn non_empty_analysis(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        NO_LLM_ANALYSIS.to_string()
+    } else {
+        value.to_string()
+    }
+}
 /// 将一条 LLM 块响应解析为 [`ExtractedGraph`]（§5.5）。
 ///
 /// 容忍 markdown 围栏或前后赘述：先尝试整体解析，
@@ -144,9 +156,9 @@ pub fn parse_nacos_block_response(
         }
     };
 
-    // 实体：丢弃 name 或 purpose 均为空的无效输出（与 parse_block_response 同策略）。
+    // 实体：丢弃 name 为空的无效输出；purpose 为空统一为明确占位。
     raw.entities.retain(|e| {
-        let valid = !e.name.trim().is_empty() && !e.purpose.trim().is_empty();
+        let valid = !e.name.trim().is_empty();
         if !valid {
             tracing::warn!(
                 "丢弃无效 Nacos 实体（name/purpose 为空）: name='{}'",
@@ -159,7 +171,7 @@ pub fn parse_nacos_block_response(
     let graph = ExtractedGraph {
         doc_id: doc_id.to_string(),
         block_index,
-        block_summary: raw.summary.clone(),
+        block_summary: non_empty_analysis(&raw.summary),
         entities: raw
             .entities
             .into_iter()
@@ -168,7 +180,7 @@ pub fn parse_nacos_block_response(
                 canonical_name: e.name,
                 entity_type: serde_json::from_value(serde_json::json!(e.entity_type))
                     .unwrap_or(EntityType::Other),
-                summary: e.purpose,
+                summary: non_empty_analysis(&e.purpose),
                 keywords: Vec::new(),
             })
             .collect(),
@@ -298,6 +310,15 @@ mod tests {
         assert_eq!(g.relations[0].relation, "CONTAINS");
         assert_eq!(g.relations[0].tail, "order_db");
         assert_eq!(g.relations[1].relation, "DETECTED_IN");
+    }
+
+    #[test]
+    fn nacos_empty_analysis_uses_unified_placeholder() {
+        let raw = r#"{"summary":"  ","entities":[
+            {"name":"server.port","type":"ConfigKey","purpose":"  ","properties":{}}],"relations":[]}"#;
+        let g = parse_nacos_block_response(raw, DOC, 0).unwrap();
+        assert_eq!(g.block_summary, NO_LLM_ANALYSIS);
+        assert_eq!(g.entities[0].summary, NO_LLM_ANALYSIS);
     }
 
     /// nacos_config 输出中的小写/别名类型同样被词表接受。

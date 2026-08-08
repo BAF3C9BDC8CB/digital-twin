@@ -211,6 +211,8 @@ impl LlmClientProcessor {
 
         let degraded_count = graphs.iter().filter(|g| g.degraded).count();
 
+        // 每个 chunk 的分析已经固化在 graph.block_summary；保留旧 response
+        // 字段以兼容 DeepSeek/SiliconFlow 及旧消费者。
         output.set("graphs", &graphs);
         output.set("response", raw_responses.join("\n\n"));
         output.set("prompt_name", prompt_name);

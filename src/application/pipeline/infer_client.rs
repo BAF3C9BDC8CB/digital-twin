@@ -34,7 +34,30 @@ pub struct Choice {
 
 #[derive(Debug, Deserialize)]
 pub struct Message {
+    #[serde(deserialize_with = "deserialize_message_content")]
     pub content: String,
+}
+
+fn deserialize_message_content<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                serde_json::Value::String(s) => Some(s),
+                serde_json::Value::Object(item) => {
+                    item.get("text").and_then(|v| v.as_str()).map(str::to_owned)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +413,48 @@ impl ChatClient for XInferenceChatClient {
     }
 }
 
+/// GLM Coding OpenAI-compatible chat client.
+pub struct GLMCodingChatClient {
+    client: Client,
+    base_url: String,
+    api_key: String,
+    semaphore: Arc<Semaphore>,
+}
+
+impl GLMCodingChatClient {
+    pub fn new(base_url: String, api_key: String, max_concurrent: usize) -> Self {
+        let api_key = if api_key.is_empty() { std::env::var("GLMCODING_API_KEY").unwrap_or_default() } else { api_key };
+        Self {
+            client: Client::builder().timeout(std::time::Duration::from_secs(180)).build().expect("reqwest client builder failed"),
+            base_url: if base_url.is_empty() { "https://glmcoding.cn".into() } else { base_url },
+            api_key, semaphore: Arc::new(Semaphore::new(max_concurrent.max(1))),
+        }
+    }
+    pub async fn health_check(&self) -> Result<bool, String> {
+        let url = format!("{}/v1/models", self.base_url.trim_end_matches('/'));
+        let mut req = self.client.get(url);
+        if !self.api_key.is_empty() { req = req.header("Authorization", format!("Bearer {}", self.api_key)); }
+        req.send().await.map(|r| r.status().is_success()).map_err(|e| format!("GLM Coding 健康检查失败: {e}"))
+    }
+    pub async fn chat(&self, model: &str, system_prompt: &str, user_prompt: &str, temperature: f32, max_tokens: u32) -> Result<ChatResponse, String> {
+        let _permit = self.semaphore.acquire().await.map_err(|e| format!("信号量获取失败: {e}"))?;
+        let url = format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({"model": model, "messages": [{"role":"system", "content":system_prompt}, {"role":"user", "content":user_prompt}], "temperature": temperature, "max_tokens": max_tokens, "stream": false});
+        let mut req = self.client.post(url).json(&body);
+        if !self.api_key.is_empty() { req = req.header("Authorization", format!("Bearer {}", self.api_key)); }
+        let resp = req.send().await.map_err(|e| format!("GLM Coding 请求失败: {e}"))?;
+        let status = resp.status();
+        if !status.is_success() { return Err(format!("GLM Coding 返回 HTTP {status}")); }
+        resp.json::<ChatResponse>().await.map_err(|e| format!("GLM Coding 响应解析失败: {e}"))
+    }
+}
+
+#[async_trait]
+impl ChatClient for GLMCodingChatClient {
+    async fn chat(&self, model: &str, system_prompt: &str, user_prompt: &str, temperature: f32, max_tokens: u32) -> Result<ChatResponse, String> { GLMCodingChatClient::chat(self, model, system_prompt, user_prompt, temperature, max_tokens).await }
+    async fn health_check(&self) -> Result<bool, String> { GLMCodingChatClient::health_check(self).await }
+}
+
 // ---------------------------------------------------------------------------
 // 测试
 // ---------------------------------------------------------------------------
@@ -397,6 +462,25 @@ impl ChatClient for XInferenceChatClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_response_accepts_null_and_array_content() {
+        let null: ChatResponse = serde_json::from_value(serde_json::json!({
+            "choices": [{"message": {"content": null}}]
+        }))
+        .unwrap();
+        assert_eq!(null.choices[0].message.content, "");
+        let parts: ChatResponse = serde_json::from_value(serde_json::json!({
+            "choices": [{"message": {"content": [{"type":"text","text":"a"},{"text":"b"}]}}]
+        }))
+        .unwrap();
+        assert_eq!(parts.choices[0].message.content, "ab");
+        let strings: ChatResponse = serde_json::from_value(serde_json::json!({
+            "choices": [{"message": {"content": ["a", "b"]}}]
+        }))
+        .unwrap();
+        assert_eq!(strings.choices[0].message.content, "ab");
+    }
 
     #[test]
     fn silicon_flow_chat_client_can_be_constructed() {
