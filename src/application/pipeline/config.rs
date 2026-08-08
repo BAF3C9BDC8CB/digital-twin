@@ -151,6 +151,10 @@ pub struct LlmConfig {
     /// 模型单次回复最多生成的 token 数。
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+
+    /// 单文件内同时发起的 chunk LLM 请求数；仍受 provider 全局并发限制。
+    #[serde(default = "default_chunk_concurrency")]
+    pub chunk_concurrency: usize,
 }
 
 const fn default_temperature() -> f32 {
@@ -161,11 +165,16 @@ const fn default_max_tokens() -> u32 {
     4096
 }
 
+const fn default_chunk_concurrency() -> usize {
+    2
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
+            chunk_concurrency: default_chunk_concurrency(),
         }
     }
 }
@@ -371,6 +380,7 @@ mod tests {
         assert!(!cfg.processors.ocr);
         assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.1);
         assert_eq!(cfg.llm.as_ref().unwrap().max_tokens, 4096);
+        assert_eq!(cfg.llm.as_ref().unwrap().chunk_concurrency, 2);
     }
 
     #[test]
@@ -391,6 +401,7 @@ processors:
 llm:
   temperature: 0.5
   max_tokens: 2048
+  chunk_concurrency: 4
 ecosystem:
   enabled: true
   projects:
@@ -401,6 +412,7 @@ ecosystem:
         assert!(cfg.enabled);
         assert_eq!(cfg.inference_server.url, "http://infer:50052");
         assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.5);
+        assert_eq!(cfg.llm.as_ref().unwrap().chunk_concurrency, 4);
 
         let eco = cfg.ecosystem.unwrap();
         assert!(eco.enabled);

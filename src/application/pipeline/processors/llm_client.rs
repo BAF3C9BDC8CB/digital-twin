@@ -24,6 +24,7 @@
 //! "model"}`——逐字节不变。
 
 use async_trait::async_trait;
+use futures::stream::{self, StreamExt};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -144,7 +145,7 @@ impl LlmClientProcessor {
         Ok(output)
     }
 
-    /// 块级提取循环（§5.2）：每个 chunk 一次 LLM 调用，串行执行。
+    /// 块级提取：每个 chunk 一次 LLM 调用，受配置的单文件并发限制。
     ///
     /// 每个块的提示词使用块文本渲染（候选字段为空占位）。
     /// 每个响应解析为 [`ExtractedGraph`]；`prompt_name == "nacos_config"`
@@ -177,47 +178,36 @@ impl LlmClientProcessor {
             .get("chunks")
             .and_then(|v| v.as_array())
             .unwrap_or(&empty_chunks);
-
-        let mut graphs: Vec<ExtractedGraph> = Vec::with_capacity(chunks.len());
-        let mut raw_responses: Vec<String> = Vec::with_capacity(chunks.len());
+        let chunks_owned = chunks.clone();
 
         let file_started = Instant::now();
         tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
-        for (pos, chunk) in chunks.iter().enumerate() {
-            let block_index = chunk
-                .get("chunk_index")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(pos as u64);
-            let block_text = chunk
-                .get("text")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-
-            // 候选字段使用空占位（HanLP 已移除）。
-            let (entities, keywords) = ("（无）".to_string(), "（无）".to_string());
-            let render_ctx = build_block_render_context(ctx, block_text, &entities, &keywords);
-            let (system_prompt, user_prompt) = self
-                .prompt_registry
-                .render(prompt_name, &render_ctx)
-                .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
-
+        let limit = self.llm_config.chunk_concurrency.max(1);
+        let mut results = stream::iter(chunks_owned.into_iter().enumerate().map(|(pos, chunk)| {
+            let doc_id = doc_id.clone();
+            async move {
+            let block_index = chunk.get("chunk_index").and_then(|v| v.as_u64()).unwrap_or(pos as u64);
+            let block_text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or_default();
+            let render_ctx = build_block_render_context(ctx, block_text, "（无）", "（无）");
+            let rendered = self.prompt_registry.render(prompt_name, &render_ctx);
             let chunk_started = Instant::now();
             tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
-            let (raw, graph) = self
-                .extract_block(
-                    &system_prompt,
-                    &user_prompt,
-                    &doc_id,
-                    block_index as u32,
-                    prompt_name,
-                )
-                .await;
-            if let Some(raw) = raw {
-                raw_responses.push(raw);
-            }
-            graphs.push(graph);
+            let result = match rendered {
+                Ok((system_prompt, user_prompt)) => self.extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32, prompt_name).await,
+                Err(_e) => (None, degraded_graph(&doc_id, block_index as u32)),
+            };
             tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
-        }
+            (block_index, result)
+        }})).buffer_unordered(limit).collect::<Vec<_>>().await;
+        results.sort_by_key(|(index, _)| *index);
+        let graphs: Vec<ExtractedGraph> = results
+            .iter()
+            .map(|(_, (_, graph))| graph.clone())
+            .collect();
+        let raw_responses: Vec<String> = results
+            .into_iter()
+            .filter_map(|(_, (raw, _))| raw)
+            .collect();
 
         let degraded_count = graphs.iter().filter(|g| g.degraded).count();
 
