@@ -21,7 +21,7 @@ providers:
 
   # SiliconFlow (云 API)
   siliconflow:
-    max_concurrent: 20
+    max_concurrent: 8
     url: https://api.siliconflow.cn/v1
     api_key: "sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip"                    # Reads SILICONFLOW_API_KEY from env if empty
     model_embed: BAAI/bge-m3

@@ -840,44 +840,71 @@ pub async fn handle_nacos_build(
     }
 
     let registry = Arc::new(registry);
-    let engine = ProcessorEngine::new(registry, pipeline_config.inference_server.max_concurrent);
+    let provider_concurrency = if pipeline_config
+        .providers
+        .as_ref()
+        .map(|p| p.llm_provider.as_str())
+        == Some("siliconflow")
+    {
+        pipeline_config
+            .providers
+            .as_ref()
+            .and_then(|p| p.siliconflow.as_ref())
+            .map(|p| p.max_concurrent)
+            .unwrap_or(8)
+    } else {
+        pipeline_config.inference_server.max_concurrent
+    };
+    let engine = ProcessorEngine::new(registry, provider_concurrency);
 
-    // 5. 执行虚拟文件管线（Nacos 源 → select_prompt 路由 nacos_config 词表）。
-    let selected_for_snapshot = selected.clone();
-    let analyses = engine
-        .analyze_virtual_batch(selected, project.to_string())
-        .await;
-    let success = analyses.iter().filter(|a| a.success).count();
-    tracing::info!("Nacos 管线完成: {success}/{} 成功", analyses.len());
+    // 5. 分批执行并在每批完成后保存快照，避免 175 条配置整批阻塞且进度长期为 0。
+    const NACOS_BATCH_SIZE: usize = 10;
+    let total = selected.len();
+    let mut completed = 0usize;
+    let mut succeeded = 0usize;
+    for batch in selected.chunks(NACOS_BATCH_SIZE) {
+        let batch_files = batch.to_vec();
+        let analyses = engine
+            .analyze_virtual_batch(batch_files, project.to_string())
+            .await;
+        let batch_success = analyses.iter().filter(|a| a.success).count();
+        succeeded += batch_success;
+        completed += analyses.len();
+        tracing::info!(
+            completed,
+            total,
+            succeeded,
+            failed = completed - succeeded,
+            "Nacos 批次完成"
+        );
 
-    // 6. 更新快照：只记录成功处理（管线完整跑通）的虚拟文件。
-    if let Some(repo) = snapshot {
-        let snapshots: Vec<FileSnapshot> = analyses
-            .iter()
-            .filter(|a| a.success)
-            .map(|a| {
-                let content_hash = selected_for_snapshot
-                    .iter()
-                    .find(|vf| vf.virtual_path == a.file_path.to_string_lossy())
-                    .map(|vf| vf.content_hash.clone())
-                    .unwrap_or_default();
-                FileSnapshot {
-                    file_path: a.file_path.to_string_lossy().to_string(),
-                    project: project.to_string(),
-                    file_sha1: content_hash,
-                    file_mtime: 0.0,
-                    method_count: 0,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                }
-            })
-            .collect();
-        if !snapshots.is_empty() {
-            strategy
-                .update_snapshots(repo.as_ref(), project, &snapshots)
-                .await
-                .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
+        if let Some(repo) = snapshot.as_ref() {
+            let snapshots: Vec<FileSnapshot> = analyses
+                .iter()
+                .filter(|a| a.success)
+                .filter_map(|a| {
+                    batch
+                        .iter()
+                        .find(|vf| vf.virtual_path == a.file_path.to_string_lossy())
+                        .map(|vf| FileSnapshot {
+                            file_path: a.file_path.to_string_lossy().to_string(),
+                            project: project.to_string(),
+                            file_sha1: vf.content_hash.clone(),
+                            file_mtime: 0.0,
+                            method_count: 0,
+                            updated_at: chrono::Utc::now().to_rfc3339(),
+                        })
+                })
+                .collect();
+            if !snapshots.is_empty() {
+                strategy
+                    .update_snapshots(repo.as_ref(), project, &snapshots)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("快照更新失败: {e}"))?;
+            }
         }
     }
+    tracing::info!("Nacos 管线完成: {succeeded}/{total} 成功");
 
     Ok(())
 }

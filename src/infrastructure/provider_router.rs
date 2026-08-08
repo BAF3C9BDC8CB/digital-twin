@@ -336,6 +336,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "qwen",
+            20,
         ));
         let router = EmbedProviderRouter::from_siliconflow(client);
         assert!(router.siliconflow.is_some());
@@ -350,6 +351,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "qwen",
+            20,
         ));
         let xi = Arc::new(XInferenceClient::new(
             "http://localhost:9997/v1",
@@ -388,6 +390,7 @@ mod tests {
             "bge-m3",
             "reranker",
             "qwen",
+            20,
         ));
         let config = ProviderRouterConfig {
             embed_provider: "unknown".into(),

@@ -19,7 +19,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 use crate::domain::error::DtError;
@@ -28,6 +28,7 @@ use crate::domain::types::HealthStatus;
 
 /// 受速率限制请求的最大重试次数。
 const MAX_RETRIES: u32 = 3;
+const REQUEST_DEADLINE_SECS: u64 = 180;
 
 /// 指数退避的基础延迟（毫秒）（1s、2s、4s）。
 const RETRY_BASE_DELAY_MS: u64 = 1000;
@@ -169,14 +170,14 @@ impl SiliconFlowClient {
         req: reqwest::RequestBuilder,
         operation: &str,
     ) -> Result<reqwest::Response, DtError> {
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
-            .map_err(|e| DtError::Network(format!("SiliconFlow 并发信号量获取失败: {e}")))?;
+        let deadline = Instant::now() + Duration::from_secs(REQUEST_DEADLINE_SECS);
         let mut last_error = String::new();
 
         for attempt in 0..=MAX_RETRIES {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
             if attempt > 0 {
                 let delay = Duration::from_millis(RETRY_BASE_DELAY_MS * (1 << (attempt - 1)));
                 tracing::warn!(
@@ -187,16 +188,22 @@ impl SiliconFlowClient {
                     last_error,
                     delay
                 );
-                tokio::time::sleep(delay).await;
+                tokio::time::sleep(delay.min(remaining)).await;
             }
+
+            // 仅在实际发送时占用 permit，退避等待期间释放并发槽位。
+            let _permit =
+                self.semaphore.acquire().await.map_err(|e| {
+                    DtError::Network(format!("SiliconFlow 并发信号量获取失败: {e}"))
+                })?;
 
             // 每次构建一个全新的请求（reqwest::RequestBuilder 不可 Clone）
             let req_built = req
                 .try_clone()
                 .ok_or_else(|| DtError::Repository("SiliconFlow: 请求克隆失败".into()))?;
 
-            match req_built.send().await {
-                Ok(resp) => {
+            match tokio::time::timeout(remaining, req_built.send()).await {
+                Ok(Ok(resp)) => {
                     let status = resp.status();
 
                     // 成功
@@ -207,8 +214,12 @@ impl SiliconFlowClient {
                     let body = resp.text().await.unwrap_or_default();
 
                     // 速率受限——可重试
-                    if status.as_u16() == 429 || status.as_u16() == 503 {
-                        last_error = format!("HTTP {}: {}", status, &body[..body.len().min(200)]);
+                    if matches!(status.as_u16(), 429 | 502 | 503 | 504) {
+                        last_error = format!(
+                            "HTTP {}: {}",
+                            status,
+                            body.chars().take(200).collect::<String>()
+                        );
                         continue;
                     }
 
@@ -218,7 +229,7 @@ impl SiliconFlowClient {
                         operation, status, body
                     )));
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     if e.is_timeout() || e.is_connect() {
                         last_error = format!("connection: {}", e);
                         continue;
@@ -227,6 +238,10 @@ impl SiliconFlowClient {
                         "SiliconFlow {} 请求失败: {}",
                         operation, e
                     )));
+                }
+                Err(_) => {
+                    last_error = format!("请求超过总 deadline {} 秒", REQUEST_DEADLINE_SECS);
+                    break;
                 }
             }
         }
