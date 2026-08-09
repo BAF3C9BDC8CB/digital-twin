@@ -155,8 +155,10 @@ pub async fn wire() -> AppComponents {
         vector.clone(),
         snapshot,
         embed.clone(),
-        None,  // siliconflow——尚未通过 gRPC 接入
-        false, // gRPC 构建默认增量
+        None,          // llm_client——尚未通过 gRPC 接入
+        String::new(), // llm_model
+        None,          // target_file
+        false,         // gRPC 构建默认增量
         batch_config,
         false, // skip_embed
     ));

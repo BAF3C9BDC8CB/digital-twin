@@ -60,7 +60,7 @@ fn build_client() -> (Arc<dyn ChatClient>, String) {
             let model = std::env::var("EXTRACT_MODEL")
                 .unwrap_or_else(|_| "Qwen/Qwen2.5-14B-Instruct".to_string());
             (
-                Arc::new(SiliconFlowChatClient::new(String::new(), 4)),
+                Arc::new(SiliconFlowChatClient::new(String::new(), String::new(), 4)),
                 model,
             )
         }

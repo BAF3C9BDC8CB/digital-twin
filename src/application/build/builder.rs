@@ -1,4 +1,5 @@
 //! Build 命令 — `dt build` 的 CLI 入口。
+//! Hook 验证：单文件修改应触发增量构建。
 //!
 //! 本模块定义带 clap 参数的 `BuildCommand` 结构体，
 //! 并提供执行构建流水线的 `run()` 方法。
@@ -13,8 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::service::BuildServiceImpl;
+use crate::application::pipeline::infer_client::ChatClient;
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// Build 命令 — 将项目源代码索引到知识图谱。
 ///
@@ -53,7 +54,9 @@ pub struct BuildDependencies {
     pub vector: Option<Arc<dyn VectorRepository>>,
     pub snapshot: Option<Arc<dyn SnapshotRepository>>,
     pub embed: Option<Arc<dyn EmbedService>>,
-    pub siliconflow: Option<Arc<SiliconFlowClient>>,
+    pub llm_client: Option<Arc<dyn ChatClient>>,
+    pub llm_model: String,
+    pub target_file: Option<PathBuf>,
     pub batch_config: Option<BatchConfig>,
     /// 跳过向量嵌入（保留 Qdrant 中的已有向量）。
     pub skip_embed: bool,
@@ -79,7 +82,9 @@ impl BuildCommand {
             deps.vector,
             deps.snapshot,
             deps.embed,
-            deps.siliconflow,
+            deps.llm_client,
+            deps.llm_model,
+            deps.target_file,
             self.full,
             batch,
             deps.skip_embed || self.skip_embed,

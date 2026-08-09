@@ -47,10 +47,12 @@ pub async fn handle_build(
         parser_registry,
         graph,
         vector,
-        None,  // snapshot——gRPC 构建不需要
-        None,  // embed——使用 noop
-        None,  // siliconflow——尚未通过 gRPC 接入
-        false, // gRPC 构建默认增量
+        None,          // snapshot——gRPC 构建不需要
+        None,          // embed——使用 noop
+        None,          // llm_client——尚未通过 gRPC 接入
+        String::new(), // llm_model
+        None,          // target_file
+        false,         // gRPC 构建默认增量
         BatchConfig::default(),
         false, // skip_embed
     );

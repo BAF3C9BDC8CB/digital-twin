@@ -36,7 +36,7 @@ dt search "XX" --limit 10                                  # all 世界
 
 | 用户做了 | MCP Tool（首选） | 说明 |
 |---------|-----------------|------|
-| 修改了代码文件（.java/.py/.ts等） | ✅ 插件自动触发，AI 无需操作 | 自动增量索引 |
+| 修改了代码文件（.java/.py/.ts等） | OpenCode after-edit Hook | 脚本调用 `cargo run ... build --path <根目录> --file <文件>`；失败查看 Hook 日志 |
 | 批量同步 / 首次索引 | `dt_build(path="<根目录>", name="<项目名>")` | 手动触发 |
 | 删除了文件 | `dt_build(path="<根目录>", name="<项目名>", full=true)` | 全量重建，不再支持单文件删除 |
 | 修改了 Nacos/Apollo 配置 | `nacos_sync(env="test")`（测试）或 `nacos_sync(env="prod")`（生产） | 同步到 KG |
@@ -64,9 +64,10 @@ dt search "XX" --limit 10                                  # all 世界
 
 | 场景 | 应执行 | 说明 |
 |------|--------|------|
-| 搜索失败/报错/行为异常 | `dt_health`（MCP）/ `dt health`（CLI） | 5 项检查：Memgraph、Embed、Qdrant、KG Bridge、全文索引 |
+| 搜索失败/报错/行为异常 | `dt_health`（MCP）/ `dt health`（CLI） | 检查 Memgraph、Qdrant、SQLite 和 Embed/SiliconFlow；不代表当前 LLM provider 健康 |
 | "dt_search 返回空" | 先 `dt_health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
 | "knowledge 世界报错" | `dt_health`，看 KG Bridge 检查项 | kg_nodes 集合可能不存在，需 `dt_kg_sync` |
+| `llm_analysis` 为空 | `tail -n 100 /var/log/digital-twin/dt-daemon.log` | 确认 provider、429/401/JSON、Qdrant upsert 和 progress 状态后再增量构建 |
 | 验证新项目解析是否正常 | `dt build --path <路径> --name <项目名>` 后用 `dt_health` 确认 | 实测索引（无独立 validate 命令） |
 | 数据备份/清空 | `dt_backup`（MCP）/ `dt clean`（CLI） | 运维类工具 |
 

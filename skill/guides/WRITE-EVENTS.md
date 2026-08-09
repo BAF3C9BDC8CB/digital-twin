@@ -21,15 +21,29 @@ dt event --type SoftwareInstalled --entity-id "<包名>" --entity-type Software 
 dt nacos-sync test
 ```
 
-## 代码实体同步（自动）
+## 代码实体同步
 
-`dt build` 已由 OpenCode 插件自动触发（`tool.execute.after` 钩子拦截 `edit`/`write`），**AI 无需手动执行**。
+OpenCode after-edit Hook 脚本为：
+
+```text
+scripts/opencode-after-edit.sh
+```
+
+它调用真正的单文件增量构建：
+
+```bash
+cargo run --quiet --manifest-path <项目根>/Cargo.toml -- \
+  build --path <项目根> --file <相对或绝对文件路径>
+```
+
+Hook 已在 `/home/luis/opencode.json` 配置；当前已验证脚本级触发，真实 OpenCode 会话需在 OpenCode CLI 可用时验证。
 
 | 触发操作 | 条件 | 执行方式 |
 |---------|------|---------|
-| 源码修改 | 自动（插件） | 无需 AI 执行 |
-| 删除文件 | 文件已删除 | MCP `dt_build(path="<项目根>", name="<项目名>", full=true)`；CLI `dt build --full --path <路径> --name <项目名>`（全量重建，无单文件删除命令） |
-| 批量同步 / 项目首次索引 | 项目维度 | MCP `dt_build(path="<项目根>", name="<项目名>")`；CLI 降级 `dt build --path <路径> --name <项目名>` |
+| 源码修改 | OpenCode Hook | 自动调用脚本中的 `cargo run ... build --path <项目根> --file <文件>` |
+| Hook 失败或批量修改 | 手动/定时兜底 | `dt build --path <项目根>` |
+| 删除文件 | 单文件删除需清理旧数据 | 优先项目级增量；无法确认快照时使用 `dt build --path <项目根> --full` |
+| 批量同步 / 项目首次索引 | 项目维度 | MCP `dt_build`；CLI `dt build --path <路径> --name <项目名>` |
 
 ## 完全不操作
 

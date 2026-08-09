@@ -23,12 +23,13 @@ use std::sync::Arc;
 
 use super::strategy::BuildStrategy;
 use crate::application::knowledge::extract::purge_document;
+use crate::application::pipeline::infer_client::ChatClient;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
-use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// 发往 SiliconFlow 的最大并发 LLM 分析请求数。
-const PHASE2_CONCURRENCY: usize = 5;
+// Provider 请求并发由配置降至 4；文档 chunk 在 pipeline.yaml 中为 1。
+const PHASE2_CONCURRENCY: usize = 4;
 
 /// 默认提示词路径（当 config/prompts/code_analysis.yaml 缺失时使用）。
 const PHASE2_DEFAULT_PROMPT: &str = "\
@@ -66,8 +67,10 @@ pub struct ExtractionResult {
 pub struct PipelineTemplate {
     parser_registry: Arc<ParserRegistry>,
     batch_config: BatchConfig,
-    /// 可选的 SiliconFlow 客户端，用于 Phase 2（代码语义分析）。
-    siliconflow: Option<Arc<SiliconFlowClient>>,
+    /// 配置路由后的 LLM 客户端，用于 Phase 2（代码语义分析）。
+    llm_client: Option<Arc<dyn ChatClient>>,
+    llm_model: String,
+    target_file: Option<std::path::PathBuf>,
     /// 跳过向量嵌入（设置 processors.embed=false 以保留已有向量）。
     skip_embed: bool,
 }
@@ -77,12 +80,16 @@ impl PipelineTemplate {
     pub fn new(
         parser_registry: Arc<ParserRegistry>,
         batch_config: BatchConfig,
-        siliconflow: Option<Arc<SiliconFlowClient>>,
+        llm_client: Option<Arc<dyn ChatClient>>,
+        llm_model: String,
+        target_file: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             parser_registry,
             batch_config,
-            siliconflow,
+            llm_client,
+            llm_model,
+            target_file,
             skip_embed: false,
         }
     }
@@ -109,7 +116,10 @@ impl PipelineTemplate {
         let start = std::time::Instant::now();
 
         // 步骤 1：扫描文件
-        let all_files = scanner::collect_files(root, scan_config);
+        let all_files = match &self.target_file {
+            Some(file) => vec![file.clone()],
+            None => scanner::collect_files(root, scan_config),
+        };
         let files_scanned = all_files.len();
 
         // 步骤 1b：扫描文档文件
@@ -335,19 +345,20 @@ impl PipelineTemplate {
         //
         // 注意：仅当 processors.store 为 true 时才需要 embed 与 vector。
         // 当 store 为 false 时，我们仍运行 LLM 分析，但跳过 embed+upsert 步骤。
-        let phase2_client_available = self.siliconflow.is_some();
+        let phase2_client_available = self.llm_client.is_some();
         let phase2_snapshot_available = snapshot_repo.is_some();
 
         if let (true, true) = (phase2_client_available, phase2_snapshot_available) {
-            let client = self.siliconflow.as_ref().unwrap();
+            let client = self.llm_client.as_ref().unwrap();
             let repo = snapshot_repo.as_ref().unwrap();
             let methods = &extraction.methods;
+            let llm_model = self.llm_model.clone();
             if !methods.is_empty() {
                 let system_prompt = load_code_analysis_prompt();
                 let collection = crate::shared::collections::CODE_METHODS.to_string();
 
                 // 构建任务列表：跳过已用相同源码哈希分析过的方法
-                let mut jobs: Vec<(crate::domain::types::MethodBlock, String)> = Vec::new();
+                let mut jobs: Vec<(crate::domain::types::MethodBlock, String, String)> = Vec::new();
                 for m in methods {
                     let mut source_text = m.source_text.clone();
                     if source_text.len() < 10 {
@@ -382,7 +393,7 @@ impl PipelineTemplate {
                     }
                     let mut m2 = m.clone();
                     m2.source_text = source_text;
-                    jobs.push((m2, hash));
+                    jobs.push((m2, hash, prog_key));
                 }
 
                 let total = jobs.len();
@@ -394,7 +405,8 @@ impl PipelineTemplate {
                 );
 
                 if total > 0 {
-                    // 派生后台任务 — 构建立即返回
+                    // 同步完成 Phase 2，确保进程退出前 LLM 分析已持久化。
+                    // 失败的方法不会写入 pipeline_progress，下一次增量构建会自动重试。
                     // 当 processors.store 为 false 时，embed_svc 与 vector_repo 可能为 None
                     let client_cloned = client.clone();
                     let repo_cloned = repo.clone();
@@ -402,11 +414,11 @@ impl PipelineTemplate {
                     let embed_svc_opt = embed.clone();
                     let vector_repo_opt = vector.clone();
 
-                    tokio::spawn(async move {
-                        tracing::info!("Phase 2 后台工作线程已启动: {} 个方法", total);
+                    let phase2_handle = tokio::spawn(async move {
+                        tracing::info!("Phase 2 工作线程已启动: {} 个方法", total);
 
                         let results: Vec<(String, bool)> = stream::iter(
-                            jobs.into_iter().map(|(method, hash)| {
+                            jobs.into_iter().map(|(method, hash, prog_key)| {
                                 let cli = client_cloned.clone();
                                 let repo_snap = repo_cloned.clone();
                                 let embed_svc = embed_svc_opt.clone();
@@ -414,17 +426,40 @@ impl PipelineTemplate {
                                 let sp = system_prompt.clone();
                                 let coll = collection.clone();
                                 let proj = proj.clone();
+                                let model = llm_model.clone();
                                 async move {
                                     let method_name = method.name.clone();
                                     let method_id = method.method_id.clone();
+                                    let started = std::time::Instant::now();
+                                    tracing::info!(
+                                        phase = "phase2",
+                                        project = %proj,
+                                        method = %method_name,
+                                        provider = "configured",
+                                        model = %model,
+                                        stage = "chat_start",
+                                        "LLM 方法分析开始"
+                                    );
 
-                                    match cli.chat(&sp, &method.source_text, 0.1, 100).await {
-                                        Ok(llm_response) => {
-                                            let _ = repo_snap
-                                                .mark_llm_analyzed(&proj, &format!("method:{}", method_id), &hash)
-                                                .await;
-
-                                            // 仅当启用 store 时（embed_svc 与 vector_repo 可用）才嵌入并 upsert
+                                    match cli.chat(&model, &sp, &method.source_text, 0.1, 100).await {
+                                        Ok(response) => {
+                                            let llm_response = response
+                                                .choices
+                                                .first()
+                                                .map(|choice| choice.message.content.clone())
+                                                .unwrap_or_default();
+                                            tracing::info!(
+                                                phase = "phase2",
+                                                project = %proj,
+                                                method = %method_name,
+                                                stage = "chat_success",
+                                                elapsed_ms = started.elapsed().as_millis() as u64,
+                                                response_len = llm_response.len(),
+                                                "LLM 方法分析响应成功"
+                                            );
+                                            // 仅当启用 store 时（embed_svc 与 vector_repo 可用）才嵌入并 upsert。
+                                            // 只有 LLM 响应已经成功持久化后，才记录进度；否则下次增量构建必须重试。
+                                            let mut persisted = false;
                                             if let (Some(svc), Some(repo_vec)) = (embed_svc.as_ref(), vector_repo.as_ref()) {
                                                 match svc.embed_batch(&[llm_response.clone()]).await {
                                                     Ok(embeddings) => {
@@ -450,8 +485,19 @@ impl PipelineTemplate {
                                                                     "llm_analysis": llm_response,
                                                                 }
                                                             });
-                                                            if let Err(e) = repo_vec.upsert(&coll, vec![point]).await {
-                                                                tracing::warn!("Phase 2 upsert 失败 {}: {}", method_name, e);
+                                                            match repo_vec.upsert(&coll, vec![point]).await {
+                                                                Ok(()) => {
+                                                                    persisted = true;
+                                                                    tracing::info!(
+                                                                        phase = "phase2",
+                                                                        project = %proj,
+                                                                        method = %method_name,
+                                                                        stage = "upsert_success",
+                                                                        elapsed_ms = started.elapsed().as_millis() as u64,
+                                                                        "LLM 分析已写入 Qdrant"
+                                                                    );
+                                                                }
+                                                                Err(e) => tracing::warn!("Phase 2 upsert 失败 {}: {}", method_name, e),
                                                             }
                                                         }
                                                     }
@@ -459,13 +505,32 @@ impl PipelineTemplate {
                                                         tracing::warn!("Phase 2 embed 失败 {}: {}", method_name, e);
                                                     }
                                                 }
-                                            } else {
-                                                // store=false：跳过 embed+upsert，仅记录 LLM 响应
-                                                tracing::debug!("Phase 2 LLM 完成（未存储）{}: {}", method_name, llm_response.chars().take(50).collect::<String>());
                                             }
 
-                                            tracing::info!("Phase 2 完成 {}", method_name);
-                                            (method_name, true)
+                                            if persisted {
+                                                if let Err(e) = repo_snap
+                                                    .mark_llm_analyzed(&proj, &prog_key, &hash)
+                                                    .await
+                                                {
+                                                    tracing::warn!("Phase 2 进度记录失败 {}: {}", method_name, e);
+                                                    persisted = false;
+                                                } else {
+                                                    tracing::info!(
+                                                        phase = "phase2",
+                                                        project = %proj,
+                                                        method = %method_name,
+                                                        stage = "progress_success",
+                                                        elapsed_ms = started.elapsed().as_millis() as u64,
+                                                        "LLM 分析进度已记录"
+                                                    );
+                                                }
+                                            }
+                                            if persisted {
+                                                tracing::info!("Phase 2 完成 {}", method_name);
+                                            } else {
+                                                tracing::warn!("Phase 2 结果未持久化，下次增量构建将重试 {}", method_name);
+                                            }
+                                            (method_name, persisted)
                                         }
                                         Err(e) => {
                                             tracing::warn!("Phase 2 失败 {}: {}", method_name, e);
@@ -488,7 +553,10 @@ impl PipelineTemplate {
                         );
                     });
 
-                    tracing::info!("Phase 2: 已提交 {} 个方法进行后台 LLM 分析", total);
+                    if let Err(e) = phase2_handle.await {
+                        tracing::warn!("Phase 2 任务异常退出: {e}");
+                    }
+                    tracing::info!("Phase 2: {} 个方法分析任务已完成", total);
                 }
             }
         }
@@ -1006,7 +1074,8 @@ mod tests {
     #[test]
     fn pipeline_can_be_created() {
         let registry = Arc::new(ParserRegistry::new());
-        let _pipeline = PipelineTemplate::new(registry, BatchConfig::default(), None);
+        let _pipeline =
+            PipelineTemplate::new(registry, BatchConfig::default(), None, String::new(), None);
     }
 
     #[test]

@@ -71,6 +71,30 @@ impl SqliteRepo {
             );",
         )
         .map_err(|e| DtError::Repository(format!("SQLite schema: {e}")))?;
+        // Existing installations predate file_sha1 on build_progress.  Keep
+        // them compatible so failed LLM work can be retried incrementally.
+        let has_file_sha1: bool = conn
+            .prepare("PRAGMA table_info(build_progress)")
+            .and_then(|mut stmt| {
+                let mut rows = stmt.query([])?;
+                let mut found = false;
+                while let Some(row) = rows.next()? {
+                    let name: String = row.get(1)?;
+                    if name == "file_sha1" {
+                        found = true;
+                        break;
+                    }
+                }
+                Ok(found)
+            })
+            .map_err(|e| DtError::Repository(format!("SQLite schema inspect: {e}")))?;
+        if !has_file_sha1 {
+            conn.execute(
+                "ALTER TABLE build_progress ADD COLUMN file_sha1 TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| DtError::Repository(format!("SQLite schema migrate: {e}")))?;
+        }
         Ok(())
     }
 }

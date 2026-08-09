@@ -1,4 +1,23 @@
-# 触发规则（已自动化）
+# 触发规则（项目构建与事件）
+
+## 代码修改后的索引触发
+
+OpenCode 修改文件后，项目 Hook 脚本：
+
+```text
+scripts/opencode-after-edit.sh
+```
+
+调用单文件增量构建：
+
+```bash
+cargo run --quiet --manifest-path <项目根>/Cargo.toml -- \
+  build --path <项目根> --file <文件>
+```
+
+Hook 使用文件锁，实际由脚本调用仓库源码的 `cargo run`；手工兜底时才使用 `dt build`。失败写入 `/var/log/digital-twin/opencode-build.log`；真实 OpenCode 会话需在 OpenCode CLI 可用时单独验证。
+
+## 事件写入
 
 事件写入已由 Hook 系统自动处理，AI 不再需要手动调用 `dt event`：
 

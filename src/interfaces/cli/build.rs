@@ -44,6 +44,13 @@ pub async fn handle_build(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string())
     });
+    let target_file = file.as_ref().map(|f| {
+        if f.is_absolute() {
+            f.clone()
+        } else {
+            path.join(f)
+        }
+    });
 
     if let Some(f) = &file {
         tracing::info!(
@@ -88,9 +95,7 @@ pub async fn handle_build(
     // 使用配置的 llm_provider 创建第二阶段 LLM 客户端。
     // 从 pipeline.yaml 解析 provider（XInference / SiliconFlow）与模型名，
     // 与 run_pipeline_analysis 中的逻辑保持一致。
-    let siliconflow = {
-        use crate::infrastructure::siliconflow::SiliconFlowClient;
-
+    let (llm_client, llm_model) = {
         let llm_provider = pipeline_config
             .providers
             .as_ref()
@@ -115,34 +120,40 @@ pub async fn handle_build(
                     .unwrap_or("qwen3.5")
                     .to_string();
 
-                let client = SiliconFlowClient::new(
-                    base_url,
-                    api_key,
-                    String::new(), // embed 模型——聊天不需要
-                    String::new(), // reranker 模型——聊天不需要
+                (
+                    Arc::new(
+                        crate::application::pipeline::infer_client::XInferenceChatClient::new(
+                            base_url, api_key, 4,
+                        ),
+                    ) as Arc<dyn ChatClient>,
                     llm_model,
-                    20,
-                );
-                Some(Arc::new(client))
+                )
             }
             _ => {
-                // 默认：SiliconFlow
-                let base_url = pipeline_config.inference_server.url.clone();
+                // 默认：SiliconFlow。必须使用 providers.siliconflow.url；
+                // inference_server.url 是本地推理服务地址，不能作为云 API 地址。
+                let sf_cfg = pipeline_config
+                    .providers
+                    .as_ref()
+                    .and_then(|p| p.siliconflow.as_ref());
+                let base_url = sf_cfg
+                    .map(|c| c.url.clone())
+                    .filter(|url| !url.is_empty())
+                    .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
                 let api_key = load_siliconflow_api_key();
                 let llm_model = load_siliconflow_llm_model()
                     .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_default();
 
-                let client = SiliconFlowClient::new(
-                    base_url,
-                    api_key,
-                    String::new(), // embed 模型——聊天不需要
-                    String::new(), // reranker 模型——聊天不需要
+                (
+                    Arc::new(
+                        crate::application::pipeline::infer_client::SiliconFlowChatClient::new(
+                            base_url, api_key, 4,
+                        ),
+                    ) as Arc<dyn ChatClient>,
                     llm_model,
-                    20,
-                );
-                Some(Arc::new(client))
+                )
             }
         }
     };
@@ -152,7 +163,9 @@ pub async fn handle_build(
         vector,
         snapshot,
         embed,
-        siliconflow,
+        llm_client: Some(llm_client),
+        llm_model,
+        target_file,
         batch_config: Some(batch_config),
         skip_embed,
     };

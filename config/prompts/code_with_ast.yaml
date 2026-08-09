@@ -16,7 +16,11 @@ system: |
   }
 
   规则：
-  - 仅输出JSON，不要markdown，不要额外说明
+  - 仅输出一个完整 JSON 对象；第一个字符必须是 {，最后一个字符必须是 }
+  - 不要 markdown 围栏、不要注释、不要解释文字、不要在 JSON 后追加任何字符
+  - 必须使用双引号包裹所有键名和字符串；禁止单引号和尾随逗号
+  - entities 与 relations 必须始终是数组；没有内容时返回 []
+  - 仅输出 JSON，不要 markdown，不要额外说明
   - 如果不确定某个字段，设为null
   - type 必须从给定词表中选择，词表外一律 Other
   - 类型定义：Concept=类/函数/方法/接口/结构体/枚举/宏/抽象概念（如 PayChannelService、doPay、MockGraph、HashMap）；Service=服务类模块（如支付服务、订单处理）；Config=配置文件/参数/环境设置项；Standard=规范/标准/流程/格式约定；Other=无法归类的（如路径引用、文件引用）

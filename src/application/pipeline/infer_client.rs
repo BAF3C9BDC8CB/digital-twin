@@ -475,17 +475,78 @@ impl GLMCodingChatClient {
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| format!("GLM Coding 请求失败: {e}"))?;
-        let status = resp.status();
-        if !status.is_success() {
+        // GLM Coding 会在高并发时返回 429；对 429/5xx 做有限退避重试，
+        // 同时记录安全诊断信息（不记录 API Key、提示词或响应正文）。
+        const MAX_RETRIES: u32 = 3;
+        let mut last_status = None;
+        for attempt in 0..=MAX_RETRIES {
+            let request = req
+                .try_clone()
+                .ok_or_else(|| "GLM Coding 请求无法克隆".to_string())?;
+            let started = std::time::Instant::now();
+            let resp = match request.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::warn!(
+                        provider = "glmcoding",
+                        model = %model,
+                        attempt,
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        error = %e,
+                        "GLM Coding 请求传输失败"
+                    );
+                    if attempt < MAX_RETRIES {
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
+                            .await;
+                        continue;
+                    }
+                    return Err(format!("GLM Coding 请求失败: {e}"));
+                }
+            };
+            let status = resp.status();
+            last_status = Some(status);
+            tracing::info!(
+                provider = "glmcoding",
+                model = %model,
+                attempt,
+                status = %status,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "GLM Coding 响应"
+            );
+            if status.is_success() {
+                return resp
+                    .json::<ChatResponse>()
+                    .await
+                    .map_err(|e| format!("GLM Coding 响应解析失败: {e}"));
+            }
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if retryable && attempt < MAX_RETRIES {
+                let delay_ms = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|s| s.saturating_mul(1000))
+                    .unwrap_or(500 * (1 << attempt));
+                tracing::warn!(
+                    provider = "glmcoding",
+                    model = %model,
+                    attempt,
+                    status = %status,
+                    retry_after_ms = delay_ms,
+                    "GLM Coding 暂态错误，准备重试"
+                );
+                let _ = resp.bytes().await;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms.min(30_000))).await;
+                continue;
+            }
+            let _ = resp.bytes().await;
             return Err(format!("GLM Coding 返回 HTTP {status}"));
         }
-        resp.json::<ChatResponse>()
-            .await
-            .map_err(|e| format!("GLM Coding 响应解析失败: {e}"))
+        Err(format!(
+            "GLM Coding 重试 {} 次后仍失败: {:?}",
+            MAX_RETRIES, last_status
+        ))
     }
 }
 

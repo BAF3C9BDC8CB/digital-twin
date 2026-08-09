@@ -132,5 +132,5 @@ fn u_human_format_three_lines_for_method() {
     assert_eq!(code, 0);
     assert!(stdout.contains("[Method] createApp"), "{stdout}");
     assert!(stdout.contains("分析:"), "{stdout}");
-    assert!(stdout.contains("app.js:L32-36"), "{stdout}");
+    assert!(stdout.contains("test/project/app.js:L32-36"), "{stdout}");
 }

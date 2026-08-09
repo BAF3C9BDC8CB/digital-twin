@@ -24,7 +24,7 @@ providers:
     max_concurrent: 8
     # 所有文件和 chunk 请求共享的 SiliconFlow 全局并发上限。
     url: https://api.siliconflow.cn/v1
-    api_key: "sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip"                    # Reads SILICONFLOW_API_KEY from env if empty
+    api_key: "sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip"                                      # Reads SILICONFLOW_API_KEY from env if empty
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
     model_llm: deepseek-ai/DeepSeek-V3.2
@@ -44,7 +44,7 @@ providers:
     api_key: ""
     protocol: openai
     model_llm: deepseek-v4-flash
-    max_concurrent: 64
+    max_concurrent: 4
 
 # ── Inference server (dt-inference-server, Python) ─────────────────────────
 inference_server:
@@ -65,7 +65,7 @@ processors:
 llm:
   temperature: 0.1     # Low = more deterministic
   max_tokens: 4096     # Max tokens per response
-  chunk_concurrency: 4 # 单文件 chunk 并发；仍受 providers.siliconflow.max_concurrent 限制
+  chunk_concurrency: 1 # 单文件 chunk 并发；由 provider 全局并发共同限制
 
 # ── Ecosystem mode (optional) ──────────────────────────────────────────────
 # ecosystem:

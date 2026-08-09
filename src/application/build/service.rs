@@ -18,8 +18,8 @@ use super::pipeline::PipelineTemplate;
 use super::strategy::full_rebuild::FullRebuildStrategy;
 use super::strategy::incremental::IncrementalStrategy;
 use super::strategy::BuildStrategy;
+use crate::application::pipeline::infer_client::ChatClient;
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::siliconflow::SiliconFlowClient;
 
 /// 默认的构建服务实现。
 ///
@@ -31,7 +31,9 @@ pub struct BuildServiceImpl {
     vector: Option<Arc<dyn VectorRepository>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
-    siliconflow: Option<Arc<SiliconFlowClient>>,
+    llm_client: Option<Arc<dyn ChatClient>>,
+    llm_model: String,
+    target_file: Option<std::path::PathBuf>,
     scan_config: ScanConfig,
     full: bool,
     batch_config: BatchConfig,
@@ -46,7 +48,9 @@ impl BuildServiceImpl {
         vector: Option<Arc<dyn VectorRepository>>,
         snapshot: Option<Arc<dyn SnapshotRepository>>,
         embed: Option<Arc<dyn EmbedService>>,
-        siliconflow: Option<Arc<SiliconFlowClient>>,
+        llm_client: Option<Arc<dyn ChatClient>>,
+        llm_model: String,
+        target_file: Option<std::path::PathBuf>,
         full: bool,
         batch_config: BatchConfig,
         skip_embed: bool,
@@ -57,7 +61,9 @@ impl BuildServiceImpl {
             vector,
             snapshot,
             embed,
-            siliconflow,
+            llm_client,
+            llm_model,
+            target_file,
             scan_config: ScanConfig::default(),
             full,
             batch_config,
@@ -89,7 +95,9 @@ impl BuildService for BuildServiceImpl {
         let pipeline = PipelineTemplate::new(
             self.parser_registry.clone(),
             self.batch_config.clone(),
-            self.siliconflow.clone(),
+            self.llm_client.clone(),
+            self.llm_model.clone(),
+            self.target_file.clone(),
         )
         .with_skip_embed(self.skip_embed);
         let strategy = self.select_strategy();
@@ -196,6 +204,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            String::new(),
             None,
             false,
             BatchConfig::default(),
