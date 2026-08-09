@@ -227,6 +227,10 @@ pub struct ProvidersConfig {
     /// XInference 提供方配置。
     #[serde(default)]
     pub xinference: Option<XInferenceProviderConfig>,
+
+    /// GLM Coding OpenAI-compatible LLM provider.
+    #[serde(default)]
+    pub glmcoding: Option<GLMCodingProviderConfig>,
 }
 
 fn default_embed_provider() -> String {
@@ -305,6 +309,46 @@ impl Default for XInferenceProviderConfig {
             model_embed: String::new(),
             model_reranker: String::new(),
             model_llm: String::new(),
+        }
+    }
+}
+
+/// GLM Coding provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GLMCodingProviderConfig {
+    #[serde(default = "default_glmcoding_url")]
+    pub url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_glmcoding_model")]
+    pub model_llm: String,
+    #[serde(default = "default_glmcoding_protocol")]
+    pub protocol: String,
+    #[serde(default = "default_glmcoding_max_concurrent")]
+    pub max_concurrent: usize,
+}
+
+fn default_glmcoding_url() -> String {
+    "https://glmcoding.cn".into()
+}
+fn default_glmcoding_model() -> String {
+    "deepseek-v4-flash".into()
+}
+fn default_glmcoding_protocol() -> String {
+    "openai".into()
+}
+const fn default_glmcoding_max_concurrent() -> usize {
+    32
+}
+
+impl Default for GLMCodingProviderConfig {
+    fn default() -> Self {
+        Self {
+            url: default_glmcoding_url(),
+            api_key: String::new(),
+            model_llm: default_glmcoding_model(),
+            protocol: default_glmcoding_protocol(),
+            max_concurrent: default_glmcoding_max_concurrent(),
         }
     }
 }

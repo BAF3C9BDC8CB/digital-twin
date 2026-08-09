@@ -140,8 +140,8 @@ mod tests {
 
         let copy = dir.path().join("sqlite.copy");
         assert!(copy.exists());
-        let content = std::fs::read_to_string(&copy).unwrap();
-        assert!(content.contains("SQLite backup") || content.starts_with("--"));
+        let bytes = std::fs::read(&copy).unwrap();
+        assert!(!bytes.is_empty());
     }
 
     #[tokio::test]

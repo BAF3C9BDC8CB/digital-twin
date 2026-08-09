@@ -8,7 +8,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "common.proto",
         "dt_core.proto",
         "embed.proto",
-        "plugin_k8s.proto",
         "plugin_svc.proto",
         "plugin_jenkins.proto",
         "metrics.proto",

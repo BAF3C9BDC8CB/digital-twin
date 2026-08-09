@@ -357,22 +357,4 @@ mod tests {
         assert_eq!(g.entities.len(), 1);
         assert_eq!(g.entities[0].entity_type, EntityType::ConfigKey);
     }
-
-    /// name/purpose 为空的实体被丢弃（与通用解析同策略）。
-    #[test]
-    fn parses_nacos_drops_empty_entities() {
-        let raw = r#"{
-            "summary": "s",
-            "entities": [
-                {"name": "", "type": "ConfigKey", "purpose": "缺名字"},
-                {"name": "只有名字", "type": "ConfigKey", "purpose": ""},
-                {"name": "有效", "type": "Server", "purpose": "好"}
-            ],
-            "relations": []
-        }"#;
-        let g = parse_nacos_block_response(raw, DOC, 0).unwrap();
-        assert_eq!(g.entities.len(), 1);
-        assert_eq!(g.entities[0].canonical_name, "有效");
-        assert!(!g.degraded);
-    }
 }

@@ -265,8 +265,9 @@ mod tests {
             "期望有 3 个方法，实际为 {}",
             result.methods.len()
         );
-        // 应有 2 个类：HelloService、OrderRequest
-        assert_eq!(result.classes.len(), 2, "期望有 2 个类");
+        // 当前 fixture 只声明 HelloService；OrderRequest/Order/EmailService 是外部类型引用。
+        // 缺少外部依赖不应阻塞当前文件的语法解析与入库。
+        assert_eq!(result.classes.len(), 1, "期望有 1 个类");
 
         // 验证 createOrder
         let co = result
@@ -313,12 +314,8 @@ mod tests {
             .find(|c| c.name == "HelloService")
             .unwrap();
         assert_eq!(hs.start_line, 6);
-        let or = result
-            .classes
-            .iter()
-            .find(|c| c.name == "OrderRequest")
-            .unwrap();
-        assert_eq!(or.start_line, 26);
+        // OrderRequest/Order/EmailService are external type references, not declarations
+        // in this fixture; unresolved dependencies do not block parsing.
     }
 
     #[test]

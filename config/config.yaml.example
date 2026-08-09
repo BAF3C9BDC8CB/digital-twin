@@ -20,6 +20,11 @@ services:
     model_reranker: BAAI/bge-reranker-v2-m3
     model_llm: ""
 
+  glmcoding:
+    url: https://glmcoding.cn
+    api_key: ""
+    model_llm: deepseek-v4-flash
+
   # Routing: assign each capability to a provider ("siliconflow" or "xinference")
   embed:
     embed_provider: siliconflow    # text embedding

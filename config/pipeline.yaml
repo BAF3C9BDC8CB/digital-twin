@@ -17,7 +17,7 @@ providers:
   # Routing: which provider handles each capability
   embed_provider: siliconflow
   rerank_provider: siliconflow
-  llm_provider: siliconflow
+  llm_provider: glmcoding
 
   # SiliconFlow (云 API)
   siliconflow:
@@ -36,6 +36,15 @@ providers:
     model_embed: bge-m3
     model_reranker: bge-reranker-v2-m3
     model_llm: qwen3.5
+
+  # GLM Coding（OpenAI-compatible LLM gateway）
+  # API key: GLMCODING_API_KEY
+  glmcoding:
+    url: https://glmcoding.cn
+    api_key: ""
+    protocol: openai
+    model_llm: deepseek-v4-flash
+    max_concurrent: 64
 
 # ── Inference server (dt-inference-server, Python) ─────────────────────────
 inference_server:
