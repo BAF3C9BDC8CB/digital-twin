@@ -2,10 +2,10 @@
 """
 DT MCP Server V2 — 将 digital-twin CLI 命令注册为 OpenCode Tool
 
-提供工具 (25个):
+提供工具 (24个):
   搜索: dt_search_kg, dt_search, dt_sense
   知识: dt_memorize, dt_event, dt_learn
-  管线: dt_build, nacos_sync, dt_kg_sync
+  管线: dt_build, dt_kg_sync
   服务: svc_list, svc_status, svc_logs, svc_start, svc_stop, svc_restart
   K8s:  kublog_status, kublog_logs, kublog_download
   Jenkins: jcli_list, jcli_params, jcli_history, jcli_build_log, jcli_build
@@ -371,21 +371,6 @@ async def list_tools():
             }
         ),
         Tool(
-            name="nacos_sync",
-            description="同步Nacos配置到知识图谱(修改Nacos配置后应触发此同步)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "env": {
-                        "type": "string",
-                        "description": "环境: test / prod / all",
-                        "enum": ["test", "prod", "all"],
-                        "default": "all"
-                    }
-                }, "required": []
-            }
-        ),
-        Tool(
             name="dt_kg_sync",
             description="同步KG节点到Qdrant向量库(KG→Qdrant桥接)。KG节点变更后应触发增量同步。",
             inputSchema={
@@ -674,10 +659,6 @@ async def call_tool(name: str, arguments: dict):
                     r = run_cmd(cmd, timeout=300)
                 results.append(r)
             text = "\n".join(results)
-
-    elif name == "nacos_sync":
-        env = arguments.get("env", "all")
-        text = run_cmd([DT_BIN, "nacos-sync", "--env", env], timeout=300)
 
     elif name == "dt_kg_sync":
         cmd = [DT_BIN, "kg-sync"]
