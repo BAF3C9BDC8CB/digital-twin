@@ -92,71 +92,11 @@ pub async fn handle_build(
         .as_ref()
         .map(|s| Arc::clone(s) as Arc<dyn SnapshotRepository>);
 
-    // 使用配置的 llm_provider 创建第二阶段 LLM 客户端。
-    // 从 pipeline.yaml 解析 provider（XInference / SiliconFlow）与模型名，
-    // 与 run_pipeline_analysis 中的逻辑保持一致。
-    let (llm_client, llm_model) = {
-        let llm_provider = pipeline_config
-            .providers
-            .as_ref()
-            .map(|p| p.llm_provider.clone())
-            .unwrap_or_else(|| "siliconflow".to_string());
-
-        match llm_provider.as_str() {
-            "xinference" => {
-                let xi_cfg = pipeline_config
-                    .providers
-                    .as_ref()
-                    .and_then(|p| p.xinference.as_ref());
-
-                let base_url = xi_cfg
-                    .map(|c| c.url.as_str())
-                    .unwrap_or("http://localhost:9997/v1")
-                    .to_string();
-                let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
-                let llm_model = xi_cfg
-                    .map(|c| c.model_llm.as_str())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("qwen3.5")
-                    .to_string();
-
-                (
-                    Arc::new(
-                        crate::application::pipeline::infer_client::XInferenceChatClient::new(
-                            base_url, api_key, 4,
-                        ),
-                    ) as Arc<dyn ChatClient>,
-                    llm_model,
-                )
-            }
-            _ => {
-                // 默认：SiliconFlow。必须使用 providers.siliconflow.url；
-                // inference_server.url 是本地推理服务地址，不能作为云 API 地址。
-                let sf_cfg = pipeline_config
-                    .providers
-                    .as_ref()
-                    .and_then(|p| p.siliconflow.as_ref());
-                let base_url = sf_cfg
-                    .map(|c| c.url.clone())
-                    .filter(|url| !url.is_empty())
-                    .unwrap_or_else(|| "https://api.siliconflow.cn/v1".to_string());
-                let api_key = load_siliconflow_api_key();
-                let llm_model = load_siliconflow_llm_model()
-                    .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_default();
-
-                (
-                    Arc::new(
-                        crate::application::pipeline::infer_client::SiliconFlowChatClient::new(
-                            base_url, api_key, 4,
-                        ),
-                    ) as Arc<dyn ChatClient>,
-                    llm_model,
-                )
-            }
-        }
-    };
+    // 使用统一路由，确保普通构建与增强 pipeline 使用同一 provider。
+    let (llm_client, llm_model) = build_llm_client(
+        &pipeline_config,
+        pipeline_config.inference_server.max_concurrent,
+    );
 
     let deps = crate::application::build::builder::BuildDependencies {
         graph,
@@ -492,6 +432,11 @@ async fn run_pipeline_analysis(
                 registry.register(Box::new(LlmClientProcessor::new(
                     infer_client.clone(),
                     infer_model.clone(),
+                    pipeline_config
+                        .providers
+                        .as_ref()
+                        .map(|p| p.llm_provider.clone())
+                        .unwrap_or_else(|| "siliconflow".to_string()),
                     Arc::new(prompts),
                     llm_config,
                 )));

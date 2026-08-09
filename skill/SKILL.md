@@ -203,7 +203,7 @@ provider/model：<脱敏后的运行配置>
 
 ## 7. 禁止事项
 
-- 不要把 API Key 写入 Git 或聊天输出。
+- 不要把 API Key 写入 Git。
 - 不要把项目级全量构建当作单文件更新的替代品。
 - 不要在 LLM 失败时伪造 `llm_analysis` 或手工标记完成。
 - 不要只依据 SQLite checkpoint 判断数据已存在；必要时用搜索/Qdrant 回读验证。

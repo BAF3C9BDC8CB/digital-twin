@@ -51,6 +51,7 @@ const JSON_CORRECTION: &str =
 pub struct LlmClientProcessor {
     client: Arc<dyn ChatClient>,
     model: String,
+    provider: String,
     prompt_registry: Arc<PromptRegistry>,
     llm_config: LlmConfig,
 }
@@ -60,12 +61,14 @@ impl LlmClientProcessor {
     pub fn new(
         client: Arc<dyn ChatClient>,
         model: String,
+        provider: String,
         prompt_registry: Arc<PromptRegistry>,
         llm_config: LlmConfig,
     ) -> Self {
         Self {
             client,
             model,
+            provider,
             prompt_registry,
             llm_config,
         }
@@ -181,7 +184,7 @@ impl LlmClientProcessor {
         let chunks_owned = chunks.clone();
 
         let file_started = Instant::now();
-        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
         let limit = self.llm_config.chunk_concurrency.max(1);
         let mut results = stream::iter(chunks_owned.into_iter().enumerate().map(|(pos, chunk)| {
             let doc_id = doc_id.clone();
@@ -191,12 +194,12 @@ impl LlmClientProcessor {
             let render_ctx = build_block_render_context(ctx, block_text, "（无）", "（无）");
             let rendered = self.prompt_registry.render(prompt_name, &render_ctx);
             let chunk_started = Instant::now();
-            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
             let result = match rendered {
                 Ok((system_prompt, user_prompt)) => self.extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32, prompt_name).await,
                 Err(_e) => (None, degraded_graph(&doc_id, block_index as u32)),
             };
-            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
             (block_index, result)
         }})).buffer_unordered(limit).collect::<Vec<_>>().await;
         results.sort_by_key(|(index, _)| *index);
@@ -220,7 +223,7 @@ impl LlmClientProcessor {
         output.set("degraded_count", degraded_count);
         output.set("block_count", chunks.len());
 
-        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "siliconflow", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_done", degraded = degraded_count > 0, "LLM file_done");
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_done", degraded = degraded_count > 0, "LLM file_done");
         Ok(output)
     }
 
@@ -415,6 +418,7 @@ mod tests {
         LlmClientProcessor::new(
             client,
             "qwen3.5".to_string(),
+            "test".to_string(),
             test_registry(),
             LlmConfig::default(),
         )

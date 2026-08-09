@@ -98,7 +98,7 @@ async fn extract_real_docs_meets_quality_gates() {
     let registry = Arc::new(
         PromptRegistry::load(Path::new("config/prompts")).expect("config/prompts 必须加载成功"),
     );
-    let llm = LlmClientProcessor::new(client, model, registry, LlmConfig::default());
+    let llm = LlmClientProcessor::new(client, model, "test".into(), registry, LlmConfig::default());
     let chunk = ChunkProcessor::default();
 
     let mut total_blocks = 0usize;

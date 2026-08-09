@@ -470,7 +470,7 @@ impl GLMCodingChatClient {
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
         );
-        let body = serde_json::json!({"model": model, "messages": [{"role":"system", "content":system_prompt}, {"role":"user", "content":user_prompt}], "temperature": temperature, "max_tokens": max_tokens, "stream": false});
+        let body = serde_json::json!({"model": model, "messages": [{"role":"system", "content":system_prompt}, {"role":"user", "content":user_prompt}], "temperature": temperature, "max_tokens": max_tokens, "stream": false, "response_format": {"type": "json_object"}});
         let mut req = self.client.post(url).json(&body);
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));

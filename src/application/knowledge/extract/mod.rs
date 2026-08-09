@@ -27,6 +27,59 @@ fn non_empty_analysis(value: &str) -> String {
         value.to_string()
     }
 }
+
+/// 从模型输出中提取唯一的、平衡的 JSON 对象。忽略 Markdown 围栏和
+/// JSON 字符串内部的花括号，避免使用 rfind 导致多个对象拼接解析失败。
+fn extract_json_object(response: &str) -> Option<&str> {
+    let bytes = response.as_bytes();
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => {
+                if start.is_none() {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            b'}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let s = start?;
+                    return Some(&response[s..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_json_object<T: serde::de::DeserializeOwned>(
+    response: &str,
+) -> Result<T, serde_json::Error> {
+    match serde_json::from_str(response) {
+        Ok(value) => Ok(value),
+        Err(first_err) => match extract_json_object(response) {
+            Some(json) => serde_json::from_str(json),
+            None => Err(first_err),
+        },
+    }
+}
+
 /// 将一条 LLM 块响应解析为 [`ExtractedGraph`]（§5.5）。
 ///
 /// 容忍 markdown 围栏或前后赘述：先尝试整体解析，
@@ -41,18 +94,7 @@ pub fn parse_block_response(
     doc_id: &str,
     block_index: u32,
 ) -> Result<ExtractedGraph, serde_json::Error> {
-    let mut graph = match serde_json::from_str::<ExtractedGraph>(response) {
-        Ok(g) => g,
-        Err(first_err) => {
-            // 容忍 markdown 围栏 / 前后赘述：用第一个 '{' 到最后一个 '}' 的子串重试。
-            let start = response.find('{');
-            let end = response.rfind('}');
-            match (start, end) {
-                (Some(s), Some(e)) if s < e => serde_json::from_str(&response[s..=e])?,
-                _ => return Err(first_err),
-            }
-        }
-    };
+    let mut graph = parse_json_object::<ExtractedGraph>(response)?;
 
     graph.doc_id = doc_id.to_string();
     graph.block_index = block_index;
@@ -144,17 +186,7 @@ pub fn parse_nacos_block_response(
     doc_id: &str,
     block_index: u32,
 ) -> Result<ExtractedGraph, serde_json::Error> {
-    let mut raw = match serde_json::from_str::<NacosLlmOutput>(response) {
-        Ok(g) => g,
-        Err(first_err) => {
-            let start = response.find('{');
-            let end = response.rfind('}');
-            match (start, end) {
-                (Some(s), Some(e)) if s < e => serde_json::from_str(&response[s..=e])?,
-                _ => return Err(first_err),
-            }
-        }
-    };
+    let mut raw = parse_json_object::<NacosLlmOutput>(response)?;
 
     // 实体：丢弃 name 为空的无效输出；purpose 为空统一为明确占位。
     raw.entities.retain(|e| {
@@ -238,6 +270,13 @@ mod tests {
     }
 
     #[test]
+    fn extracts_balanced_json_with_trailing_text() {
+        let raw =
+            "前言\n```json\n{\"block_summary\":\"a } b\",\"entities\":[],\"relations\":[]}\n```\n说明";
+        let g = parse_block_response(raw, DOC, 0).unwrap();
+        assert_eq!(g.block_summary, "a } b");
+    }
+
     fn rejects_garbage() {
         assert!(parse_block_response("完全不是 JSON", DOC, 0).is_err());
         assert!(parse_block_response("", DOC, 0).is_err());
