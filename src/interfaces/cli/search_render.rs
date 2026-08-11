@@ -141,9 +141,16 @@ fn render_hit(h: &SearchHit, show_content: bool, resolver: &ProjectPathResolver)
     out
 }
 
+/// 低分阈值：rerank 分数低于此值的命中通常与查询无关（实测
+/// 跨项目污染结果普遍 <0.5，有效命中 >0.66）。低于阈值时提示降级。
+const LOW_SCORE_THRESHOLD: f64 = 0.5;
+
 /// 人类格式：类型感知三行制（标题 / 分析·摘要·原文 / 位置·来源）+ 降级尾行。
 /// `show_content` 开启时展开正文原文块（`--show-content`）。
 /// `resolver` 用于把 `dt://doc/{项目}/...` 来源解析为磁盘全路径（仅展示层）。
+///
+/// 跨项目结果按 project 分组展示（团队 B 建议 #3），让调用方一眼看出
+/// 命中来源分布，避免跨项目噪音淹没目标项目结果。
 pub fn render_human(
     result: &CrossWorldResult,
     show_content: bool,
@@ -153,8 +160,44 @@ pub fn render_human(
     if result.hits.is_empty() {
         out.push_str("  (无结果)\n");
     }
+    // 按 project 分组（None 归入 "（无项目）"），保持原有相对顺序。
+    let mut order: Vec<String> = Vec::new();
+    let mut buckets: HashMap<String, Vec<&SearchHit>> = HashMap::new();
     for h in &result.hits {
-        out.push_str(&render_hit(h, show_content, resolver));
+        let key = h.project.clone().unwrap_or_else(|| "（无项目）".to_string());
+        if !buckets.contains_key(&key) {
+            order.push(key.clone());
+        }
+        buckets.entry(key).or_default().push(h);
+    }
+    if order.len() > 1 {
+        out.push_str(&format!(
+            "  📦 命中项目分布: {}（共 {} 条）\n",
+            order.join(" / "),
+            result.hits.len()
+        ));
+    }
+    for key in &order {
+        if order.len() > 1 {
+            out.push_str(&format!("  ── {} ──\n", key));
+        }
+        for h in &buckets[key] {
+            out.push_str(&render_hit(h, show_content, resolver));
+        }
+    }
+    // 低分降级提示：全部命中低于阈值时，结果大概率与查询无关
+    // （跨项目噪音/世界错配），给出显式警示而非静默返回。
+    if !result.hits.is_empty() {
+        let max_score = result
+            .hits
+            .iter()
+            .map(|h| h.score)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if max_score < LOW_SCORE_THRESHOLD {
+            out.push_str(&format!(
+                "  ⚠️ 结果可能不相关：最高分 {max_score:.4} 低于阈值 {LOW_SCORE_THRESHOLD}（常见原因：world 选错或跨项目噪音；可尝试 --world code + --project <项目名>）\n"
+            ));
+        }
     }
     if !result.degraded.is_empty() {
         out.push_str(&format!("  ⚠️ 降级: {}\n", result.degraded.join(", ")));
