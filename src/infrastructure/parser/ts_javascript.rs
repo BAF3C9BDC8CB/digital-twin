@@ -43,7 +43,14 @@ impl TsJavaScriptParser {
         }
     }
 
-    fn collect_methods(source: &str, node: &tree_sitter::Node) -> Vec<MethodBlock> {
+    #[allow(clippy::too_many_arguments)]
+    fn collect_methods(
+        source: &str,
+        node: &tree_sitter::Node,
+        project: &str,
+        file_path: &str,
+        module: &str,
+    ) -> Vec<MethodBlock> {
         let mut methods = Vec::new();
         let mut c = node.walk();
         for ch in node.children(&mut c) {
@@ -72,22 +79,16 @@ impl TsJavaScriptParser {
                     let body = Self::get_body(source, &ch);
                     let calls = tree_sitter_utils::extract_calls_from_body(source, &ch);
                     methods.push(MethodBlock {
-                        method_id: make_method_id(
-                            project_dummy(),
-                            file_path_dummy(),
-                            "_module_",
-                            &name,
-                            sl,
-                        ),
+                        method_id: make_method_id(project, file_path, module, &name, sl),
                         name,
                         signature: sig,
                         params,
                         return_type: "any".into(),
                         class_name: "_module_".into(),
-                        file_path: String::new(),
-                        package_or_module: String::new(),
+                        file_path: file_path.to_string(),
+                        package_or_module: module.to_string(),
                         language: "javascript".into(),
-                        project: String::new(),
+                        project: project.to_string(),
                         start_line: sl,
                         end_line: el,
                         calls,
@@ -122,19 +123,6 @@ impl TsJavaScriptParser {
     }
 }
 
-// 临时占位函数——将在 parse() 中正确设置
-static mut CUR_PROJECT: String = String::new();
-static mut CUR_FILE: String = String::new();
-static mut CUR_MODULE: String = String::new();
-static mut CUR_CLASS: String = String::new();
-
-fn project_dummy() -> &'static str {
-    unsafe { &CUR_PROJECT }
-}
-fn file_path_dummy() -> &'static str {
-    unsafe { &CUR_FILE }
-}
-
 impl ParseStrategy for TsJavaScriptParser {
     fn language(&self) -> Language {
         Language::JavaScript
@@ -162,17 +150,6 @@ impl ParseStrategy for TsJavaScriptParser {
             .unwrap_or_default();
         let root = tree.root_node();
 
-        // 设置全局变量
-        unsafe {
-            CUR_PROJECT = project.to_string();
-        }
-        unsafe {
-            CUR_FILE = file_path.clone();
-        }
-        unsafe {
-            CUR_MODULE = module.clone();
-        }
-
         let mut classes = Vec::new();
         {
             let mut c = root.walk();
@@ -184,9 +161,6 @@ impl ParseStrategy for TsJavaScriptParser {
         // 收集类方法
         let mut methods = Vec::new();
         for cls in &classes {
-            unsafe {
-                CUR_CLASS = cls.name.clone();
-            }
             // 遍历树以查找类方法体
             let mut c = root.walk();
             find_class_methods_js(

@@ -38,6 +38,12 @@ pub struct BuildServiceImpl {
     full: bool,
     batch_config: BatchConfig,
     skip_embed: bool,
+    /// 构建末尾 LLM 缺口补偿自愈开关（默认开启；CLI --no-llm-backfill 关闭）。
+    llm_backfill: bool,
+    /// Phase 2（方法级）LLM 分析并发——统一由 provider max_concurrent 控制。
+    llm_concurrency: usize,
+    /// Phase 2 单次 LLM 回复最大 token 数——由 provider max_tokens 控制。
+    llm_max_tokens: u32,
 }
 
 impl BuildServiceImpl {
@@ -54,6 +60,8 @@ impl BuildServiceImpl {
         full: bool,
         batch_config: BatchConfig,
         skip_embed: bool,
+        llm_concurrency: usize,
+        llm_max_tokens: u32,
     ) -> Self {
         Self {
             parser_registry,
@@ -68,12 +76,21 @@ impl BuildServiceImpl {
             full,
             batch_config,
             skip_embed,
+            llm_backfill: true,
+            llm_concurrency,
+            llm_max_tokens,
         }
     }
 
     /// 设置自定义扫描配置。
     pub fn with_scan_config(mut self, config: ScanConfig) -> Self {
         self.scan_config = config;
+        self
+    }
+
+    /// 设置构建末尾 LLM 缺口补偿自愈开关（CLI --no-llm-backfill 关闭，默认开启）。
+    pub fn with_llm_backfill(mut self, enabled: bool) -> Self {
+        self.llm_backfill = enabled;
         self
     }
 
@@ -98,8 +115,11 @@ impl BuildService for BuildServiceImpl {
             self.llm_client.clone(),
             self.llm_model.clone(),
             self.target_file.clone(),
+            self.llm_concurrency,
+            self.llm_max_tokens,
         )
-        .with_skip_embed(self.skip_embed);
+        .with_skip_embed(self.skip_embed)
+        .with_llm_backfill(self.llm_backfill);
         let strategy = self.select_strategy();
 
         let graph_ref: Option<&dyn GraphRepository> = self.graph.as_ref().map(|r| r.as_ref());
@@ -210,6 +230,8 @@ mod tests {
             false,
             BatchConfig::default(),
             false,
+            16,
+            512,
         );
         // 仅验证它可编译且可构造
         assert_eq!(service.scan_config.max_file_size, 524_288);

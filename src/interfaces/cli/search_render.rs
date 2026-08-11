@@ -1,8 +1,51 @@
 //! 检索结果渲染 — 人类格式（类型感知三行制）与 JSON（MCP 消费）。
 
 use crate::application::context::search_mcp::{CrossWorldResult, SearchHit};
+use std::collections::HashMap;
 
 const MAX_CHARS: usize = 200;
+
+/// 项目名 → 磁盘绝对根路径 的解析表。
+///
+/// 由 `config.yaml` 的 `projects` 段构造（base + 别名目录），用于把
+/// `dt://doc/{project}/{rel}` 形式的来源解析为磁盘全路径。仅影响
+/// CLI 人类可读渲染；不改动 `SearchHit.source_ref` 数据值、JSON 与 MCP。
+#[derive(Debug, Default, Clone)]
+pub struct ProjectPathResolver {
+    /// 项目别名 → 绝对根路径。
+    roots: HashMap<String, String>,
+}
+
+impl ProjectPathResolver {
+    /// 从项目名→绝对根路径对构造。重复名后者覆盖前者。
+    pub fn new(roots: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self {
+            roots: roots.into_iter().collect(),
+        }
+    }
+
+    /// 取项目名对应的磁盘根路径（不存在返回 None）。
+    pub fn root_for(&self, project: &str) -> Option<&str> {
+        self.roots.get(project).map(|s| s.as_str())
+    }
+
+    /// 将 `dt://doc/{project}/{rel_path}` 解析为磁盘绝对路径。
+    ///
+    /// 仅解析 `dt://doc/` 前缀且项目名在表中、且相对路径不逃逸根目录
+    /// 的情况；其余（`dt://nacos/`、`dt://entity/`、未知项目、
+    /// 含 `..` 的路径）返回 `None`，调用方保留原值。
+    pub fn resolve_doc_source(&self, source_ref: &str) -> Option<String> {
+        let rest = source_ref.strip_prefix("dt://doc/")?;
+        let (project, rel) = rest.split_once('/')?;
+        if project.is_empty() || rel.is_empty() || rel.contains("..") {
+            return None;
+        }
+        let root = self.roots.get(project)?;
+        // 相对路径以 / 开头时去掉,避免拼出双斜杠
+        let rel_trim = rel.trim_start_matches('/');
+        Some(format!("{}/{}", root.trim_end_matches('/'), rel_trim))
+    }
+}
 
 fn truncate(s: &str) -> String {
     if s.chars().count() > MAX_CHARS {
@@ -12,7 +55,7 @@ fn truncate(s: &str) -> String {
     }
 }
 
-fn render_hit(h: &SearchHit, show_content: bool) -> String {
+fn render_hit(h: &SearchHit, show_content: bool, resolver: &ProjectPathResolver) -> String {
     let type_tag = match (&h.file_type_label, h.entity_type.as_str()) {
         (Some(ftl), et) if !et.is_empty() && et != "?" => format!("{ftl}/{et}"),
         (Some(ftl), _) => ftl.to_string(),
@@ -23,7 +66,12 @@ fn render_hit(h: &SearchHit, show_content: bool) -> String {
     let (label, body) = match h.entity_type.as_str() {
         "Method" => (
             "分析",
-            h.llm_analysis.clone().unwrap_or_else(|| h.snippet.clone()),
+            match &h.llm_analysis {
+                Some(a) if !a.trim().is_empty() => a.clone(),
+                // 无 LLM 分析（未处理/failed）：明确标注，不再伪装成位置串。
+                // 位置信息由下方"位置:"行单独展示。
+                _ => "暂无 LLM 分析".into(),
+            },
         ),
         "Doc" => (
             "原文",
@@ -56,15 +104,33 @@ fn render_hit(h: &SearchHit, show_content: bool) -> String {
     }
     let mut loc = String::new();
     if let Some(fp) = &h.file_path {
+        // code 世界：优先拼磁盘全路径（project + resolver），否则显示相对路径。
+        let shown = h
+            .project
+            .as_ref()
+            .and_then(|p| resolver.root_for(p))
+            .map(|root| {
+                format!(
+                    "{}/{}",
+                    root.trim_end_matches('/'),
+                    fp.trim_start_matches('/')
+                )
+            })
+            .unwrap_or_else(|| fp.clone());
         loc = match (h.start_line, h.end_line) {
-            (Some(s), Some(e)) => format!("位置: {fp}:L{s}-{e}"),
-            _ => format!("位置: {fp}"),
+            (Some(s), Some(e)) => format!("位置: {shown}:L{s}-{e}"),
+            _ => format!("位置: {shown}"),
         };
         if let Some(sig) = &h.signature {
             loc.push_str(&format!("  signature: {sig}"));
         }
     } else if let Some(sr) = &h.source_ref {
-        loc = format!("来源: {sr}");
+        // 人类可读渲染：dt://doc/{项目}/{相对路径} → 磁盘全路径（查得到映射时）；
+        // 其余（nacos/entity 虚拟来源、未知项目）保留原始 URI。
+        let shown = resolver
+            .resolve_doc_source(sr)
+            .unwrap_or_else(|| sr.clone());
+        loc = format!("来源: {shown}");
         if let Some(hop) = h.hop {
             loc.push_str(&format!("  [hop={hop}]"));
         }
@@ -77,13 +143,18 @@ fn render_hit(h: &SearchHit, show_content: bool) -> String {
 
 /// 人类格式：类型感知三行制（标题 / 分析·摘要·原文 / 位置·来源）+ 降级尾行。
 /// `show_content` 开启时展开正文原文块（`--show-content`）。
-pub fn render_human(result: &CrossWorldResult, show_content: bool) -> String {
+/// `resolver` 用于把 `dt://doc/{项目}/...` 来源解析为磁盘全路径（仅展示层）。
+pub fn render_human(
+    result: &CrossWorldResult,
+    show_content: bool,
+    resolver: &ProjectPathResolver,
+) -> String {
     let mut out = String::new();
     if result.hits.is_empty() {
         out.push_str("  (无结果)\n");
     }
     for h in &result.hits {
-        out.push_str(&render_hit(h, show_content));
+        out.push_str(&render_hit(h, show_content, resolver));
     }
     if !result.degraded.is_empty() {
         out.push_str(&format!("  ⚠️ 降级: {}\n", result.degraded.join(", ")));
@@ -114,6 +185,7 @@ mod tests {
             source_ref: None,
             metadata: None,
             file_path: Some("test/project/app.js".into()),
+            project: Some("copartner-h5".into()),
             start_line: Some(32),
             end_line: Some(36),
             signature: Some("function createApp(port)".into()),
@@ -140,13 +212,31 @@ mod tests {
         }
     }
 
+    fn resolver() -> ProjectPathResolver {
+        ProjectPathResolver::new([(
+            "pay-center".to_string(),
+            "/data/aflmProjects/unimportant/uvp-pay-center".to_string(),
+        )])
+    }
+
     #[test]
     fn human_render_method_three_lines() {
-        let out = render_human(&result_with(vec![base_hit()], vec![]), false);
+        let out = render_human(&result_with(vec![base_hit()], vec![]), false, &resolver());
         assert!(out.contains("[0.9412] [Method] createApp"));
         assert!(out.contains("分析: 用途：创建服务器实例。"));
         assert!(out.contains("位置: test/project/app.js:L32-36"));
         assert!(out.contains("signature: function createApp(port)"));
+    }
+
+    #[test]
+    fn human_render_method_without_llm_shows_placeholder() {
+        // Method 命中但 llm_analysis 缺失（未处理/failed）→ 显示"暂无 LLM 分析"，
+        // 不再伪装成 snippet 位置串；位置信息由"位置:"行单独展示。
+        let mut h = base_hit();
+        h.llm_analysis = None;
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(out.contains("分析: 暂无 LLM 分析"));
+        assert!(out.contains("位置: test/project/app.js:L32-36"));
     }
 
     #[test]
@@ -163,10 +253,34 @@ mod tests {
         h.signature = None;
         h.source_ref = Some("dt://doc/支付架构决策.md".into());
         h.hop = Some(0);
-        let out = render_human(&result_with(vec![h], vec![]), false);
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
         assert!(out.contains("摘要: 支付渠道编码，决定路由"));
         assert!(out.contains("来源: dt://doc/支付架构决策.md"));
         assert!(out.contains("[hop=0]"));
+    }
+
+    #[test]
+    fn human_render_resolves_doc_source_to_disk_path() {
+        // dt://doc/{项目}/{相对路径} → 磁盘全路径（仅展示层,source_ref 数据不变）
+        let mut h = base_hit();
+        h.entity_type = "Entity".into();
+        h.source_world = "knowledge".into();
+        h.title = "ifCode".into();
+        h.snippet = "s".into();
+        h.file_path = None;
+        h.source_ref = Some("dt://doc/pay-center/src/main/resources/bootstrap.yml".into());
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(out.contains(
+            "来源: /data/aflmProjects/unimportant/uvp-pay-center/src/main/resources/bootstrap.yml"
+        ));
+        // 未映射项目/虚拟来源保留原 URI
+        let mut h2 = base_hit();
+        h2.entity_type = "Entity".into();
+        h2.source_world = "knowledge".into();
+        h2.file_path = None;
+        h2.source_ref = Some("dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud".into());
+        let out2 = render_human(&result_with(vec![h2], vec![]), false, &resolver());
+        assert!(out2.contains("来源: dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud"));
     }
 
     #[test]
@@ -174,6 +288,7 @@ mod tests {
         let out = render_human(
             &result_with(vec![base_hit()], vec!["rerank_unavailable".into()]),
             false,
+            &resolver(),
         );
         assert!(out.contains("降级") && out.contains("rerank_unavailable"));
     }
@@ -192,7 +307,7 @@ mod tests {
         c.signature = None;
         c.source_ref = Some("dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud".into());
         c.llm_analysis = Some("用途：配置 Nacos 服务发现。".into());
-        let out = render_human(&result_with(vec![c], vec![]), false);
+        let out = render_human(&result_with(vec![c], vec![]), false, &resolver());
         assert!(out.contains("[nacos配置/ConfigKey]"));
         assert!(out.contains("分析: 用途：配置 Nacos 服务发现。"));
         assert!(out.contains("来源: dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud"));
@@ -201,7 +316,7 @@ mod tests {
         // Method：默认不显示正文
         let mut m = base_hit();
         m.content = Some("function createApp(port) {\n  return port;\n}".into());
-        let out_m = render_human(&result_with(vec![m], vec![]), false);
+        let out_m = render_human(&result_with(vec![m], vec![]), false, &resolver());
         assert!(!out_m.contains("正文:"));
 
         // Doc：默认不显示正文
@@ -212,7 +327,7 @@ mod tests {
         d.start_line = None;
         d.end_line = None;
         d.signature = None;
-        let out_d = render_human(&result_with(vec![d], vec![]), false);
+        let out_d = render_human(&result_with(vec![d], vec![]), false, &resolver());
         assert!(!out_d.contains("正文:"));
     }
 
@@ -230,7 +345,7 @@ mod tests {
         c.end_line = None;
         c.signature = None;
         c.source_ref = Some("dt://nacos/test/DEFAULT_GROUP/common.yaml#spring.cloud".into());
-        let out = render_human(&result_with(vec![c], vec![]), true);
+        let out = render_human(&result_with(vec![c], vec![]), true, &resolver());
         assert!(out.contains("正文:"));
         assert!(out.contains("    spring:"));
         assert!(out.contains("      server-addr: nacos:8848  #注释"));
@@ -238,7 +353,7 @@ mod tests {
         // Method：展开代码片段原文
         let mut m = base_hit();
         m.content = Some("function createApp(port) {\n  return port;\n}".into());
-        let out_m = render_human(&result_with(vec![m], vec![]), true);
+        let out_m = render_human(&result_with(vec![m], vec![]), true, &resolver());
         assert!(out_m.contains("正文:"));
         assert!(out_m.contains("    function createApp(port) {"));
         assert!(out_m.contains("      return port;"));
@@ -251,7 +366,7 @@ mod tests {
         d.start_line = None;
         d.end_line = None;
         d.signature = None;
-        let out_d = render_human(&result_with(vec![d], vec![]), true);
+        let out_d = render_human(&result_with(vec![d], vec![]), true, &resolver());
         assert!(out_d.contains("正文:"));
         assert!(out_d.contains("    第一行"));
         assert!(out_d.contains("    第二行"));
@@ -266,5 +381,38 @@ mod tests {
             "用途：创建服务器实例。\n逻辑：实例化服务器对象。"
         );
         assert_eq!(v["hits"][0]["start_line"], 32);
+        assert_eq!(v["hits"][0]["project"], "copartner-h5");
+    }
+
+    #[test]
+    fn human_render_method_resolves_disk_path_when_project_known() {
+        // project 在 resolver 中 → 位置显示磁盘全路径
+        let mut h = base_hit();
+        h.project = Some("pay-center".into());
+        h.file_path = Some("src/main/java/X.java".into());
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(out.contains(
+            "位置: /data/aflmProjects/unimportant/uvp-pay-center/src/main/java/X.java:L32-36"
+        ));
+    }
+
+    #[test]
+    fn human_render_method_falls_back_to_relative_when_project_unknown() {
+        // project 不在 resolver 中 → 回退相对路径
+        let mut h = base_hit();
+        h.project = Some("unknown-proj".into());
+        h.file_path = Some("src/main/java/X.java".into());
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(out.contains("位置: src/main/java/X.java:L32-36"));
+    }
+
+    #[test]
+    fn human_render_method_without_project_falls_back_to_relative() {
+        // project 为 None（旧数据/其他世界）→ 回退相对路径
+        let mut h = base_hit();
+        h.project = None;
+        h.file_path = Some("src/main/java/X.java".into());
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(out.contains("位置: src/main/java/X.java:L32-36"));
     }
 }

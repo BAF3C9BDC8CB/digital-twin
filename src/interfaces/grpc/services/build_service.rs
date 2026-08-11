@@ -55,6 +55,8 @@ pub async fn handle_build(
         false,         // gRPC 构建默认增量
         BatchConfig::default(),
         false, // skip_embed
+        16,    // llm_concurrency——gRPC 无 llm_client, 值仅占位
+        512,   // llm_max_tokens——gRPC 无 llm_client, 值仅占位
     );
 
     match service.build(&project_name, &project_path).await {
@@ -340,6 +342,7 @@ mod tests {
             source_ref: Some("dt://doc/pay.md".into()),
             metadata: None,
             file_path: None,
+            project: None,
             start_line: None,
             end_line: None,
             signature: None,

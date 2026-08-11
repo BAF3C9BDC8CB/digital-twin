@@ -55,6 +55,7 @@ impl CrossWorldSearch {
                         source_ref: None,
                         metadata: None,
                         file_path: None,
+                        project: None,
                         start_line: None,
                         end_line: None,
                         signature: None,

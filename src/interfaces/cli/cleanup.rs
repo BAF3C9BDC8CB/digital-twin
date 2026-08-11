@@ -48,7 +48,12 @@ pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Res
 ///
 /// 未加 `--confirm` 时，打印警告并直接退出，不做任何修改。
 /// 加上 `--confirm` 后，将清理 Memgraph、Qdrant 与 SQLite。
-pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
+pub async fn run_clean(
+    confirm: bool,
+    graph: Option<&dyn GraphRepository>,
+    vector: Option<&dyn VectorRepository>,
+    snapshot: Option<&dyn SnapshotRepository>,
+) -> anyhow::Result<()> {
     if !confirm {
         eprintln!("警告：`dt clean` 将删除以下所有数据：");
         eprintln!("  - Memgraph：所有节点与关系");
@@ -59,7 +64,6 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
         eprintln!("请使用 `--confirm` 参数继续。");
         return Ok(());
     }
-
     let total_start = Instant::now();
 
     println!("正在清理所有数据...");
@@ -82,23 +86,57 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     println!("  耗时                : {} ms", memgraph_report.elapsed_ms);
 
     // --- Qdrant ---
-    // NoopVectorRepo 不暴露集合管理方法；在真实实现中，
-    // 这里会调用 `QdrantClient::list_collections()`
-    // 并逐个删除。
-    let _vector = crate::infrastructure::qdrant::NoopVectorRepo;
-    let qdrant_removed: usize = 0;
+    let mut removed_collections: Vec<String> = Vec::new();
+    let mut qdrant_err: Option<String> = None;
+    if let Some(v) = vector {
+        match v.list_collections().await {
+            Ok(collections) => {
+                for name in &collections {
+                    match v.delete_collection(name).await {
+                        Ok(()) => removed_collections.push(name.clone()),
+                        Err(e) => {
+                            qdrant_err = Some(format!("删除集合 {name} 失败: {e}"));
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => qdrant_err = Some(format!("列出集合失败: {e}")),
+        }
+    } else {
+        qdrant_err = Some("vector 后端未连接 (noop)".to_string());
+    }
+
     println!();
     println!("Qdrant:");
-    println!("  移除的集合          : {} (noop 后端)", qdrant_removed);
+    println!("  移除的集合          : {}", removed_collections.len());
+    for name in &removed_collections {
+        println!("    - {name}");
+    }
+    if let Some(e) = &qdrant_err {
+        println!("  ⚠️ {e}");
+    }
 
     // --- SQLite ---
-    // 尚未接入真实的 SnapshotRepository；在完整实现中，
-    // 这里将通过 rusqlite 执行 `DELETE FROM file_snapshots`。
-    let snapshots_cleared = true;
+    let snapshots_cleared = if let Some(s) = snapshot {
+        match s.clear_all().await {
+            Ok(n) => {
+                println!("  已删除快照/进度行    : {n}");
+                true
+            }
+            Err(e) => {
+                println!("  ⚠️ SQLite 清空失败: {e}");
+                false
+            }
+        }
+    } else {
+        println!("  ⚠️ snapshot 后端未连接 (noop)");
+        false
+    };
     println!();
     println!("SQLite:");
     println!(
-        "  已清空的快照        : {} (noop 后端)",
+        "  已清空的快照        : {}",
         if snapshots_cleared { "yes" } else { "no" }
     );
 
@@ -108,7 +146,7 @@ pub async fn run_clean(confirm: bool, graph: Option<&dyn GraphRepository>) -> an
     let combined = CleanReport {
         nodes_deleted: memgraph_report.nodes_deleted,
         relationships_deleted: memgraph_report.relationships_deleted,
-        qdrant_collections_removed: qdrant_removed,
+        qdrant_collections_removed: removed_collections.len(),
         snapshots_cleared,
         reasoning_stale_deleted: 0,
         memory_archived: 0,
@@ -263,13 +301,13 @@ mod tests {
     #[tokio::test]
     async fn run_clean_without_confirm_prints_warning() {
         // 不应 panic 或报错——它只是警告并退出。
-        let result = run_clean(false, None).await;
+        let result = run_clean(false, None, None, None).await;
         assert!(result.is_ok(), "不带 --confirm 的 clean 应成功（仅警告）");
     }
 
     #[tokio::test]
     async fn run_clean_with_confirm_succeeds() {
-        let result = run_clean(true, None).await;
+        let result = run_clean(true, None, None, None).await;
         assert!(result.is_ok(), "使用 noop 仓库时 clean --confirm 应成功");
     }
 

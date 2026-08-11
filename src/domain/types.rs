@@ -360,8 +360,10 @@ pub struct FileSnapshot {
 /// 扫描器配置。
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
-    /// 需要忽略的目录。
+    /// 需要忽略的目录（单段目录名或相对路径前缀，例如 "node_modules"、"target/debug"）。
     pub ignore_dirs: HashSet<String>,
+    /// 需要忽略的文件名（精确匹配，例如 "Cargo.lock"、"composer.lock"）。
+    pub ignore_files: HashSet<String>,
     /// 需要忽略的扩展名（带点前缀，例如 ".class"）。
     pub ignore_ext: HashSet<String>,
     /// 最大文件大小（字节）。
@@ -389,6 +391,19 @@ impl Default for ScanConfig {
                 ".vscode",
                 "coverage",
                 ".nyc_output",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            ignore_files: [
+                "composer.lock",
+                "Gemfile.lock",
+                "Cargo.lock",
+                "poetry.lock",
+                "Pipfile.lock",
+                "mix.lock",
+                "yarn-error.log",
+                "npm-debug.log",
             ]
             .iter()
             .map(|s| s.to_string())

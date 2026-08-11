@@ -131,6 +131,7 @@ impl ChatClient for MockChatClient {
         _user_prompt: &str,
         _temperature: f32,
         _max_tokens: u32,
+        _json_mode: bool,
     ) -> Result<ChatResponse, String> {
         let content = self
             .script
@@ -354,6 +355,7 @@ async fn config_chunk_llm_analysis_unified_contract() {
         let llm_proc = LlmClientProcessor::new(
             llm.clone(),
             LLM_MODEL.to_string(),
+            "mock".to_string(),
             registry.clone(),
             LlmConfig::default(),
         );

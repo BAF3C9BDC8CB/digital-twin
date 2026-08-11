@@ -46,6 +46,11 @@ pub struct BuildCommand {
     /// 跳过向量嵌入（processors.embed=false）。
     #[arg(long = "skip-embed")]
     pub skip_embed: bool,
+
+    /// 关闭构建末尾的 LLM 缺口补偿自愈（默认开启）。
+    /// 语义为"关"：带此 flag 时 llm_backfill=false。
+    #[arg(long = "no-llm-backfill", action = clap::ArgAction::SetFalse, default_value_t = true)]
+    pub llm_backfill: bool,
 }
 
 /// 运行构建所需的依赖。
@@ -60,6 +65,13 @@ pub struct BuildDependencies {
     pub batch_config: Option<BatchConfig>,
     /// 跳过向量嵌入（保留 Qdrant 中的已有向量）。
     pub skip_embed: bool,
+    /// 扫描忽略规则（来自 config.yaml scanner 段）；默认使用内置规则。
+    pub scan_config: crate::domain::types::ScanConfig,
+    /// Phase 2（方法级 LLM 分析）并发——CLI 从 provider max_concurrent 读取。
+    pub llm_concurrency: usize,
+    /// Phase 2 单次 LLM 回复最大 token 数——CLI 从 provider max_tokens 读取
+    /// （与模型上下文长度相关，可按模型配置调整）。
+    pub llm_max_tokens: u32,
 }
 
 impl BuildCommand {
@@ -88,9 +100,13 @@ impl BuildCommand {
             self.full,
             batch,
             deps.skip_embed || self.skip_embed,
-        );
+            deps.llm_concurrency,
+            deps.llm_max_tokens,
+        )
+        .with_llm_backfill(self.llm_backfill);
 
         let report = service
+            .with_scan_config(deps.scan_config)
             .build(&self.project_name, &self.project_path)
             .await?;
 
@@ -135,6 +151,21 @@ mod tests {
         assert_eq!(cmd.project_path, PathBuf::from("/tmp/test-project"));
         assert_eq!(cmd.project_name, "test");
         assert!(cmd.full);
+        // 补偿自愈默认开启
+        assert!(cmd.llm_backfill);
+    }
+
+    #[test]
+    fn no_llm_backfill_flag_disables() {
+        let cmd = BuildCommand::try_parse_from([
+            "build",
+            "/tmp/test-project",
+            "--name",
+            "test",
+            "--no-llm-backfill",
+        ]);
+        assert!(cmd.is_ok());
+        assert!(!cmd.unwrap().llm_backfill);
     }
 
     #[test]

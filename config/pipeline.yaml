@@ -1,73 +1,38 @@
-# ═══════════════════════════════════════════════════════════════════════════
-# Pipeline Configuration — Digital Twin v2
-# ═══════════════════════════════════════════════════════════════════════════
-#
-# This file controls the behaviour of the build pipeline and its various
-# processors.  All fields are optional — missing values fall back to the
-# defaults in `PipelineConfig::default()`.
-
-# ── Master switch ──────────────────────────────────────────────────────────
-# When false, the entire pipeline is skipped.
 enabled: true
-
-# ── Provider routing and model configuration ───────────────────────────────
-# All model/embed/llm routing config lives here — no longer split across
-# config.yaml.  Each capability (embed/rerank/llm) routes to a provider.
 providers:
-  # Routing: which provider handles each capability
   embed_provider: siliconflow
   rerank_provider: siliconflow
-  llm_provider: glmcoding
-
-  # SiliconFlow (云 API)
+  llm_provider: openai_compatible
   siliconflow:
     max_concurrent: 8
-    # 所有文件和 chunk 请求共享的 SiliconFlow 全局并发上限。
     url: https://api.siliconflow.cn/v1
-    api_key: "sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip"                                      # Reads SILICONFLOW_API_KEY from env if empty
+    api_key: sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
     model_llm: deepseek-ai/DeepSeek-V3.2
-
-  # XInference (本地推理服务)
+    max_tokens: 512
   xinference:
     url: http://localhost:9997/v1
-    api_key: ""
+    api_key: ''
     model_embed: bge-m3
     model_reranker: bge-reranker-v2-m3
     model_llm: qwen3.5
-
-  # GLM Coding（OpenAI-compatible LLM gateway）
-  # API key: GLMCODING_API_KEY
-  glmcoding:
-    url: https://glmcoding.cn
-    api_key: ""
+    max_tokens: 512
+  openai_compatible:
+    url: https://opencode.ai/zen/go
+    api_key: sk-NUbJeTud0UI3LDr5VMSaQvNfNkCn0gTLlxCzzkJULdPF1mEbZdwEW4b9CFXMvuGg
     protocol: openai
     model_llm: deepseek-v4-flash
-    max_concurrent: 4
-
-# ── Inference server (dt-inference-server, Python) ─────────────────────────
-inference_server:
-  url: "http://localhost:9997/v1"
-  max_concurrent: 1
-
-# ── Per-processor feature flags ────────────────────────────────────────────
+    max_concurrent: 24
+    max_tokens: 512
 processors:
-  tree_sitter: true    # AST parsing
-  llm: true            # LLM-based analysis
-  chunk: true          # Text chunking / splitting
-  extract_text: true   # Raw text extraction
-  ocr: false           # OCR (off by default)
-  store: true         # Graph + vector storage (disable for LLM-only test)
-  embed: true          # Enable vector embedding (set false to skip embedding, preserve existing vectors)
-
-# ── LLM inference presets ──────────────────────────────────────────────────
+  tree_sitter: true
+  llm: true
+  chunk: true
+  extract_text: true
+  ocr: false
+  store: true
+  embed: true
 llm:
-  temperature: 0.1     # Low = more deterministic
-  max_tokens: 4096     # Max tokens per response
-  chunk_concurrency: 1 # 单文件 chunk 并发；由 provider 全局并发共同限制
-
-# ── Ecosystem mode (optional) ──────────────────────────────────────────────
-# ecosystem:
-#   enabled: false
-#   projects: []
+  temperature: 0.1
+  max_tokens: 4096

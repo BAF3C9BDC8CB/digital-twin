@@ -28,8 +28,12 @@ pub fn extract_comment(source: &str, node: &tree_sitter::Node) -> String {
         let kind = sib.kind();
         if kind.contains("comment") {
             comment_lines.push(node_text(source, &sib).to_string());
-        } else if !comment_lines.is_empty() {
-            // 已收集到注释但遇到非注释节点，停止
+        } else {
+            // 遇到非注释节点立即停止。
+            // 关键：tree-sitter 中空白/空行不产生节点，方法声明的
+            // 前兄弟要么是紧邻的注释，要么是前一个成员（方法/字段）。
+            // 旧逻辑在 comment_lines 为空时不 break，会跨过上一个
+            // 方法节点继续向前，误取其 Javadoc 作为本方法注释。
             break;
         }
         prev = sib.prev_sibling();
@@ -109,4 +113,75 @@ fn get_call_name(source: &str, node: &tree_sitter::Node) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    fn parse_java(src: &str) -> tree_sitter::Tree {
+        let mut parser = Parser::new();
+        let lang: tree_sitter::Language = tree_sitter_java::LANGUAGE.into();
+        parser.set_language(&lang).unwrap();
+        parser.parse(src, None).unwrap()
+    }
+
+    fn collect_methods<'tree>(
+        node: tree_sitter::Node<'tree>,
+        out: &mut Vec<tree_sitter::Node<'tree>>,
+    ) {
+        if node.kind() == "method_declaration" || node.kind() == "constructor_declaration" {
+            out.push(node);
+        }
+        let mut c = node.walk();
+        for ch in node.children(&mut c) {
+            collect_methods(ch, out);
+        }
+    }
+
+    #[test]
+    fn comment_not_stolen_from_prev_method() {
+        let src = r#"public class Test {
+    /**
+     * 删除群成员消息
+     */
+    public void deleteGroupMsgBySender() {
+    }
+
+    public void groupMsgGetSimple() {
+    }
+}"#;
+        let tree = parse_java(src);
+        let mut methods = Vec::new();
+        collect_methods(tree.root_node(), &mut methods);
+        assert!(methods.len() >= 2, "methods={}", methods.len());
+
+        let c1 = extract_comment(src, &methods[0]);
+        assert!(c1.contains("删除群成员消息"), "method0 comment: {c1:?}");
+
+        // 回归：无注释方法不得偷取前一个方法的 javadoc
+        let c2 = extract_comment(src, &methods[1]);
+        assert!(!c2.contains("删除群成员消息"), "method1 stolen: {c2:?}");
+    }
+
+    #[test]
+    fn adjacent_comment_still_extracted() {
+        let src = r#"public class Test {
+    public void a() {
+    }
+
+    /**
+     * 紧邻注释
+     */
+    public void b() {
+    }
+}"#;
+        let tree = parse_java(src);
+        let mut methods = Vec::new();
+        collect_methods(tree.root_node(), &mut methods);
+        assert!(methods.len() >= 2);
+        let c2 = extract_comment(src, &methods[1]);
+        assert!(c2.contains("紧邻注释"), "adjacent comment: {c2:?}");
+    }
 }

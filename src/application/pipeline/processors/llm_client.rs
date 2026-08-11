@@ -185,7 +185,10 @@ impl LlmClientProcessor {
 
         let file_started = Instant::now();
         tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
-        let limit = self.llm_config.chunk_concurrency.max(1);
+        // 块级并发模型（2026-08-11）：单文件内所有 chunk 同时发起，
+        // 全局在飞请求由客户端 semaphore（provider max_concurrent）统一限流——
+        // 不再按文件/文件内独立限流，任何文件只要全局并发未满就继续取块。
+        let limit = chunks_owned.len().max(1);
         let mut results = stream::iter(chunks_owned.into_iter().enumerate().map(|(pos, chunk)| {
             let doc_id = doc_id.clone();
             async move {
@@ -285,6 +288,7 @@ impl LlmClientProcessor {
                 user_prompt,
                 self.llm_config.temperature,
                 self.llm_config.max_tokens,
+                true, // chunk 分析要求 JSON 输出，声明 json_object
             )
             .await?;
         Ok(resp
@@ -385,6 +389,7 @@ mod tests {
             user_prompt: &str,
             _temperature: f32,
             _max_tokens: u32,
+            _json_mode: bool,
         ) -> Result<ChatResponse, String> {
             self.calls
                 .lock()

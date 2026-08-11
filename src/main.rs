@@ -175,6 +175,11 @@ enum Commands {
         #[arg(long = "no-pipeline")]
         no_pipeline: bool,
 
+        /// 关闭构建末尾的 LLM 缺口补偿自愈（默认开启）。
+        /// 语义为"关"：带此 flag 时 llm_backfill=false。
+        #[arg(long = "no-llm-backfill", action = clap::ArgAction::SetFalse, default_value_t = true)]
+        llm_backfill: bool,
+
         /// 运行自包含的流水线集成测试。
         ///
         /// 创建 test- 前缀的节点与集合，验证每种实体类型，
@@ -332,6 +337,21 @@ struct DaemonConfig {
     services: ServiceConfig,
     #[serde(default)]
     batch: BatchConfig,
+    #[serde(default)]
+    scanner: ScannerFileConfig,
+}
+
+/// config.yaml 的 `scanner` 段 —— 构建扫描器的忽略规则。
+#[derive(Debug, Deserialize, Default)]
+struct ScannerFileConfig {
+    #[serde(default)]
+    ignore_dirs: Vec<String>,
+    #[serde(default)]
+    ignore_ext: Vec<String>,
+    #[serde(default)]
+    ignore_files: Vec<String>,
+    #[serde(default)]
+    max_file_size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -429,6 +449,41 @@ fn load_config() -> Option<DaemonConfig> {
             None
         }
     }
+}
+
+/// 将 config.yaml 的 `scanner` 段转换为 `ScanConfig`。
+///
+/// 用户配置的列表与内置默认值**合并**（而非覆盖），确保常见噪音目录
+/// 始终被忽略；`max_file_size` 未配置时用默认 500KB。
+fn scan_config_from(cfg: &DaemonConfig) -> dt_daemon::domain::types::ScanConfig {
+    use dt_daemon::domain::types::ScanConfig;
+    let mut sc = ScanConfig::default();
+    for d in &cfg.scanner.ignore_dirs {
+        if !d.is_empty() {
+            sc.ignore_dirs.insert(d.clone());
+        }
+    }
+    for f in &cfg.scanner.ignore_files {
+        if !f.is_empty() {
+            sc.ignore_files.insert(f.clone());
+        }
+    }
+    for e in &cfg.scanner.ignore_ext {
+        let e = e.trim();
+        if !e.is_empty() {
+            sc.ignore_ext.insert(if e.starts_with('.') {
+                e.to_string()
+            } else {
+                format!(".{e}")
+            });
+        }
+    }
+    if let Some(m) = cfg.scanner.max_file_size {
+        if m > 0 {
+            sc.max_file_size = m;
+        }
+    }
+    sc
 }
 
 /// 解析 `~/.config/...`，无需引入 `dirs` crate。
@@ -728,11 +783,19 @@ async fn main() -> anyhow::Result<()> {
             }
 
             let memgraph = connect_memgraph().await;
+            let vector = connect_vector().await;
+            let snapshot = connect_snapshot().await;
             dt_daemon::interfaces::cli::cleanup::run_clean(
                 confirm,
                 memgraph
                     .as_ref()
                     .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                vector
+                    .as_deref()
+                    .map(|c| c as &dyn dt_daemon::domain::traits::VectorRepository),
+                snapshot
+                    .as_deref()
+                    .map(|c| c as &dyn dt_daemon::domain::traits::SnapshotRepository),
             )
             .await?;
             return Ok(());
@@ -929,6 +992,7 @@ async fn main() -> anyhow::Result<()> {
             file,
             full,
             no_pipeline,
+            llm_backfill,
             test,
             source,
         }) => {
@@ -985,11 +1049,13 @@ async fn main() -> anyhow::Result<()> {
                     None, // file
                     full, // full: ②a fix — 透传用户 flag（原来是硬编码 false）
                     true, // pipeline: 已启用 — 与生产构建同一代码路径（Phase 4 变更）
+                    true, // llm_backfill: --test 也启用补偿自愈
                     Some(graph.clone()),
                     Some(vector.clone()),
                     Some(embed.clone()),
                     Some(snapshot.clone()),
                     BatchConfig::default(),
+                    dt_daemon::domain::types::ScanConfig::default(),
                 )
                 .await?;
 
@@ -1069,15 +1135,18 @@ async fn main() -> anyhow::Result<()> {
 
                 let batch_config = cfg.batch.clone();
                 let pipeline = !no_pipeline;
+                let scan_config = scan_config_from(&cfg);
                 dt_daemon::interfaces::cli::build::handle_build_all(
                     projects,
                     full,
                     pipeline,
+                    llm_backfill,
                     graph,
                     vector,
                     embed,
                     snapshot,
                     batch_config,
+                    scan_config,
                 )
                 .await?;
                 return Ok(());
@@ -1108,6 +1177,9 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let batch_config = load_config().map(|c| c.batch).unwrap_or_default();
+            let scan_config = load_config()
+                .map(|c| scan_config_from(&c))
+                .unwrap_or_default();
 
             let pipeline = !no_pipeline;
             dt_daemon::interfaces::cli::build::handle_build(
@@ -1116,11 +1188,13 @@ async fn main() -> anyhow::Result<()> {
                 file,
                 full,
                 pipeline,
+                llm_backfill,
                 graph,
                 vector,
                 embed,
                 snapshot,
                 batch_config,
+                scan_config,
             )
             .await?;
             return Ok(());

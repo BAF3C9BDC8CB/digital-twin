@@ -20,7 +20,7 @@ services:
     model_reranker: BAAI/bge-reranker-v2-m3
     model_llm: ""
 
-  glmcoding:
+  openai_compatible:
     url: https://glmcoding.cn
     api_key: ""
     model_llm: deepseek-v4-flash

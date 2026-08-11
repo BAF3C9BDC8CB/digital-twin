@@ -359,6 +359,7 @@ pub trait ChatClient: Send + Sync {
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        json_mode: bool,
     ) -> Result<ChatResponse, String>;
     async fn health_check(&self) -> Result<bool, String>;
 }
@@ -372,6 +373,7 @@ impl ChatClient for SiliconFlowChatClient {
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        _json_mode: bool,
     ) -> Result<ChatResponse, String> {
         SiliconFlowChatClient::chat(
             self,
@@ -397,6 +399,7 @@ impl ChatClient for XInferenceChatClient {
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        _json_mode: bool,
     ) -> Result<ChatResponse, String> {
         XInferenceChatClient::chat(
             self,
@@ -413,18 +416,23 @@ impl ChatClient for XInferenceChatClient {
     }
 }
 
-/// GLM Coding OpenAI-compatible chat client.
-pub struct GLMCodingChatClient {
+/// 通用 OpenAI-compatible chat client（glmcoding / opencode-go 等任意网关）。
+pub struct OpenAICompatibleChatClient {
     client: Client,
     base_url: String,
     api_key: String,
     semaphore: Arc<Semaphore>,
 }
 
-impl GLMCodingChatClient {
+impl OpenAICompatibleChatClient {
     pub fn new(base_url: String, api_key: String, max_concurrent: usize) -> Self {
+        // 优先读新 env 名，回退旧 GLMCODING_API_KEY 以兼容既有部署。
         let api_key = if api_key.is_empty() {
-            std::env::var("GLMCODING_API_KEY").unwrap_or_default()
+            std::env::var("OPENAI_COMPATIBLE_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| std::env::var("GLMCODING_API_KEY").ok())
+                .unwrap_or_default()
         } else {
             api_key
         };
@@ -451,7 +459,7 @@ impl GLMCodingChatClient {
         req.send()
             .await
             .map(|r| r.status().is_success())
-            .map_err(|e| format!("GLM Coding 健康检查失败: {e}"))
+            .map_err(|e| format!("OpenAI-Compatible 健康检查失败: {e}"))
     }
     pub async fn chat(
         &self,
@@ -460,6 +468,7 @@ impl GLMCodingChatClient {
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        json_mode: bool,
     ) -> Result<ChatResponse, String> {
         let _permit = self
             .semaphore
@@ -470,54 +479,67 @@ impl GLMCodingChatClient {
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
         );
-        let body = serde_json::json!({"model": model, "messages": [{"role":"system", "content":system_prompt}, {"role":"user", "content":user_prompt}], "temperature": temperature, "max_tokens": max_tokens, "stream": false, "response_format": {"type": "json_object"}});
+        let mut body = serde_json::json!({"model": model, "messages": [{"role":"system", "content":system_prompt}, {"role":"user", "content":user_prompt}], "temperature": temperature, "max_tokens": max_tokens, "stream": false});
+        // json_mode 才附加 response_format=json_object——部分上游(如 opencode-go/Console Go)
+        // 要求 prompt 必须含 "json" 字样才能用 json_object;Phase 2 方法分析输出纯文本两行,
+        // 不应声明 json_object(否则 400 或推理模型 content 被吃光)。
+        if json_mode {
+            body["response_format"] = serde_json::json!({"type": "json_object"});
+        }
         let mut req = self.client.post(url).json(&body);
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
-        // GLM Coding 会在高并发时返回 429；对 429/5xx 做有限退避重试，
+        // 必须带浏览器 UA：opencode.go 等上游对无浏览器 UA 的并发请求返回 403
+        // Forbidden（实测 2026-08-11：并发 8 无 UA 全部 403，带 UA 全部 200）。
+        // reqwest 默认 UA 是 "reqwest/x.y.z"，同样被拒。
+        req = req.header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        );
+        // OpenAI-Compatible 会在高并发时返回 429；对 429/5xx 做有限退避重试，
         // 同时记录安全诊断信息（不记录 API Key、提示词或响应正文）。
         const MAX_RETRIES: u32 = 3;
         let mut last_status = None;
         for attempt in 0..=MAX_RETRIES {
             let request = req
                 .try_clone()
-                .ok_or_else(|| "GLM Coding 请求无法克隆".to_string())?;
+                .ok_or_else(|| "OpenAI-Compatible 请求无法克隆".to_string())?;
             let started = std::time::Instant::now();
             let resp = match request.send().await {
                 Ok(resp) => resp,
                 Err(e) => {
                     tracing::warn!(
-                        provider = "glmcoding",
+                        provider = "openai_compatible",
                         model = %model,
                         attempt,
                         elapsed_ms = started.elapsed().as_millis() as u64,
                         error = %e,
-                        "GLM Coding 请求传输失败"
+                        "OpenAI-Compatible 请求传输失败"
                     );
                     if attempt < MAX_RETRIES {
                         tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt)))
                             .await;
                         continue;
                     }
-                    return Err(format!("GLM Coding 请求失败: {e}"));
+                    return Err(format!("OpenAI-Compatible 请求失败: {e}"));
                 }
             };
             let status = resp.status();
             last_status = Some(status);
             tracing::info!(
-                provider = "glmcoding",
+                provider = "openai_compatible",
                 model = %model,
                 attempt,
                 status = %status,
                 elapsed_ms = started.elapsed().as_millis() as u64,
-                "GLM Coding 响应"
+                "OpenAI-Compatible 响应"
             );
             if status.is_success() {
                 return resp
                     .json::<ChatResponse>()
                     .await
-                    .map_err(|e| format!("GLM Coding 响应解析失败: {e}"));
+                    .map_err(|e| format!("OpenAI-Compatible 响应解析失败: {e}"));
             }
             let retryable = status.as_u16() == 429 || status.is_server_error();
             if retryable && attempt < MAX_RETRIES {
@@ -529,29 +551,29 @@ impl GLMCodingChatClient {
                     .map(|s| s.saturating_mul(1000))
                     .unwrap_or(500 * (1 << attempt));
                 tracing::warn!(
-                    provider = "glmcoding",
+                    provider = "openai_compatible",
                     model = %model,
                     attempt,
                     status = %status,
                     retry_after_ms = delay_ms,
-                    "GLM Coding 暂态错误，准备重试"
+                    "OpenAI-Compatible 暂态错误，准备重试"
                 );
                 let _ = resp.bytes().await;
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms.min(30_000))).await;
                 continue;
             }
             let _ = resp.bytes().await;
-            return Err(format!("GLM Coding 返回 HTTP {status}"));
+            return Err(format!("OpenAI-Compatible 返回 HTTP {status}"));
         }
         Err(format!(
-            "GLM Coding 重试 {} 次后仍失败: {:?}",
+            "OpenAI-Compatible 重试 {} 次后仍失败: {:?}",
             MAX_RETRIES, last_status
         ))
     }
 }
 
 #[async_trait]
-impl ChatClient for GLMCodingChatClient {
+impl ChatClient for OpenAICompatibleChatClient {
     async fn chat(
         &self,
         model: &str,
@@ -559,19 +581,21 @@ impl ChatClient for GLMCodingChatClient {
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        json_mode: bool,
     ) -> Result<ChatResponse, String> {
-        GLMCodingChatClient::chat(
+        OpenAICompatibleChatClient::chat(
             self,
             model,
             system_prompt,
             user_prompt,
             temperature,
             max_tokens,
+            json_mode,
         )
         .await
     }
     async fn health_check(&self) -> Result<bool, String> {
-        GLMCodingChatClient::health_check(self).await
+        OpenAICompatibleChatClient::health_check(self).await
     }
 }
 

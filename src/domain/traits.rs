@@ -70,6 +70,53 @@ pub trait VectorRepository: Send + Sync + 'static {
             .collect())
     }
 
+    /// 在指定命名向量上搜索最近邻（named vectors 集合专用）。
+    ///
+    /// 数字孪生使用双向量：`base`（确定性召回，embed(signature+comment)）与
+    /// `llm`（LLM 分析文本嵌入，rerank 用）。named vectors 集合的搜索必须指定
+    /// 向量名（不指定会 400），因此 code 世界召回走此方法传 `"base"`。
+    /// 默认实现退化为 [`VectorRepository::search`]（单向量集合/后端兼容）。
+    async fn search_named(
+        &self,
+        collection: &str,
+        vector_name: &str,
+        vector: Vec<f32>,
+        limit: u64,
+    ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
+        let _ = vector_name;
+        self.search(collection, vector, limit).await
+    }
+
+    /// 在指定命名向量上带过滤搜索（named vectors 集合专用）。
+    ///
+    /// 默认实现退化为 [`VectorRepository::search_with_filter`]。
+    async fn search_named_with_filter(
+        &self,
+        collection: &str,
+        vector_name: &str,
+        vector: Vec<f32>,
+        limit: u64,
+        filter: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
+        let _ = vector_name;
+        self.search_with_filter(collection, vector, limit, filter)
+            .await
+    }
+
+    /// 按数值点 id 批量拉取指定命名向量（rerank 用，不返回 payload）。
+    ///
+    /// 返回 `[{"id": <u64>, "vector": [f32...]}]`；点缺失该命名向量时该点
+    /// 不在结果中（调用方需自行跳过）。默认实现返回空——不支持的后端优雅降级。
+    async fn fetch_vectors(
+        &self,
+        collection: &str,
+        ids: &[u64],
+        vector_name: &str,
+    ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
+        let _ = (collection, ids, vector_name);
+        Ok(Vec::new())
+    }
+
     /// 向集合中写入（upsert）数据点。
     async fn upsert(
         &self,
@@ -112,6 +159,36 @@ pub trait VectorRepository: Send + Sync + 'static {
     ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
         let _ = (collection, filter, max);
         Ok(Vec::new())
+    }
+
+    /// Scroll 返回 `{"id": <数值点 id>, "payload": {...}}` 列表（无向量），可选过滤。
+    ///
+    /// 与 [`VectorRepository::scroll_payloads`] 的区别：返回结果携带点的数值 id，
+    /// 供上层（如补偿自愈扫描）定位需要 `set_payload` 更新的具体点。
+    /// 分页循环直到拿满 `max` 或集合耗尽（next_page_offset 为空）。
+    /// 默认实现返回空——不支持 scroll 的后端优雅降级。
+    async fn scroll_points(
+        &self,
+        collection: &str,
+        filter: Option<serde_json::Value>,
+        max: usize,
+    ) -> Result<Vec<serde_json::Value>, crate::domain::error::DtError> {
+        let _ = (collection, filter, max);
+        Ok(Vec::new())
+    }
+
+    /// 只更新指定点的 payload 字段（保留向量、不重嵌）。
+    ///
+    /// `payloads` 每项形状：`{"id": <u64>, "payload": {...}}`。
+    /// 集合不存在时安全降级为 `Ok(())`（与 `scroll_payloads` 的
+    /// 集合缺失语义一致）。默认实现为空操作——不支持的后端优雅降级。
+    async fn set_payload(
+        &self,
+        collection: &str,
+        payloads: Vec<serde_json::Value>,
+    ) -> Result<(), crate::domain::error::DtError> {
+        let _ = (collection, payloads);
+        Ok(())
     }
 }
 
@@ -173,6 +250,12 @@ pub trait SnapshotRepository: Send + Sync + 'static {
 
     /// 删除某个项目的全部快照。
     async fn delete_project(&self, project: &str) -> Result<u64, DtError>;
+
+    /// 清空全部快照与构建进度（用于 `dt clean`）。
+    /// 默认空操作：未实现该能力的仓库安全回退（什么都不删）。
+    async fn clear_all(&self) -> Result<u64, DtError> {
+        Ok(0)
+    }
 
     /// 列出某个项目的全部快照。
     async fn list_snapshots(&self, project: &str) -> Result<Vec<FileSnapshot>, DtError>;

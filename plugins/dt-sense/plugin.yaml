@@ -1,0 +1,11 @@
+name: dt-sense
+version: 1.0.0
+description: "Digital-twin KG 环境感知注入：pre_llm_call 每会话开头注入 dt_sense 简报（项目定位/索引状态/KG健康/搜索触发规则），user_message 匹配注册表定位目标项目。详见 docs/superpowers/specs/2026-08-11-pre-llm-call-injection-final.md"
+author: NousResearch
+kind: standalone
+platforms:
+  - linux
+  - macos
+provides_tools: []
+hooks:
+  - pre_llm_call

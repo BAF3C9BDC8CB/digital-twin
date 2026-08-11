@@ -27,9 +27,19 @@ use crate::application::pipeline::infer_client::ChatClient;
 use crate::infrastructure::parser::ParserRegistry;
 use crate::infrastructure::scanner;
 
-/// 发往 SiliconFlow 的最大并发 LLM 分析请求数。
-// Provider 请求并发由配置降至 4；文档 chunk 在 pipeline.yaml 中为 1。
-const PHASE2_CONCURRENCY: usize = 4;
+/// Phase 2（方法级 LLM 分析）并发取自构建链传入的 `llm_concurrency`——
+/// 与 pipeline 文件分析、客户端 semaphore 统一由 provider 的
+/// `max_concurrent` 单一参数控制（块级并发模型，2026-08-11）。
+const LLM_BACKFILL_BATCH: usize = 200;
+
+/// Phase 2 / 补偿的单方法 LLM 调用最大尝试次数（1 次初始 + 最多 5 次重试）。
+const LLM_CALL_MAX_ATTEMPTS: usize = 6;
+
+/// 失败重试间隔（秒）：LLM 调用失败/空响应后延迟 1 秒再试。
+const LLM_RETRY_DELAY_SECS: u64 = 1;
+
+/// 跨构建累计失败重试上限：llm_retries 达到该值后跳过 LLM 调用（保持 failed）。
+const LLM_RETRIES_HARD_CAP: u32 = 5;
 
 /// 默认提示词路径（当 config/prompts/code_analysis.yaml 缺失时使用）。
 const PHASE2_DEFAULT_PROMPT: &str = "\
@@ -71,8 +81,15 @@ pub struct PipelineTemplate {
     llm_client: Option<Arc<dyn ChatClient>>,
     llm_model: String,
     target_file: Option<std::path::PathBuf>,
+    /// Phase 2（方法级）LLM 分析并发——与 provider max_concurrent 一致。
+    phase2_concurrency: usize,
+    /// Phase 2 单次 LLM 回复最大 token 数——由 provider max_tokens 配置
+    /// （与模型上下文长度相关，推理模型需预留 reasoning 空间）。
+    llm_max_tokens: u32,
     /// 跳过向量嵌入（设置 processors.embed=false 以保留已有向量）。
     skip_embed: bool,
+    /// 构建末尾是否执行 LLM 缺口补偿自愈（默认开启，CLI --no-llm-backfill 关闭）。
+    llm_backfill: bool,
 }
 
 impl PipelineTemplate {
@@ -83,6 +100,8 @@ impl PipelineTemplate {
         llm_client: Option<Arc<dyn ChatClient>>,
         llm_model: String,
         target_file: Option<std::path::PathBuf>,
+        phase2_concurrency: usize,
+        llm_max_tokens: u32,
     ) -> Self {
         Self {
             parser_registry,
@@ -90,13 +109,22 @@ impl PipelineTemplate {
             llm_client,
             llm_model,
             target_file,
+            phase2_concurrency: phase2_concurrency.max(1),
+            llm_max_tokens: llm_max_tokens.max(64),
             skip_embed: false,
+            llm_backfill: true,
         }
     }
 
     /// 设置 skip_embed 标志（配置中的 processors.embed=false）。
     pub fn with_skip_embed(mut self, skip: bool) -> Self {
         self.skip_embed = skip;
+        self
+    }
+
+    /// 设置构建末尾 LLM 缺口补偿自愈开关（CLI --no-llm-backfill 关闭，默认开启）。
+    pub fn with_llm_backfill(mut self, enabled: bool) -> Self {
+        self.llm_backfill = enabled;
         self
     }
 
@@ -126,9 +154,14 @@ impl PipelineTemplate {
         let doc_files = scanner::collect_document_files(root, scan_config);
 
         // 步骤 2：通过策略选择文件
-        let (files_to_process, deleted) = strategy
-            .select_files(root, &all_files, snapshot_repo.as_deref(), project)
-            .await?;
+        // 单文件模式（--file）只处理目标文件，绝不把其余文件判为
+        // "已删除"（否则会误删 Memgraph 中其他文件的方法节点）。
+        let (files_to_process, deleted) = match &self.target_file {
+            Some(_) => (all_files.clone(), Vec::new()),
+            None => strategy
+                .select_files(root, &all_files, snapshot_repo.as_deref(), project)
+                .await?,
+        };
         let files_changed = files_to_process.len();
 
         // 步骤 3：删除已删除文件的数据
@@ -239,7 +272,9 @@ impl PipelineTemplate {
                                     .map(|(m, vec)| {
                                         serde_json::json!({
                                             "id": m.method_id,
-                                            "vector": vec,
+                                            // named vectors：base 为确定性召回向量（embed(signature+comment)）。
+                                            // llm 向量由 Phase 2 成功后补写（可选）。
+                                            "vectors": { "base": vec },
                                             "payload": {
                                                 // ---- 标识 ----
                                                 "name": m.name,
@@ -355,6 +390,7 @@ impl PipelineTemplate {
             let llm_model = self.llm_model.clone();
             if !methods.is_empty() {
                 let system_prompt = load_code_analysis_prompt();
+                let proj_root = root.to_path_buf();
                 let collection = crate::shared::collections::CODE_METHODS.to_string();
 
                 // 构建任务列表：跳过已用相同源码哈希分析过的方法
@@ -362,8 +398,10 @@ impl PipelineTemplate {
                 for m in methods {
                     let mut source_text = m.source_text.clone();
                     if source_text.len() < 10 {
-                        let fp = std::path::Path::new(&m.file_path);
-                        if let Ok(content) = std::fs::read_to_string(fp) {
+                        // 接口/抽象方法的方法体为空——回退读取整文件。
+                        // file_path 是相对项目根路径，必须 join 项目根才能读到。
+                        let fp = proj_root.join(&m.file_path);
+                        if let Ok(content) = std::fs::read_to_string(&fp) {
                             source_text = content;
                         }
                     }
@@ -413,6 +451,8 @@ impl PipelineTemplate {
                     let proj = project.to_string();
                     let embed_svc_opt = embed.clone();
                     let vector_repo_opt = vector.clone();
+                    let phase2_concurrency = self.phase2_concurrency;
+                    let llm_max_tokens = self.llm_max_tokens;
 
                     let phase2_handle = tokio::spawn(async move {
                         tracing::info!("Phase 2 工作线程已启动: {} 个方法", total);
@@ -441,13 +481,130 @@ impl PipelineTemplate {
                                         "LLM 方法分析开始"
                                     );
 
-                                    match cli.chat(&model, &sp, &method.source_text, 0.1, 100).await {
-                                        Ok(response) => {
-                                            let llm_response = response
-                                                .choices
-                                                .first()
-                                                .map(|choice| choice.message.content.clone())
-                                                .unwrap_or_default();
+                                    // 状态位读取：定位点的数值 id 与已有 llm_retries。
+                                    // llm_retries >= 5 时本轮跳过 LLM 调用（保持 failed 状态，数据可辨识）。
+                                    let mut llm_retries: u32 = 0;
+                                    let mut point_id: Option<u64> = None;
+                                    if let Some(repo_vec) = vector_repo.as_ref() {
+                                        let loc_filter = serde_json::json!({
+                                            "must": [{"key": "entity_id", "match": {"value": method_id}}],
+                                        });
+                                        match repo_vec
+                                            .scroll_points(&coll, Some(loc_filter), 1)
+                                            .await
+                                        {
+                                            Ok(points) => {
+                                                if let Some(p) = points.first() {
+                                                    point_id = p.get("id").and_then(|v| v.as_u64());
+                                                    llm_retries = p
+                                                        .get("payload")
+                                                        .and_then(|pl| pl.get("llm_retries"))
+                                                        .and_then(|v| v.as_u64())
+                                                        .unwrap_or(0) as u32;
+                                                }
+                                            }
+                                            Err(e) => tracing::warn!(
+                                                "Phase 2 定位点 {} 失败（跳过状态位写入）: {}",
+                                                method_name,
+                                                e
+                                            ),
+                                        }
+                                    }
+                                    if llm_retries >= LLM_RETRIES_HARD_CAP {
+                                        tracing::warn!(
+                                            phase = "phase2",
+                                            project = %proj,
+                                            method = %method_name,
+                                            llm_retries,
+                                            "已达重试上限，本轮跳过 LLM 调用（保持 failed 状态）"
+                                        );
+                                        return (method_name, false);
+                                    }
+
+                                    // 失败重试循环：LLM 调用失败/空响应 → 延迟 1 秒重试，最多 5 次重试。
+                                    // 全部尝试仍失败才写 failed（不立即标记，给瞬时故障留恢复窗口）。
+                                    let mut llm_response = String::new();
+                                    let mut last_err: Option<String> = None;
+                                    for attempt in 0..LLM_CALL_MAX_ATTEMPTS {
+                                        if attempt > 0 {
+                                            tokio::time::sleep(std::time::Duration::from_secs(
+                                                LLM_RETRY_DELAY_SECS,
+                                            ))
+                                            .await;
+                                            tracing::warn!(
+                                                phase = "phase2",
+                                                project = %proj,
+                                                method = %method_name,
+                                                attempt,
+                                                "LLM 调用失败，延迟 1 秒后重试"
+                                            );
+                                        }
+                                        match cli
+                                            .chat(&model, &sp, &method.source_text, 0.1, llm_max_tokens, false)
+                                            .await
+                                        {
+                                            Ok(response) => {
+                                                let content = response
+                                                    .choices
+                                                    .first()
+                                                    .map(|choice| choice.message.content.clone())
+                                                    .unwrap_or_default();
+                                                // 🚫 无降级：空响应视为失败（触发重试），绝不写空串/占位伪装成功。
+                                                if content.trim().is_empty() {
+                                                    last_err = Some("LLM 响应为空".to_string());
+                                                    tracing::warn!(
+                                                        phase = "phase2",
+                                                        project = %proj,
+                                                        method = %method_name,
+                                                        attempt,
+                                                        stage = "empty_response",
+                                                        "LLM 响应为空，视为失败（将重试）"
+                                                    );
+                                                    continue;
+                                                }
+                                                llm_response = content;
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                last_err = Some(e.clone());
+                                                tracing::warn!(
+                                                    phase = "phase2",
+                                                    project = %proj,
+                                                    method = %method_name,
+                                                    attempt,
+                                                    "LLM 调用失败（将重试）: {e}"
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    if llm_response.trim().is_empty() {
+                                        // 全部尝试失败 → 写 failed 状态位（不 mark，保持可重试）。
+                                        tracing::warn!(
+                                            phase = "phase2",
+                                            project = %proj,
+                                            method = %method_name,
+                                            last_err = ?last_err,
+                                            "LLM 分析失败（{LLM_CALL_MAX_ATTEMPTS} 次尝试均未成功），标记 failed"
+                                        );
+                                        if let (Some(repo_vec), Some(id)) =
+                                            (vector_repo.as_ref(), point_id)
+                                        {
+                                            let _ = repo_vec
+                                                .set_payload(
+                                                    &coll,
+                                                    vec![serde_json::json!({
+                                                        "id": id,
+                                                        "payload": {
+                                                            "llm_status": "failed",
+                                                            "llm_retries": llm_retries + 1,
+                                                        }
+                                                    })],
+                                                )
+                                                .await;
+                                        }
+                                        return (method_name, false);
+                                    }
                                             tracing::info!(
                                                 phase = "phase2",
                                                 project = %proj,
@@ -461,49 +618,53 @@ impl PipelineTemplate {
                                             // 只有 LLM 响应已经成功持久化后，才记录进度；否则下次增量构建必须重试。
                                             let mut persisted = false;
                                             if let (Some(svc), Some(repo_vec)) = (embed_svc.as_ref(), vector_repo.as_ref()) {
-                                                match svc.embed_batch(&[llm_response.clone()]).await {
-                                                    Ok(embeddings) => {
-                                                        if let Some(vec) = embeddings.first() {
-                                                            let point = serde_json::json!({
-                                                                "id": method_id,
-                                                                "vector": vec,
-                                                                "payload": {
-                                                                    "name": method.name,
-                                                                    "signature": method.signature,
-                                                                    "class_name": method.class_name,
-                                                                    "file_path": method.file_path,
-                                                                    "package_or_module": method.package_or_module,
-                                                                    "language": method.language,
-                                                                    "project": method.project,
-                                                                    "start_line": method.start_line,
-                                                                    "end_line": method.end_line,
-                                                                    "params": method.params,
-                                                                    "return_type": method.return_type,
-                                                                    "calls": method.calls,
-                                                                    "comment": method.comment,
-                                                                    "entity_id": method.method_id,
-                                                                    "llm_analysis": llm_response,
-                                                                }
-                                                            });
-                                                            match repo_vec.upsert(&coll, vec![point]).await {
-                                                                Ok(()) => {
-                                                                    persisted = true;
-                                                                    tracing::info!(
-                                                                        phase = "phase2",
-                                                                        project = %proj,
-                                                                        method = %method_name,
-                                                                        stage = "upsert_success",
-                                                                        elapsed_ms = started.elapsed().as_millis() as u64,
-                                                                        "LLM 分析已写入 Qdrant"
-                                                                    );
-                                                                }
-                                                                Err(e) => tracing::warn!("Phase 2 upsert 失败 {}: {}", method_name, e),
+                                                // 一次 embed 调用产出双向量：base（signature+comment，与 Phase 1 同源）+ llm（分析文本）。
+                                                // upsert 是整点替换，必须带上 base 向量，否则会丢掉 Phase 1 的召回向量。
+                                                let base_text = format!("{} {}", method.signature, method.comment);
+                                                match svc.embed_batch(&[base_text, llm_response.clone()]).await {
+                                                    Ok(embeddings) if embeddings.len() >= 2 => {
+                                                        let point = serde_json::json!({
+                                                            "id": method_id,
+                                                            "vectors": {
+                                                                "base": &embeddings[0],
+                                                                "llm": &embeddings[1],
+                                                            },
+                                                            "payload": {
+                                                                "name": method.name,
+                                                                "signature": method.signature,
+                                                                "class_name": method.class_name,
+                                                                "file_path": method.file_path,
+                                                                "package_or_module": method.package_or_module,
+                                                                "language": method.language,
+                                                                "project": method.project,
+                                                                "start_line": method.start_line,
+                                                                "end_line": method.end_line,
+                                                                "params": method.params,
+                                                                "return_type": method.return_type,
+                                                                "calls": method.calls,
+                                                                "comment": method.comment,
+                                                                "entity_id": method.method_id,
+                                                                "llm_analysis": llm_response,
+                                                                "llm_status": "success",
                                                             }
+                                                        });
+                                                        match repo_vec.upsert(&coll, vec![point]).await {
+                                                            Ok(()) => {
+                                                                persisted = true;
+                                                                tracing::info!(
+                                                                    phase = "phase2",
+                                                                    project = %proj,
+                                                                    method = %method_name,
+                                                                    stage = "upsert_success",
+                                                                    elapsed_ms = started.elapsed().as_millis() as u64,
+                                                                    "LLM 分析已写入 Qdrant"
+                                                                );
+                                                            }
+                                                            Err(e) => tracing::warn!("Phase 2 upsert 失败 {}: {}", method_name, e),
                                                         }
                                                     }
-                                                    Err(e) => {
-                                                        tracing::warn!("Phase 2 embed 失败 {}: {}", method_name, e);
-                                                    }
+                                                    Ok(_) => tracing::warn!("Phase 2 embed 返回维度不足 {}", method_name),
+                                                    Err(e) => tracing::warn!("Phase 2 embed 失败 {}: {}", method_name, e),
                                                 }
                                             }
 
@@ -532,15 +693,9 @@ impl PipelineTemplate {
                                             }
                                             (method_name, persisted)
                                         }
-                                        Err(e) => {
-                                            tracing::warn!("Phase 2 失败 {}: {}", method_name, e);
-                                            (method_name, false)
-                                        }
-                                    }
-                                }
                             }),
                         )
-                        .buffer_unordered(PHASE2_CONCURRENCY)
+                        .buffer_unordered(phase2_concurrency)
                         .collect::<Vec<_>>()
                         .await;
 
@@ -557,6 +712,38 @@ impl PipelineTemplate {
                         tracing::warn!("Phase 2 任务异常退出: {e}");
                     }
                     tracing::info!("Phase 2: {} 个方法分析任务已完成", total);
+                }
+            }
+        }
+
+        // ── Phase 2.5：补偿自愈（构建末尾，开关 --no-llm-backfill 可关）──
+        // 扫描本项目"已索引但 llm_status != success"的方法缺口点，重试 LLM 分析。
+        // 与 Phase 2 顺序执行（await 完成之后），不叠加瞬时负载；内部错误仅 warn，
+        // 绝不让补偿失败导致整个 build 返回 Err。
+        if self.llm_backfill {
+            if let (Some(client), Some(snap_repo), Some(embed_svc), Some(vector_repo)) =
+                (&self.llm_client, &snapshot_repo, &embed, &vector)
+            {
+                if !self.skip_embed {
+                    let system_prompt = load_code_analysis_prompt();
+                    match self
+                        .backfill_llm_gaps(
+                            project,
+                            root,
+                            client.clone(),
+                            snap_repo.clone(),
+                            embed_svc.clone(),
+                            vector_repo.clone(),
+                            &self.llm_model,
+                            &system_prompt,
+                        )
+                        .await
+                    {
+                        Ok(processed) => {
+                            tracing::info!("补偿自愈完成: 本轮处理 {processed} 个缺口点");
+                        }
+                        Err(e) => tracing::warn!("补偿自愈失败（非致命）: {e}"),
+                    }
                 }
             }
         }
@@ -918,8 +1105,333 @@ impl PipelineTemplate {
 
         Ok(())
     }
+
+    /// 补偿自愈：扫描本项目 `llm_status != success` 的方法缺口点并重试 LLM 分析。
+    ///
+    /// 缺口定义：`llm_status = "failed"` 或 `llm_status` 缺失（未处理）。
+    /// 每轮限批 [`LLM_BACKFILL_BATCH`] 个点；成功 → 补写 llm 向量 +
+    /// `llm_analysis`/`llm_status=success` 并 `mark_llm_analyzed`；
+    /// 失败（chat Err 或空响应）→ `llm_status=failed` + `llm_retries+1`（不 mark）；
+    /// `llm_retries >= 5` 的失败点本轮跳过（保持 failed 状态）；源文件缺失 → skip + warn。
+    /// 内部错误一律 warn，不向上传播（构建照常成功）。
+    /// 返回本轮尝试处理的缺口点数量。
+    #[allow(clippy::too_many_arguments)]
+    async fn backfill_llm_gaps(
+        &self,
+        project: &str,
+        root: &Path,
+        client: Arc<dyn ChatClient>,
+        snapshot_repo: Arc<dyn SnapshotRepository>,
+        embed_svc: Arc<dyn EmbedService>,
+        vector_repo: Arc<dyn VectorRepository>,
+        llm_model: &str,
+        system_prompt: &str,
+    ) -> Result<usize, DtError> {
+        let collection = crate::shared::collections::CODE_METHODS.to_string();
+
+        // 缺口 = llm_status=failed 或 llm_status 缺失（未处理）。
+        // 基础设施层 json_to_qdrant_filter 不支持 must 内嵌套 should（OR 子句），
+        // 因此拆两次 scroll 再按 id 去重 —— 语义等价于 project AND (failed OR is_empty)。
+        let failed_filter = serde_json::json!({
+            "must": [
+                {"key": "project", "match": {"value": project}},
+                {"key": "llm_status", "match": {"value": "failed"}},
+            ]
+        });
+        let missing_filter = serde_json::json!({
+            "must": [
+                {"key": "project", "match": {"value": project}},
+                {"key": "llm_status", "is_empty": true},
+            ]
+        });
+        let mut gap_points: Vec<serde_json::Value> = Vec::new();
+        for f in [failed_filter, missing_filter] {
+            match vector_repo
+                .scroll_points(&collection, Some(f), LLM_BACKFILL_BATCH)
+                .await
+            {
+                Ok(points) => gap_points.extend(points),
+                Err(e) => tracing::warn!("补偿自愈 scroll 失败（非致命）: {e}"),
+            }
+        }
+        // 按点 id 去重（防御性：failed 与缺失两条件理论不重叠）
+        let mut seen = std::collections::HashSet::new();
+        gap_points.retain(|p| {
+            let id = p.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+            seen.insert(id)
+        });
+        let gaps = gap_points.len().min(LLM_BACKFILL_BATCH);
+
+        // ── 并发补偿：每个缺口点独立 async 任务，buffer_unordered 限并发。 ──
+        // 与 Phase 2 主循环一致使用 provider max_concurrent（phase2_concurrency），
+        // 避免串行处理（此前每个缺口点一次请求，12.8s/个 × N 缺口 = 极慢）。
+        // 返回 (点 id, 处理结果)：Some(true)=成功补写, Some(false)=失败(已记 retries), None=本轮跳过。
+        let backfill_concurrency = self.phase2_concurrency;
+        let results: Vec<(u64, Option<bool>)> = stream::iter(
+            gap_points.into_iter().take(gaps).map(|point| {
+                let client = client.clone();
+                let snapshot_repo = snapshot_repo.clone();
+                let embed_svc = embed_svc.clone();
+                let vector_repo = vector_repo.clone();
+                let llm_model = llm_model.to_string();
+                let system_prompt = system_prompt.to_string();
+                let collection = collection.clone();
+                let project = project.to_string();
+                let root = root.to_path_buf();
+                let llm_max_tokens = self.llm_max_tokens;
+                async move {
+                    let Some(id) = point.get("id").and_then(|v| v.as_u64()) else {
+                        return (0, None);
+                    };
+                    let payload = point
+                        .get("payload")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    let file_path = payload
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let entity_id = payload
+                        .get("entity_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let llm_retries: u32 = payload
+                        .get("llm_retries")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+
+                    // 已达重试上限：保持 failed 状态，本轮跳过（数据可辨识）。
+                    if llm_retries >= LLM_RETRIES_HARD_CAP {
+                        return (id, None);
+                    }
+                    // Nacos 虚拟文件无磁盘物化 → 跳过（该类缺口由 Phase 2 变更驱动兜底）。
+                    if file_path.starts_with("dt://nacos/") {
+                        tracing::warn!("补偿自愈跳过 Nacos 虚拟文件缺口: {file_path}");
+                        return (id, None);
+                    }
+                    // 读源文件并按 start_line/end_line 切方法体（切片 <10 字符回退整文件，
+                    // 与 Phase 2 同策略）；文件不存在 → skip + warn。
+                    let fp = root.join(&file_path);
+                    let source_text = match std::fs::read_to_string(&fp) {
+                        Ok(content) => {
+                            let start = payload
+                                .get("start_line")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as usize;
+                            let end = payload
+                                .get("end_line")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as usize;
+                            slice_method_body(&content, start, end)
+                        }
+                        Err(e) => {
+                            tracing::warn!("补偿自愈跳过 {file_path}: 源文件不存在/不可读: {e}");
+                            return (id, None);
+                        }
+                    };
+                    let mut hasher = Sha256::new();
+                    hasher.update(source_text.as_bytes());
+                    let hash = format!("{:x}", hasher.finalize());
+                    let prog_key = format!("method:{entity_id}");
+                    // 幂等守卫：已用相同哈希分析过 → 跳过（并发构建防御）。
+                    if snapshot_repo
+                        .is_llm_analyzed(&project, &prog_key, &hash)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        return (id, None);
+                    }
+
+                    // 失败重试循环：LLM 调用失败/空响应 → 延迟 1 秒重试，最多 5 次重试。
+                    // 全部尝试仍失败才写 failed（与 Phase 2 同策略，给瞬时故障留恢复窗口）。
+                    let mut llm_response = String::new();
+                    let mut last_err: Option<String> = None;
+                    for attempt in 0..LLM_CALL_MAX_ATTEMPTS {
+                        if attempt > 0 {
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                LLM_RETRY_DELAY_SECS,
+                            ))
+                            .await;
+                            tracing::warn!(
+                                phase = "phase2_compensation",
+                                project = %project,
+                                method = %entity_id,
+                                attempt,
+                                "补偿 LLM 调用失败，延迟 1 秒后重试"
+                            );
+                        }
+                        match client
+                            .chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false)
+                            .await
+                        {
+                            Ok(response) => {
+                                let content = response
+                                    .choices
+                                    .first()
+                                    .map(|choice| choice.message.content.clone())
+                                    .unwrap_or_default();
+                                // 空响应 = 失败（触发重试，与 Phase 2 同规则，不写空串伪装成功）。
+                                if content.trim().is_empty() {
+                                    last_err = Some("LLM 响应为空".to_string());
+                                    tracing::warn!(
+                                        phase = "phase2_compensation",
+                                        project = %project,
+                                        method = %entity_id,
+                                        attempt,
+                                        "补偿 LLM 响应为空，视为失败（将重试）"
+                                    );
+                                    continue;
+                                }
+                                llm_response = content;
+                                break;
+                            }
+                            Err(e) => {
+                                last_err = Some(e.clone());
+                                tracing::warn!(
+                                    phase = "phase2_compensation",
+                                    project = %project,
+                                    method = %entity_id,
+                                    attempt,
+                                    "补偿 LLM 调用失败（将重试）: {e}"
+                                );
+                            }
+                        }
+                    }
+
+                    if llm_response.trim().is_empty() {
+                        // 全部尝试失败 → 写 failed 状态位（不 mark，保持可重试）。
+                        let _ = vector_repo
+                            .set_payload(
+                                &collection,
+                                vec![serde_json::json!({
+                                    "id": id,
+                                    "payload": {
+                                        "llm_status": "failed",
+                                        "llm_retries": llm_retries + 1,
+                                    }
+                                })],
+                            )
+                            .await;
+                        tracing::warn!(
+                            phase = "phase2_compensation",
+                            project = %project,
+                            method = %entity_id,
+                            last_err = ?last_err,
+                            "补偿 LLM 分析失败（{LLM_CALL_MAX_ATTEMPTS} 次尝试均未成功），标记 failed"
+                        );
+                        return (id, Some(false));
+                    }
+                    // 成功：一次 embed 产出 base（signature+comment，与 Phase 1 同源）+ llm 双向量。
+                            let base_text = format!(
+                                "{} {}",
+                                payload
+                                    .get("signature")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(""),
+                                payload
+                                    .get("comment")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                            );
+                            match embed_svc
+                                .embed_batch(&[base_text, llm_response.clone()])
+                                .await
+                            {
+                                Ok(embeddings) if embeddings.len() >= 2 => {
+                                    let mut new_payload = payload.clone();
+                                    if let Some(obj) = new_payload.as_object_mut() {
+                                        obj.insert(
+                                            "llm_analysis".to_string(),
+                                            serde_json::Value::String(llm_response.clone()),
+                                        );
+                                        obj.insert(
+                                            "llm_status".to_string(),
+                                            serde_json::Value::String("success".to_string()),
+                                        );
+                                    }
+                                    let point = serde_json::json!({
+                                        "id": id,
+                                        "vectors": {
+                                            "base": &embeddings[0],
+                                            "llm": &embeddings[1],
+                                        },
+                                        "payload": new_payload,
+                                    });
+                                    match vector_repo.upsert(&collection, vec![point]).await {
+                                        Ok(()) => {
+                                            match snapshot_repo
+                                                .mark_llm_analyzed(&project, &prog_key, &hash)
+                                                .await
+                                            {
+                                                Ok(()) => {
+                                                    tracing::info!(
+                                                        phase = "phase2_compensation",
+                                                        project = %project,
+                                                        method = %entity_id,
+                                                        "补偿成功"
+                                                    );
+                                                    return (id, Some(true));
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "补偿 mark_llm_analyzed 失败 {}: {}",
+                                                        entity_id,
+                                                        e
+                                                    );
+                                                    return (id, Some(false));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("补偿 upsert 失败 {}: {}", entity_id, e);
+                                            return (id, Some(false));
+                                        }
+                                    }
+                                }
+                                Ok(_) => {
+                                    tracing::warn!("补偿 embed 返回维度不足 {}", entity_id);
+                                    return (id, Some(false));
+                                }
+                                Err(e) => {
+                                    tracing::warn!("补偿 embed 失败 {}: {}", entity_id, e);
+                                    return (id, Some(false));
+                                }
+                            }
+                        }
+            }),
+        )
+        .buffer_unordered(backfill_concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+        let succeeded = results.iter().filter(|(_, r)| *r == Some(true)).count();
+        let failed = results.iter().filter(|(_, r)| *r == Some(false)).count();
+        tracing::info!(
+            "缺口补偿: {} 缺口, {} 成功, {} 失败",
+            gaps,
+            succeeded,
+            failed
+        );
+        Ok(gaps)
+    }
 }
 
+/// 按行号切片方法体；切片结果 <10 字符时回退整文件（与 Phase 2 L364-372 同策略）。
+fn slice_method_body(content: &str, start_line: usize, end_line: usize) -> String {
+    let body: String = content
+        .lines()
+        .skip(start_line.saturating_sub(1))
+        .take(end_line.saturating_sub(start_line) + 1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if body.len() < 10 {
+        content.to_string()
+    } else {
+        body
+    }
+}
 /// 为一组已删除文件删除方法节点及其关系。
 async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, files: &[String]) {
     let files_json: Vec<serde_json::Value> = files
@@ -939,9 +1451,52 @@ async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, fil
             "MATCH (m:Method {project: $project}) \
              WHERE m.file_path IN $files \
              DETACH DELETE m",
-            params,
+            params.clone(),
         )
         .await;
+
+    // 非 Method 实体（Config/Service/Database 等）无 file_path 字段，按
+    // entity_id 前缀 `dt://entity/{project}/{Type}/{文件名}` 匹配删除。
+    // 文件名取自相对路径最后一段；被忽略文件的 Config 节点由此清理，
+    // 避免“忽略后实体残留”问题（§6.5.4 实体孤儿清理未实现时的兜底）。
+    let file_names: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.rsplit('/').next().map(|s| s.to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !file_names.is_empty() {
+        let mut params2 = std::collections::HashMap::new();
+        params2.insert(
+            "project".to_string(),
+            serde_json::Value::String(project.to_string()),
+        );
+        params2.insert("names".to_string(), serde_json::Value::Array(
+            file_names.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+        ));
+        let _ = graph
+            .write_query(
+                "MATCH (n:Entity {project: $project}) \
+                 WHERE n.entity_id CONTAINS '/Config/' \
+                   AND ANY(fn IN $names WHERE n.entity_id ENDS WITH fn) \
+                 DETACH DELETE n",
+                params2.clone(),
+            )
+            .await;
+
+        // 文件内容级子实体（如 .gitlab-ci.yml 里的 when_parameter/job 名）没有
+        // 文件溯源字段，文件删除后成为孤儿——连同 RELATES 边已删、无任何
+        // 关系的孤儿实体一并清理。仅删除完全无关系的节点，避免误删被其他
+        // 文档引用的共享实体。
+        let _ = graph
+            .write_query(
+                "MATCH (n:Entity {project: $project}) \
+                 WHERE n.entity_id CONTAINS '/Config/' \
+                   AND NOT EXISTS { (n)--() } \
+                 DETACH DELETE n",
+                params2,
+            )
+            .await;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,8 +1629,15 @@ mod tests {
     #[test]
     fn pipeline_can_be_created() {
         let registry = Arc::new(ParserRegistry::new());
-        let _pipeline =
-            PipelineTemplate::new(registry, BatchConfig::default(), None, String::new(), None);
+        let _pipeline = PipelineTemplate::new(
+            registry,
+            BatchConfig::default(),
+            None,
+            String::new(),
+            None,
+            16,
+            512,
+        );
     }
 
     #[test]

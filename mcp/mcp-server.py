@@ -270,11 +270,13 @@ async def list_tools():
         # ===== 搜索 =====
         Tool(
             name="dt_search_kg",
-            description="搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源文档/hop/score_breakdown）。",
+            description="搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源文档/hop/score_breakdown）。world 可指定 code/knowledge/doc/config/memory/all，默认 knowledge（纯知识层）；查代码实体请用 world=code 或直接 dt_search。project 可选，过滤跨项目噪音。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "自然语言搜索关键词"},
+                    "world": {"type": "string", "description": "检索世界: all|code|knowledge|doc|config|memory，默认 knowledge", "default": "knowledge"},
+                    "project": {"type": "string", "description": "限定项目名（如 im-center），过滤跨项目噪音", "default": ""},
                     "limit": {"type": "integer", "description": "返回数量", "default": 10}
                 }, "required": ["query"]
             }
@@ -582,9 +584,14 @@ async def call_tool(name: str, arguments: dict):
     # ===== 搜索 =====
     if name == "dt_search_kg":
         query = arguments.get("query", "")
+        world = arguments.get("world", "knowledge")
         limit = arguments.get("limit", 10)
-        text = run_cmd([DT_BIN, "search", query, "--world", "knowledge",
-                        "--limit", str(limit), "--json"])
+        project = arguments.get("project", "")
+        cmd = [DT_BIN, "search", query, "--world", world,
+               "--limit", str(limit), "--json"]
+        if project:
+            cmd += ["--project", project]
+        text = run_cmd(cmd)
 
     elif name == "dt_search":
         query = arguments.get("query", "")

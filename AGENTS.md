@@ -39,18 +39,24 @@ RETURN n.auth_user, n.auth_password, n.hostname, n.port, n.url, n.service_type
 > MCP 不可用时降级为 CLI：`dt search "<关键词>" --world knowledge --limit 10`
 > （`dt search-kg` 子命令已移除，KG 搜索走统一检索的 knowledge 世界。）
 
-#### 🥈 场景 B：全文关键词精确匹配
+#### 🥈 场景 B：精确命名关键词匹配
 
-如果是明确的命名关键词（如服务名、配置名），用全文索引兜底：
+明确的命名关键词（如服务名、配置名、类名、方法名）优先走统一检索，`world` 选对层、`project` 限定消除跨项目噪音：
 
-```cypher
-CALL db.index.fulltext.queryNodes("infra_search", "<关键词>")
-YIELD node, score
-RETURN node.name, labels(node)[0] AS type, node.auth_user, node.hostname, node.url, score
-ORDER BY score DESC LIMIT 10
+```
+dt_search_kg(query="<关键词>", world="code|knowledge|config", project="<项目名>", limit=10)
 ```
 
-> 全文索引覆盖标签：Infrastructure, Server, Database, Project, Environment, Software, Knowledge, Configuration, NacosConfig, NacosService
+代码实体（类/方法）必须用 world=code（knowledge 世界不索引代码实体）；服务/配置在 knowledge/config 世界。
+Cypher 兜底用属性匹配（本环境 Memgraph 不支持 Neo4j 全文索引语法）：
+
+```cypher
+MATCH (n) WHERE n.project = '<项目名>' AND n.name CONTAINS '<关键词>'
+RETURN n.name, labels(n)[0] AS type, n.hostname, n.url
+LIMIT 10
+```
+
+> 覆盖实体：Class/Method/Entity/Service/Server/Project 等全部标签，按 project 过滤跨项目噪音。
 
 #### 🥉 场景 C：探索性查询（不确定目标类型时）
 

@@ -19,6 +19,13 @@ pub const CONFIG_CHUNKS: &str = "config_chunks";
 /// 向量维度（BGE-M3 = 1024）。
 pub const VECTOR_DIM: u32 = 1024;
 
+/// named vectors 中 base 向量的名称（确定性召回向量：embed(signature+comment)）。
+pub const VECTOR_NAME_BASE: &str = "base";
+
+/// named vectors 中 llm 向量的名称（LLM 分析文本的 rerank 向量）。
+/// 仅当 LLM 分析成功（llm_status=success）后才写入，缺失表示无 llm 向量。
+pub const VECTOR_NAME_LLM: &str = "llm";
+
 /// 为给定的源类型解析 collection 名称。
 ///
 /// 阶段 5+6：返回全局 collection 名称（项目是 payload 标签，

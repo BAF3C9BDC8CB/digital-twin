@@ -1146,7 +1146,7 @@ ORDER BY eid, d.doc_id
                 SearchHit {
                     id: c.business_id,
                     title: c.name,
-                    snippet: c.summary,
+                    snippet: c.summary.clone(),
                     content: None,
                     source_world: "knowledge".into(),
                     entity_type: c.entity_type,
@@ -1156,10 +1156,13 @@ ORDER BY eid, d.doc_id
                     source_ref: c.source_ref,
                     metadata: None,
                     file_path: None,
+                    project: None,
                     start_line: None,
                     end_line: None,
                     signature: None,
-                    llm_analysis: None,
+                    // 知识实体无"方法分析"——摘要即 summary；填入 llm_analysis
+                    // 使 Config 等类型也能显示摘要（否则渲染层回退"暂无摘要"）。
+                    llm_analysis: Some(c.summary.clone()),
                     calls: vec![],
                     element_id: c.element_id,
                     score_breakdown: Some(b),
@@ -2036,6 +2039,7 @@ mod tests {
             source_ref: None,
             metadata: None,
             file_path: None,
+            project: None,
             start_line: None,
             end_line: None,
             signature: None,

@@ -192,6 +192,30 @@ impl SnapshotRepository for SqliteRepo {
         Ok(count as u64)
     }
 
+    async fn clear_all(&self) -> Result<u64, DtError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        let snap_count = conn
+            .execute("DELETE FROM file_snapshots", [])
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        let prog_count = conn
+            .execute("DELETE FROM build_progress", [])
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        let pipe_count = conn
+            .execute("DELETE FROM pipeline_progress", [])
+            .map_err(|e| DtError::Repository(e.to_string()))?;
+        // pipeline_tasks 由 TaskStore（独立连接）维护；表可能尚未创建，
+        // 因此对“no such table”宽容——其余错误照常上报。
+        let task_count = match conn.execute("DELETE FROM pipeline_tasks", []) {
+            Ok(n) => n,
+            Err(e) if e.to_string().contains("no such table") => 0,
+            Err(e) => return Err(DtError::Repository(e.to_string())),
+        };
+        Ok((snap_count + prog_count + pipe_count + task_count) as u64)
+    }
+
     async fn list_snapshots(&self, project: &str) -> Result<Vec<FileSnapshot>, DtError> {
         let conn = self
             .conn

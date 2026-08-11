@@ -121,15 +121,15 @@ dt health
 
 provider 来自 `pipeline.yaml` 的 `providers.llm_provider`：
 
-- `glmcoding` → GLM Coding
+- `openai_compatible`（旧名 `glmcoding` 兼容）→ 通用 OpenAI 兼容网关（GLM Coding / opencode-go 等）
 - `siliconflow` → SiliconFlow
 - `xinference` → XInference
 
-当前推荐低并发：
+并发各 provider 独立配置（`max_concurrent` 字段；引擎与客户端统一读当前 llm_provider 的该值）：
 
 ```yaml
-glmcoding:
-  max_concurrent: 4
+openai_compatible:
+  max_concurrent: 32
 llm:
   chunk_concurrency: 1
 ```
@@ -216,4 +216,5 @@ provider/model：<脱敏后的运行配置>
 - `guides/TRIGGER-RULES.md`
 - `guides/WRITE-EVENTS.md`
 - `guides/PROJECT-DISCOVERY.md`
-- `guides/LONG-TASK-WORKFLOW.md`
+
+> 个人工作流/环境工具指南（Leader 工作流、Git 策略、Jenkins/K8s/服务管理、长任务工作流）已移至 `skill/personal/`，与知识图谱项目无关。

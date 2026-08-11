@@ -31,15 +31,24 @@ dt search "<关键词>" --world knowledge --limit 10
 
 > `dt search-kg` 子命令已移除，KG 语义搜索走统一检索的 knowledge 世界。
 
-### 方式 B：全文索引
+### 方式 B：精确命名匹配（代码实体必须 world=code）
 
-适用于明确的服务名/配置名精确匹配：
+适用于明确的服务名/配置名/类名/方法名精确匹配：
+
+```bash
+# 代码实体（类/方法）— knowledge 世界不索引代码实体，必须 code
+dt search "<关键词>" --world code --project <项目名> --limit 10
+
+# 服务/配置实体
+dt search "<关键词>" --world knowledge --project <项目名> --limit 10
+```
+
+Cypher 兜底（本环境 Memgraph 不支持 Neo4j 全文索引语法 `db.index.fulltext`，用属性匹配）：
 
 ```cypher
-CALL db.index.fulltext.queryNodes("infra_search", "<关键词>")
-YIELD node, score
-RETURN node.name, labels(node)[0] AS type, node.auth_user, node.hostname, node.url, score
-ORDER BY score DESC LIMIT 10
+MATCH (n) WHERE n.project = '<项目名>' AND n.name CONTAINS '<关键词>'
+RETURN n.name, labels(n)[0] AS type, n.hostname, n.url
+LIMIT 10
 ```
 
 ### 方式 C：传统 Cypher

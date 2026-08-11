@@ -161,6 +161,8 @@ pub async fn wire() -> AppComponents {
         false,         // gRPC 构建默认增量
         batch_config,
         false, // skip_embed
+        16,    // llm_concurrency——gRPC 无 llm_client, 值仅占位
+        512,   // llm_max_tokens——gRPC 无 llm_client, 值仅占位
     ));
 
     // ---- 用 WriteCoordinator 包裹 ----

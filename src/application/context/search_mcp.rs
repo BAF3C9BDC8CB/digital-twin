@@ -154,6 +154,10 @@ fn hit_from_payload(
             .get("file_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        project: payload
+            .get("project")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         start_line: payload
             .get("start_line")
             .and_then(|v| v.as_u64())
@@ -169,7 +173,8 @@ fn hit_from_payload(
         llm_analysis: payload
             .get("llm_analysis")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         calls,
         element_id: payload
             .get("method_id")
@@ -205,6 +210,147 @@ fn hit_id(hit: &serde_json::Value, payload: &serde_json::Value) -> String {
                 )
             }),
     }
+}
+
+/// 计算两个稠密向量的余弦相似度（rerank 用）。
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.is_empty() || b.is_empty() || a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut na = 0.0f64;
+    let mut nb = 0.0f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let (xf, yf) = (*x as f64, *y as f64);
+        dot += xf * yf;
+        na += xf * xf;
+        nb += yf * yf;
+    }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na.sqrt() * nb.sqrt())
+    }
+}
+
+/// base 向量召回后，用 llm 向量做 rerank：拉取候选点的 llm 向量（限批 top-50），
+/// 与 query 向量算 cosine 相似度，与 base 分数加权融合（0.5/0.5）后重排序。
+///
+/// 无 llm 向量的点保持 base 分数（不因增强层缺失而掉出候选）。返回重排后的
+/// hit 列表（保留 `{id, score, payload}` 结构），并已过滤 project/exact_ids。
+async fn rerank_with_llm_vectors(
+    vector: &Arc<dyn crate::domain::traits::VectorRepository>,
+    collection: &str,
+    query_vec: &[f32],
+    results: Vec<serde_json::Value>,
+    min_score: f64,
+    project: Option<&str>,
+    exact_ids: &[String],
+) -> Vec<serde_json::Value> {
+    // 先做基础过滤（分数阈值 / 合法 name / project / 与精确通道去重）。
+    let mut kept: Vec<serde_json::Value> = Vec::new();
+    for hit in results {
+        let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if score < min_score {
+            continue;
+        }
+        let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
+        let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if name.is_empty() || name == "?" {
+            continue;
+        }
+        if let Some(p) = project {
+            let pp = payload
+                .get("project")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if pp != p {
+                continue;
+            }
+        }
+        let id = hit_id(&hit, payload);
+        if exact_ids.contains(&id) {
+            continue;
+        }
+        kept.push(hit);
+    }
+    if kept.is_empty() {
+        return kept;
+    }
+
+    // 拉取 top-50 候选的 llm 向量（限批：rerank 只对头部候选有意义）。
+    let ids: Vec<u64> = kept
+        .iter()
+        .take(50)
+        .filter_map(|h| {
+            h.get("id").and_then(|v| v.as_u64()).or_else(|| {
+                h.get("payload")
+                    .and_then(|p| p.get("entity_id"))
+                    .and_then(|v| v.as_u64())
+            })
+        })
+        .collect();
+    let mut llm_by_id: std::collections::HashMap<u64, Vec<f32>> = std::collections::HashMap::new();
+    match vector
+        .fetch_vectors(
+            collection,
+            &ids,
+            crate::shared::collections::VECTOR_NAME_LLM,
+        )
+        .await
+    {
+        Ok(vecs) => {
+            for v in vecs {
+                if let (Some(id), Some(vec_arr)) = (
+                    v.get("id").and_then(|x| x.as_u64()),
+                    v.get("vector").and_then(|x| x.as_array()),
+                ) {
+                    let vec_f32: Vec<f32> = vec_arr
+                        .iter()
+                        .filter_map(|x| x.as_f64().map(|f| f as f32))
+                        .collect();
+                    if !vec_f32.is_empty() {
+                        llm_by_id.insert(id, vec_f32);
+                    }
+                }
+            }
+        }
+        Err(e) => tracing::warn!("llm 向量 rerank 拉取失败（跳过 rerank）: {e}"),
+    }
+
+    // 融合：final = 0.5 * base_score + 0.5 * cosine(query, llm_vec)；无 llm 向量保持 base。
+    for hit in kept.iter_mut() {
+        let base_score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let id = hit
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                hit.get("payload")
+                    .and_then(|p| p.get("entity_id"))
+                    .and_then(|v| v.as_u64())
+            })
+            .unwrap_or(0);
+        let final_score = match llm_by_id.get(&id) {
+            Some(llm_vec) => {
+                let sim = cosine_similarity(query_vec, llm_vec);
+                // 余弦值域 [-1,1]，Qdrant base score 也是 cosine 相似度 →
+                // 直接线性融合即可（0.5/0.5，用户拍板）。
+                0.5 * base_score + 0.5 * sim
+            }
+            None => base_score,
+        };
+        if let Some(obj) = hit.as_object_mut() {
+            obj.insert("score".to_string(), serde_json::json!(final_score));
+        }
+    }
+
+    // 按融合分重排序（稳定降序）。
+    kept.sort_by(|a, b| {
+        let sa = a.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let sb = b.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    kept
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +413,9 @@ pub struct SearchHit {
     pub metadata: Option<serde_json::Value>,
     /// 源文件路径（code 世界）。
     pub file_path: Option<String>,
+    /// 项目名（code 世界；从 Qdrant payload 读，用于展示层拼磁盘全路径）。
+    #[serde(default)]
+    pub project: Option<String>,
     /// 起始行号（code 世界）。
     pub start_line: Option<u32>,
     /// 结束行号（code 世界）。
@@ -439,7 +588,13 @@ impl CrossWorldSearch {
                     "must": [{"key": "name", "match": {"value": query}}]
                 });
                 match vector
-                    .search_with_filter(col, query_vec.clone(), internal_limit as u64, filter)
+                    .search_named_with_filter(
+                        col,
+                        crate::shared::collections::VECTOR_NAME_BASE,
+                        query_vec.clone(),
+                        internal_limit as u64,
+                        filter,
+                    )
                     .await
                 {
                     Ok(results) => {
@@ -473,35 +628,28 @@ impl CrossWorldSearch {
                 }
             }
 
-            // 向量通道(语义召回)
+            // 向量通道(语义召回)——base 向量召回，llm 向量 rerank
             match vector
-                .search(col, query_vec.clone(), internal_limit as u64)
+                .search_named(
+                    col,
+                    crate::shared::collections::VECTOR_NAME_BASE,
+                    query_vec.clone(),
+                    internal_limit as u64,
+                )
                 .await
             {
                 Ok(results) => {
-                    for hit in results {
+                    // llm 向量 rerank：拉取 top 候选的 llm 向量（限批），
+                    // 与 query 算 cosine 相似度，与 base 分数加权融合后重排。
+                    let reranked = rerank_with_llm_vectors(
+                        &vector, col, &query_vec, results, min_score, project, &exact_ids,
+                    )
+                    .await;
+                    for hit in reranked {
                         let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        if score < min_score {
-                            continue;
-                        }
                         let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
                         let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if name.is_empty() || name == "?" {
-                            continue;
-                        }
-                        if let Some(p) = project {
-                            let pp = payload
-                                .get("project")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            if pp != p {
-                                continue;
-                            }
-                        }
                         let id = hit_id(&hit, payload);
-                        if exact_ids.contains(&id) {
-                            continue;
-                        }
                         all_hits.push(hit_from_payload(payload, name.to_string(), id, score));
                     }
                 }
@@ -672,6 +820,7 @@ impl CrossWorldSearch {
                     source_ref: Some(doc.to_string()),
                     metadata: None,
                     file_path: None,
+                    project: None,
                     start_line: None,
                     end_line: None,
                     signature: None,
@@ -745,6 +894,7 @@ impl CrossWorldSearch {
                                 source_ref: Some(doc.to_string()),
                                 metadata: None,
                                 file_path: None,
+                                project: None,
                                 start_line: None,
                                 end_line: None,
                                 signature: None,
@@ -958,6 +1108,7 @@ mod tests {
             source_ref: Some("src/payment.rs".into()),
             metadata: None,
             file_path: Some("src/payment.rs".into()),
+            project: Some("pay-center".into()),
             start_line: Some(10),
             end_line: Some(45),
             signature: Some("pub fn process()".into()),
@@ -1041,6 +1192,7 @@ mod tests {
                 source_ref: None,
                 metadata: None,
                 file_path: None,
+                project: None,
                 start_line: None,
                 end_line: None,
                 signature: None,

@@ -10,6 +10,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+/// 判断目录是否应被忽略。
+///
+/// `ignore_dirs` 支持两种匹配：
+/// - 单段目录名（如 "node_modules"、"target"）—— 匹配任何同名目录；
+/// - 带路径前缀的条目（如 "target/debug"、"node_modules/.cache"）
+///   —— 匹配 `entry_path` 相对扫描根的子路径，或以该前缀开头的深层路径。
+/// 传入 `rel`（entry_path 相对 root 的正斜杠路径）用于前缀匹配。
+pub fn dir_is_ignored(
+    rel: &str,
+    name: &str,
+    ignore_dirs: &std::collections::HashSet<String>,
+) -> bool {
+    if ignore_dirs.contains(name) {
+        return true;
+    }
+    // 深层路径前缀匹配：例如 "src/main/java/.../target" 命中 "target"，
+    // "node_modules/.cache/foo" 命中 "node_modules/.cache"。
+    let rel_std = rel.replace('\\', "/");
+    ignore_dirs
+        .iter()
+        .filter(|pat| pat.contains('/')) // 仅对带路径的条目做前缀匹配
+        .any(|pat| {
+            let pat = pat.trim_end_matches('/');
+            !pat.is_empty() && (rel_std == pat || rel_std.starts_with(&format!("{pat}/")))
+        })
+}
+
 /// 从项目根目录收集所有源文件，遵循扫描配置。
 ///
 /// 返回通过所有过滤器的绝对文件路径。
@@ -20,7 +47,8 @@ pub fn collect_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
         .filter_entry(|entry| {
             if entry.file_type().is_dir() {
                 let name = entry.file_name().to_string_lossy();
-                !config.ignore_dirs.contains(name.as_ref())
+                let rel = rel_path(root, entry.path());
+                !dir_is_ignored(&rel, name.as_ref(), &config.ignore_dirs)
             } else {
                 true
             }
@@ -29,6 +57,12 @@ pub fn collect_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let path = e.path();
+            // 按文件名过滤（精确匹配 ignore_files）
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if config.ignore_files.contains(name) {
+                    return false;
+                }
+            }
             // 按扩展名过滤
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 let dot_ext = format!(".{}", ext);
@@ -67,7 +101,8 @@ pub fn collect_document_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> 
         .filter_entry(|entry| {
             if entry.file_type().is_dir() {
                 let name = entry.file_name().to_string_lossy();
-                !config.ignore_dirs.contains(name.as_ref())
+                let rel = rel_path(root, entry.path());
+                !dir_is_ignored(&rel, name.as_ref(), &config.ignore_dirs)
             } else {
                 true
             }
@@ -76,6 +111,14 @@ pub fn collect_document_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> 
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let path = e.path();
+            // 按文件名过滤（精确匹配 ignore_files，与 collect_files 一致）。
+            // 否则 .gitlab-ci.yml/banner.txt 等无价值文件会绕过代码收集、
+            // 以文档身份进入 doc_chunks。
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if config.ignore_files.contains(name) {
+                    return false;
+                }
+            }
             // 只匹配文档扩展名
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 if config.document_extensions.contains(ext) {
@@ -200,6 +243,35 @@ mod tests {
         assert!(names.contains(&"main.rs".to_string()));
         // target/ 被忽略，因此 foo.rs 不应出现
         assert!(!names.contains(&"foo.rs".to_string()));
+    }
+
+    #[test]
+    fn collect_files_respects_path_prefix_and_ignore_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        // 深层路径前缀忽略：node_modules/.cache 下的文件不应出现
+        fs::create_dir_all(root.join("node_modules/.cache")).unwrap();
+        fs::write(root.join("node_modules/.cache/cache.rs"), "fn c() {}").unwrap();
+        // ignore_files 精确匹配：Cargo.lock 不应出现
+        fs::write(root.join("Cargo.lock"), "# lock").unwrap();
+        // 正常文件应出现
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        let mut config = ScanConfig::default();
+        config.ignore_dirs.insert("node_modules/.cache".to_string());
+        config.ignore_files.insert("Cargo.lock".to_string());
+
+        let files = collect_files(root, &config);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"main.rs".to_string()));
+        assert!(!names.contains(&"cache.rs".to_string()));
+        assert!(!names.contains(&"Cargo.lock".to_string()));
     }
 
     #[test]
