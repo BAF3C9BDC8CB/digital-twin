@@ -112,3 +112,13 @@
 ### 结论
 
 KG 使用链路（sense → search_kg → cypher）全部畅通；代码实体检索需 world=code + project 限定（已写入技能）；注释/索引质量经重建+修复后达标。
+
+## 四、团队 B 建议落地（第二轮修复，commit 7b91b96 + 45158fa）
+
+1. **低分降级提示**（search_render.rs）：rerank 分数 <0.5 时输出"⚠️ 结果可能不相关"（含 world 错配/跨项目噪音排查指引）
+2. **索引对账巡检**（cleanup.rs dt health）：Memgraph Method 节点数 vs Qdrant code_methods 向量数对账，漂移提示 --full 重建；实测清理前 16366≠17920（漂移），清理后 16355=16355（一致）
+3. **跨项目分组展示**（search_render.rs）：多项目命中按 project 分组 + "命中项目分布"统计行
+4. **uvp-im-center 残留清理**：误用目录名构建产生的 411 个 Memgraph 节点 + 3 集合 Qdrant 向量，脚本 /tmp/cleanup-uvp-im-center.py 清除
+5. **im-center 知识层补全**（dt learn）：消息发送链路 + 群组管理两主题 → Knowledge/Experience/Playbook 节点写入 knowledge 世界，dt build --source knowledge 同步后检索分数 0.92+
+
+验证：676 测试全过；dt health 对账一致；knowledge 检索命中；注释无错位。
