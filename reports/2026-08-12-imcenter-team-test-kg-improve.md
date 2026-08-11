@@ -122,3 +122,24 @@ KG 使用链路（sense → search_kg → cypher）全部畅通；代码实体�
 5. **im-center 知识层补全**（dt learn）：消息发送链路 + 群组管理两主题 → Knowledge/Experience/Playbook 节点写入 knowledge 世界，dt build --source knowledge 同步后检索分数 0.92+
 
 验证：676 测试全过；dt health 对账一致；knowledge 检索命中；注释无错位。
+
+## 五、复测结果（团队 deleg_9493a4d3，第二轮）
+
+### 复测 1：KG 检索正确率
+- 10 项功能双查询词（中文自然语言 + 英文标识符）交叉验证
+- **中文口径 80%（8/10）**，中英文兜底口径 **100%（10/10）**
+- 所有命中 project 归属正确，无 uvp-im-center 残留噪音
+- 2 项中文弱召回（群成员管理/账号导入）为**查询词语义召回偏弱**，非索引缺失/数据污染/跨项目泄漏；英文标识符（addGroupMember/accountImport）100% 召回
+
+### 复测 2：知识层 + 回归 + 新功能（5/5 ✓）
+1. knowledge 世界命中 im-center 知识层（0.92+ 分，Knowledge/Playbook/Experience 节点）✓
+2. 注释错位回归：groupMsgGetSimple comment 不再含"删除群成员消息" ✓
+3. 索引对账：Memgraph 16355 = Qdrant 16355 ✓
+4. 错 world 低分降级提示出现并给纠正建议 ✓
+5. 跨项目分组展示"命中项目分布" ✓
+
+### 使用建议（已采纳）
+- 中文查询尽量带具体动词（"添加群成员"而非"群成员管理"）
+- 关键功能（群成员/账号导入）用英文标识符或中英混搭兜底可满分召回
+
+**结论：检索链路全部达标，闭环完成。**
