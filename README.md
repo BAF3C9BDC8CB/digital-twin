@@ -184,7 +184,7 @@ dt build --source knowledge --full
 
 MCP 服务入口为 [`mcp/mcp-server.py`](mcp/mcp-server.py)。当前 MCP server 主要通过子进程调用 `dt` CLI，提供搜索、构建、健康检查、知识写入以及 Jenkins、服务和 K8s 相关工具；实际工具列表和参数以该文件及 MCP 服务输出为准。gRPC 集成属于独立的 daemon 入口，不应假定 MCP 已通过 gRPC 通信。
 
-在 AI 工具中，优先使用 MCP 返回的结构化结果；MCP 不可用时再使用 `dt` CLI。有关操作建议可参考 [`skill/guides/DT-CLI-REFERENCE.md`](skill/guides/DT-CLI-REFERENCE.md)。
+在 AI 工具中，优先使用 MCP 返回的结构化结果；MCP 不可用时再使用 `dt` CLI。有关操作建议可参考 [`skills/digital-twin-ops`](skills/digital-twin-ops/SKILL.md)（Hermes 集成的操作技能，含 references 知识点与 agent-workflow 工作流指南）。
 
 ## 测试
 
@@ -217,7 +217,7 @@ tests/      Rust 集成测试
 test/       测试项目、夹具和回归数据
 scripts/    构建、部署和辅助脚本
 docs/       设计规格和实施文档
-skill/      AI 使用指南
+skills/     Hermes 集成的操作技能（digital-twin-ops：SKILL.md + references + agent-workflow）
 ```
 
 项目的实际目录和文件以当前分支内容为准，不在 README 中维护文件数量或模块数量。`scripts/setup.sh` 仍包含旧目录引用，不作为当前安装入口；请使用上面的 Cargo 构建和手动配置流程。
@@ -226,8 +226,8 @@ skill/      AI 使用指南
 
 - [`docs/`](docs/)：设计规格和实施计划
 - [`config/config.yaml.example`](config/config.yaml.example)：配置模板
-- [`skill/guides/DT-CLI-REFERENCE.md`](skill/guides/DT-CLI-REFERENCE.md)：MCP 优先的操作参考
-- [`skill/guides/WRITE-EVENTS.md`](skill/guides/WRITE-EVENTS.md)：事件写入指南
+- [`skills/digital-twin-ops/references/agent-workflow/JCLI-GUIDE.md`](skills/digital-twin-ops/references/agent-workflow/JCLI-GUIDE.md)：Jenkins 部署指南
+- [`skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md`](skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md)：事件写入指南
 
 ## 许可证
 
