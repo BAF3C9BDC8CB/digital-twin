@@ -762,6 +762,8 @@ impl PipelineTemplate {
                         root,
                         client.clone(),
                         graph_repo,
+                        embed.clone(),
+                        vector.clone(),
                         &self.llm_model,
                         &system_prompt,
                     )
@@ -1461,9 +1463,22 @@ impl PipelineTemplate {
         root: &Path,
         client: Arc<dyn ChatClient>,
         graph: &dyn GraphRepository,
+        embed: Option<Arc<dyn EmbedService>>,
+        vector: Option<Arc<dyn VectorRepository>>,
         llm_model: &str,
         system_prompt: &str,
     ) -> Result<usize, DtError> {
+        // GAP-B：循环处理直到无缺口（每轮 LIMIT 300，处理完再扫描剩余），
+        // 避免大项目需手动多次构建才能补全全部类描述。
+        let mut total_succeeded: usize = 0;
+        let mut total_failed: usize = 0;
+        let mut rounds: u32 = 0;
+        loop {
+            rounds += 1;
+            if rounds > 20 {
+                tracing::warn!("Class 描述补偿已达 20 轮上限, 停止（仍有缺口留待下次构建）");
+                break;
+            }
         // 缺口 = description 为空/缺失 且 (llm_status 缺失 或 = failed)。
         let mut params = std::collections::HashMap::new();
         params.insert("project".to_string(), serde_json::Value::String(project.to_string()));
@@ -1471,12 +1486,13 @@ impl PipelineTemplate {
         let rows = match graph
             .read_query(
                 "MATCH (c:Class) \
-                 WHERE c.project = $project \
-                   AND (c.description IS NULL OR c.description = '') \
-                   AND (c.llm_status IS NULL OR c.llm_status <> 'success') \
-                 RETURN c.class_id AS class_id, c.name AS name, c.file_path AS file_path, \
-                        c.start_line AS start_line, c.end_line AS end_line \
-                 LIMIT 300",
+                WHERE c.project = $project \
+                  AND ((c.description IS NULL OR c.description = '') \
+                       OR c.vectorized IS NULL OR c.vectorized = false) \
+                RETURN c.class_id AS class_id, c.name AS name, c.file_path AS file_path, \
+                       c.start_line AS start_line, c.end_line AS end_line, \
+                       coalesce(c.description, '') AS desc_text \
+                LIMIT 300",
                 params.clone(),
             )
             .await
@@ -1488,7 +1504,7 @@ impl PipelineTemplate {
             }
         };
 
-        let mut jobs: Vec<(String, String, String, usize, usize)> = Vec::new();
+        let mut jobs: Vec<(String, String, String, usize, usize, String)> = Vec::new();
         if let Some(arr) = rows.as_array() {
             for row in arr {
                 // read_query 返回对象格式（字段名访问，见 search_config.rs 同款解析）。
@@ -1497,8 +1513,9 @@ impl PipelineTemplate {
                 let file_path = row.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let start = row.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let end = row.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let desc_text = row.get("desc_text").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if !class_id.is_empty() && !file_path.is_empty() {
-                    jobs.push((class_id, name, file_path, start, end));
+                    jobs.push((class_id, name, file_path, start, end, desc_text));
                 }
             }
         }
@@ -1511,9 +1528,12 @@ impl PipelineTemplate {
         // 并发处理：每类独立 async 任务（与 Phase 2 同用 phase2_concurrency）。
         let concurrency = self.phase2_concurrency.max(1);
         let llm_max_tokens = self.llm_max_tokens;
-        let results: Vec<(String, bool)> = stream::iter(jobs.into_iter().map(|(class_id, name, file_path, start, end)| {
+        let round_jobs = jobs.len();
+        let results: Vec<(String, bool)> = stream::iter(jobs.into_iter().map(|(class_id, name, file_path, start, end, existing_desc)| {
             let client = client.clone();
-                        let llm_model = llm_model.to_string();
+            let embed_c = embed.clone();
+            let vector_c = vector.clone();
+            let llm_model = llm_model.to_string();
             let system_prompt = system_prompt.to_string();
             let root = root.to_path_buf();
             let project = project.to_string();
@@ -1542,7 +1562,12 @@ impl PipelineTemplate {
                     return (class_id, false);
                 }
 
-                // 失败重试循环（与方法 Phase 2 同策略）。
+                // GAP-A 回填：已有描述（description 非空）的类跳过 LLM，
+                // 直接走向量化分支（补 code_classes 向量 + vectorized 标记）。
+                let desc = if !existing_desc.is_empty() {
+                    existing_desc
+                } else {
+                    // 失败重试循环（与方法 Phase 2 同策略）。
                 let mut llm_response = String::new();
                 let mut last_err: Option<String> = None;
                 for attempt in 0..LLM_CALL_MAX_ATTEMPTS {
@@ -1611,19 +1636,95 @@ impl PipelineTemplate {
                     return (class_id, false);
                 }
 
-                // 成功：写回 description + llm_status=success。
-                let desc = llm_response.trim().chars().take(500).collect::<String>();
+                // LLM 成功：写回 description + llm_status=success。
+                let desc_llm = llm_response.trim().chars().take(500).collect::<String>();
                 let _ = graph
                     .write_query(
                         "MATCH (c:Class {class_id: $id}) SET c.description = $d, c.llm_status = 'success'",
                         {
                             let mut p = std::collections::HashMap::new();
                             p.insert("id".to_string(), serde_json::Value::String(class_id.clone()));
-                            p.insert("d".to_string(), serde_json::Value::String(desc));
+                            p.insert("d".to_string(), serde_json::Value::String(desc_llm.clone()));
                             p
                         },
                     )
                     .await;
+                desc_llm
+                };
+                // GAP-A：类描述成功后可检索——把类 upsert 进 code_classes 集合
+                // （description 向量），使 dt search --world code 能召回类实体。
+                if let (Some(svc), Some(repo)) = (&embed_c, &vector_c) {
+                    if !desc.is_empty() {
+                        // 集合不存在时先创建（与 Phase 1 的 ensure_collection 同模式）。
+                        let _ = repo
+                            .ensure_collection(
+                                crate::shared::collections::CODE_CLASSES,
+                                crate::shared::collections::VECTOR_DIM,
+                            )
+                            .await;
+                        match svc.embed_batch(&[desc.clone()]).await {
+                            Ok(embeddings) if !embeddings.is_empty() => {
+                                let point = serde_json::json!({
+                                    "id": class_id,
+                                    // code_classes 是单向量集合（ensure_collection 默认配置），
+                                    // 用 "vector" 而非 named vectors "vectors"——与集合配置匹配。
+                                    "vector": &embeddings[0],
+                                    "payload": {
+                                        "name": name,
+                                        "entity_type": "Class",
+                                        "file_type": "code",
+                                        "file_path": file_path,
+                                        "project": project,
+                                        "start_line": start,
+                                        "end_line": end,
+                                        "entity_id": class_id,
+                                        "llm_analysis": &desc,
+                                        "llm_status": "success",
+                                    }
+                                });
+                                match repo
+                                    .upsert(crate::shared::collections::CODE_CLASSES, vec![point])
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        tracing::info!(
+                                            phase = "phase2_class_desc",
+                                            project = %project,
+                                            class = %name,
+                                            "Class 向量已写入 code_classes"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Class 向量 upsert 失败 {}: {}",
+                                            class_id,
+                                            e
+                                        );
+                                    }
+                                }
+                                // 向量化成功：标记 vectorized，避免下轮重扫。
+                                let _ = graph
+                                    .write_query(
+                                        "MATCH (c:Class {class_id: $id}) SET c.vectorized = true",
+                                        {
+                                            let mut p = std::collections::HashMap::new();
+                                            p.insert(
+                                                "id".to_string(),
+                                                serde_json::Value::String(class_id.clone()),
+                                            );
+                                            p
+                                        },
+                                    )
+                                    .await;
+                            }
+                            Ok(_) => tracing::warn!(
+                                "Class 描述 embed 返回空, 跳过向量化 {}",
+                                class_id
+                            ),
+                            Err(e) => tracing::warn!("Class 描述 embed 失败 {}: {}", class_id, e),
+                        }
+                    }
+                }
                 tracing::info!(phase = "phase2_class_desc", project = %project, class = %name, "Class 描述已写入");
                 (class_id, true)
             }
@@ -1640,7 +1741,20 @@ impl PipelineTemplate {
             succeeded,
             failed
         );
-        Ok(succeeded)
+        total_succeeded += succeeded;
+        total_failed += failed;
+        // 本轮无待处理（无缺口）或全部失败（无可进展）→ 结束循环。
+        if round_jobs == 0 || succeeded == 0 {
+            break;
+        }
+        }
+        tracing::info!(
+            "Class 描述补偿总览: {} 轮, {} 成功, {} 失败",
+            rounds,
+            total_succeeded,
+            total_failed
+        );
+        Ok(total_succeeded)
     }
 }
 

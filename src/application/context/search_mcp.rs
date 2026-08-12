@@ -144,7 +144,14 @@ fn hit_from_payload(
         },
         content: None,
         source_world: "code".into(),
-        entity_type: "Method".into(),
+        // 从 payload 读取实体类型：方法点无 entity_type 字段→默认 Method；
+        // 类点（code_classes）有 entity_type=Class（GAP-A）。
+        entity_type: payload
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Method")
+            .into(),
         file_type: None,
         file_type_label: None,
         score,
@@ -561,8 +568,12 @@ impl CrossWorldSearch {
             return Ok(Vec::new());
         };
 
-        // U-D6：只查全局 code_methods；project 过滤下沉 payload 级
-        let method_cols = vec![crate::shared::collections::CODE_METHODS.to_string()];
+        // U-D6：查全局 code_methods + code_classes（方法 + 类实体）；
+        // project 过滤下沉 payload 级。类描述向量使类可被检索（GAP-A）。
+        let method_cols = vec![
+            crate::shared::collections::CODE_METHODS.to_string(),
+            crate::shared::collections::CODE_CLASSES.to_string(),
+        ];
 
         if method_cols.is_empty() {
             return Ok(Vec::new());
@@ -582,8 +593,11 @@ impl CrossWorldSearch {
         let mut exact_ids: Vec<String> = Vec::new();
 
         for col in &method_cols {
-            // 1A:标识符精确匹配通道——payload name 精确过滤,命中强制置顶
-            if ident_mode {
+            // 1A:标识符精确匹配通道——payload name 精确过滤,命中强制置顶。
+            // code_classes 是单向量集合，无 named vectors，跳过 search_named_with_filter
+            // （类名精确匹配由向量通道 + 关键词兜底覆盖）。
+            let is_classes = col == crate::shared::collections::CODE_CLASSES;
+            if ident_mode && !is_classes {
                 let filter = serde_json::json!({
                     "must": [{"key": "name", "match": {"value": query}}]
                 });
@@ -628,23 +642,34 @@ impl CrossWorldSearch {
                 }
             }
 
-            // 向量通道(语义召回)——base 向量召回，llm 向量 rerank
-            match vector
-                .search_named(
-                    col,
-                    crate::shared::collections::VECTOR_NAME_BASE,
-                    query_vec.clone(),
-                    internal_limit as u64,
-                )
-                .await
-            {
+            // 向量通道(语义召回)——base 向量召回，llm 向量 rerank。
+            // code_methods 是 named 双向量（base/llm），code_classes 是单向量
+            // （ensure_collection 非 code_methods 默认单向量）——按集合区分查询。
+            let is_classes = col == crate::shared::collections::CODE_CLASSES;
+            let search_res = if is_classes {
+                vector.search(col, query_vec.clone(), internal_limit as u64).await
+            } else {
+                vector
+                    .search_named(
+                        col,
+                        crate::shared::collections::VECTOR_NAME_BASE,
+                        query_vec.clone(),
+                        internal_limit as u64,
+                    )
+                    .await
+            };
+            match search_res {
                 Ok(results) => {
                     // llm 向量 rerank：拉取 top 候选的 llm 向量（限批），
                     // 与 query 算 cosine 相似度，与 base 分数加权融合后重排。
-                    let reranked = rerank_with_llm_vectors(
-                        &vector, col, &query_vec, results, min_score, project, &exact_ids,
-                    )
-                    .await;
+                    let reranked = if is_classes {
+                        results
+                    } else {
+                        rerank_with_llm_vectors(
+                            &vector, col, &query_vec, results, min_score, project, &exact_ids,
+                        )
+                        .await
+                    };
                     for hit in reranked {
                         let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
@@ -1299,20 +1324,28 @@ mod tests {
         }
         async fn search(
             &self,
-            _c: &str,
+            c: &str,
             _v: Vec<f32>,
             _l: u64,
         ) -> Result<Vec<serde_json::Value>, DtError> {
+            // 双集合搜索（code_methods + code_classes）：桩仅对方法集合返回命中，
+            // 类集合返回空——避免旧测试断言（1 条命中）被类集合重复命中破坏。
+            if c == crate::shared::collections::CODE_CLASSES {
+                return Ok(Vec::new());
+            }
             Ok(self.hits.clone())
         }
         async fn search_with_filter(
             &self,
-            _c: &str,
+            c: &str,
             _v: Vec<f32>,
             _l: u64,
             filter: serde_json::Value,
         ) -> Result<Vec<serde_json::Value>, DtError> {
             *self.captured_filter.lock().unwrap() = Some(filter);
+            if c == crate::shared::collections::CODE_CLASSES {
+                return Ok(Vec::new());
+            }
             Ok(self.hits.clone())
         }
         async fn upsert(&self, _c: &str, _p: Vec<serde_json::Value>) -> Result<(), DtError> {

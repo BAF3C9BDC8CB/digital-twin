@@ -7,6 +7,11 @@
 /// 代码方法向量的全局 collection。
 pub const CODE_METHODS: &str = "code_methods";
 
+/// 代码类（Class）描述向量的全局 collection。
+/// Phase 2.6 类描述补偿成功后写入（description 文本向量），
+/// 使 `dt search --world code` 能检索到类实体（此前类只有 Memgraph 节点）。
+pub const CODE_CLASSES: &str = "code_classes";
+
 /// 文档分块向量的全局 collection。
 pub const DOC_CHUNKS: &str = "doc_chunks";
 
