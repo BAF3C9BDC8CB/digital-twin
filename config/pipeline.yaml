@@ -20,7 +20,7 @@ providers:
     max_tokens: 512
   openai_compatible:
     url: https://opencode.ai/zen/go
-    api_key: sk-H1Nc3lHFH5diDpti5znUwwKRBhvmK2B53jqbHwCizOaY5MU2KkZwoE9DYV8HBvLO
+    api_key: sk-bYOh21Rr94LMD2CMYi26xWyh7wmkddQ1SSQUn2GEyiCqDOag6uVs6jKpgrJ09l99
     protocol: openai
     model_llm: deepseek-v4-flash
     max_concurrent: 24

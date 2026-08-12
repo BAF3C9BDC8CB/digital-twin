@@ -173,7 +173,7 @@ dt build --source knowledge --full
 
 ## MCP 集成
 
-MCP 服务入口为 [`mcp/mcp-server.py`](mcp/mcp-server.py)。当前 MCP server 主要通过子进程调用 `dt` CLI，提供搜索、构建、健康检查、知识写入以及 Jenkins、服务和 K8s 相关工具；实际工具列表和参数以该文件及 MCP 服务输出为准。
+MCP 服务入口为 Rust MCP server `dt-mcp`(二进制 `target/release/dt-mcp`,部署软链 `~/.local/bin/dt-mcp`),与 jcli-mcp/kublog-mcp/svc-mcp 平级注册到 Hermes config.yaml。dt-mcp 直接调用 `digital_twin` lib 的 handler, 提供搜索、构建、健康检查、知识写入等 10 个 dt_* 工具, 不再经 Python 子进程封装; 实际工具列表和参数以 MCP 服务输出为准。
 
 在 AI 工具中，优先使用 MCP 返回的结构化结果；MCP 不可用时再使用 `dt` CLI。有关操作建议可参考 [`skills/digital-twin-ops`](skills/digital-twin-ops/SKILL.md)（Hermes 集成的操作技能，含 references 知识点与 agent-workflow 工作流指南）。
 

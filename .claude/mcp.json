@@ -10,7 +10,7 @@
   },
   "digital-twin": {
     "type": "local",
-    "command": "/home/luis/.local/bin/digital-twin-mcp"
+    "command": "/home/luis/.local/bin/dt-mcp"
   },
   "httptoolkit": {
     "type": "local",
