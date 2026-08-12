@@ -1,0 +1,3 @@
+description: "Digital-twin knowledge-graph memory provider: prefetch relevant KG memories per turn via dt search."
+version: 1.0.0
+name: digital-twin
