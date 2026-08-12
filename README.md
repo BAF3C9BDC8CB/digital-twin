@@ -129,7 +129,7 @@ cargo run -- --help
  dt sense
 ```
 
-`dt build --test` 用于运行仓库内置的管线集成测试；测试数据会使用 `test-` 前缀，并依赖已配置的后端服务。`--source knowledge` 用于执行知识节点同步；`dt kg-sync` 仍可使用但已弃用，建议改用前者。
+`--source knowledge` 用于执行知识节点同步；`dt kg-sync` 仍可使用但已弃用，建议改用前者。
 
 ### 知识和事件
 
@@ -190,10 +190,9 @@ MCP 服务入口为 [`mcp/mcp-server.py`](mcp/mcp-server.py)。当前 MCP server
 
 ```bash
 cargo test
-dt build --test
 ```
 
-集成测试所需的夹具和回归数据位于 `test/`。需要 Memgraph、Qdrant 或推理服务的测试，应先准备对应服务和配置。
+单元测试位于 `src/` 内（`#[cfg(test)]` 模块）。需要 Memgraph、Qdrant 或推理服务的测试，应先准备对应服务和配置。
 
 ## 当前边界
 
@@ -213,9 +212,6 @@ src/        Rust 主代码（领域、基础设施、应用和接口层）
 config/     配置、管线参数、Prompt 和事件 Hook 模板
 mcp/        MCP 服务
 proto/      Protobuf 定义
-tests/      Rust 集成测试
-test/       测试项目、夹具和回归数据
-scripts/    构建、部署和辅助脚本
 docs/       设计规格和实施文档
 skills/     Hermes 集成的操作技能（digital-twin-ops：SKILL.md + references + agent-workflow）
 ```

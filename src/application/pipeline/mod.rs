@@ -39,7 +39,6 @@ pub mod processor;
 pub mod processors;
 pub mod prompt;
 pub mod registry;
-pub mod test;
 pub mod virtual_file;
 
 pub use config::PipelineConfig;

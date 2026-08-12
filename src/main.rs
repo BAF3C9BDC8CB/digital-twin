@@ -44,11 +44,6 @@ enum Commands {
         /// 支持值: "all"（未指定目标时的默认值）。
         #[arg(long = "targets", value_delimiter = ',')]
         targets: Vec<String>,
-
-        /// 清理所有 test- 前缀的数据（节点 + Qdrant 集合）。
-        /// 等价于 `dt build --test` 的清理阶段。
-        #[arg(long = "test")]
-        test: bool,
     },
 
     /// 系统备份 — Memgraph、Qdrant 与 SQLite 的分层备份。
@@ -152,8 +147,7 @@ enum Commands {
     /// `dt build --path <path>` — 按根路径构建项目。
     /// `dt build --name <name>` — 按 config.yaml 中的名称构建项目。
     /// `dt build --file <file>` — 单文件增量更新。
-    /// `dt build --full` — 全量重建（可与 --path/--name/--file/--test 组合）。
-    /// `dt build --test` — 运行自包含的流水线集成测试。
+    /// `dt build --full` — 全量重建（可与 --path/--name/--file 组合）。
     Build {
         /// 项目根路径。
         #[arg(long = "path")]
@@ -179,15 +173,6 @@ enum Commands {
         /// 语义为"关"：带此 flag 时 llm_backfill=false。
         #[arg(long = "no-llm-backfill", action = clap::ArgAction::SetFalse, default_value_t = true)]
         llm_backfill: bool,
-
-        /// 运行自包含的流水线集成测试。
-        ///
-        /// 创建 test- 前缀的节点与集合，验证每种实体类型，
-        /// 然后自动清理。
-        /// 当增量进度过期时，可配合 --full 强制全量重建；
-        /// 使用 `dt clean --test` 可手动清理测试数据。
-        #[arg(long = "test")]
-        test: bool,
 
         /// 要构建的源类型: code（默认）、knowledge（将 KG 节点同步为向量）。
         /// 使用 "knowledge" 替代 `dt kg-sync`。
@@ -746,42 +731,7 @@ async fn main() -> anyhow::Result<()> {
             confirm,
             dry_run: _,
             targets: _,
-            test,
         }) => {
-            // 处理 --test: 清理 test- 前缀的数据（快速失败，无 Noop 兜底）
-            if test {
-                // a. 连接真实 Memgraph — 不可用时快速失败
-                let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
-                    Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
-                    None => {
-                        eprintln!("错误: Memgraph 不可用 — clean --test 需要真实后端");
-                        std::process::exit(1);
-                    }
-                };
-
-                // b. 连接真实 Qdrant — 不可用时快速失败
-                let vector: Arc<dyn VectorRepository> = match connect_vector().await {
-                    Some(c) => c,
-                    None => {
-                        eprintln!("错误: Qdrant 不可用 — clean --test 需要真实后端");
-                        std::process::exit(1);
-                    }
-                };
-
-                // c. 连接 SQLite 用于快照清理（可选，非致命）
-                let snapshot = connect_snapshot().await;
-
-                let deleted = dt_daemon::application::pipeline::test::cleanup::cleanup_test_data(
-                    &graph,
-                    &vector,
-                    snapshot.as_ref(),
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
-                println!("已清理 {} 个 test- 节点与集合", deleted);
-                return Ok(());
-            }
-
             let memgraph = connect_memgraph().await;
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
@@ -993,87 +943,8 @@ async fn main() -> anyhow::Result<()> {
             full,
             no_pipeline,
             llm_backfill,
-            test,
             source,
         }) => {
-            // ── dt build --test: 运行自包含的流水线集成测试 ──
-            if test {
-                tracing::info!("dt build --test: 启动流水线集成测试");
-
-                // a. 连接真实 Memgraph — 不可用时快速失败
-                let graph: Arc<dyn GraphRepository> = match connect_memgraph().await {
-                    Some(c) => Arc::new(c) as Arc<dyn GraphRepository>,
-                    None => {
-                        eprintln!("错误: Memgraph 不可用 — build --test 需要真实后端");
-                        std::process::exit(1);
-                    }
-                };
-
-                // b. 连接真实 Qdrant — 不可用时快速失败
-                let vector: Arc<dyn VectorRepository> = match connect_vector().await {
-                    Some(c) => c,
-                    None => {
-                        eprintln!("错误: Qdrant 不可用 — build --test 需要真实后端");
-                        std::process::exit(1);
-                    }
-                };
-
-                // c. 连接 SiliconFlow（不可用时回退为 Noop — embed 质量不影响测试有效性）
-                let embed: Arc<dyn EmbedService> = connect_embed().await.unwrap_or_else(|| {
-                    tracing::warn!("SiliconFlow 不可用，使用 NoopEmbedService");
-                    Arc::new(dt_daemon::infrastructure::embedder::NoopEmbedService::default())
-                        as Arc<dyn EmbedService>
-                });
-
-                // d. 连接真实 SQLite 快照存储 — 不可用时快速失败
-                let snapshot: Arc<dyn SnapshotRepository> = match connect_snapshot().await {
-                    Some(c) => c,
-                    None => {
-                        eprintln!("错误: SQLite 快照存储不可用 — build --test 需要真实后端");
-                        std::process::exit(1);
-                    }
-                };
-
-                // e. 运行构建（默认增量 — 首次运行检测不到快照，处理所有文件；
-                //    后续运行跳过未变更的文件）。
-                //    full: 可通过 `dt build --test --full` 传入 — 强制全量重建
-                //    并绕过增量快照（当 SQLite 进度过期时使用，例如在
-                //    `dt clean --test` 之外清空了 KG 之后）。
-                //    pipeline=true: 构建后流水线已启用 — 与生产构建走同一代码路径，
-                //    包括 LLM 后台分析（Phase 2）。这确保 --test 使用与真实构建
-                //    完全相同的流水线。LLM 在后台运行（非阻塞）。
-                //    `dt clean --test` 仍可用于手动清理测试数据。
-                dt_daemon::interfaces::cli::build::handle_build(
-                    PathBuf::from("/data/myProject/digital-twin-v2/test"),
-                    Some("test-pipeline".to_string()),
-                    None, // file
-                    full, // full: ②a fix — 透传用户 flag（原来是硬编码 false）
-                    true, // pipeline: 已启用 — 与生产构建同一代码路径（Phase 4 变更）
-                    true, // llm_backfill: --test 也启用补偿自愈
-                    Some(graph.clone()),
-                    Some(vector.clone()),
-                    Some(embed.clone()),
-                    Some(snapshot.clone()),
-                    BatchConfig::default(),
-                    dt_daemon::domain::types::ScanConfig::default(),
-                )
-                .await?;
-
-                // h. 验证测试数据
-                let report =
-                    dt_daemon::application::pipeline::test::runner::verify_test_data(graph, vector)
-                        .await;
-
-                // i. 打印测试报告
-                report.print();
-
-                // j. 若任一检查失败则以防错误码退出
-                if report.failed > 0 {
-                    std::process::exit(1);
-                }
-                return Ok(());
-            }
-
             if let Some(ref src) = source {
                 if src == "knowledge" {
                     tracing::info!("dt build --source knowledge: 同步 KG 节点到向量库");

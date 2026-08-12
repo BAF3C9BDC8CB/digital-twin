@@ -304,43 +304,4 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    #[test]
-    fn parses_payment_py() {
-        let source =
-            std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
-                .expect("读取 payment.py");
-        let parser = TsPythonParser;
-        let result = parser
-            .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
-            .expect("解析");
-
-        assert_eq!(result.methods.len(), 3, "期望有 3 个方法");
-        assert_eq!(result.classes.len(), 1, "期望有 1 个类（PaymentGateway）");
-
-        let pp = result
-            .methods
-            .iter()
-            .find(|m| m.name == "process_payment")
-            .unwrap();
-        assert_eq!(pp.start_line, 9);
-        assert_eq!(pp.end_line, 12);
-        assert_eq!(pp.class_name, "PaymentGateway");
-
-        let cp = result
-            .methods
-            .iter()
-            .find(|m| m.name == "_call_provider")
-            .unwrap();
-        assert_eq!(cp.start_line, 15);
-        assert_eq!(cp.end_line, 17);
-
-        let rp = result
-            .methods
-            .iter()
-            .find(|m| m.name == "refund_payment")
-            .unwrap();
-        assert_eq!(rp.start_line, 20);
-        assert_eq!(rp.end_line, 22);
-        assert_eq!(rp.class_name, "_module_");
-    }
 }

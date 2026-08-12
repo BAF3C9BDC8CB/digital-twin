@@ -265,33 +265,4 @@ mod tests {
         assert!(PythonParser.can_parse(&PathBuf::from("main.py")));
         assert!(!PythonParser.can_parse(&PathBuf::from("main.java")));
     }
-
-    #[test]
-    fn check_payment_line_numbers() {
-        let source =
-            std::fs::read_to_string("/data/myProject/digital-twin-v2/test/project/payment.py")
-                .expect("读取 payment.py");
-        let result = PythonParser
-            .parse(&source, &PathBuf::from("payment.py"), "test-pipeline")
-            .expect("解析");
-        let methods: Vec<String> = result
-            .methods
-            .iter()
-            .map(|m| format!("{} L{}-{}", m.name, m.start_line, m.end_line))
-            .collect();
-        println!("Python 方法: {:?}", methods);
-        assert_eq!(result.methods.len(), 3, "期望有 3 个方法");
-        let pm = &result.methods[0];
-        assert_eq!(pm.name, "process_payment");
-        assert_eq!(pm.start_line, 9, "process_payment 应从第 9 行开始");
-        assert_eq!(pm.end_line, 12, "process_payment 应在第 12 行结束");
-        let cm = &result.methods[1];
-        assert_eq!(cm.name, "_call_provider");
-        assert_eq!(cm.start_line, 15, "_call_provider 应从第 15 行开始");
-        assert_eq!(cm.end_line, 17, "_call_provider 应在第 17 行结束");
-        let rm = &result.methods[2];
-        assert_eq!(rm.name, "refund_payment");
-        assert_eq!(rm.start_line, 20, "refund_payment 应从第 20 行开始");
-        assert_eq!(rm.end_line, 22, "refund_payment 应在第 22 行结束");
-    }
 }

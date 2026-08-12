@@ -127,18 +127,17 @@ curl -s -X POST http://127.0.0.1:6333/collections/code_methods/points/scroll \
   （方法体 hash，体<10 字符→整文件，pipeline.rs L364-375），否则下次变更会重复分析。
 
 ### 7.5 测试影响清单（补偿落地后需回归的断言）
-- `pipeline/test/runner.rs` L563-604 + `test/expected.json` L379 `has_llm_analysis_on_methods=true`
-  （L380 注明 LLM 关闭时可 false→测试跳过）——补偿使该检查**更稳定地通过**，不会破坏。
-- `tests/unified_search.rs` L38（createApp 的 llm_analysis 非空）——同样只会更稳。
-- `tests/t3_verify_config_llm_analysis.rs`（config_chunks 契约）走独立集合/独立管线，**不受影响**。
+- ⚠️ `pipeline/test/runner.rs` + `test/expected.json` 已随 2026-08-12 清理删除（test/ tests/ 目录与 build --test 一并移除），此处的 `has_llm_analysis_on_methods=true` 断言不再存在。
+- `search_mcp.rs` / `search_render.rs` 的 llm_analysis 单测（stub 输入）——同样只会更稳。
+- ~~`tests/t3_verify_config_llm_analysis.rs`~~（已删）config_chunks 契约测试已随清理移除。
 - `search_mcp.rs` L1218-1260 / `search_render.rs` 各断言均为 stub 输入，不受影响。
 - 需新增：stale 点跳过、空响应重试、向量保留（set_payload）、mark 幂等四类测试。
 
 ### 7.6 读码工具怪癖（审计本仓库时）
-- `read_file` 会把本仓库 6 个 UTF-8 文本文件误判为 binary：`interfaces/cli/search_render.rs`、
-  `application/pipeline/test/runner.rs`、`application/build/strategy/incremental.rs`、
+- `read_file` 会把本仓库部分 UTF-8 文本文件误判为 binary：`interfaces/cli/search_render.rs`、
+  `application/build/strategy/incremental.rs`、
   `application/build/service.rs`、`infrastructure/qdrant/repo.rs`、`application/build/builder.rs`
-  （实际无 NUL，`file` 报 Unicode text）。
+  （实际无 NUL，`file` 报 Unicode text；`pipeline/test/runner.rs` 已随 2026-08-12 清理删除）。
   绕过：`python3 -c "lines=open(p).read().split('\n'); [print(f'{i+1}|{lines[i]}') for i in range(a,b)]"`。
   搜索类工具（search_files）不受影响。
 

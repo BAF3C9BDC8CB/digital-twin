@@ -45,4 +45,4 @@
 - 读含中文 rs 文件:read_file 误报 binary → 用 `scripts/dump_lines.py <path> <start> <end>`(或 python3 -c "print(open(p).read())")
 - 检查 dt build 进程别用 `pgrep -af 'dt build'`(hermes 包装进程自带该字符串会自匹配)→ 用 `ps aux | grep -E '[d]t build'`
 - cargo test --release --lib 一次只能一个 filter
-- 验证顺序:pgrep 复查 → cargo fmt --check → cargo check --release → 逐个单测 → 同步 pipeline.yaml → dt health → `dt build --test --full`(固定构建 test/ 目录)或 `dt build --path <小目录>`;日志出现 "使用 OpenAI-Compatible LLM" 即通过
+- 验证顺序:pgrep 复查 → cargo fmt --check → cargo check --release → 逐个单测 → 同步 pipeline.yaml → dt health → `dt build --path <小目录>`（build --test 已随 2026-08-12 清理删除）；日志出现 "使用 OpenAI-Compatible LLM" 即通过
