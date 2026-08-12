@@ -8,7 +8,7 @@
 ```bash
 cd /data/myProject/digital-twin-v2
 git log -1 --format="%h %s"        # 记录对应 commit（未 commit 的改动会打进包，需向用户说明）
-cargo build --release              # 产出 target/release/dt（~34MB，dt-daemon 0.1.0）
+cargo build --release              # 产出 target/release/dt（~34MB，digital-twin 0.1.0）
 ./target/release/dt --version      # 确认版本
 
 # 组装发布目录（内容清单是 2026-08-11 拍板的标准集）
@@ -60,7 +60,7 @@ mkdir -p /tmp/dt-release-smoke && tar xzf dt-release-v0.1.0.tar.gz -C /tmp/dt-re
 - 配置装载约定（写进 README）：`config.yaml` 读固定 `~/.config/digital-twin/config.yaml`；
   `pipeline.yaml` 读固定 `~/.config/digital-twin/pipeline.yaml`（2026-08-06 修复后），
   prompts 目录也在 `~/.config/digital-twin/prompts`。
-- `dt --version` 输出 `dt-daemon 0.1.0`（package name 是 dt-daemon，bin 名 dt），别写成 dt 0.1.0。
+- `dt --version` 输出 `digital-twin 0.1.0`（package name 是 digital-twin，bin 名 dt），别写成 dt 0.1.0。
 - 打包内容若含 docs/，注意当前工作区 docs 下可能有未提交的设计文档（本次的
   phase2-self-healing-spec.md），属合理随包内容。
 - 打包前 `pgrep -af "dt build"` 确认无残留构建进程（旧二进制构建会干扰验证）。
@@ -84,5 +84,5 @@ Cargo.toml 固定 `version = "0.1.0"`，无 git tag 流程、无 CHANGELOG。打
   常用命令、注意事项（⚠️ 构建期间不要并行跑多个 dt 命令）。
 - 打包后验证三步：`find . -type f` 核对清单 → `grep -rn "sk-" | grep -v YOUR_` 确认无真实 key →
   解包冒烟 `bin/dt --version`（v0.1.2 包实测 SHA256 7945453db6460426e02fa8f5595d09a7018464fa6df186ab926375a0a15d703d，10.5MB）。
-- `dt --version` 输出始终是 `dt-daemon 0.1.0`（Cargo.toml 版本），**不随 tar 文件名变**——用户问版本时
+- `dt --version` 输出始终是 `digital-twin 0.1.0`（Cargo.toml 版本），**不随 tar 文件名变**——用户问版本时
   报 tar 名（v0.1.2）+ SHA256，别报二进制里的 0.1.0 混淆。

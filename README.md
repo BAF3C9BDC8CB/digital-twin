@@ -87,7 +87,7 @@ projects:
 
 所有命令都可以使用 `dt <command> --help` 查看当前参数。以下示例以已正确配置后端服务为前提。
 
-Cargo package 名称为 `dt-daemon`，构建出的可执行文件名称为 `dt`。
+Cargo package 名称为 `digital-twin`，构建出的可执行文件名称为 `dt`。
 
 最小启动流程：
 

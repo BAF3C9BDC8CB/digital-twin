@@ -62,7 +62,7 @@ llm_analysis 描述准确。查询词用英文方法名（accountImport）比中
 
 ## 4. dt build 是 daemon 化进程（调试陷阱）
 
-- `dt build` 的 stdout/stderr 基本为空（INFO 走 /var/log/digital-twin/dt-daemon.log）
+- `dt build` 的 stdout/stderr 基本为空（INFO 走 /var/log/digital-twin/dt.log）
 - 判断构建是否执行：看 daemon.log 的 "开始构建: project=X, full=…" 与
   "构建完成: 扫描 N 个文件" 行
 - 在解析器加 `eprintln!` DBG 可能看不到（若构建走了流水线/TsJavaParser 而非

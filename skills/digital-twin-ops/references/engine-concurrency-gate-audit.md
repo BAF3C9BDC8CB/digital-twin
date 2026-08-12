@@ -53,7 +53,7 @@ providers:
 
 ```python
 # 1. 只从日志行提取 status 字段(勿 grep 裸 "429", elapsed_ms 数字会假命中)
-out = subprocess.run(['sudo','grep','GLM Coding 响应','/var/log/digital-twin/dt-daemon.log'],
+out = subprocess.run(['sudo','grep','GLM Coding 响应','/var/log/digital-twin/dt.log'],
                      capture_output=True, text=True).stdout
 lines = [l for l in out.splitlines() if '2026-08-11T' in l]
 # 2. 按时间戳过滤本次构建窗口(上午旧构建的 429 会混入)
@@ -85,7 +85,7 @@ e200 = sorted(int(re.search(r'"elapsed_ms":(\d+)', l).group(1)) for l in build i
 pgrep -af 'dt build'                          # 残留进程
 ps -o pid,etime,%cpu,stat -p <pid>            # CPU 0% = 纯网络等待
 ss -tnp | grep <pid>                          # 在飞连接(443 无 = 串行间隙)
-sudo grep 'GLM Coding 响应' /var/log/digital-twin/dt-daemon.log | grep '2026-08-11T' | tail  # 耗时/状态
+sudo grep 'GLM Coding 响应' /var/log/digital-twin/dt.log | grep '2026-08-11T' | tail  # 耗时/状态
 python3 -c 'import yaml,pathlib;c=yaml.safe_load(pathlib.Path.home()/".config/digital-twin/pipeline.yaml");print(c["inference_server"]["max_concurrent"], c["providers"]["glmcoding"]["max_concurrent"])'
 KEY=$(grep -oE 'OPENCODE_GO_API_KEY=.*' ~/.hermes/.env | cut -d= -f2-)
 time curl -s --noproxy '*' -o /dev/null -w "HTTP %{http_code} %{time_total}s\n" -X POST https://opencode.ai/zen/go/v1/chat/completions -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":10}'

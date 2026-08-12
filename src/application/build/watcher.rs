@@ -12,7 +12,7 @@
 //!    送入 `std::sync::mpsc` 通道。
 //! 2. 内部循环从该通道读取，过滤源码文件，应用防抖，
 //!    解析所属项目，并把 `FileChangeEvent` 值推入 `tokio::sync::mpsc` 通道。
-//! 3. 消费方（通常是 `dt-daemon` 的 `watch` 子命令）从该通道读取，
+//! 3. 消费方（如 `dt` 的构建监听）从该通道读取，
 //!    并为每个事件调度 `UpdateRunner::run()`。
 //!
 //! # PID 文件

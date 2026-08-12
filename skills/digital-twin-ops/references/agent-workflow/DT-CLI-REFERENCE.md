@@ -67,7 +67,7 @@ dt search "XX" --limit 10                                  # all 世界
 | 搜索失败/报错/行为异常 | `dt_health`（MCP）/ `dt health`（CLI） | 检查 Memgraph、Qdrant、SQLite 和 Embed/SiliconFlow；不代表当前 LLM provider 健康 |
 | "dt_search 返回空" | 先 `dt_health`，再检查项目是否已索引 | Embed 或 Qdrant 可能挂了 |
 | "knowledge 世界报错" | `dt_health`，看 KG Bridge 检查项 | kg_nodes 集合可能不存在，需 `dt_kg_sync` |
-| `llm_analysis` 为空 | `tail -n 100 /var/log/digital-twin/dt-daemon.log` | 确认 provider、429/401/JSON、Qdrant upsert 和 progress 状态后再增量构建 |
+| `llm_analysis` 为空 | `tail -n 100 /var/log/digital-twin/dt.log` | 确认 provider、429/401/JSON、Qdrant upsert 和 progress 状态后再增量构建 |
 | 验证新项目解析是否正常 | `dt build --path <路径> --name <项目名>` 后用 `dt_health` 确认 | 实测索引（无独立 validate 命令） |
 | 数据备份/清空 | `dt_backup`（MCP）/ `dt clean`（CLI） | 运维类工具 |
 

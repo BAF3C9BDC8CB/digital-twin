@@ -4,7 +4,7 @@
 
 ## 代码位置
 
-`src/application/build/pipeline.rs`（dt-daemon crate）：
+`src/application/build/pipeline.rs`（digital-twin crate）：
 
 ```rust
 const LLM_CALL_MAX_ATTEMPTS: usize = 6;   // 1 次初始 + 最多 5 次重试

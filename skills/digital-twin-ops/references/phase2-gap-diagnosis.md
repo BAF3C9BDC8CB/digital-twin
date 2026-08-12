@@ -31,7 +31,7 @@
 2. **快照表对账**：`sqlite3 /var/lib/digital-twin/snapshots.db`
    - `build_progress` 行数 ≈ success 数（stage='llm_analysis'，file_path 列存 `method:{method_id}`）
    - `pipeline_progress` 只有 500 文件（流水线文档级，别混淆）
-3. **日志时间线**：解析 `/var/log/digital-twin/dt-daemon.log`（49MB+，用 Python json 逐行，
+3. **日志时间线**：解析 `/var/log/digital-twin/dt.log`（49MB+，用 Python json 逐行，
    勿用 grep 单行匹配）——找 `Phase 2: N 个待分析` / `工作线程已启动` /
    `后台任务完成` / `缺口补偿`。**若"待分析 3715"之后没有"后台任务完成"日志，就是
    Phase 2 被中途杀死**。

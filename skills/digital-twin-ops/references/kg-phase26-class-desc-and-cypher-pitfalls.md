@@ -34,7 +34,7 @@ bolt 驱动 `row.to::<serde_json::Value>()` 返回的 key **带别名前缀**：
 （如 `uvp-im-center/default/`），scanner 会当源码索引：
 - 现象：daemon 日志出现 `default/skills/apple/...` 等 Python 文件被 LLM 分析，
   Phase 2 拖慢 10+ 分钟；Memgraph 混入 `_undeclared_axes`/`test_*` 等 Python 方法。
-- 排查：`ps aux | grep "dt build"` 看是否在跑；daemon 日志 `tail -f /var/log/digital-twin/dt-daemon.log` 看处理文件。
+- 排查：`ps aux | grep "dt build"` 看是否在跑；daemon 日志 `tail -f /var/log/digital-twin/dt.log` 看处理文件。
 - 修复：`~/.config/digital-twin/config.yaml` scanner.ignore_dirs 加 `default`；
   已污染的用 python neo4j 直连删除（`n.file_path CONTAINS 'default/'`）+ Qdrant
   FilterSelector(MatchText(text='default/')) 删除（⚠️ MatchText 参数名是 `text` 不是 `value`）。

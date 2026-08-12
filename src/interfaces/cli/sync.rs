@@ -16,7 +16,7 @@ pub async fn handle_kg_sync(
 ) -> anyhow::Result<()> {
     tracing::warn!("dt kg-sync 已弃用——请改用 `dt build --source knowledge`");
     tracing::info!(
-        "dt-daemon CLI: kg-sync --incremental {incremental} --labels {:?}",
+        "dt CLI: kg-sync --incremental {incremental} --labels {:?}",
         labels,
     );
 

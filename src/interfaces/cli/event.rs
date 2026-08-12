@@ -22,7 +22,7 @@ pub async fn handle_event(
     hook_engine: Option<Arc<HookEngine>>,
     kg_bridge: Option<Arc<KgBridge>>,
 ) -> anyhow::Result<()> {
-    tracing::info!("dt-daemon CLI: event --hook {hook_name}");
+    tracing::info!("dt CLI: event --hook {hook_name}");
 
     let engine = match hook_engine {
         Some(e) => e,

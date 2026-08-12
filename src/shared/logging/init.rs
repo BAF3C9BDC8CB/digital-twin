@@ -26,14 +26,14 @@ impl FormatTime for LocalTimer {
 const LOG_DIR: &str = "/var/log/digital-twin";
 
 /// 默认日志文件名。
-const LOG_FILE: &str = "dt-daemon.log";
+const LOG_FILE: &str = "dt.log";
 
 /// 初始化统一日志管线。
 ///
 /// # 写入目标
 ///
-/// 1. **主要**：JSON 行 → `$LOG_DIR/dt-daemon.log`。
-/// 2. **兜底**：若 `LOG_DIR` 不可写，则写入 `/tmp/dt-daemon.log`。
+/// 1. **主要**：JSON 行 → `$LOG_DIR/dt.log`。
+/// 2. **兜底**：若 `LOG_DIR` 不可写，则写入 `/tmp/dt.log`。
 /// 3. **stderr**：供开发使用的人类可读紧凑输出。
 ///
 /// # 环境变量
@@ -54,7 +54,7 @@ pub fn init_logging() -> anyhow::Result<()> {
         log_dir.join(LOG_FILE)
     } else {
         // 静默回退到 /tmp，不污染终端输出
-        PathBuf::from("/tmp/dt-daemon.log")
+        PathBuf::from("/tmp/dt.log")
     };
 
     // 以追加模式打开（或创建）日志文件

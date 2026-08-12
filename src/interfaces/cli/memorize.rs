@@ -24,7 +24,7 @@ pub async fn handle_memorize(
     sync_acc: Option<Arc<SyncAccumulator>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "dt-daemon CLI: memorize --type {knowledge_type} --entity-id {entity_id} --details {details}",
+        "dt CLI: memorize --type {knowledge_type} --entity-id {entity_id} --details {details}",
     );
 
     let project_name = project.as_deref().unwrap_or("unknown");

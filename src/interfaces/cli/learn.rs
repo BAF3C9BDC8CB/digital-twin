@@ -26,7 +26,7 @@ pub async fn handle_learn(
     sync_acc: Option<Arc<SyncAccumulator>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "dt-daemon CLI: learn --task {task} --pattern {:?} --pitfalls {:?}",
+        "dt CLI: learn --task {task} --pattern {:?} --pitfalls {:?}",
         pattern,
         pitfalls,
     );

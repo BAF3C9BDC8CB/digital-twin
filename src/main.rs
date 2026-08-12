@@ -8,10 +8,10 @@
 //! 2. **CLI 模式** — 以已识别的子命令（如 `build`、`search`）调用时，执行命令并退出。
 
 use clap::{Parser, Subcommand};
-use dt_daemon::domain::traits::{
+use digital_twin::domain::traits::{
     EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
 };
-use dt_daemon::domain::types::BatchConfig;
+use digital_twin::domain::types::BatchConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use std::sync::Arc;
 // ---- CLI 定义 ----
 
 #[derive(Parser)]
-#[command(name = "dt-daemon", version = env!("CARGO_PKG_VERSION"), about = "Digital Twin 守护进程")]
+#[command(name = "dt", version = env!("CARGO_PKG_VERSION"), about = "Digital Twin 命令行工具")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -404,8 +404,8 @@ fn load_config() -> Option<DaemonConfig> {
 ///
 /// 用户配置的列表与内置默认值**合并**（而非覆盖），确保常见噪音目录
 /// 始终被忽略；`max_file_size` 未配置时用默认 500KB。
-fn scan_config_from(cfg: &DaemonConfig) -> dt_daemon::domain::types::ScanConfig {
-    use dt_daemon::domain::types::ScanConfig;
+fn scan_config_from(cfg: &DaemonConfig) -> digital_twin::domain::types::ScanConfig {
+    use digital_twin::domain::types::ScanConfig;
     let mut sc = ScanConfig::default();
     for d in &cfg.scanner.ignore_dirs {
         if !d.is_empty() {
@@ -501,7 +501,7 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
+    match digital_twin::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
         .await
     {
         Ok(client) => {
@@ -517,13 +517,13 @@ async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
 
 /// 从 `~/.config/digital-twin/event-hooks.yaml` 构建 HookEngine。
 /// 若 Memgraph 不可用或配置文件缺失，则返回 `None`。
-async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::HookEngine>> {
+async fn connect_hook_engine() -> Option<Arc<digital_twin::application::hooks::HookEngine>> {
     let graph = connect_graph().await?;
     let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
-    match dt_daemon::application::hooks::HookRegistry::from_file(&path) {
+    match digital_twin::application::hooks::HookRegistry::from_file(&path) {
         Ok(registry) => {
             tracing::info!("HookRegistry 已加载: {}", path.display());
-            Some(Arc::new(dt_daemon::application::hooks::HookEngine::new(
+            Some(Arc::new(digital_twin::application::hooks::HookEngine::new(
                 Arc::new(registry),
                 graph,
             )))
@@ -536,13 +536,13 @@ async fn connect_hook_engine() -> Option<Arc<dt_daemon::application::hooks::Hook
 }
 
 /// 使用 config.yaml 中的值（或合理默认值）连接 Memgraph。
-async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::MemgraphClient> {
+async fn connect_memgraph() -> Option<digital_twin::infrastructure::memgraph::MemgraphClient> {
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match dt_daemon::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
+    match digital_twin::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
         .await
     {
         Ok(client) => {
@@ -558,7 +558,7 @@ async fn connect_memgraph() -> Option<dt_daemon::infrastructure::memgraph::Memgr
 
 /// 使用 config.yaml 中的值（或合理默认值）连接 Qdrant 向量存储。
 /// 返回可供服务直接使用的 `Arc<dyn VectorRepository>`。
-async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>> {
+async fn connect_vector() -> Option<Arc<dyn digital_twin::domain::traits::VectorRepository>> {
     let cfg = load_config()?;
     let qdrant_uri = cfg
         .services
@@ -567,11 +567,11 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
         .as_deref()
         .unwrap_or("http://localhost:6334");
 
-    match dt_daemon::infrastructure::qdrant::QdrantClient::connect(qdrant_uri).await {
+    match digital_twin::infrastructure::qdrant::QdrantClient::connect(qdrant_uri).await {
         Ok(client) => {
             tracing::info!("Qdrant 已连接: {}", qdrant_uri);
-            let repo = dt_daemon::infrastructure::qdrant::QdrantRepo::new(client);
-            Some(Arc::new(repo) as Arc<dyn dt_daemon::domain::traits::VectorRepository>)
+            let repo = digital_twin::infrastructure::qdrant::QdrantRepo::new(client);
+            Some(Arc::new(repo) as Arc<dyn digital_twin::domain::traits::VectorRepository>)
         }
         Err(e) => {
             tracing::warn!("Qdrant 连接失败 (将使用 noop): {}", e);
@@ -584,8 +584,8 @@ async fn connect_vector() -> Option<Arc<dyn dt_daemon::domain::traits::VectorRep
 ///
 /// 仅从 config/pipeline.yaml（PipelineConfig）读取 provider 配置。
 /// 该函数是创建 embed 服务的唯一事实来源。
-async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedService>> {
-    use dt_daemon::application::pipeline::config::PipelineConfig;
+async fn connect_embed() -> Option<Arc<dyn digital_twin::domain::traits::EmbedService>> {
+    use digital_twin::application::pipeline::config::PipelineConfig;
 
     let pipeline_cfg = PipelineConfig::load().ok()?;
     let pcfg = pipeline_cfg.providers?;
@@ -603,7 +603,7 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
 
     let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
-    let cfg = dt_daemon::infrastructure::embedder::ProviderConfig {
+    let cfg = digital_twin::infrastructure::embedder::ProviderConfig {
         siliconflow_url: sf_url.to_string(),
         siliconflow_api_key: sf
             .and_then(|s| {
@@ -627,7 +627,7 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
         rerank_provider: pcfg.rerank_provider.clone(),
         llm_provider: pcfg.llm_provider.clone(),
     };
-    Some(dt_daemon::infrastructure::embedder::create_embed_router(
+    Some(digital_twin::infrastructure::embedder::create_embed_router(
         cfg,
     ))
 }
@@ -636,42 +636,42 @@ async fn connect_embed() -> Option<Arc<dyn dt_daemon::domain::traits::EmbedServi
 ///
 /// 需要同时具备 `graph` 与 `vector`；`queue` 提供带优先级的嵌入能力。
 async fn build_kg_bridge(
-    graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
-    vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
-    queue: Option<Arc<dt_daemon::application::sync::queue::VectorQueue>>,
-) -> Option<Arc<dt_daemon::application::sync::kg_bridge::KgBridge>> {
+    graph: Option<Arc<dyn digital_twin::domain::traits::GraphRepository>>,
+    vector: Option<Arc<dyn digital_twin::domain::traits::VectorRepository>>,
+    queue: Option<Arc<digital_twin::application::sync::queue::VectorQueue>>,
+) -> Option<Arc<digital_twin::application::sync::kg_bridge::KgBridge>> {
     let g = graph?;
     let embed = queue.as_ref()?.embed_service().clone();
     let v = vector.unwrap_or_else(|| {
-        Arc::new(dt_daemon::infrastructure::qdrant::repo::NoopVectorRepo)
-            as Arc<dyn dt_daemon::domain::traits::VectorRepository>
+        Arc::new(digital_twin::infrastructure::qdrant::repo::NoopVectorRepo)
+            as Arc<dyn digital_twin::domain::traits::VectorRepository>
     });
-    let bridge = dt_daemon::application::sync::kg_bridge::KgBridge::new(g, embed, v);
+    let bridge = digital_twin::application::sync::kg_bridge::KgBridge::new(g, embed, v);
     Some(Arc::new(bridge.with_queue(queue?)))
 }
 
 /// 构建可选的 SyncAccumulator，用于批量累积的后台同步。
 async fn build_sync_acc(
-    graph: Option<Arc<dyn dt_daemon::domain::traits::GraphRepository>>,
-    vector: Option<Arc<dyn dt_daemon::domain::traits::VectorRepository>>,
-    queue: Option<Arc<dt_daemon::application::sync::queue::VectorQueue>>,
-) -> Option<Arc<dt_daemon::application::sync::batch::SyncAccumulator>> {
+    graph: Option<Arc<dyn digital_twin::domain::traits::GraphRepository>>,
+    vector: Option<Arc<dyn digital_twin::domain::traits::VectorRepository>>,
+    queue: Option<Arc<digital_twin::application::sync::queue::VectorQueue>>,
+) -> Option<Arc<digital_twin::application::sync::batch::SyncAccumulator>> {
     let bridge = build_kg_bridge(graph, vector, queue.clone()).await?;
     Some(Arc::new(
-        dt_daemon::application::sync::batch::SyncAccumulator::spawn(bridge, queue?),
+        digital_twin::application::sync::batch::SyncAccumulator::spawn(bridge, queue?),
     ))
 }
 
 /// 连接 SQLite 快照存储（不可用时回退为 None）。
-async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::SnapshotRepository>> {
+async fn connect_snapshot() -> Option<Arc<dyn digital_twin::domain::traits::SnapshotRepository>> {
     let db_path = load_config()
         .map(|c| c.services.sqlite.path.clone())
         .unwrap_or_else(default_sqlite_path);
 
-    match dt_daemon::infrastructure::sqlite::SqliteRepo::open(&db_path) {
+    match digital_twin::infrastructure::sqlite::SqliteRepo::open(&db_path) {
         Ok(repo) => {
             tracing::info!("SQLite 快照存储已连接: {db_path}");
-            Some(Arc::new(repo) as Arc<dyn dt_daemon::domain::traits::SnapshotRepository>)
+            Some(Arc::new(repo) as Arc<dyn digital_twin::domain::traits::SnapshotRepository>)
         }
         Err(e) => {
             tracing::warn!("SQLite 快照存储不可用: {e} — 增量构建已禁用");
@@ -685,7 +685,7 @@ async fn connect_snapshot() -> Option<Arc<dyn dt_daemon::domain::traits::Snapsho
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 通过 dt-log 初始化统一日志（JSON → 文件 + stderr 兜底）
-    dt_daemon::shared::logging::init::init_logging()?;
+    digital_twin::shared::logging::init::init_logging()?;
 
     let cli = Cli::parse();
 
@@ -699,17 +699,17 @@ async fn main() -> anyhow::Result<()> {
             let memgraph = connect_memgraph().await;
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
-            dt_daemon::interfaces::cli::cleanup::run_clean(
+            digital_twin::interfaces::cli::cleanup::run_clean(
                 confirm,
                 memgraph
                     .as_ref()
-                    .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                    .map(|c| c as &dyn digital_twin::domain::traits::GraphRepository),
                 vector
                     .as_deref()
-                    .map(|c| c as &dyn dt_daemon::domain::traits::VectorRepository),
+                    .map(|c| c as &dyn digital_twin::domain::traits::VectorRepository),
                 snapshot
                     .as_deref()
-                    .map(|c| c as &dyn dt_daemon::domain::traits::SnapshotRepository),
+                    .map(|c| c as &dyn digital_twin::domain::traits::SnapshotRepository),
             )
             .await?;
             return Ok(());
@@ -720,7 +720,7 @@ async fn main() -> anyhow::Result<()> {
             match action.unwrap_or(BackupAction::Create) {
                 BackupAction::Create => {
                     println!("=== dt backup ===");
-                    let report = dt_daemon::interfaces::cli::backup::create_backup().await?;
+                    let report = digital_twin::interfaces::cli::backup::create_backup().await?;
                     println!();
                     println!("备份已创建:");
                     println!("  位置:       {}", report.location.display());
@@ -747,7 +747,7 @@ async fn main() -> anyhow::Result<()> {
                 }
                 BackupAction::List => {
                     println!("=== dt backup list ===");
-                    let entries = dt_daemon::interfaces::cli::backup::list_backups().await?;
+                    let entries = digital_twin::interfaces::cli::backup::list_backups().await?;
 
                     if entries.is_empty() {
                         println!("未找到任何备份。");
@@ -769,13 +769,13 @@ async fn main() -> anyhow::Result<()> {
                 }
                 BackupAction::Restore { date } => {
                     println!("=== dt backup restore {date} ===");
-                    dt_daemon::interfaces::cli::backup::restore_backup(&date).await?;
+                    digital_twin::interfaces::cli::backup::restore_backup(&date).await?;
                     println!("恢复完成。");
                 }
                 BackupAction::Verify { date } => {
                     println!("=== dt backup verify {date} ===");
                     let report =
-                        dt_daemon::interfaces::cli::backup::verify_backup_files(&date).await?;
+                        digital_twin::interfaces::cli::backup::verify_backup_files(&date).await?;
 
                     println!();
                     if report.all_valid {
@@ -803,10 +803,10 @@ async fn main() -> anyhow::Result<()> {
         // ---- CLI 模式: dt schema init ----
         Some(Commands::Schema(SchemaAction::Init)) => {
             let memgraph = connect_memgraph().await;
-            dt_daemon::interfaces::cli::cleanup::run_schema_init(
+            digital_twin::interfaces::cli::cleanup::run_schema_init(
                 memgraph
                     .as_ref()
-                    .map(|c| c as &dyn dt_daemon::domain::traits::GraphRepository),
+                    .map(|c| c as &dyn digital_twin::domain::traits::GraphRepository),
             )
             .await?;
             return Ok(());
@@ -818,7 +818,7 @@ async fn main() -> anyhow::Result<()> {
             let qdrant = connect_vector().await;
             let snapshot = connect_snapshot().await;
             let embed = connect_embed().await;
-            dt_daemon::interfaces::cli::cleanup::run_health(
+            digital_twin::interfaces::cli::cleanup::run_health(
                 memgraph.as_ref().map(|c| c as &dyn GraphRepository),
                 qdrant.as_deref().map(|c| c as &dyn VectorRepository),
                 snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
@@ -840,9 +840,9 @@ async fn main() -> anyhow::Result<()> {
             let embed = connect_embed().await;
             let vector = connect_vector().await;
             let queue =
-                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
+                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
             let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
-            dt_daemon::interfaces::cli::memorize::handle_memorize(
+            digital_twin::interfaces::cli::memorize::handle_memorize(
                 knowledge_type,
                 entity_id,
                 entity_type,
@@ -862,9 +862,9 @@ async fn main() -> anyhow::Result<()> {
             let embed = connect_embed().await;
             let vector = connect_vector().await;
             let queue =
-                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
+                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
             let kg_bridge = build_kg_bridge(graph, vector, queue).await;
-            dt_daemon::interfaces::cli::event::handle_event(
+            digital_twin::interfaces::cli::event::handle_event(
                 hook_name,
                 context,
                 hook_engine,
@@ -889,9 +889,9 @@ async fn main() -> anyhow::Result<()> {
             let embed = connect_embed().await;
             let vector = connect_vector().await;
             let queue =
-                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
+                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
             let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
-            dt_daemon::interfaces::cli::learn::handle_learn(
+            digital_twin::interfaces::cli::learn::handle_learn(
                 task, entities, pattern, pitfalls, decisions, thread_id, success, project, graph,
                 sync_acc,
             )
@@ -927,12 +927,12 @@ async fn main() -> anyhow::Result<()> {
                     let graph = graph.unwrap();
                     let embed = embed.unwrap();
 
-                    let queue = Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(
+                    let queue = Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(
                         embed.clone(),
                     ));
 
                     let incremental = !full;
-                    dt_daemon::interfaces::cli::sync::handle_kg_sync(
+                    digital_twin::interfaces::cli::sync::handle_kg_sync(
                         incremental,
                         None,
                         config_chunks,
@@ -971,7 +971,7 @@ async fn main() -> anyhow::Result<()> {
                 let batch_config = cfg.batch.clone();
                 let pipeline = !no_pipeline;
                 let scan_config = scan_config_from(&cfg);
-                dt_daemon::interfaces::cli::build::handle_build_all(
+                digital_twin::interfaces::cli::build::handle_build_all(
                     projects,
                     full,
                     pipeline,
@@ -1035,7 +1035,7 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_default();
 
             let pipeline = !no_pipeline;
-            dt_daemon::interfaces::cli::build::handle_build(
+            digital_twin::interfaces::cli::build::handle_build(
                 actual_path,
                 name,
                 file,
@@ -1066,7 +1066,7 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
-            dt_daemon::interfaces::cli::build::handle_search(
+            digital_twin::interfaces::cli::build::handle_search(
                 query,
                 world,
                 limit,
@@ -1090,7 +1090,7 @@ async fn main() -> anyhow::Result<()> {
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
             let ignored = dirs_like_home_config(".config/digital-twin/ignored_dirs.yaml");
-            dt_daemon::interfaces::cli::sense::handle_sense(
+            digital_twin::interfaces::cli::sense::handle_sense(
                 path, json, projects, graph, vector, snapshot, ignored,
             )
             .await?;

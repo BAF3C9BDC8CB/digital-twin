@@ -1,5 +1,5 @@
 [package]
-name = "dt-daemon"
+name = "digital-twin"
 version = "0.1.0"
 edition = "2021"
 

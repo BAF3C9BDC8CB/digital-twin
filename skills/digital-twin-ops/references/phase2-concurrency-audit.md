@@ -48,8 +48,8 @@ patch 配置文件时若从 Hermes 工具输出复制 api_key 行（输出显示
 
 ```bash
 # Phase 2 并发实测：数方法分析完成节奏
-sudo grep 'LLM 方法分析开始' /var/log/digital-twin/dt-daemon.log | grep '2026-08-11T14:3' | head
+sudo grep 'LLM 方法分析开始' /var/log/digital-twin/dt.log | grep '2026-08-11T14:3' | head
 # 文件级并发（file_start 时间戳差 2-7ms = 并发生效）
-sudo grep -E 'LLM file_start' /var/log/digital-twin/dt-daemon.log | grep '2026-08-11T14:3' | head -5
+sudo grep -E 'LLM file_start' /var/log/digital-twin/dt.log | grep '2026-08-11T14:3' | head -5
 # 判断"并发 N 生效"：完成间隔 ≈ 耗时/N；间隔 ≈ 耗时 = 串行（并发 1）
 ```

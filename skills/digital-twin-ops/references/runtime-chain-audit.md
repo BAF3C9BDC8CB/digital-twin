@@ -10,7 +10,7 @@ user command: dt ...
 
 The symlink target and the debug binary can diverge. In the investigated case:
 
-- release: `target/release/dt`, version `dt-daemon 0.1.0`, older mtime;
+- release: `target/release/dt`, version `digital-twin 0.1.0`, older mtime;
 - debug: `target/debug/dt`, same version, newer mtime and debug info;
 - source had uncommitted search-result changes;
 - `cargo check --bin dt` passed;

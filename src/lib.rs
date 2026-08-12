@@ -1,4 +1,4 @@
-//! Digital Twin V2 守护进程 — 单 crate 分层架构。
+//! Digital Twin V2 — 单 crate 分层架构。
 //!
 //! 分层 DDD 架构:
 //!   domain/          → 实体、值对象、领域 trait（零依赖）

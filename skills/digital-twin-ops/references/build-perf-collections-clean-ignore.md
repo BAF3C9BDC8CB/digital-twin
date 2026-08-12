@@ -21,7 +21,7 @@ opencode.go 单请求平均 12.8s（中位 10.4s），417 个 failed 缺口点 �
 统计：`results.iter().filter(|(_, r)| *r == Some(true)).count()`。
 实测 16 并发 ≈ 16 倍加速（302 缺口从 ~64 分钟 → ~4 分钟）。
 
-**排查方法**：`grep "缺口补偿" /var/log/digital-twin/dt-daemon.log` 看每轮处理量；
+**排查方法**：`grep "缺口补偿" /var/log/digital-twin/dt.log` 看每轮处理量；
 `grep "OpenAI-Compatible 响应" ... | python3` 统计 elapsed_ms 均值。
 tail -f 日志若只见"补偿成功"不见"Phase 2"→ 正在串行补偿。
 
@@ -123,7 +123,7 @@ robots.txt/favicon.ico）。**md 文档全部保留**（用户选择，README �
 ## 5. 性能验证方法（真实构建冒烟）
 
 修复后验证并发补偿：`ss -tn | grep ":443" | grep -c ESTAB` 看活跃连接数
-（串行=1，并发=16+）；`grep -c "补偿成功" /var/log/digital-twin/dt-daemon.log`
+（串行=1，并发=16+）；`grep -c "补偿成功" /var/log/digital-twin/dt.log`
 看吞吐。坏 model 注入验证自愈闭环：pipeline.yaml 把 model_llm 改成
 `nonexistent-model-fail-test` → 构建产生 failed 状态位 → 恢复 model →
 增量构建并发补偿翻转为 success（63 个 failed → 63 个 success，零假成功）。

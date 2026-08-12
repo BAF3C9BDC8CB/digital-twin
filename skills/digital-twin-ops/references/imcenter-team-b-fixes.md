@@ -71,9 +71,9 @@ dt learn "im-center 腾讯云IM消息发送链路" --project im-center \
 
 ## 4. dt build 行为踩坑（调试/运维必读）
 
-- **daemon 化执行**: `dt build` 会把任务交给 dt-daemon 执行, CLI 进程 stdout/stderr
-  几乎为空; 真正日志在 `/var/log/digital-twin/dt-daemon.log`（JSON 行）。
-  **eprintln! 调试日志看不到**——要看 daemon.log, 且代码级调试信息建议直接
+- **CLI 直接执行**: `dt build` 由 CLI 进程内联执行, CLI 进程 stdout/stderr
+  基本为空; 真正日志在 `/var/log/digital-twin/dt.log`（JSON 行）。
+  **eprintln! 调试日志看不到**——要看 dt.log, 且代码级调试信息建议直接
   `tracing::info!` 而不是 eprintln。
 - **CLI 参数陷阱**: `dt build <path>` 位置参数**不接受**（要 `--path`/`--name`）;
   `--json` **不接受**（报 unexpected argument）。
