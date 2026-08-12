@@ -233,6 +233,23 @@ enum Commands {
         json: bool,
     },
 
+    /// （已移除）原 `dt kg-sync` 已被 `dt build --source knowledge` 替代。
+    /// 保留隐藏变体仅用于输出友好提示。
+    #[command(hide = true)]
+    KgSync {
+        /// 全量重建 — 同步所有节点（绕过增量）。
+        #[arg(long = "full")]
+        full: bool,
+
+        /// 指定的标签（逗号分隔）。
+        #[arg(long = "labels")]
+        labels: Option<String>,
+
+        /// 将自适应配置分块同步到 Qdrant 的 config_chunks 集合。
+        #[arg(long = "config-chunks")]
+        config_chunks: bool,
+    },
+
     /// Jenkins CI/CD 操作（经由 jcli）。
     Jcli {
         /// 操作: list、params、history、log、build。
@@ -1100,6 +1117,12 @@ async fn main() -> anyhow::Result<()> {
                 path, json, projects, graph, vector, snapshot, ignored,
             )
             .await?;
+            return Ok(());
+        }
+
+        // ---- CLI 模式: dt kg-sync（已移除，友好提示）----
+        Some(Commands::KgSync { .. }) => {
+            eprintln!("⚠️  dt kg-sync 已移除（2026-08-12）。请改用: dt build --source knowledge");
             return Ok(());
         }
 
