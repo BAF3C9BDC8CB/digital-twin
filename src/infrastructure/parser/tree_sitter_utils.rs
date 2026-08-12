@@ -184,4 +184,61 @@ mod tests {
         let c2 = extract_comment(src, &methods[1]);
         assert!(c2.contains("紧邻注释"), "adjacent comment: {c2:?}");
     }
+
+    #[test]
+    fn class_level_javadoc_extracted() {
+        // 类级 javadoc：extract_comment 对 class_declaration 节点应提取到类注释。
+        let src = r#"/**
+ * 群组管理服务，封装腾讯云 IM 群组操作
+ */
+public class GroupService {
+    public void groupMsgRecall() {
+    }
+}"#;
+        let tree = parse_java(src);
+        let root = tree.root_node();
+        // 找到 class_declaration 节点
+        let mut class_node = None;
+        let mut cursor = root.walk();
+        for child in root.children(&mut cursor) {
+            if child.kind() == "class_declaration" {
+                class_node = Some(child);
+                break;
+            }
+        }
+        let cn = class_node.expect("class_declaration 节点应存在");
+        let c = extract_comment(src, &cn);
+        assert!(c.contains("群组管理服务"), "class comment: {c:?}");
+    }
+
+    #[test]
+    fn class_without_comment_stays_empty() {
+        // 标准 Java 文件：文件头注释在 package 之前，class 之前有
+        // package/import 节点挡隔——extract_comment 遇非注释节点即停，
+        // 不得跨过 package/import 偷取文件头注释。
+        let src = r#"/**
+ * 文件级版权注释
+ */
+package com.example;
+
+import java.util.List;
+
+public class PlainService {
+    public void doWork() {
+    }
+}"#;
+        let tree = parse_java(src);
+        let mut cursor = tree.root_node().walk();
+        let mut class_node = None;
+        for child in tree.root_node().children(&mut cursor) {
+            if child.kind() == "class_declaration" {
+                class_node = Some(child);
+                break;
+            }
+        }
+        let cn = class_node.expect("class_declaration 节点应存在");
+        let c = extract_comment(src, &cn);
+        // 文件头注释在 package/import 之前，不应被偷取
+        assert!(!c.contains("文件级版权注释"), "class comment stolen from file header: {c:?}");
+    }
 }

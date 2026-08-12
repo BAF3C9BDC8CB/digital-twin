@@ -155,7 +155,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 name: name.clone(),
                 title: format!("{} — 执行模式", request.task),
                 domain: domain.clone(),
-                summary: pattern.clone(),
+                summary: with_keywords(pattern.clone(), &request.task),
                 content: format!(
                     "# {}\n\n## 模式\n\n{}\n\n## 涉及实体\n\n{}",
                     request.task,
@@ -187,7 +187,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
             let experience = Experience {
                 experience_id,
                 title: format!("{} — 踩坑 #{}", request.task, i + 1),
-                summary: pitfall.clone(),
+                summary: with_keywords(pitfall.clone(), &request.task),
                 content: format!(
                     "## 坑点\n{}\n\n## 任务\n{}\n\n## 涉及实体\n{}",
                     pitfall,
@@ -393,6 +393,45 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
 /// - "日志采集优化"  → "日志"
 /// 从任务标题提取领域关键词。
 ///
+/// 为知识/经验 summary 追加中英文检索关键词，提升跨语言向量命中。
+///
+/// 中文任务（如"消息撤回链路"）常被英文查询词（recall/withdraw）检索不到——
+/// 在 summary 尾部追加"（keywords: recall, withdraw, ...）"让向量空间同时
+/// 覆盖中英文语义。内置常见业务关键词映射，映射不到的保留原文。
+fn with_keywords(text: String, task: &str) -> String {
+    const MAP: &[(&str, &[&str])] = &[
+        ("撤回", &["recall", "withdraw", "revoke"]),
+        ("消息", &["message", "msg"]),
+        ("发送", &["send", "push"]),
+        ("群组", &["group"]),
+        ("单聊", &["c2c", "single"]),
+        ("签名", &["sign", "signature"]),
+        ("账号", &["account", "import"]),
+        ("成员", &["member"]),
+        ("回调", &["callback"]),
+        ("历史", &["history", "roam"]),
+        ("未读", &["unread"]),
+        ("部署", &["deploy", "release"]),
+        ("配置", &["config"]),
+        ("登录", &["login", "auth"]),
+        ("支付", &["pay", "payment"]),
+        ("订单", &["order"]),
+        ("库存", &["inventory", "stock"]),
+        ("导入", &["import"]),
+    ];
+    let mut kws: Vec<&str> = Vec::new();
+    for (zh, en) in MAP {
+        if task.contains(zh) {
+            kws.extend_from_slice(en);
+        }
+    }
+    if kws.is_empty() {
+        text
+    } else {
+        format!("{}（keywords: {}）", text.trim_end(), kws.join(", "))
+    }
+}
+
 /// 先匹配常见中文领域关键词，匹配不到则回退到
 /// 去除首尾空白后任务的前 2 个字符。
 pub(crate) fn extract_domain(task: &str) -> String {

@@ -52,6 +52,7 @@ impl TsJavaParser {
                     _ => ClassKind::Class,
                 };
                 let class_id = make_class_id(project, pkg, &name);
+                let description = tree_sitter_utils::extract_comment(source, &node);
                 classes.push(ClassBlock {
                     class_id,
                     name,
@@ -62,6 +63,7 @@ impl TsJavaParser {
                     start_line,
                     end_line,
                     method_ids: Vec::new(),
+                    description,
                 });
             }
         }

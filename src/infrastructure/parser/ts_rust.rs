@@ -40,6 +40,7 @@ impl TsRustParser {
                     start_line: sl,
                     end_line: el,
                     method_ids: Vec::new(),
+                description: String::new(),
                 });
             }
         }

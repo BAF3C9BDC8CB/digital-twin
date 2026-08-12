@@ -54,6 +54,7 @@ impl TsTypeScriptParser {
                 start_line: sl,
                 end_line: el,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
         // 递归进入子节点（对 export_statement，这会找到内部声明）

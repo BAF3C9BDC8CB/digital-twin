@@ -363,6 +363,7 @@ async fn write_classes(
                     "project": c.project,
                     "start_line": c.start_line,
                     "end_line": c.end_line,
+                    "description": c.description,
                 })
             })
             .collect();
@@ -383,7 +384,8 @@ async fn write_classes(
                     n.package_or_module = c.package_or_module,
                     n.project = c.project,
                     n.start_line = c.start_line,
-                    n.end_line = c.end_line
+                    n.end_line = c.end_line,
+                    n.description = c.description
                 WITH n, c
                 MERGE (p:Project {name: c.project})
                 MERGE (n)-[:BELONGS_TO]->(p)"#,

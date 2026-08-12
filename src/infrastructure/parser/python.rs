@@ -100,6 +100,7 @@ impl ParseStrategy for PythonParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
 

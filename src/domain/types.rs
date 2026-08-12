@@ -299,6 +299,8 @@ pub struct ClassBlock {
     pub end_line: usize,
     /// 该类包含的方法 ID 列表。
     pub method_ids: Vec<String>,
+    /// 类级 javadoc / 注释摘要（源码有注释时由解析器提取，否则为空）。
+    pub description: String,
 }
 
 /// V2 Module 节点——由包/模块路径自动生成。

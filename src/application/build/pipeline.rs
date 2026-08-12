@@ -748,6 +748,33 @@ impl PipelineTemplate {
             }
         }
 
+        // ── Phase 2.6：Class 描述补偿（构建末尾，开关 --no-llm-backfill 可关）──
+        // 扫描本项目"无 description 且 llm_status != success"的 Class 节点，
+        // 读源码切片 → LLM 生成类描述 → 写回 Memgraph（description + llm_status）。
+        // 状态机与方法 Phase 2 对齐：缺失=待处理, success=已生成, failed=可重试。
+        // 完全增量：只处理缺口，成功节点幂等跳过；失败标记 failed，下次构建自动重试。
+        if self.llm_backfill {
+            if let (Some(client), Some(graph_repo)) = (&self.llm_client, graph) {
+                let system_prompt = load_code_analysis_prompt();
+                match self
+                    .backfill_class_descriptions(
+                        project,
+                        root,
+                        client.clone(),
+                        graph_repo,
+                        &self.llm_model,
+                        &system_prompt,
+                    )
+                    .await
+                {
+                    Ok(processed) => {
+                        tracing::info!("Class 描述补偿完成: 本轮处理 {processed} 个类");
+                    }
+                    Err(e) => tracing::warn!("Class 描述补偿失败（非致命）: {e}"),
+                }
+            }
+        }
+
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
         Ok(BuildReport {
@@ -1415,6 +1442,203 @@ impl PipelineTemplate {
             failed
         );
         Ok(gaps)
+    }
+
+    /// Class 描述补偿：扫描本项目"无 description 且 llm_status != success"的
+    /// Class 节点，读源码切片 → LLM 生成类描述 → 写回 Memgraph。
+    ///
+    /// 状态机（与方法 Phase 2 对齐）：
+    /// - `llm_status` 缺失或 `= "failed"` → 缺口，本轮处理
+    /// - 成功 → `SET n.description = $d, n.llm_status = "success"`
+    /// - 失败（chat Err / 空响应）→ `SET n.llm_status = "failed"`（下次构建重试）
+    ///
+    /// 完全增量：只处理缺口；源码有 javadoc 的类（description 非空）天然跳过。
+    /// 内部错误一律 warn，不向上传播（构建照常成功）。
+    #[allow(clippy::too_many_arguments)]
+    async fn backfill_class_descriptions(
+        &self,
+        project: &str,
+        root: &Path,
+        client: Arc<dyn ChatClient>,
+        graph: &dyn GraphRepository,
+        llm_model: &str,
+        system_prompt: &str,
+    ) -> Result<usize, DtError> {
+        // 缺口 = description 为空/缺失 且 (llm_status 缺失 或 = failed)。
+        let mut params = std::collections::HashMap::new();
+        params.insert("project".to_string(), serde_json::Value::String(project.to_string()));
+
+        let rows = match graph
+            .read_query(
+                "MATCH (c:Class) \
+                 WHERE c.project = $project \
+                   AND (c.description IS NULL OR c.description = '') \
+                   AND (c.llm_status IS NULL OR c.llm_status <> 'success') \
+                 RETURN c.class_id, c.name, c.file_path, c.start_line, c.end_line \
+                 LIMIT 300",
+                params.clone(),
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Class 描述补偿扫描失败（非致命）: {e}");
+                return Ok(0);
+            }
+        };
+
+        let mut jobs: Vec<(String, String, String, usize, usize)> = Vec::new();
+        if let Some(arr) = rows.as_array() {
+            for row in arr {
+                let class_id = row.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = row.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let file_path = row.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let start = row.get(3).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let end = row.get(4).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                if !class_id.is_empty() && !file_path.is_empty() {
+                    jobs.push((class_id, name, file_path, start, end));
+                }
+            }
+        }
+        if jobs.is_empty() {
+            tracing::info!("Class 描述补偿: 本项目无缺口（全部已有描述）");
+            return Ok(0);
+        }
+        tracing::info!("Class 描述补偿: {} 个类待分析", jobs.len());
+
+        // 并发处理：每类独立 async 任务（与 Phase 2 同用 phase2_concurrency）。
+        let concurrency = self.phase2_concurrency.max(1);
+        let llm_max_tokens = self.llm_max_tokens;
+        let results: Vec<(String, bool)> = stream::iter(jobs.into_iter().map(|(class_id, name, file_path, start, end)| {
+            let client = client.clone();
+                        let llm_model = llm_model.to_string();
+            let system_prompt = system_prompt.to_string();
+            let root = root.to_path_buf();
+            let project = project.to_string();
+            async move {
+                // 读源文件并切片类体（start_line/end_line 由 tree-sitter 提供）。
+                let fp = root.join(&file_path);
+                let source_text = match std::fs::read_to_string(&fp) {
+                    Ok(content) => slice_method_body(&content, start, end),
+                    Err(e) => {
+                        tracing::warn!("Class 描述补偿跳过 {file_path}: 源文件不可读: {e}");
+                        return (class_id, false);
+                    }
+                };
+                // 类体过短（<10 字符）→ 跳过（无内容可分析），标 failed 避免每轮重扫。
+                if source_text.trim().is_empty() {
+                    let _ = graph
+                        .write_query(
+                            "MATCH (c:Class {class_id: $id}) SET c.llm_status = 'failed'",
+                            {
+                                let mut p = std::collections::HashMap::new();
+                                p.insert("id".to_string(), serde_json::Value::String(class_id.clone()));
+                                p
+                            },
+                        )
+                        .await;
+                    return (class_id, false);
+                }
+
+                // 失败重试循环（与方法 Phase 2 同策略）。
+                let mut llm_response = String::new();
+                let mut last_err: Option<String> = None;
+                for attempt in 0..LLM_CALL_MAX_ATTEMPTS {
+                    if attempt > 0 {
+                        tokio::time::sleep(std::time::Duration::from_secs(LLM_RETRY_DELAY_SECS)).await;
+                        tracing::warn!(
+                            phase = "phase2_class_desc",
+                            project = %project,
+                            class = %name,
+                            attempt,
+                            "Class 描述 LLM 调用失败，延迟 1 秒后重试"
+                        );
+                    }
+                    match client.chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false).await {
+                        Ok(response) => {
+                            let content = response
+                                .choices
+                                .first()
+                                .map(|choice| choice.message.content.clone())
+                                .unwrap_or_default();
+                            if content.trim().is_empty() {
+                                last_err = Some("LLM 响应为空".to_string());
+                                tracing::warn!(
+                                    phase = "phase2_class_desc",
+                                    project = %project,
+                                    class = %name,
+                                    attempt,
+                                    "Class 描述 LLM 响应为空，视为失败（将重试）"
+                                );
+                                continue;
+                            }
+                            llm_response = content;
+                            break;
+                        }
+                        Err(e) => {
+                            last_err = Some(format!("{e}"));
+                            tracing::warn!(
+                                phase = "phase2_class_desc",
+                                project = %project,
+                                class = %name,
+                                attempt,
+                                "Class 描述 LLM 调用失败: {e}"
+                            );
+                        }
+                    }
+                }
+
+                if llm_response.trim().is_empty() {
+                    tracing::warn!(
+                        phase = "phase2_class_desc",
+                        project = %project,
+                        class = %name,
+                        last_err = ?last_err,
+                        "Class 描述失败（{LLM_CALL_MAX_ATTEMPTS} 次尝试均未成功），标记 failed"
+                    );
+                    let _ = graph
+                        .write_query(
+                            "MATCH (c:Class {class_id: $id}) SET c.llm_status = 'failed'",
+                            {
+                                let mut p = std::collections::HashMap::new();
+                                p.insert("id".to_string(), serde_json::Value::String(class_id.clone()));
+                                p
+                            },
+                        )
+                        .await;
+                    return (class_id, false);
+                }
+
+                // 成功：写回 description + llm_status=success。
+                let desc = llm_response.trim().chars().take(500).collect::<String>();
+                let _ = graph
+                    .write_query(
+                        "MATCH (c:Class {class_id: $id}) SET c.description = $d, c.llm_status = 'success'",
+                        {
+                            let mut p = std::collections::HashMap::new();
+                            p.insert("id".to_string(), serde_json::Value::String(class_id.clone()));
+                            p.insert("d".to_string(), serde_json::Value::String(desc));
+                            p
+                        },
+                    )
+                    .await;
+                tracing::info!(phase = "phase2_class_desc", project = %project, class = %name, "Class 描述已写入");
+                (class_id, true)
+            }
+        }))
+        .buffer_unordered(concurrency)
+        .collect::<Vec<_>>()
+        .await;
+
+        let succeeded = results.iter().filter(|(_, ok)| *ok).count();
+        let failed = results.iter().filter(|(_, ok)| !*ok).count();
+        tracing::info!(
+            "Class 描述补偿: {} 待处理, {} 成功, {} 失败",
+            results.len(),
+            succeeded,
+            failed
+        );
+        Ok(succeeded)
     }
 }
 

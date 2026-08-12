@@ -270,7 +270,7 @@ async def list_tools():
         # ===== 搜索 =====
         Tool(
             name="dt_search_kg",
-            description="搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源文档/hop/score_breakdown）。world 可指定 code/knowledge/doc/config/memory/all，默认 knowledge（纯知识层）。推荐用法：查询代码实体（类/方法）时推荐 world='code'；若已从 [DT-SENSE] 简报或上下文得知目标项目名，推荐同时带 project=<项目名> 过滤跨项目噪音——这能让结果更精准。",
+            description="搜索知识图谱（GraphRAG 混合检索：向量召回+图扩展+rerank），返回 JSON（含 summary/来源文档/hop/score_breakdown）。world 可指定 code/knowledge/doc/config/memory/all，默认 knowledge（纯知识层）。推荐用法：①查询代码实体（类/方法）时推荐 world='code'；②若已知精确方法/类名（如 groupMsgRecall），直接把名字作为 query 会触发精确匹配（0.95 分置顶），比中文描述更准；③若已从 [DT-SENSE] 简报或上下文得知目标项目名，推荐同时带 project=<项目名> 过滤跨项目噪音。",
             inputSchema={
                 "type": "object",
                 "properties": {

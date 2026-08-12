@@ -93,6 +93,7 @@ impl ParseStrategy for GoParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                    description: String::new(),
             });
         }
 
@@ -111,6 +112,7 @@ impl ParseStrategy for GoParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                    description: String::new(),
             });
         }
 

@@ -93,6 +93,10 @@ LIMIT 20
 ```
 
 > 注意过滤噪音：`toString/success/fail/error/getUrl/getXxx` 等公共方法/getter 会淹没业务链，优先看跨类调用（`b.class_name <> a.class_name`）。
+> ⚠️ MCP run_cypher_query 只读模式对 `NOT STARTS WITH`/`NOT CONTAINS` 误判为写操作——需要复杂过滤时用 `NOT b.name IN [...]` 白名单排除（实测可用），或经 python neo4j 驱动直连 bolt://127.0.0.1:7688 执行。
+> ✅ 实测（2026-08-12）：`groupMsgRecall` 一条查询即得完整业务链（Group.groupMsgRecall@301 / GroupController@115 / MessageRecordMongoService.groupMsgRecallUpdate@237），替代 8-10 次 read_file。
+
+> ⚠️ **委派子代理时**（delegate_task）：任务书必须写明"代码任务带 world=code + project=<项目名>；漏参纠正性重查计入 L1 次数"。子代理不注入 DT-SENSE 简报，任务书是它唯一的 KG 准则来源。
 
 **唯一不查的情况：** 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须查。
 

@@ -142,6 +142,7 @@ impl ParseStrategy for JavaParser {
                 start_line,
                 end_line,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
 

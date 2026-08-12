@@ -98,6 +98,7 @@ impl ParseStrategy for RustParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
         for caps in trait_re.captures_iter(source) {
@@ -115,6 +116,7 @@ impl ParseStrategy for RustParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
         for caps in enum_re.captures_iter(source) {
@@ -132,6 +134,7 @@ impl ParseStrategy for RustParser {
                 start_line,
                 end_line: 0,
                 method_ids: Vec::new(),
+                description: String::new(),
             });
         }
 
