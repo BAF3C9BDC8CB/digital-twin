@@ -47,7 +47,7 @@ RETURN n.auth_user, n.auth_password, n.hostname, n.port, n.url, n.service_type
 dt_search_kg(query="<关键词>", world="code|knowledge|config", project="<项目名>", limit=10)
 ```
 
-代码实体（类/方法）必须用 world=code（knowledge 世界不索引代码实体）；服务/配置在 knowledge/config 世界。
+代码实体（类/方法）必须用 world=code（knowledge 世界不索引代码实体）；服务/配置在 knowledge/config 世界。**代码逻辑任务必须先 dt_search_kg(world=code, project=<项目名>) 定位再读源码验证**（KG 命中=事实；仅当 dt_search_kg 不可用/超时才纯读源码并标注 ⚠）。
 Cypher 兜底用属性匹配（本环境 Memgraph 不支持 Neo4j 全文索引语法）：
 
 ```cypher

@@ -143,3 +143,19 @@ KG 使用链路（sense → search_kg → cypher）全部畅通；代码实体�
 - 关键功能（群成员/账号导入）用英文标识符或中英混搭兜底可满分召回
 
 **结论：检索链路全部达标，闭环完成。**
+
+## 六、Hermes 实际使用 KG 测试（用户自测发现）
+
+**测试**：用户开新会话问"im-center 的消息撤回流程"，观测 agent 是否主动用 dt 搜索。
+**结果**：全程未查 KG——3 次 search_files + 1 次 terminal，0 次 dt_search_kg/run_cypher。
+
+**根因（两层）**：
+1. **准则漏洞**：SOUL.md/AGENTS.md 原第 4 条"读源码, 或 dt_search_kg(code 世界)"——"或"给了完全跳过 KG 的合法出口
+2. **插件信号弱**：dt-sense 简报只报 cwd 项目状态，未提示"目标项目已索引 2287 方法可用"，agent 误判 KG 无内容
+
+**修复**：
+1. dt-sense 插件：已索引项目注入强信号"✅ 本项目已索引 N 方法——代码问题先用 dt_search_kg(world=code, project=X) 定位, 再读源码验证; 禁止只读源码跳过 KG"
+2. SOUL.md + AGENTS.md 第 4 条改为：代码逻辑任务**先 dt_search_kg(world=code) 定位再读源码验证**，仅 KG 不可用时纯读源码并标注 ⚠
+3. digital-twin-v2 自身从未索引（0m 0c 0v）→ 触发全量构建让 KG 覆盖自身
+
+**验证**：插件简报渲染单测 6/6 通过（已索引强信号/未索引无提示）。

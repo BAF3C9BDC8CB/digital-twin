@@ -193,14 +193,25 @@ def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
 
     deg_str = f"\n⚠ KG degraded: [{','.join(degraded)}] 查询可能为空, 降级读磁盘" if degraded else ""
 
+    # 已索引项目强信号：目标项目在 KG 里有实体时，明确引导 agent
+    # 用 dt_search_kg(world=code) 定位——否则 agent 可能误判"KG 无内容"而纯读源码。
+    indexed_hint = ""
+    if status == "indexed" and stats.get("methods", 0) > 0:
+        pname = proj.get("name") or "?"
+        indexed_hint = (
+            f"\n✅ 本项目已索引 {stats.get('methods',0)} 方法/{stats.get('classes',0)} 类——"
+            f"代码问题先用 dt_search_kg(world=code, project={pname}, limit=5) 定位, "
+            f"再读源码验证; 禁止只读源码跳过 KG"
+        )
+
     return (
         f"[DT-SENSE] {proj.get('name') or '?'} | {status} | KG {kg_status}\n"
         f"path: {proj.get('path') or cwd}\n"
         f"stats: {stats.get('methods',0)}m {stats.get('classes',0)}c {stats.get('vectors',0)}v | build: {_fmt_ts(stats.get('last_build'))}\n"
         f"brief: dirs:{dirs_str} | langs:{langs_str} | 实体:{ents_str}\n"
         f"注册项目: {projects_n} 个"
-        f"{cand_str}{deg_str}\n\n"
-        f"搜索触发: 服务/配置/凭据/部署/历史决策→dt_search_kg(q,limit=5); hop0=事实,hop1+=线索; 按project过滤; 纯代码→读源码或code世界; 闲聊→不查; 每任务L1≤1次; 10s超时=降级\n"
+        f"{cand_str}{deg_str}{indexed_hint}\n\n"
+        f"搜索触发: 服务/配置/凭据/部署/历史决策→dt_search_kg(q,limit=5); hop0=事实,hop1+=线索; 按project过滤; 纯代码→先dt_search_kg(world=code)定位再读源码; 闲聊→不查; 每任务L1≤1次; 10s超时=降级\n"
         f"禁止: 凭记忆答项目事实; 伪造结果; 输出key/密码; KG故障阻塞任务→读磁盘并标⚠; 重复/碎查"
     )
 
