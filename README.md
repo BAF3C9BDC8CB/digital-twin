@@ -12,7 +12,6 @@ Rust 实现的数字孪生服务，为项目代码、配置和知识提供索引
 - 使用 SQLite 保存快照和任务状态
 - 写入知识、事件及任务经验
 - 提供统一搜索、环境感知和健康检查
-- 提供 Jenkins 操作与同步能力
 - 通过 MCP 为 OpenCode、Claude Code 等 AI 工具提供结构化调用
 - 提供 `dt` CLI 作为全部能力的操作入口
 
@@ -159,10 +158,6 @@ cargo run -- --help
 dt build --source knowledge
 dt build --source knowledge --full
 
-# Jenkins 操作与同步
- dt jcli list
- dt jc-sync
-
 # 预览清理内容；真正清理必须显式确认
  dt clean --dry-run
  dt clean --confirm
@@ -218,7 +213,6 @@ skills/     Hermes 集成的操作技能（digital-twin-ops：SKILL.md + referen
 
 - [`docs/`](docs/)：设计规格和实施计划
 - [`config/config.yaml.example`](config/config.yaml.example)：配置模板
-- [`skills/digital-twin-ops/references/agent-workflow/JCLI-GUIDE.md`](skills/digital-twin-ops/references/agent-workflow/JCLI-GUIDE.md)：Jenkins 部署指南
 - [`skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md`](skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md)：事件写入指南
 
 ## 许可证

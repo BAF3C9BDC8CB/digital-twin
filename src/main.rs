@@ -249,39 +249,6 @@ enum Commands {
         #[arg(long = "config-chunks")]
         config_chunks: bool,
     },
-
-    /// Jenkins CI/CD 操作（经由 jcli）。
-    Jcli {
-        /// 操作: list、params、history、log、build。
-        action: String,
-
-        /// Job 名称。
-        #[arg(long = "job", short = 'j')]
-        job: Option<String>,
-
-        /// 构建编号（用于 log）。
-        #[arg(long = "build")]
-        build: Option<String>,
-
-        /// 最大结果数（用于 history）。
-        #[arg(long = "limit")]
-        limit: Option<u32>,
-
-        /// 构建参数: KEY=VALUE,...（用于 build）。
-        #[arg(long = "params")]
-        params: Option<String>,
-
-        /// 环境: test（默认）或 production。
-        #[arg(long = "env", default_value = "test")]
-        env: String,
-    },
-
-    /// 将 Jenkins 的 Views、Jobs 与 Builds 同步到知识图谱。
-    JcSync {
-        /// 要同步的指定 Job 名称。默认: 同步所有 Job。
-        #[arg(long = "job")]
-        job: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -1119,71 +1086,6 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- CLI 模式: dt jcli ----
-        Some(Commands::Jcli {
-            action,
-            job,
-            build,
-            limit,
-            params,
-            env,
-        }) => {
-            let config = load_config();
-            let jenkins_creds = config.as_ref().and_then(|c| {
-                let j = &c.services.jenkins;
-                let url = j.url.as_deref()?;
-                let user = j.user.as_deref()?;
-                let token = j.token.as_deref()?;
-                if url.is_empty() {
-                    return None;
-                }
-                Some((url.to_string(), user.to_string(), token.to_string()))
-            });
-
-            match jenkins_creds {
-                Some((url, user, token)) => {
-                    let graph = connect_graph().await;
-                    dt_daemon::interfaces::cli::jcli::handle_jcli(
-                        action, job, build, limit, params, env, &url, &user, &token, graph,
-                    )
-                    .await?;
-                }
-                None => {
-                    eprintln!("config.yaml（services.jenkins）中未配置 Jenkins。请添加包含 url/user/token 的 jenkins 配置段以启用。");
-                }
-            }
-            return Ok(());
-        }
-
-        // ---- CLI 模式: dt jc-sync ----
-        Some(Commands::JcSync { job }) => {
-            let config = load_config();
-            let jenkins_creds = config.as_ref().and_then(|c| {
-                let j = &c.services.jenkins;
-                let url = j.url.as_deref()?;
-                let user = j.user.as_deref()?;
-                let token = j.token.as_deref()?;
-                if url.is_empty() {
-                    return None;
-                }
-                Some((url.to_string(), user.to_string(), token.to_string()))
-            });
-
-            match jenkins_creds {
-                Some((url, user, token)) => {
-                    let graph = connect_graph().await;
-                    dt_daemon::interfaces::cli::jenkins_sync::handle_jenkins_sync(
-                        job, graph, &url, &user, &token,
-                    )
-                    .await?;
-                }
-                None => {
-                    eprintln!("config.yaml（services.jenkins）中未配置 Jenkins。请添加包含 url/user/token 的 jenkins 配置段以启用。");
-                }
-            }
-            return Ok(());
-        }
-
-        // ---- dt daemon status 分支 ----
         // ---- 无命令：打印帮助 ----
         None => {
             use clap::CommandFactory;

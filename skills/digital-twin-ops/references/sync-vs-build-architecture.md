@@ -1,12 +1,14 @@
 # dt 构建的三大数据路径:文件管线 vs Nacos/Jenkins 同步
 
 2026-08-07 用户提问"nacos构建 / jenkins构建从代码逻辑上如何处理,与其他类型文件处理有何不同"后整理。
+
+> ⚠️ **2026-08-12 更新**: Jenkins 集成已整体移除（`dt jc-sync` / `dt jcli` / `application/plugins/jenkins` / `application/sync/jenkins` 全部删除，外部独立 `jcli` 二进制保留供 MCP jcli_* 工具使用）。本文第 3 节 Jenkins 架构为历史记录。
 核心结论:**Nacos/Jenkins 不是"文件处理",它们走外部系统同步(SyncSource)体系,与文件构建是独立子系统。**
 
 ```
 普通文件(dt build)   → 文件管线 pipeline(扫描→hash→LLM→向量化)
 Nacos(dt nacos-sync) → SyncSource API 同步(拉取→MERGE→向量化到 config_chunks)
-Jenkins(dt jc-sync / jcli build) → SyncSource API 同步(拉取→MERGE,不向量化)
+~~Jenkins(dt jc-sync / jcli build)~~ 已移除(2026-08-12)；Jenkins 数据摄入不再进 dt（外部 jcli 独立存在）
 ```
 
 ## 1. 普通文件构建(dt build)— pipeline 管线
@@ -32,7 +34,7 @@ Jenkins(dt jc-sync / jcli build) → SyncSource API 同步(拉取→MERGE,不向
   - 向量化到 **`config_chunks`**(不是 kg_nodes!)
 - **ServiceSyncSource**(`sync/nacos/service_sync.rs`):`list_services()` → `NacosService` 节点 + `(:Service)-[:REGISTERED_IN]->(:NacosService)`
 
-## 3. Jenkins 同步(dt jc-sync / jcli build)— SyncSource
+## 3. ~~Jenkins 同步(dt jc-sync / jcli build)— SyncSource~~（已移除 2026-08-12, 历史记录）
 
 - 全量入口 `cli/jenkins_sync.rs`(`dt jc-sync`),核心 `sync/jenkins/job_sync.rs` `JobSyncSource`:
   - `list_views()` → `JenkinsView`(id=`dt://jenkins/view/{name}`);扁平 `/api/json?tree=jobs[...]` 拉全部作业保证覆盖

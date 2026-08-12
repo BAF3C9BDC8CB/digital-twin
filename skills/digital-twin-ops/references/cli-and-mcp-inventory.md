@@ -5,7 +5,7 @@ Source of truth: `dt --help` / `dt <cmd> --help` / `src/main.rs` Clap definition
 ## Verified top-level CLI commands (14)
 
 ```
-clean backup schema health memorize event learn build search sense jcli jc-sync
+clean backup schema health memorize event learn build search sense
 ```
 
 Key signatures (from `--help`, 2026-08-09):
@@ -21,8 +21,7 @@ Key signatures (from `--help`, 2026-08-09):
 - `dt clean [--confirm] [--dry-run] [--targets]` — destructive; requires `--confirm`
 - `dt schema init`
 - ~~`dt kg-sync`~~ — 已移除(2026-08-12)；等价 `dt build --source knowledge`（config_chunks 用 `--config-chunks`）
-- `dt jcli <action> [-j/--job] [--build] [--limit] [--params] [--env test|production]` (actions: list/params/history/log/build)
-- `dt jc-sync [--job <name>]`
+- ~~`dt jcli` / `dt jc-sync`~~ — 已移除(2026-08-12)；Jenkins 走外部 `jcli` 二进制（MCP jcli_* 工具）
 - ~~`dt daemon`~~ — 已移除(2026-08-12)，gRPC 层整体删除（CLI 为唯一入口）
 
 ## Non-existent commands (old docs still mention them — do not use)

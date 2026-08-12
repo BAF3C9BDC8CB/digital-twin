@@ -56,7 +56,7 @@ dt search "XX" --limit 10                                  # all 世界
 | KG 节点有少量变更 | `dt_kg_sync()` | `dt build --source knowledge`（默认即增量） |
 | Nacos 配置有更新 | `nacos_sync(env="test")` | `dt nacos-sync test`（位置参数） |
 | K8s 资源有变化 | （无 MCP 等价物） | `dt k8s-sync` |
-| Jenkins Views/Jobs/Builds | （无 MCP 等价物） | `dt jc-sync` |
+| ~~Jenkins Views/Jobs/Builds~~ | （无） | ~~`dt jc-sync`~~ 已移除(2026-08-12) |
 
 ---
 
@@ -95,7 +95,7 @@ dt search "XX" --limit 10                                  # all 世界
 | 同步 KG | `dt_kg_sync` | `dt build --source knowledge` |
 | 同步 Nacos | `nacos_sync` | `dt nacos-sync [test|prod]` |
 | 健康检查 | `dt_health` | `dt health` |
-| 查 Jenkins | `jcli_*` | `dt jcli` |
+| 查 Jenkins | `jcli_*`（外部二进制） | ~~`dt jcli`~~ 已移除(2026-08-12)，用外部 `jcli` |
 | 管微服务 | `svc_*` | （MCP 专属，无 CLI） |
 | 查 K8s 日志 | `kublog_*` | `dt kub` |
 | 项目注册表/项目发现 | （读 `~/.config/digital-twin/config.yaml`） | `dt build`（无参数=构建所有项目） |

@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // 健康状态与插件
@@ -23,23 +22,6 @@ impl HealthStatus {
     pub fn is_healthy(&self) -> bool {
         matches!(self, HealthStatus::Healthy)
     }
-}
-
-/// 插件专用错误类型。
-#[derive(Debug, thiserror::Error)]
-pub enum PluginError {
-    #[error("插件未找到：{0}")]
-    NotFound(String),
-    #[error("插件初始化失败：{0}")]
-    InitFailed(String),
-    #[error("gRPC 注册失败：{0}")]
-    GrpcRegistration(String),
-    #[error("健康检查失败：{0}")]
-    HealthCheck(String),
-    #[error("关闭失败：{0}")]
-    Shutdown(String),
-    #[error("内部错误：{0}")]
-    Internal(#[from] anyhow::Error),
 }
 
 // ---------------------------------------------------------------------------
@@ -119,62 +101,6 @@ impl Default for BatchConfig {
             embed_concurrency: default_embed_concurrency(),
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// 日志器
-// ---------------------------------------------------------------------------
-
-/// 插件的日志器句柄（异步安全，无阻塞 I/O）。
-///
-/// 所有消息都通过 `tracing` crate 发出。插件名包含在消息本身中，因为
-/// `tracing` 事件宏要求 `&'static str` 作为 target。JSON 格式化器将 Rust
-/// 模块路径作为 `target`，插件名则内嵌在 `message` 字段中。
-///
-/// 如需键值结构字段，请直接使用 `tracing::info!` 宏：
-/// ```ignore
-/// tracing::info!(plugin = "k8s", pods = 12, "pod listing complete");
-/// ```
-#[derive(Clone)]
-pub struct PluginLogger {
-    pub target: String,
-}
-
-impl PluginLogger {
-    pub fn new(target: impl Into<String>) -> Self {
-        Self {
-            target: target.into(),
-        }
-    }
-
-    pub fn info(&self, msg: &str) {
-        tracing::info!("[{}] {}", self.target, msg);
-    }
-
-    pub fn warn(&self, msg: &str) {
-        tracing::warn!("[{}] {}", self.target, msg);
-    }
-
-    pub fn error(&self, msg: &str) {
-        tracing::error!("[{}] {}", self.target, msg);
-    }
-
-    pub fn debug(&self, msg: &str) {
-        tracing::debug!("[{}] {}", self.target, msg);
-    }
-
-    pub fn trace(&self, msg: &str) {
-        tracing::trace!("[{}] {}", self.target, msg);
-    }
-}
-
-/// 初始化时传递给所有插件的核心上下文。
-pub struct PluginContext {
-    pub graph: Arc<dyn crate::domain::traits::GraphRepository>,
-    pub vector: Arc<dyn crate::domain::traits::VectorRepository>,
-    pub config: Arc<AppConfig>,
-    pub log: PluginLogger,
-    pub data_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------

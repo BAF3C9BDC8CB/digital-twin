@@ -8,8 +8,6 @@ pub mod cleanup;
 // V3 架构：抽取的 CLI 命令处理器
 pub mod build;
 pub mod event;
-pub mod jcli;
-pub mod jenkins_sync;
 pub mod learn;
 pub mod memorize;
 pub mod search_render;
