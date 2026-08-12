@@ -11,8 +11,6 @@ use clap::{Parser, Subcommand};
 use digital_twin::domain::traits::{
     EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
 };
-use digital_twin::domain::types::BatchConfig;
-use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -278,409 +276,69 @@ enum BackupAction {
 // ---- 配置加载 ----
 
 /// 从 config.yaml 提取项目路径所需的最小 YAML 子集。
-#[derive(Debug, Deserialize)]
-struct DaemonConfig {
-    #[serde(default)]
-    projects: Vec<ProjectGroup>,
-    #[serde(default)]
-    services: ServiceConfig,
-    #[serde(default)]
-    batch: BatchConfig,
-    #[serde(default)]
-    scanner: ScannerFileConfig,
-}
+// ---- 连接薄转发: 实现已抽取到 digital_twin::runtime ----
+use digital_twin::application::hooks::HookEngine;
+use digital_twin::application::sync::batch::SyncAccumulator;
+use digital_twin::application::sync::kg_bridge::KgBridge;
+use digital_twin::application::sync::queue::VectorQueue;
+use digital_twin::domain::types::ScanConfig;
+use digital_twin::runtime::DaemonConfig;
 
-/// config.yaml 的 `scanner` 段 —— 构建扫描器的忽略规则。
-#[derive(Debug, Deserialize, Default)]
-struct ScannerFileConfig {
-    #[serde(default)]
-    ignore_dirs: Vec<String>,
-    #[serde(default)]
-    ignore_ext: Vec<String>,
-    #[serde(default)]
-    ignore_files: Vec<String>,
-    #[serde(default)]
-    max_file_size: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ServiceConfig {
-    #[serde(default, alias = "memgraph")]
-    graph: GraphDbConfig,
-    #[serde(default)]
-    qdrant: QdrantServiceConfig,
-    #[serde(default)]
-    jenkins: JenkinsEndpointConfig,
-    #[serde(default)]
-    sqlite: SqliteConfig,
-}
-
-#[derive(Debug, Deserialize)]
-struct GraphDbConfig {
-    url: Option<String>,
-    user: Option<String>,
-    password: Option<String>,
-}
-
-impl Default for GraphDbConfig {
-    fn default() -> Self {
-        Self {
-            url: Some("bolt://localhost:7687".to_string()),
-            user: Some("memgraph".to_string()),
-            password: Some("".to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct QdrantServiceConfig {
-    #[serde(default)]
-    url: Option<String>,
-}
-
-/// 来自 config.yaml `services.jenkins` 的 Jenkins 连接信息。
-#[derive(Debug, Deserialize, Default)]
-struct JenkinsEndpointConfig {
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    user: Option<String>,
-    #[serde(default)]
-    token: Option<String>,
-}
-
-/// 来自 config.yaml `services.sqlite` 的 SQLite 快照存储配置。
-#[derive(Debug, Deserialize)]
-struct SqliteConfig {
-    /// SQLite 快照数据库文件的路径。
-    #[serde(default = "default_sqlite_path")]
-    path: String,
-}
-
-impl Default for SqliteConfig {
-    fn default() -> Self {
-        Self {
-            path: default_sqlite_path(),
-        }
-    }
-}
-
-fn default_sqlite_path() -> String {
-    "/var/lib/digital-twin/snapshots.db".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectGroup {
-    base: String,
-    #[serde(default)]
-    items: Vec<serde_yaml::Value>,
-}
-
-/// 从 `~/.config/digital-twin/config.yaml` 加载配置。
 fn load_config() -> Option<DaemonConfig> {
-    let path = dirs_like_home_config(".config/digital-twin/config.yaml")?;
-    if !path.exists() {
-        return None;
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(content) => match serde_yaml::from_str::<DaemonConfig>(&content) {
-            Ok(cfg) => {
-                tracing::info!("已加载配置: {}", path.display());
-                Some(cfg)
-            }
-            Err(e) => {
-                tracing::warn!("解析配置失败 {}: {e}", path.display());
-                None
-            }
-        },
-        Err(e) => {
-            tracing::warn!("读取配置文件失败 {}: {e}", path.display());
-            None
-        }
-    }
+    digital_twin::runtime::load_config()
 }
 
-/// 将 config.yaml 的 `scanner` 段转换为 `ScanConfig`。
-///
-/// 用户配置的列表与内置默认值**合并**（而非覆盖），确保常见噪音目录
-/// 始终被忽略；`max_file_size` 未配置时用默认 500KB。
-fn scan_config_from(cfg: &DaemonConfig) -> digital_twin::domain::types::ScanConfig {
-    use digital_twin::domain::types::ScanConfig;
-    let mut sc = ScanConfig::default();
-    for d in &cfg.scanner.ignore_dirs {
-        if !d.is_empty() {
-            sc.ignore_dirs.insert(d.clone());
-        }
-    }
-    for f in &cfg.scanner.ignore_files {
-        if !f.is_empty() {
-            sc.ignore_files.insert(f.clone());
-        }
-    }
-    for e in &cfg.scanner.ignore_ext {
-        let e = e.trim();
-        if !e.is_empty() {
-            sc.ignore_ext.insert(if e.starts_with('.') {
-                e.to_string()
-            } else {
-                format!(".{e}")
-            });
-        }
-    }
-    if let Some(m) = cfg.scanner.max_file_size {
-        if m > 0 {
-            sc.max_file_size = m;
-        }
-    }
-    sc
+fn scan_config_from(cfg: &DaemonConfig) -> ScanConfig {
+    digital_twin::runtime::scan_config_from(cfg)
 }
 
-/// 解析 `~/.config/...`，无需引入 `dirs` crate。
-fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(suffix))
-}
-
-/// 将项目组扁平化为 `(name, full_path)` 对。
 fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    for group in &cfg.projects {
-        let base = PathBuf::from(&group.base);
-        for item in &group.items {
-            match item {
-                serde_yaml::Value::String(name) => {
-                    out.push((name.clone(), base.join(name)));
-                }
-                serde_yaml::Value::Mapping(m) => {
-                    for (k, v) in m {
-                        let name = k.as_str().unwrap_or("").to_string();
-                        let rel = v.as_str().unwrap_or(&name).to_string();
-                        out.push((name, base.join(rel)));
-                    }
-                }
-                _ => {
-                    // 跳过无法识别的条目结构。
-                }
-            }
-        }
-    }
-    out
+    digital_twin::runtime::resolve_project_paths(cfg)
 }
 
-/// 从 config.yaml `services.graph` 解析 Memgraph Bolt URI。
-///
-/// 若 `url` 已设置但使用 HTTP 协议（如 `http://localhost:7474`），
-/// 则转换为 Bolt（`bolt://localhost:7687`）。若未配置 URL，
-/// 返回默认值 `bolt://localhost:7687`。
-fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
-    match &cfg.url {
-        Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
-            // 从 HTTP URL 中提取主机名，使用默认 Bolt 端口
-            if let Some(host) = url
-                .trim_start_matches("http://")
-                .trim_start_matches("https://")
-                .split(':')
-                .next()
-            {
-                format!("bolt://{}:7687", host)
-            } else {
-                "bolt://localhost:7687".to_string()
-            }
-        }
-        Some(url) if url.starts_with("bolt://") => url.clone(),
-        Some(url) => format!("bolt://{}:7687", url),
-        None => "bolt://localhost:7687".to_string(),
-    }
+fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
+    digital_twin::runtime::dirs_like_home_config(suffix)
 }
 
-/// 使用 config.yaml 中的值（或合理默认值）连接 Memgraph。
-/// 返回可供服务直接使用的 `Arc<dyn GraphRepository>`。
 async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
-    let cfg = load_config()?;
-    let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
-    let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
-    let password = cfg.services.graph.password.as_deref().unwrap_or("");
-
-    match digital_twin::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
-        .await
-    {
-        Ok(client) => {
-            tracing::info!("Memgraph 已连接: {}", bolt_url);
-            Some(Arc::new(client) as Arc<dyn GraphRepository>)
-        }
-        Err(e) => {
-            tracing::warn!("Memgraph 连接失败 (将使用 noop): {}", e);
-            None
-        }
-    }
+    digital_twin::runtime::connect_graph().await
 }
 
-/// 从 `~/.config/digital-twin/event-hooks.yaml` 构建 HookEngine。
-/// 若 Memgraph 不可用或配置文件缺失，则返回 `None`。
-async fn connect_hook_engine() -> Option<Arc<digital_twin::application::hooks::HookEngine>> {
-    let graph = connect_graph().await?;
-    let path = dirs_like_home_config(".config/digital-twin/event-hooks.yaml")?;
-    match digital_twin::application::hooks::HookRegistry::from_file(&path) {
-        Ok(registry) => {
-            tracing::info!("HookRegistry 已加载: {}", path.display());
-            Some(Arc::new(digital_twin::application::hooks::HookEngine::new(
-                Arc::new(registry),
-                graph,
-            )))
-        }
-        Err(e) => {
-            tracing::warn!("加载 HookRegistry 失败 {}: {e}", path.display());
-            None
-        }
-    }
+async fn connect_hook_engine() -> Option<Arc<HookEngine>> {
+    digital_twin::runtime::connect_hook_engine().await
 }
 
-/// 使用 config.yaml 中的值（或合理默认值）连接 Memgraph。
 async fn connect_memgraph() -> Option<digital_twin::infrastructure::memgraph::MemgraphClient> {
-    let cfg = load_config()?;
-    let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
-    let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
-    let password = cfg.services.graph.password.as_deref().unwrap_or("");
-
-    match digital_twin::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
-        .await
-    {
-        Ok(client) => {
-            tracing::info!("Memgraph 已连接: {}", bolt_url);
-            Some(client)
-        }
-        Err(e) => {
-            tracing::warn!("Memgraph 连接失败 (将使用 noop): {}", e);
-            None
-        }
-    }
+    digital_twin::runtime::connect_memgraph().await
 }
 
-/// 使用 config.yaml 中的值（或合理默认值）连接 Qdrant 向量存储。
-/// 返回可供服务直接使用的 `Arc<dyn VectorRepository>`。
-async fn connect_vector() -> Option<Arc<dyn digital_twin::domain::traits::VectorRepository>> {
-    let cfg = load_config()?;
-    let qdrant_uri = cfg
-        .services
-        .qdrant
-        .url
-        .as_deref()
-        .unwrap_or("http://localhost:6334");
-
-    match digital_twin::infrastructure::qdrant::QdrantClient::connect(qdrant_uri).await {
-        Ok(client) => {
-            tracing::info!("Qdrant 已连接: {}", qdrant_uri);
-            let repo = digital_twin::infrastructure::qdrant::QdrantRepo::new(client);
-            Some(Arc::new(repo) as Arc<dyn digital_twin::domain::traits::VectorRepository>)
-        }
-        Err(e) => {
-            tracing::warn!("Qdrant 连接失败 (将使用 noop): {}", e);
-            None
-        }
-    }
+async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
+    digital_twin::runtime::connect_vector().await
 }
 
-/// 通过 provider 路由连接嵌入服务。
-///
-/// 仅从 config/pipeline.yaml（PipelineConfig）读取 provider 配置。
-/// 该函数是创建 embed 服务的唯一事实来源。
-async fn connect_embed() -> Option<Arc<dyn digital_twin::domain::traits::EmbedService>> {
-    use digital_twin::application::pipeline::config::PipelineConfig;
-
-    let pipeline_cfg = PipelineConfig::load().ok()?;
-    let pcfg = pipeline_cfg.providers?;
-
-    let sf = pcfg.siliconflow.as_ref();
-    let xi = pcfg.xinference.as_ref();
-
-    // 至少有一个 provider 必须配置非空 URL
-    let sf_url = sf.map(|s| s.url.as_str()).unwrap_or("");
-    let xi_url = xi.map(|s| s.url.as_str()).unwrap_or("");
-    if sf_url.is_empty() && xi_url.is_empty() {
-        tracing::warn!("pipeline.yaml providers: 所有 provider URL 为空，跳过 embed 服务");
-        return None;
-    }
-
-    let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
-
-    let cfg = digital_twin::infrastructure::embedder::ProviderConfig {
-        siliconflow_url: sf_url.to_string(),
-        siliconflow_api_key: sf
-            .and_then(|s| {
-                if s.api_key.is_empty() {
-                    None
-                } else {
-                    Some(s.api_key.clone())
-                }
-            })
-            .unwrap_or_else(api_key_fallback),
-        siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
-        siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
-        xinference_url: xi_url.to_string(),
-        xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
-        xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        xinference_model_reranker: xi.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        xinference_model_llm: xi.map(|s| s.model_llm.clone()).unwrap_or_default(),
-        embed_provider: pcfg.embed_provider.clone(),
-        rerank_provider: pcfg.rerank_provider.clone(),
-        llm_provider: pcfg.llm_provider.clone(),
-    };
-    Some(digital_twin::infrastructure::embedder::create_embed_router(
-        cfg,
-    ))
+async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
+    digital_twin::runtime::connect_embed().await
 }
 
-/// 构建可选的 KgBridge，用于写入后自动将节点同步到 Qdrant。
-///
-/// 需要同时具备 `graph` 与 `vector`；`queue` 提供带优先级的嵌入能力。
 async fn build_kg_bridge(
-    graph: Option<Arc<dyn digital_twin::domain::traits::GraphRepository>>,
-    vector: Option<Arc<dyn digital_twin::domain::traits::VectorRepository>>,
-    queue: Option<Arc<digital_twin::application::sync::queue::VectorQueue>>,
-) -> Option<Arc<digital_twin::application::sync::kg_bridge::KgBridge>> {
-    let g = graph?;
-    let embed = queue.as_ref()?.embed_service().clone();
-    let v = vector.unwrap_or_else(|| {
-        Arc::new(digital_twin::infrastructure::qdrant::repo::NoopVectorRepo)
-            as Arc<dyn digital_twin::domain::traits::VectorRepository>
-    });
-    let bridge = digital_twin::application::sync::kg_bridge::KgBridge::new(g, embed, v);
-    Some(Arc::new(bridge.with_queue(queue?)))
+    graph: Option<Arc<dyn GraphRepository>>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    queue: Option<Arc<VectorQueue>>,
+) -> Option<Arc<KgBridge>> {
+    digital_twin::runtime::build_kg_bridge(graph, vector, queue).await
 }
 
-/// 构建可选的 SyncAccumulator，用于批量累积的后台同步。
 async fn build_sync_acc(
-    graph: Option<Arc<dyn digital_twin::domain::traits::GraphRepository>>,
-    vector: Option<Arc<dyn digital_twin::domain::traits::VectorRepository>>,
-    queue: Option<Arc<digital_twin::application::sync::queue::VectorQueue>>,
-) -> Option<Arc<digital_twin::application::sync::batch::SyncAccumulator>> {
-    let bridge = build_kg_bridge(graph, vector, queue.clone()).await?;
-    Some(Arc::new(
-        digital_twin::application::sync::batch::SyncAccumulator::spawn(bridge, queue?),
-    ))
+    graph: Option<Arc<dyn GraphRepository>>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    queue: Option<Arc<VectorQueue>>,
+) -> Option<Arc<SyncAccumulator>> {
+    digital_twin::runtime::build_sync_acc(graph, vector, queue).await
 }
 
-/// 连接 SQLite 快照存储（不可用时回退为 None）。
-async fn connect_snapshot() -> Option<Arc<dyn digital_twin::domain::traits::SnapshotRepository>> {
-    let db_path = load_config()
-        .map(|c| c.services.sqlite.path.clone())
-        .unwrap_or_else(default_sqlite_path);
-
-    match digital_twin::infrastructure::sqlite::SqliteRepo::open(&db_path) {
-        Ok(repo) => {
-            tracing::info!("SQLite 快照存储已连接: {db_path}");
-            Some(Arc::new(repo) as Arc<dyn digital_twin::domain::traits::SnapshotRepository>)
-        }
-        Err(e) => {
-            tracing::warn!("SQLite 快照存储不可用: {e} — 增量构建已禁用");
-            None
-        }
-    }
+async fn connect_snapshot() -> Option<Arc<dyn SnapshotRepository>> {
+    digital_twin::runtime::connect_snapshot().await
 }
-
-// ---- 主函数 ----
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

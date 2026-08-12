@@ -7,6 +7,10 @@ edition = "2021"
 name = "dt"
 path = "src/main.rs"
 
+[[bin]]
+name = "dt-mcp"
+path = "src/mcp.rs"
+
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -84,6 +88,13 @@ flate2 = "1.0"
 
 # Qdrant gRPC client
 qdrant-client = "1"
+
+# MCP server (Rust)
+mcp-server = "0.1"
+mcp-spec = "0.1"
+
+# stdout 捕获 (dt-mcp: handler 输出适配)
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
