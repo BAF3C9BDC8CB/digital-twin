@@ -3,7 +3,7 @@
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::FileSnapshot;
-use crate::shared::collections::{DOC_CHUNKS, KG_NODES};
+use crate::shared::collections::{CODE_CLASSES, DOC_CHUNKS, KG_NODES};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
@@ -47,7 +47,8 @@ impl BuildStrategy for FullRebuildStrategy {
             let project_filter = serde_json::json!({
                 "must": [{"key": "project", "match": {"value": project}}],
             });
-            for collection in [KG_NODES, DOC_CHUNKS] {
+            // P3-10：全量重建清理包含 code_classes——否则已删除类的旧向量点残留可被召回
+            for collection in [KG_NODES, DOC_CHUNKS, CODE_CLASSES] {
                 if let Err(e) = vector
                     .delete_by_filter(collection, project_filter.clone())
                     .await

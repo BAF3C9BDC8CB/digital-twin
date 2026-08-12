@@ -1489,6 +1489,7 @@ impl PipelineTemplate {
                 WHERE c.project = $project \
                   AND ((c.description IS NULL OR c.description = '') \
                        OR c.vectorized IS NULL OR c.vectorized = false) \
+                  AND (c.llm_status IS NULL OR c.llm_status <> 'failed') \
                 RETURN c.class_id AS class_id, c.name AS name, c.file_path AS file_path, \
                        c.start_line AS start_line, c.end_line AS end_line, \
                        coalesce(c.description, '') AS desc_text \
@@ -1538,12 +1539,28 @@ impl PipelineTemplate {
             let root = root.to_path_buf();
             let project = project.to_string();
             async move {
+                // GAP-A 回填：已有描述（description 非空）的类跳过 LLM，也无需读源码，
+                // 直接走向量化分支（补 code_classes 向量 + vectorized 标记）。
+                let desc = if !existing_desc.is_empty() {
+                    existing_desc
+                } else {
                 // 读源文件并切片类体（start_line/end_line 由 tree-sitter 提供）。
                 let fp = root.join(&file_path);
                 let source_text = match std::fs::read_to_string(&fp) {
                     Ok(content) => slice_method_body(&content, start, end),
                     Err(e) => {
                         tracing::warn!("Class 描述补偿跳过 {file_path}: 源文件不可读: {e}");
+                        // P2-7：与空类体分支一致，标记 failed 避免每轮重扫。
+                        let _ = graph
+                            .write_query(
+                                "MATCH (c:Class {class_id: $id}) SET c.llm_status = 'failed'",
+                                {
+                                    let mut p = std::collections::HashMap::new();
+                                    p.insert("id".to_string(), serde_json::Value::String(class_id.clone()));
+                                    p
+                                },
+                            )
+                            .await;
                         return (class_id, false);
                     }
                 };
@@ -1562,12 +1579,7 @@ impl PipelineTemplate {
                     return (class_id, false);
                 }
 
-                // GAP-A 回填：已有描述（description 非空）的类跳过 LLM，
-                // 直接走向量化分支（补 code_classes 向量 + vectorized 标记）。
-                let desc = if !existing_desc.is_empty() {
-                    existing_desc
-                } else {
-                    // 失败重试循环（与方法 Phase 2 同策略）。
+                // 失败重试循环（与方法 Phase 2 同策略）。
                 let mut llm_response = String::new();
                 let mut last_err: Option<String> = None;
                 for attempt in 0..LLM_CALL_MAX_ATTEMPTS {
@@ -1638,7 +1650,9 @@ impl PipelineTemplate {
 
                 // LLM 成功：写回 description + llm_status=success。
                 let desc_llm = llm_response.trim().chars().take(500).collect::<String>();
-                let _ = graph
+                // P0-2：写回失败 → return（不继续 embed/upsert/vectorized），
+                // 否则图缺 description 但被标记完成，图与向量永久不一致。
+                if let Err(e) = graph
                     .write_query(
                         "MATCH (c:Class {class_id: $id}) SET c.description = $d, c.llm_status = 'success'",
                         {
@@ -1648,7 +1662,13 @@ impl PipelineTemplate {
                             p
                         },
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        "Class 描述写回 Memgraph 失败 {class_id}: {e}（下轮重试）"
+                    );
+                    return (class_id, false);
+                }
                 desc_llm
                 };
                 // GAP-A：类描述成功后可检索——把类 upsert 进 code_classes 集合

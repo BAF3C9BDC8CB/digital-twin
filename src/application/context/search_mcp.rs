@@ -594,23 +594,29 @@ impl CrossWorldSearch {
 
         for col in &method_cols {
             // 1A:标识符精确匹配通道——payload name 精确过滤,命中强制置顶。
-            // code_classes 是单向量集合，无 named vectors，跳过 search_named_with_filter
-            // （类名精确匹配由向量通道 + 关键词兜底覆盖）。
+            // code_classes 是单向量集合：用单向量版 search_with_filter（无 named vectors）。
+            // P1-4：此前跳过 classes 导致类名精确检索失效（向量分不足时无兜底）。
             let is_classes = col == crate::shared::collections::CODE_CLASSES;
-            if ident_mode && !is_classes {
+            if ident_mode {
                 let filter = serde_json::json!({
                     "must": [{"key": "name", "match": {"value": query}}]
                 });
-                match vector
-                    .search_named_with_filter(
-                        col,
-                        crate::shared::collections::VECTOR_NAME_BASE,
-                        query_vec.clone(),
-                        internal_limit as u64,
-                        filter,
-                    )
-                    .await
-                {
+                let search_res = if is_classes {
+                    vector
+                        .search_with_filter(col, query_vec.clone(), internal_limit as u64, filter)
+                        .await
+                } else {
+                    vector
+                        .search_named_with_filter(
+                            col,
+                            crate::shared::collections::VECTOR_NAME_BASE,
+                            query_vec.clone(),
+                            internal_limit as u64,
+                            filter,
+                        )
+                        .await
+                };
+                match search_res {
                     Ok(results) => {
                         for hit in results {
                             let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -663,7 +669,36 @@ impl CrossWorldSearch {
                     // llm 向量 rerank：拉取 top 候选的 llm 向量（限批），
                     // 与 query 算 cosine 相似度，与 base 分数加权融合后重排。
                     let reranked = if is_classes {
-                        results
+                        // 单向量集合无 llm 向量可 rerank，但需与 rerank 相同的基础过滤
+                        // （score ≥ min_score、project 匹配、name 合法、exact 去重）——
+                        // 否则其他项目类泄漏 + 低分噪声挤占 limit（P0-3）。
+                        let mut kept = Vec::new();
+                        for hit in results {
+                            let score = hit.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            if score < min_score {
+                                continue;
+                            }
+                            let payload = hit.get("payload").or(hit.get("result")).unwrap_or(&hit);
+                            let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            if name.is_empty() || name == "?" {
+                                continue;
+                            }
+                            if let Some(p) = project {
+                                let pp = payload
+                                    .get("project")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if pp != p {
+                                    continue;
+                                }
+                            }
+                            let id = hit_id(&hit, payload);
+                            if exact_ids.contains(&id) {
+                                continue;
+                            }
+                            kept.push(hit);
+                        }
+                        kept
                     } else {
                         rerank_with_llm_vectors(
                             &vector, col, &query_vec, results, min_score, project, &exact_ids,
@@ -682,50 +717,57 @@ impl CrossWorldSearch {
             }
         }
 
-        // 2B/4:结果不足时关键词兜底(scroll payload + 本地 CONTAINS 匹配)
+        // 2B/4:结果不足时关键词兜底(scroll payload + 本地 CONTAINS 匹配)。
+        // P1-4：循环所有集合（method_cols[0]=code_methods + code_classes），
+        // 使类名精确匹配也有兜底（此前只 scroll 方法集合，类精确检索全靠向量分）。
         if all_hits.len() < limit {
-            match vector.scroll_payloads(&method_cols[0], None, 5000).await {
-                Ok(payloads) => {
-                    let kws = extract_keywords(query, 3);
-                    'outer: for kw in kws {
-                        let lkw = kw.to_lowercase();
-                        for p in &payloads {
-                            if all_hits.len() >= limit {
-                                break 'outer;
-                            }
-                            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            if name.is_empty() || name == "?" {
-                                continue;
-                            }
-                            if !name.to_lowercase().contains(&lkw) {
-                                continue;
-                            }
-                            if let Some(pr) = project {
-                                if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr {
+            let kws = extract_keywords(query, 3);
+            'outer: for col in &method_cols {
+                match vector.scroll_payloads(col, None, 5000).await {
+                    Ok(payloads) => {
+                        for kw in &kws {
+                            let lkw = kw.to_lowercase();
+                            for p in &payloads {
+                                if all_hits.len() >= limit {
+                                    break 'outer;
+                                }
+                                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                if name.is_empty() || name == "?" {
                                     continue;
                                 }
+                                if !name.to_lowercase().contains(&lkw) {
+                                    continue;
+                                }
+                                if let Some(pr) = project {
+                                    if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr {
+                                        continue;
+                                    }
+                                }
+                                let id = p
+                                    .get("entity_id")
+                                    .or(p.get("method_id"))
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| {
+                                        format!(
+                                            "{}:{}",
+                                            p.get("file_path").and_then(|v| v.as_str()).unwrap_or("?"),
+                                            name
+                                        )
+                                    });
+                                if exact_ids.contains(&id) || all_hits.iter().any(|h| h.id == id) {
+                                    continue;
+                                }
+                                // 兜底命中固定低分(低于向量阈值,仅保证可达)
+                                all_hits.push(hit_from_payload(p, name.to_string(), id, 0.28));
                             }
-                            let id = p
-                                .get("entity_id")
-                                .or(p.get("method_id"))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| {
-                                    format!(
-                                        "{}:{}",
-                                        p.get("file_path").and_then(|v| v.as_str()).unwrap_or("?"),
-                                        name
-                                    )
-                                });
-                            if exact_ids.contains(&id) || all_hits.iter().any(|h| h.id == id) {
-                                continue;
-                            }
-                            // 兜底命中固定低分(低于向量阈值,仅保证可达)
-                            all_hits.push(hit_from_payload(p, name.to_string(), id, 0.28));
                         }
                     }
+                    Err(e) => tracing::warn!("关键词兜底 scroll {col} 失败: {e}"),
                 }
-                Err(e) => tracing::warn!("关键词兜底 scroll 失败: {e}"),
+                if all_hits.len() >= limit {
+                    break;
+                }
             }
         }
 
