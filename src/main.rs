@@ -902,7 +902,7 @@ async fn main() -> anyhow::Result<()> {
         // ---- CLI 模式: dt build ----
         Some(Commands::Build {
             path,
-            name,
+            mut name,
             file,
             full,
             no_pipeline,
@@ -1007,6 +1007,24 @@ async fn main() -> anyhow::Result<()> {
                             .map(|(_, proj_path)| proj_path)
                     })
                     .unwrap_or_else(|| path.expect("必须提供 --path"))
+            } else if let Some(ref f) = file {
+                // --file 单独使用：从 config.yaml 匹配文件所属项目根，
+                // 使 `dt build --file <绝对路径>` 无需显式 --path/--name
+                // （MCP dt_build 对文件路径即如此调用；此前会 panic）。
+                let cfg = load_config();
+                let projects = cfg.as_ref().map(resolve_project_paths).unwrap_or_default();
+                let file_path = PathBuf::from(f);
+                let matched = projects
+                    .into_iter()
+                    .filter(|(_, p)| file_path.starts_with(p))
+                    .max_by_key(|(_, p)| p.components().count());
+                match matched {
+                    Some((proj_name, proj_path)) => {
+                        name = Some(proj_name);
+                        proj_path
+                    }
+                    None => path.expect("必须提供 --path"),
+                }
             } else {
                 path.expect("必须提供 --path")
             };

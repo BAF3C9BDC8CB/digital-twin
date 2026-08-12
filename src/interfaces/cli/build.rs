@@ -201,6 +201,23 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
                 continue;
             }
         }
+        // 按大小过滤（与 scanner.rs collect_files 的 max_file_size 对齐；
+        // 缺失此过滤时超大打包文件（如 webpack bundle）会整体进入 LLM 流水线，
+        // 导致 opencode.go 等上游返回 HTTP 400。实测 public/bpmnjs/index.js 7.9MB。
+        match entry.metadata() {
+            Ok(m) => {
+                if m.len() > scan_config.max_file_size {
+                    tracing::debug!(
+                        "跳过超大文件 {} ({} bytes > max {})",
+                        entry.path().display(),
+                        m.len(),
+                        scan_config.max_file_size
+                    );
+                    continue;
+                }
+            }
+            Err(_) => continue,
+        }
         if let Ok(content) = std::fs::read_to_string(entry.path()) {
             files.push((entry.path().to_path_buf(), content));
         }
