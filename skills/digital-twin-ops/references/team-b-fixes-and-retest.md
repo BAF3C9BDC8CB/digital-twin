@@ -42,10 +42,10 @@
 
 ## 用户自测脚本(项目内 scripts/, 已提交)
 
-- `scripts/verify-kg.sh [--full]`: 8 组检查(索引状态 sense / 中文检索 5 项 / 英文标识符 4 项 /
+- ~~`scripts/verify-kg.sh [--full]`~~（已删）: 8 组检查(索引状态 sense / 中文检索 5 项 / 英文标识符 4 项 /
   注释回归 2 项 / 索引对账 dt health / 低分提示 / 分组展示 / knowledge 世界), 输出 PASS/FAIL 统计。
   14/14 通过为基线。--full 增加 cargo test(约 1 分钟)。
-- `scripts/check-dt-usage.sh [小时数] [agent.log路径]`: **元测试**——统计 Hermes 会话日志中
+- ~~`scripts/check-dt-usage.sh`~~（已删）: **元测试**——等价手动：`grep -c "dt_search_kg\|dt search\|run_cypher_query" ~/.hermes/logs/agent.log`。统计 Hermes 会话日志中
   dt_sense / dt_search_kg / dt search / run_cypher_query 调用次数 + [DT-SENSE] 简报注入次数,
   判定 Hermes 是否真的使用 dt 搜索(验证插件+AGENTS.md 准则生效)。
   用法: 开新会话问需项目事实的任务(如 "im-center 的消息撤回流程"), 跑完查日志计数。

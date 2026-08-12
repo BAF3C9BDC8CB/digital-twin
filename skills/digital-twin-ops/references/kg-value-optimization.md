@@ -65,5 +65,5 @@ qc.close()
 
 ## 4. 自测脚本（已入库，勿重建）
 
-- `scripts/verify-kg.sh`: 用户自测 KG 全链路（索引状态/检索正确率/注释回归/索引对账/低分提示/分组展示/knowledge 世界），`bash scripts/verify-kg.sh [--full]`。
-- `scripts/check-dt-usage.sh`: 审计 Hermes 会话是否用了 dt 工具（grep agent.log 统计 dt_sense/dt_search/cypher 调用次数 + 判定标准），`bash scripts/check-dt-usage.sh [小时数] [日志路径]`。
+- 用户自测脚本 ~~`scripts/verify-kg.sh`~~（已删）：覆盖 KG 全链路（索引状态/检索正确率/注释回归/索引对账/低分提示/分组展示/knowledge 世界），手动等价：`dt sense` + `dt search` 抽样 + `dt health` 对账。
+- ~~`scripts/check-dt-usage.sh`~~（已删）：审计 Hermes 会话是否用了 dt 工具，等价手动 `grep -o "dt_search_kg\|dt search\|run_cypher_query" ~/.hermes/logs/agent.log | sort | uniq -c`。

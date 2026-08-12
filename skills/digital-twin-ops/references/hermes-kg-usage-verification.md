@@ -10,7 +10,7 @@
 3. 观察两个信号：
    - **信号 A（开场简报）**：`[DT-SENSE]` 行 + 强信号行「✅ 本项目已索引 N 方法——代码问题先用 dt_search_kg(world=code, project=X) 定位」
    - **信号 B（工具调用）**：agent 是否调用 dt_search_kg(world=code, project=X) 或 dt search --world code --project X
-4. 事后量化：`bash scripts/check-dt-usage.sh <小时数>`（统计 agent.log 中 dt_sense/dt_search_kg/run_cypher 次数）
+4. 事后量化：`grep -o "dt_search_kg\|dt search\|run_cypher_query" ~/.hermes/logs/agent.log | sort | uniq -c`（check-dt-usage.sh 已删，统计 dt_sense/dt_search_kg/run_cypher 次数）
    - 判定：dt_sense ≥1 且 dt_search_kg ≥1 = 用了 KG；全 0 = 插件/准则未生效
 
 ## 2. 根因（agent 跳过 KG 的两层原因，2026-08-12 实测）
@@ -49,5 +49,5 @@
 ## 5. 关键工具
 - `session_search(session_id=...)` 读完整会话轨迹（state.db 实时库；导出目录 sessions/ 可能滞后不含当天会话）
 - `grep "20260812_XXXXXX" ~/.hermes/logs/agent.log` 查会话工具调用统计
-- `scripts/check-dt-usage.sh` 统计 dt 工具调用次数
+- ~~`scripts/check-dt-usage.sh`~~（已删）统计 dt 工具调用次数，等价手动 grep agent.log
 - 审计材料模板：`reports/2026-08-12-hermes-kg-usage-audit-material.md`（工具序列 + KG 返回 + 对比表 + 优化点清单）

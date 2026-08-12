@@ -40,10 +40,10 @@
 
 ## 自测脚本
 
-`scripts/verify-kg.sh`（项目根，bash 运行）— 8 组检查：dt sense 索引状态、
+~~`scripts/verify-kg.sh`~~（已删）— 8 组检查：dt sense 索引状态、
 中文检索 5 查询、英文标识符 4 查询、注释错位回归（groupMsgGetSimple/groupMsgRecall）、
 dt health 索引对账、错 world 低分提示、分组展示、knowledge 世界检索。
-`bash scripts/verify-kg.sh --full` 追加 cargo test 全量（676 passed）。
+等价手动：`cargo test` 全量（676 passed）。
 注意第 5 项对账在有并发构建时显示警告属正常。
 
 ## 验证模式

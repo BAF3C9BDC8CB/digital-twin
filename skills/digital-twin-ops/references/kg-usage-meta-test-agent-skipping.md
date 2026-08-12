@@ -19,7 +19,7 @@
 
 ## 验证方法（复测 agent 是否真用 KG）
 
-- 脚本 `scripts/check-dt-usage.sh [小时数]`：统计 agent.log 中 dt_sense / dt_search_kg / dt search / run_cypher_query 调用次数与 [DT-SENSE] 注入次数。
+- 脚本已删（2026-08-12 清理），等价手动统计：`grep -o "mcp__digital_twin__dt_search_kg\|mcp__digital_twin__dt_search\|run_cypher_query" ~/.hermes/logs/agent.log | sort | uniq -c`（统计 agent.log 中 dt 工具调用次数与 [DT-SENSE] 注入次数）。
 - 判定：dt_sense ≥1 且 (dt_search_kg/dt search ≥1) = 用了；全 0 = 插件/准则未生效。
 - 注意：日志里 "dt-sense: injected briefing for <path>" 一行可确认注入路径到底是 cwd 还是 user_message 匹配到的目标项目（曾经发现注入的是 uvp-im-center 路径而非 digital-twin-v2）。
 

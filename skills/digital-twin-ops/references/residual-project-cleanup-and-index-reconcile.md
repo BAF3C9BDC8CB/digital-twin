@@ -48,4 +48,4 @@ qc.close()
 
 ## 验证
 
-清理后 `dt health` 对账应恢复一致（本次 16355 = 16355），且 `dt search` 不再出现残留项目名。可用 `scripts/verify-kg.sh` 全量复测。
+清理后 `dt health` 对账应恢复一致（本次 16355 = 16355），且 `dt search` 不再出现残留项目名。可用 `dt search --project <项目名> --limit 5` 抽样复测（verify-kg.sh 已删）。

@@ -1,7 +1,7 @@
 # digital-twin release 打包流程（2026-08-11 实测）
 
 用户说「打包正式 --release 包」时的标准流程。仓库无打包脚本/无 [profile.release] 自定义配置，
-`scripts/build-all.sh` 是**全项目数据索引构建**（dt build 66 个项目），不是二进制打包——别混淆。
+全项目索引构建 = `dt build`（66 个项目逐个执行，无独立脚本，build-all.sh 已删），**不是二进制打包**——别混淆。
 
 ## 步骤
 
