@@ -78,6 +78,6 @@ dt_kg_sync()                    # MCP Tool（首选）
 CLI 降级：
 
 ```bash
-dt kg-sync                 # 全量同步（推荐首次）
-dt kg-sync   # 增量同步（默认，日常维护）；--full 全量重建
+dt build --source knowledge --full   # 全量同步（推荐首次）
+dt build --source knowledge  # 增量同步（默认，日常维护）；--full 全量重建
 ```

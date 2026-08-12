@@ -178,6 +178,11 @@ enum Commands {
         /// 使用 "knowledge" 替代 `dt kg-sync`。
         #[arg(long = "source")]
         source: Option<String>,
+
+        /// 将自适应配置分块同步到 Qdrant 的 config_chunks 集合。
+        /// （仅与 --source knowledge 配合使用）
+        #[arg(long = "config-chunks")]
+        config_chunks: bool,
     },
 
     /// 跨世界统一搜索。
@@ -226,24 +231,6 @@ enum Commands {
         /// 输出纯 JSON 到 stdout（供 MCP / 脚本使用）。
         #[arg(long = "json")]
         json: bool,
-    },
-
-    /// 将 KG 节点同步到 Qdrant 向量存储。
-    ///
-    /// 默认: 增量（仅同步新增/未同步的节点）。
-    /// 使用 --full 进行全量重建。
-    KgSync {
-        /// 全量重建 — 同步所有节点（绕过增量）。
-        #[arg(long = "full")]
-        full: bool,
-
-        /// 指定的标签（逗号分隔）。
-        #[arg(long = "labels")]
-        labels: Option<String>,
-
-        /// 将自适应配置分块同步到 Qdrant 的 config_chunks 集合。
-        #[arg(long = "config-chunks")]
-        config_chunks: bool,
     },
 
     /// Jenkins CI/CD 操作（经由 jcli）。
@@ -944,6 +931,7 @@ async fn main() -> anyhow::Result<()> {
             no_pipeline,
             llm_backfill,
             source,
+            config_chunks,
         }) => {
             if let Some(ref src) = source {
                 if src == "knowledge" {
@@ -971,7 +959,7 @@ async fn main() -> anyhow::Result<()> {
                     dt_daemon::interfaces::cli::sync::handle_kg_sync(
                         incremental,
                         None,
-                        false,
+                        config_chunks,
                         Some(graph),
                         Some(queue),
                     )
@@ -1110,30 +1098,6 @@ async fn main() -> anyhow::Result<()> {
             let ignored = dirs_like_home_config(".config/digital-twin/ignored_dirs.yaml");
             dt_daemon::interfaces::cli::sense::handle_sense(
                 path, json, projects, graph, vector, snapshot, ignored,
-            )
-            .await?;
-            return Ok(());
-        }
-
-        // ---- CLI 模式: dt kg-sync ----
-        Some(Commands::KgSync {
-            full,
-            labels,
-            config_chunks,
-        }) => {
-            eprintln!("⚠️  已弃用: `dt kg-sync` 已弃用。请改用 `dt build --source knowledge`。");
-            eprintln!("   该命令仍可使用，但将在未来的版本中移除。");
-            let graph = connect_graph().await;
-            let embed = connect_embed().await;
-            let queue =
-                embed.map(|e| Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(e)));
-            let incremental = !full;
-            dt_daemon::interfaces::cli::sync::handle_kg_sync(
-                incremental,
-                labels,
-                config_chunks,
-                graph,
-                queue,
             )
             .await?;
             return Ok(());

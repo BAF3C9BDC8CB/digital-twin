@@ -129,7 +129,7 @@ cargo run -- --help
  dt sense
 ```
 
-`--source knowledge` 用于执行知识节点同步；`dt kg-sync` 仍可使用但已弃用，建议改用前者。
+`--source knowledge` 用于执行知识节点同步（KG 节点 → Qdrant 向量，原 `dt kg-sync` 已移除并入此处）。
 
 ### 知识和事件
 

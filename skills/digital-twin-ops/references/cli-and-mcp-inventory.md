@@ -5,7 +5,7 @@ Source of truth: `dt --help` / `dt <cmd> --help` / `src/main.rs` Clap definition
 ## Verified top-level CLI commands (14)
 
 ```
-clean backup schema health memorize event learn build search sense kg-sync jcli jc-sync daemon
+clean backup schema health memorize event learn build search sense jcli jc-sync daemon
 ```
 
 Key signatures (from `--help`, 2026-08-09):
@@ -18,9 +18,9 @@ Key signatures (from `--help`, 2026-08-09):
 - `dt memorize <KNOWLEDGE_TYPE> <ENTITY_ID> <DETAILS> [--entity-type] [--project]`
 - `dt learn <TASK> [--entities --pattern --pitfalls --decisions --thread-id --success --project]`
 - `dt backup create|list|restore <date>|verify <date>`
-- `dt clean [--confirm] [--dry-run] [--targets] [--test]` — destructive; requires `--confirm`
+- `dt clean [--confirm] [--dry-run] [--targets]` — destructive; requires `--confirm`
 - `dt schema init`
-- `dt kg-sync [--full] [--labels] [--config-chunks]` — **deprecated** (warns: use `dt build --source knowledge`)
+- ~~`dt kg-sync`~~ — 已移除(2026-08-12)；等价 `dt build --source knowledge`（config_chunks 用 `--config-chunks`）
 - `dt jcli <action> [-j/--job] [--build] [--limit] [--params] [--env test|production]` (actions: list/params/history/log/build)
 - `dt jc-sync [--job <name>]`
 - `dt daemon [start|status]` (default start; listens `127.0.0.1:50051`, override `DT_LISTEN_ADDR`)

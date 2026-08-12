@@ -52,8 +52,8 @@ dt search "XX" --limit 10                                  # all 世界
 
 | 场景 | MCP Tool（首选） | CLI 降级 |
 |------|-----------------|---------|
-| KG 节点增加了新的基础设施/服务 | `dt_kg_sync()` | `dt kg-sync`（全量） |
-| KG 节点有少量变更 | `dt_kg_sync()` | `dt kg-sync`（默认即增量） |
+| KG 节点增加了新的基础设施/服务 | `dt_kg_sync()` | `dt build --source knowledge --full` |
+| KG 节点有少量变更 | `dt_kg_sync()` | `dt build --source knowledge`（默认即增量） |
 | Nacos 配置有更新 | `nacos_sync(env="test")` | `dt nacos-sync test`（位置参数） |
 | K8s 资源有变化 | （无 MCP 等价物） | `dt k8s-sync` |
 | Jenkins Views/Jobs/Builds | （无 MCP 等价物） | `dt jc-sync` |
@@ -92,7 +92,7 @@ dt search "XX" --limit 10                                  # all 世界
 | 写知识/事件 | `dt_memorize` / `dt_event` | `dt memorize` / `dt event` |
 | 任务经验沉淀 | `dt_learn` | `dt learn` |
 | 索引代码 | `dt_build` | `dt build` |
-| 同步 KG | `dt_kg_sync` | `dt kg-sync` |
+| 同步 KG | `dt_kg_sync` | `dt build --source knowledge` |
 | 同步 Nacos | `nacos_sync` | `dt nacos-sync [test|prod]` |
 | 健康检查 | `dt_health` | `dt health` |
 | 查 Jenkins | `jcli_*` | `dt jcli` |

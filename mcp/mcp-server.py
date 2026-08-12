@@ -374,12 +374,11 @@ async def list_tools():
         ),
         Tool(
             name="dt_kg_sync",
-            description="同步KG节点到Qdrant向量库(KG→Qdrant桥接)。KG节点变更后应触发增量同步。",
+            description="同步KG节点到Qdrant向量库(KG→Qdrant桥接)。KG节点变更后应触发增量同步。等价于 dt build --source knowledge。",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "incremental": {"type": "boolean", "description": "仅同步未索引节点", "default": False},
-                    "labels": {"type": "string", "description": "指定标签(逗号分隔)，默认全部业务标签"}
+                    "config_chunks": {"type": "boolean", "description": "同时同步自适应配置分块到 config_chunks 集合", "default": False}
                 }, "required": []
             }
         ),
@@ -668,12 +667,9 @@ async def call_tool(name: str, arguments: dict):
             text = "\n".join(results)
 
     elif name == "dt_kg_sync":
-        cmd = [DT_BIN, "kg-sync"]
-        if arguments.get("incremental"):
-            cmd.append("--incremental")
-        if arguments.get("labels"):
-            for lbl in arguments["labels"].split(","):
-                cmd += ["--labels", lbl.strip()]
+        cmd = [DT_BIN, "build", "--source", "knowledge"]
+        if arguments.get("config_chunks"):
+            cmd.append("--config-chunks")
         text = run_cmd(cmd, timeout=300)
 
     # ===== 服务: 本地微服务管理 =====
