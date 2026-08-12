@@ -47,7 +47,7 @@ RETURN n.auth_user, n.auth_password, n.hostname, n.port, n.url, n.service_type
 dt_search_kg(query="<关键词>", world="code|knowledge|config", project="<项目名>", limit=10)
 ```
 
-代码实体（类/方法）必须用 world=code（knowledge 世界不索引代码实体）；服务/配置在 knowledge/config 世界。**代码逻辑任务必须先 dt_search_kg(world=code, project=<项目名>) 定位再读源码验证**（KG 命中=事实；仅当 dt_search_kg 不可用/超时才纯读源码并标注 ⚠）。
+代码实体（类/方法）推荐用 world=code（knowledge 世界不索引代码实体）；服务/配置在 knowledge/config 世界。**代码逻辑任务推荐先 dt_search_kg(world=code) 定位再读源码验证**；若上下文（[DT-SENSE] 简报 project 字段 / 用户消息）已明确目标项目名，推荐同时带 project=<项目名> 过滤跨项目噪音（KG 命中=事实；仅当 dt_search_kg 不可用/超时才纯读源码并标注 ⚠）。
 Cypher 兜底用属性匹配（本环境 Memgraph 不支持 Neo4j 全文索引语法）：
 
 ```cypher
@@ -80,6 +80,19 @@ LIMIT 20
 > ⚠️ 场景 C 是兜底方案，优先用场景 A 或 B。场景 A (`dt_search_kg`) 是推荐首选。
 
 > ⚠️ **查询词建议**（复测验证）：中文查询尽量带具体动词（"添加群成员"而非"群成员管理"）；功能名/标识符类（accountImport、addGroupMember）用英文或中英混搭召回率更高（100% vs 80%）。
+
+#### 场景 D：代码调用链问题（入口→链路追踪）
+
+L1 定位入口方法后，**推荐用 L2 遍历 CALLS 关系**直接拿调用链，省去逐个读文件：
+
+```cypher
+MATCH p=(a:Method)-[:CALLS*1..2]->(b)
+WHERE a.project = '<项目名>' AND a.name = '<入口方法名>'
+RETURN a.name AS caller, b.name AS callee
+LIMIT 20
+```
+
+> 注意过滤噪音：`toString/success/fail/error/getUrl/getXxx` 等公共方法/getter 会淹没业务链，优先看跨类调用（`b.class_name <> a.class_name`）。
 
 **唯一不查的情况：** 当前环境无任何项目上下文（刚启动、无目录、无打开的文件）且用户消息中也无任何关键词。除此以外都必须查。
 

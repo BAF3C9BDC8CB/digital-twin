@@ -211,7 +211,8 @@ def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
         f"brief: dirs:{dirs_str} | langs:{langs_str} | 实体:{ents_str}\n"
         f"注册项目: {projects_n} 个"
         f"{cand_str}{deg_str}{indexed_hint}\n\n"
-        f"搜索触发: 服务/配置/凭据/部署/历史决策→dt_search_kg(q,limit=5); hop0=事实,hop1+=线索; 按project过滤; 纯代码→先dt_search_kg(world=code)定位再读源码; 闲聊→不查; 每任务L1≤1次; 10s超时=降级\n"
+        f"可用dt工具: dt_search_kg(query,world=code|knowledge,project=<项目名>,limit≤5) — 代码问题推荐world=code+project; run_cypher_query(已知elementId走L2); dt_health; dt_sense\n"
+        f"搜索触发: 服务/配置/凭据/部署/历史决策→dt_search_kg; 纯代码→先dt_search_kg(world=code)定位再读源码; 闲聊→不查; 每任务L1≤1次(漏参重查计入); 10s超时=降级\n"
         f"禁止: 凭记忆答项目事实; 伪造结果; 输出key/密码; KG故障阻塞任务→读磁盘并标⚠; 重复/碎查"
     )
 
