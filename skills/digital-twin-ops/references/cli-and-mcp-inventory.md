@@ -5,7 +5,7 @@ Source of truth: `dt --help` / `dt <cmd> --help` / `src/main.rs` Clap definition
 ## Verified top-level CLI commands (14)
 
 ```
-clean backup schema health memorize event learn build search sense jcli jc-sync daemon
+clean backup schema health memorize event learn build search sense jcli jc-sync
 ```
 
 Key signatures (from `--help`, 2026-08-09):
@@ -23,7 +23,7 @@ Key signatures (from `--help`, 2026-08-09):
 - ~~`dt kg-sync`~~ — 已移除(2026-08-12)；等价 `dt build --source knowledge`（config_chunks 用 `--config-chunks`）
 - `dt jcli <action> [-j/--job] [--build] [--limit] [--params] [--env test|production]` (actions: list/params/history/log/build)
 - `dt jc-sync [--job <name>]`
-- `dt daemon [start|status]` (default start; listens `127.0.0.1:50051`, override `DT_LISTEN_ADDR`)
+- ~~`dt daemon`~~ — 已移除(2026-08-12)，gRPC 层整体删除（CLI 为唯一入口）
 
 ## Non-existent commands (old docs still mention them — do not use)
 
@@ -40,7 +40,7 @@ Key signatures (from `--help`, 2026-08-09):
 
 - Memgraph Bolt: code default `bolt://localhost:7687`; `config.yaml.example` uses `:7688` — deployment-dependent
 - Qdrant: REST `:6333` answers; `:6334` is gRPC only (REST call → `HTTP/0.9 when not allowed`)
-- dt gRPC daemon: `127.0.0.1:50051`
+- ~~dt gRPC daemon: `127.0.0.1:50051`~~ — 已移除(2026-08-12)
 
 ## MCP tool removal procedure (mcp/mcp-server.py)
 

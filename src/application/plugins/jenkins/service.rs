@@ -71,14 +71,6 @@ impl Plugin for JenkinsPluginService {
         "0.2.0"
     }
 
-    fn register_grpc(
-        &self,
-        _server: &mut tonic::transport::server::Server,
-    ) -> Result<(), PluginError> {
-        // TODO: proto 编译完成后装配生成的 JenkinsPluginServer
-        Ok(())
-    }
-
     async fn init(&self, ctx: &PluginContext) -> Result<(), PluginError> {
         ctx.log.info("[jenkins] 插件已初始化（原生 HTTP 客户端）");
         Ok(())

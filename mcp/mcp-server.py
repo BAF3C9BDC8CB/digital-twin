@@ -14,17 +14,8 @@ DT MCP Server V2 — 将 digital-twin CLI 命令注册为 OpenCode Tool
 ## 通信架构
 
 当前: 所有工具通过 `subprocess.run()` 调用 CLI 二进制 (DT_BIN/svc/kub/jcli)。
-目标: 所有工具通过 gRPC client 调用 dt-daemon 的 plugin service。
-
-迁移计划:
-  1. Phase 1 (当前): MCP Server → subprocess → CLI binary  (现状)
-  2. Phase 2 (未来): MCP Server → grpcio/grpclib → dt-daemon:50051
-      各工具映射到 proto 定义:
-        svc_*       → dt.plugin.svc.SvcPlugin
-        kublog_*    → dt.plugin.k8s.K8sPlugin
-        jcli_*      → dt.plugin.jenkins.JenkinsPlugin
-        dt_*        → dt.core.DtCore
-  3. Phase 3 (最终): 删除 subprocess 调用，纯 gRPC
+（gRPC 守护进程架构已随 2026-08-12 移除——daemon 命令与 proto 层不再存在，
+保持 subprocess 调用 CLI 为唯一通信方式。）
 """
 
 import json

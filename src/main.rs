@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use dt_daemon::domain::traits::{
     EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
 };
-use dt_daemon::domain::types::{AppConfig, BatchConfig};
+use dt_daemon::domain::types::BatchConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -281,13 +281,6 @@ enum Commands {
         /// 要同步的指定 Job 名称。默认: 同步所有 Job。
         #[arg(long = "job")]
         job: Option<String>,
-    },
-
-    /// 启动 gRPC 守护进程服务器或显示状态。
-    Daemon {
-        /// 操作: start（启动 gRPC 服务器）或 status（健康检查）。
-        #[arg(default_value = "start")]
-        action: String,
     },
 }
 
@@ -966,7 +959,6 @@ async fn main() -> anyhow::Result<()> {
 
                     let graph = graph.unwrap();
                     let embed = embed.unwrap();
-                    let vector = vector.unwrap();
 
                     let queue = Arc::new(dt_daemon::application::sync::queue::VectorQueue::spawn(
                         embed.clone(),
@@ -1192,57 +1184,12 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // ---- dt daemon status 分支 ----
-        Some(Commands::Daemon { action }) => {
-            match action.as_str() {
-                "status" => {
-                    tracing::info!("dt-daemon CLI: 守护进程状态");
-                    let memgraph = connect_memgraph().await;
-                    let qdrant = connect_vector().await;
-                    let snapshot = connect_snapshot().await;
-                    let embed = connect_embed().await;
-                    dt_daemon::interfaces::cli::cleanup::run_health(
-                        memgraph.as_ref().map(|c| c as &dyn GraphRepository),
-                        qdrant.as_deref().map(|c| c as &dyn VectorRepository),
-                        snapshot.as_deref().map(|c| c as &dyn SnapshotRepository),
-                        embed.as_deref().map(|c| c as &dyn EmbedService),
-                    )
-                    .await?;
-                }
-                _ => {
-                    // start — 落入服务器模式
-                    return Ok(());
-                }
-            }
-            return Ok(());
-        }
-
-        // ---- 服务器模式（默认 / dt daemon start） ----
+        // ---- 无命令：打印帮助 ----
         None => {
-            tracing::info!("dt-daemon 启动中 (服务器模式)");
-
-            let config = AppConfig {
-                listen_addr: std::env::var("DT_LISTEN_ADDR")
-                    .unwrap_or_else(|_| "127.0.0.1:50051".into()),
-                ..AppConfig::default()
-            };
-
-            // 监听 Ctrl+C 以便优雅关闭
-            let shutdown = tokio::spawn(async {
-                tokio::signal::ctrl_c().await.ok();
-                tracing::info!("收到关闭信号");
-            });
-
-            // 运行服务器（阻塞至出错或显式关闭）
-            tokio::select! {
-                result = dt_daemon::interfaces::grpc::server::run(config) => {
-                    if let Err(e) = result {
-                        tracing::error!("服务器错误: {}", e);
-                    }
-                }
-                _ = shutdown => {
-                    tracing::info!("dt-daemon 关闭中");
-                }
-            }
+            use clap::CommandFactory;
+            Cli::command().print_help().ok();
+            println!();
+            return Ok(());
         }
     }
 

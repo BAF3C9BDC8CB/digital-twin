@@ -285,7 +285,7 @@ When `dt` behavior may come from a stale or different executable, follow `refere
 For a release/deployment review, first establish the **actual runtime chain** rather than trusting stale systemd units or old plans: resolve the project root, `DT_BIN`, symlinks, running processes, listeners, config paths, and service `ExecStart` targets. Distinguish the per-invocation CLI path from MCP subprocess callers and any true long-running daemon. Read-only audit details and the safe replacement/rollback checklist are in `references/release-deployment-audit.md`.
 
 Rules:
-- Do not infer that a daemon needs restarting just because `dt daemon` exists; verify a running process and its executable first.
+- Do not infer a service needs restarting just because a command exists; verify a running process and its executable first. (gRPC daemon removed 2026-08-12; CLI is the only entry.)
 - Treat stale service definitions with nonexistent `ExecStart` or config paths as **not current deployment evidence**.
 - For a CLI binary, prefer build → smoke-test the staged artifact → hash/metadata capture → preserve previous version → atomic `mv` replacement → post-swap smoke test. Never truncate-write the live executable.
 - Restart only the consumers that cache or hold the executable (normally MCP sessions or a verified daemon); do not restart Memgraph/Qdrant/embed services unless the release changes their compatibility, schema, model, or service configuration.
@@ -311,7 +311,7 @@ A compact evidence pattern from the latest audit is in `references/test-failure-
 ```bash
 dt health / dt sense --json / dt search "<q>" --world code --project <p> --limit 5 --json
 dt build --path <project> --name <name>   # incremental; `--full` rebuild
-dt daemon status                          # gRPC daemon health (MCP doesn't need it running)
+dt health                                 # backend health (gRPC daemon removed 2026-08-12)
 hermes kanban create ...                  # multi-agent testing: see hermes-kanban-orchestration
 ```
 

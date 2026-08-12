@@ -14,14 +14,14 @@ Rust 实现的数字孪生服务，为项目代码、配置和知识提供索引
 - 提供统一搜索、环境感知和健康检查
 - 提供 Jenkins 操作与同步能力
 - 通过 MCP 为 OpenCode、Claude Code 等 AI 工具提供结构化调用
-- 通过 gRPC daemon 提供服务端入口
+- 提供 `dt` CLI 作为全部能力的操作入口
 
 Nacos、K8s 和 HanLP 相关内容在仓库中仍有部分配置或设计痕迹，但当前不应视为已接入的独立 CLI 能力；使用前请以 `dt --help` 和实际配置为准。
 
 ## 架构概览
 
 ```text
-CLI / gRPC daemon
+CLI
         │
         ├── Memgraph       图数据、实体和关系
         ├── Qdrant         向量存储与检索
@@ -155,10 +155,6 @@ cargo run -- --help
 # 初始化图数据库 Schema
  dt schema init
 
-# 启动或查看 gRPC daemon
- dt daemon start
- dt daemon status
-
 # 将 KG 节点同步到 Qdrant（推荐）
 dt build --source knowledge
 dt build --source knowledge --full
@@ -182,7 +178,7 @@ dt build --source knowledge --full
 
 ## MCP 集成
 
-MCP 服务入口为 [`mcp/mcp-server.py`](mcp/mcp-server.py)。当前 MCP server 主要通过子进程调用 `dt` CLI，提供搜索、构建、健康检查、知识写入以及 Jenkins、服务和 K8s 相关工具；实际工具列表和参数以该文件及 MCP 服务输出为准。gRPC 集成属于独立的 daemon 入口，不应假定 MCP 已通过 gRPC 通信。
+MCP 服务入口为 [`mcp/mcp-server.py`](mcp/mcp-server.py)。当前 MCP server 主要通过子进程调用 `dt` CLI，提供搜索、构建、健康检查、知识写入以及 Jenkins、服务和 K8s 相关工具；实际工具列表和参数以该文件及 MCP 服务输出为准。
 
 在 AI 工具中，优先使用 MCP 返回的结构化结果；MCP 不可用时再使用 `dt` CLI。有关操作建议可参考 [`skills/digital-twin-ops`](skills/digital-twin-ops/SKILL.md)（Hermes 集成的操作技能，含 references 知识点与 agent-workflow 工作流指南）。
 
@@ -198,10 +194,10 @@ cargo test
 
 以下内容目前不能仅凭 README 视为已实现的独立能力：
 
-- `dt nacos-sync`、`dt k8s-sync`、`dt kub` 等旧文档中的命令；`dt kg-sync` 虽仍可运行，但已标记为弃用；
+- `dt nacos-sync`、`dt k8s-sync`、`dt kub` 等旧文档中的命令；`dt kg-sync` 已移除（改用 `dt build --source knowledge`）；
 - HanLP 处理器及其固定管线阶段；
 - 源码编辑、K8s 事件、Nacos 变更等自动 Hook；部分 Hook 仍需手动触发或属于预留配置；
-- MCP 直接通过 gRPC 通信。
+- MCP 直接通过 gRPC 通信（gRPC 层已随 2026-08-12 移除，此能力不再存在）。
 
 请以 `dt --help`、`dt <command> --help`、`config/` 模板和当前源码为准。
 

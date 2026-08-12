@@ -4,12 +4,11 @@
 //!   domain/          → 实体、值对象、领域 trait（零依赖）
 //!   infrastructure/   → Memgraph、Qdrant、SQLite、scanner、parser
 //!   application/      → 用例编排（build、sync、context、knowledge、plugins）
-//!   interfaces/       → gRPC 服务器 + CLI 命令处理器
-//!   shared/           → logging、coordinator、chunker
+//!   interfaces/       → CLI 命令处理器
+//!
 
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
 pub mod interfaces;
-pub mod proto;
 pub mod shared;

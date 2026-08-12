@@ -25,8 +25,7 @@ impl HealthStatus {
     }
 }
 
-/// 插件专用错误类型。`From<PluginError> for tonic::Status` 转换在 `dt-plugins`
-/// 中实现（`tonic` 是那里的依赖项）。
+/// 插件专用错误类型。
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
     #[error("插件未找到：{0}")]

@@ -22,7 +22,7 @@ ps -eo pid,ppid,user,lstart,args | grep -E '[d]t( |$)|digital-twin|mcp' || true
 ss -ltnp 2>/dev/null | grep -E ':5005|:7688|:6333|:6334|:9997' || true
 ```
 
-The MCP server may call `dt` via `subprocess`; that is not evidence of a resident dt daemon. A daemon restart is required only when a verified long-running dt process is using the old executable.
+The MCP server calls `dt` via `subprocess` only (gRPC daemon removed 2026-08-12); binary swap takes effect on the next CLI invocation. Restart is only needed for verified long-running dt processes using the old executable.
 
 ## 2. Validate service definitions, not their names
 
@@ -41,7 +41,7 @@ A release build can include local modifications, so record this before approval.
 
 - CLI: no restart; each invocation loads a new executable.
 - MCP subprocess caller: restart/recreate the MCP session when you need a clean path resolution or process state, even though future calls spawn the CLI.
-- Verified dt daemon: restart after an atomic binary swap, using its actual unit/process—not a stale unit.
+- Verified long-running dt process: restart after an atomic binary swap, using its actual unit/process—not a stale unit.
 - Memgraph, Qdrant, and embed/Xinference: leave running unless the release changes their protocol, schema, model, port, or service configuration.
 
 ## 4. Safe binary replacement
