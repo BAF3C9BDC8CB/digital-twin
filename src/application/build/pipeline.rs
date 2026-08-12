@@ -1474,7 +1474,8 @@ impl PipelineTemplate {
                  WHERE c.project = $project \
                    AND (c.description IS NULL OR c.description = '') \
                    AND (c.llm_status IS NULL OR c.llm_status <> 'success') \
-                 RETURN c.class_id, c.name, c.file_path, c.start_line, c.end_line \
+                 RETURN c.class_id AS class_id, c.name AS name, c.file_path AS file_path, \
+                        c.start_line AS start_line, c.end_line AS end_line \
                  LIMIT 300",
                 params.clone(),
             )
@@ -1490,11 +1491,12 @@ impl PipelineTemplate {
         let mut jobs: Vec<(String, String, String, usize, usize)> = Vec::new();
         if let Some(arr) = rows.as_array() {
             for row in arr {
-                let class_id = row.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = row.get(1).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let file_path = row.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let start = row.get(3).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let end = row.get(4).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                // read_query 返回对象格式（字段名访问，见 search_config.rs 同款解析）。
+                let class_id = row.get("class_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let file_path = row.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let start = row.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let end = row.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 if !class_id.is_empty() && !file_path.is_empty() {
                     jobs.push((class_id, name, file_path, start, end));
                 }
