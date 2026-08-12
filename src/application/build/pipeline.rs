@@ -1693,6 +1693,22 @@ impl PipelineTemplate {
                                             class = %name,
                                             "Class 向量已写入 code_classes"
                                         );
+                                        // 向量化成功才标记 vectorized，避免下轮重扫。
+                                        // （必须在 upsert 成功后标记——若 upsert 失败则保持
+                                        // 未标记，下轮构建自动重试，防止假成功。）
+                                        let _ = graph
+                                            .write_query(
+                                                "MATCH (c:Class {class_id: $id}) SET c.vectorized = true",
+                                                {
+                                                    let mut p = std::collections::HashMap::new();
+                                                    p.insert(
+                                                        "id".to_string(),
+                                                        serde_json::Value::String(class_id.clone()),
+                                                    );
+                                                    p
+                                                },
+                                            )
+                                            .await;
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -1702,20 +1718,6 @@ impl PipelineTemplate {
                                         );
                                     }
                                 }
-                                // 向量化成功：标记 vectorized，避免下轮重扫。
-                                let _ = graph
-                                    .write_query(
-                                        "MATCH (c:Class {class_id: $id}) SET c.vectorized = true",
-                                        {
-                                            let mut p = std::collections::HashMap::new();
-                                            p.insert(
-                                                "id".to_string(),
-                                                serde_json::Value::String(class_id.clone()),
-                                            );
-                                            p
-                                        },
-                                    )
-                                    .await;
                             }
                             Ok(_) => tracing::warn!(
                                 "Class 描述 embed 返回空, 跳过向量化 {}",
