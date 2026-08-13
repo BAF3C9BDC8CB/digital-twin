@@ -807,8 +807,9 @@ pub async fn handle_search(
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
-    // 分词结果日志:验证中文切词生效(入口日志保留原始 query,jieba 分词结果在此展示)
-    let kws = crate::application::knowledge::extract::retrieve::keywords_of(&query, 5);
+    // 分词结果日志:验证中文切词生效(入口日志保留原始 query,jieba 分词结果在此展示)。
+    // 上限 20 与 keyword_recall 消费端一致,保证日志展示的 kw 即实际查询的 kw。
+    let kws = crate::application::knowledge::extract::retrieve::keywords_of(&query, 20);
     tracing::info!(
         "搜索: query={query} 分词={kws:?} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
     );

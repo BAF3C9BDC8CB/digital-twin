@@ -1115,14 +1115,17 @@ impl Retriever {
         let Some(ref graph) = self.graph else {
             return Vec::new();
         };
-        // 5 个 kw:长查询下内容词(浏览器/谷歌)排序靠后,3 个名额不够
-        let kws = keywords_of(query, 5);
+        // 关键词数量不设小上限(用户 2026-08-13:长句限制后意思可能全变,宁可多查)。
+        // 20 为防极端的安全天花板:实测 100 字长句经 jieba 切词+虚词过滤后内容词 ≤15。
+        let kws = keywords_of(query, 20);
         if kws.is_empty() {
             return Vec::new();
         }
-        // 每 kw 配额:预算均分,保证所有 kw 都有种子进池(避免高权重 kw
-        // 先到先得独占 limit——如 "git 注册逻辑" 只出 git 不出注册)。
-        let per_kw_cap = (limit / kws.len().max(1)).max(1);
+        // 每 kw 固定 2 条配额:kw 数量放开后若按 limit 均分,20 个 kw 时每词只
+        // 取 1 条,精确词(浏览器 exact)与宽泛词(环境 substr)待遇相同,精确词
+        // 优势被稀释。固定 2 条让每个内容词都有种子,噪声由 match_kind 分级
+        // (exact/prefix 强制保留,substr 正常竞争)与 rerank 收敛。
+        let per_kw_cap = 2usize;
         let mut seeds: Vec<Seed> = Vec::new();
         for kw in &kws {
             // 注意:bolt 参数化的 toLower($kw) 在 Memgraph 上返回 0 行(客户端差异),
@@ -1223,7 +1226,10 @@ LIMIT 50
                 Err(e) => tracing::warn!("keyword_recall: kw={} 查询失败: {e}", kw),
             }
         }
-        seeds.truncate(limit);
+        // 种子上限放宽到 2×limit:kw 数量放开后 truncate(limit) 会砍掉
+        // 排序靠后的内容词种子,白费查询;2×limit 与向量种子池(3×limit)相比
+        // 占比可控,噪声由后续 rerank 收敛。
+        seeds.truncate(limit * 2);
         seeds
     }
 
