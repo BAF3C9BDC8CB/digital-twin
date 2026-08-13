@@ -342,8 +342,9 @@ async fn connect_snapshot() -> Option<Arc<dyn SnapshotRepository>> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 通过 dt-log 初始化统一日志（JSON → 文件 + stderr 兜底）
-    digital_twin::shared::logging::init::init_logging()?;
+    // 通过 dt-log 初始化统一日志（JSON → 文件 + stderr 兜底；异步写入）
+    // guard 必须存活到 main 结束——drop 时冲刷日志队列，保证不丢。
+    let _log_guard = digital_twin::shared::logging::init::init_logging()?;
 
     let cli = Cli::parse();
 

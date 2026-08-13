@@ -86,3 +86,38 @@ Cargo.toml 固定 `version = "0.1.0"`，无 git tag 流程、无 CHANGELOG。打
   解包冒烟 `bin/dt --version`（v0.1.2 包实测 SHA256 7945453db6460426e02fa8f5595d09a7018464fa6df186ab926375a0a15d703d，10.5MB）。
 - `dt --version` 输出始终是 `digital-twin 0.1.0`（Cargo.toml 版本），**不随 tar 文件名变**——用户问版本时
   报 tar 名（v0.1.2）+ SHA256，别报二进制里的 0.1.0 混淆。
+
+## v0.1.3 双平台打包（2026-08-13 实测，Windows 支持首版）
+
+- **Windows 交叉编译**: 本机已有 `rustup target x86_64-pc-windows-gnu` + `/usr/bin/x86_64-w64-mingw32-gcc`。
+  命令: `cargo build --release --target x86_64-pc-windows-gnu`（产出 dt.exe/dt-mcp.exe，约 39MB，PE32+ console, x86-64）。
+  rusqlite bundled / tree-sitter C 代码用 mingw gcc 编译无问题。
+- **Windows 兼容改动（本次 7 文件）**:
+  ① `src/shared/mod.rs` 新增 `home_dir()`（HOME → USERPROFILE → HOMEDRIVE+HOMEPATH），替换 5 处
+  `std::env::var("HOME")`（runtime.rs dirs_like_home_config、cli/build.rs project_roots_from_config、
+  build/pipeline.rs load_code_analysis_prompt、pipeline/prompt.rs、pipeline/config.rs home_pipeline_config）
+  ——Windows 无 HOME 变量，不改则配置加载失败。
+  ② `src/mcp.rs` capture_stdout 唯一 unix-only 点（dup/dup2 + AsRawFd）：cfg(unix) 保留原实现，
+  cfg(windows) 用 `libc::open_osfhandle(handle, 0)` 把 File HANDLE 转 CRT fd 再 dup2
+  （libc 在 windows target 函数名**无下划线**：open_osfhandle/close 而非 _open_osfhandle/_close），
+  close(fd) 后 `std::mem::forget(file)` 防二次 CloseHandle；临时文件从 `/tmp/` 改 `std::env::temp_dir()`。
+- **包结构（双平台）**: `bin/{dt,dt-mcp}` + `bin/windows/{dt.exe,dt-mcp.exe}`；其余同 v0.1.2。
+- **文档**: 完整配置文档 `docs/CONFIG.md`（包内 + 项目 docs/ 各一份），含 Windows 专章
+  （Docker Desktop 跑 Memgraph/Qdrant + 原生 exe；或 WSL2 全 Linux；%USERPROFILE%\.config\digital-twin\
+  路径；MCP 客户端 json 示例；防火墙/SmartScreen/UTF-8 chcp 65001 注意事项）。
+- **脱敏验证升级**: 全包文本 grep "sk-" 零命中——pipeline.yaml.example 占位符用
+  `REPLACE_WITH_YOUR_KEY`（不带 sk- 前缀，v0.1.2 的 sk-YOUR_XXX_KEY 会命中 grep）；CONFIG.md 示例同。
+  验证脚本: python 遍历 tar 内所有 .yaml/.md 逐行查 sk-。
+- 归档: 正式包 `dist/dt-release-v0.1.3.tar.gz`（项目内），SHA256 749eda04272b104e5cb9b0b75eeb795cf8036bc0c9b69f9a929c7a264b0466c9。
+- `dt --version` 实际输出 `dt 0.1.0`（bin 名 dt；v0.1.2 记录 digital-twin 0.1.0 有出入，以实际为准）。
+
+## v0.1.3 二次修正（2026-08-13，验证抓到真实 bug）
+
+- **HOMEDRIVE+HOMEPATH 分支的 join 坑**: `PathBuf::from("D:").join("\\Users\\x")` 在 Windows 上
+  join 把以 `\` 开头的 HOMEPATH 当 root-relative 路径 → 结果丢盘符变成 `\Users\x`。
+  修复: 字符串拼接 `format!("{}{}", drive, path)`（shared::home_dir）。
+- **验证方法（临时集成测试）**: 在 tests/ 写 `hermes_verify_*.rs` 直接测 shared::home_dir()
+  四种场景（HOME/USERPROFILE/HOMEDRIVE+HOMEPATH/全缺省），跑 `cargo test --test <name>` 后删除。
+  比黑盒 dt sense 验证更直接（sense 的 project 识别依赖后端在线, 环境变量组合不可控）。
+- **env::set_var 在新 rustc 需 unsafe 块**（edition 2021 也报, 直接包 unsafe 即可）。
+- v0.1.3 最终 SHA256: 531ba64608720066ae868f4be20d26b17c3572c8b52dfc42556ca5281128eda1。

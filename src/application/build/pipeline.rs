@@ -1954,9 +1954,8 @@ fn infer_project_type(project: &str) -> &str {
 /// 文件缺失时回退到硬编码的默认提示词。
 fn load_code_analysis_prompt() -> String {
     let paths = [
-        std::env::var("HOME").ok().map(|h| {
-            std::path::PathBuf::from(h)
-                .join(".config")
+        crate::shared::home_dir().map(|h| {
+            h.join(".config")
                 .join("digital-twin")
                 .join("prompts")
                 .join("code_analysis.yaml")

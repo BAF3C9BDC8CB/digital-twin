@@ -835,6 +835,14 @@ pub async fn handle_search(
         entity_type_filter: content_type,
     };
     let result = cws.search(&req).await?;
+    tracing::info!(
+        "搜索完成: query={:?} world={} total={} per_world={:?} degraded={:?}",
+        result.query,
+        result.world,
+        result.total,
+        result.per_world_counts,
+        result.degraded,
+    );
 
     if json {
         // U-D4：--json 时 stdout 仅含 JSON（header 行已抑制，日志走 stderr）
@@ -864,8 +872,8 @@ pub fn project_roots_from_config() -> Vec<(String, String)> {
     use crate::domain::types::ScanConfig;
     let _ = ScanConfig::default(); // 确保类型可见性（无实际用途）
     let mut out: Vec<(String, String)> = Vec::new();
-    let home = std::env::var("HOME").unwrap_or_default();
-    let path = std::path::Path::new(&home).join(".config/digital-twin/config.yaml");
+    let home = crate::shared::home_dir().unwrap_or_default();
+    let path = home.join(".config/digital-twin/config.yaml");
     let Ok(content) = std::fs::read_to_string(&path) else {
         return out;
     };

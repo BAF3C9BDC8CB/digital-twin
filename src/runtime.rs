@@ -121,8 +121,8 @@ pub struct ProjectGroup {
 
 /// 解析 `~/.config/...`，无需引入 `dirs` crate。
 pub fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(suffix))
+    let home = crate::shared::home_dir()?;
+    Some(home.join(suffix))
 }
 
 /// 从 `~/.config/digital-twin/config.yaml` 加载配置。

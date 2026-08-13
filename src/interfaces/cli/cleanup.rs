@@ -23,6 +23,7 @@ use std::time::Instant;
 ///
 /// 当 `graph` 为 `None` 时，回退到 `NoopGraphRepo`（no-op，供测试使用）。
 pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Result<()> {
+    tracing::info!("dt schema: 开始初始化 V2 模式");
     println!("正在初始化 V2 模式...");
     let report: SchemaInitReport = if let Some(g) = graph {
         init_schema(g).await?
@@ -36,6 +37,12 @@ pub async fn run_schema_init(graph: Option<&dyn GraphRepository>) -> anyhow::Res
     println!("  创建的约束        : {}", report.constraints_created);
     println!("  创建的索引        : {}", report.indexes_created);
     println!("  耗时              : {} ms", report.elapsed_ms);
+    tracing::info!(
+        "dt schema: 完成 约束={} 索引={} 耗时={}ms",
+        report.constraints_created,
+        report.indexes_created,
+        report.elapsed_ms,
+    );
 
     Ok(())
 }
@@ -55,6 +62,7 @@ pub async fn run_clean(
     snapshot: Option<&dyn SnapshotRepository>,
 ) -> anyhow::Result<()> {
     if !confirm {
+        tracing::warn!("dt clean: 未带 --confirm,仅打印警告退出(未执行任何删除)");
         eprintln!("警告：`dt clean` 将删除以下所有数据：");
         eprintln!("  - Memgraph：所有节点与关系");
         eprintln!("  - Qdrant：所有向量集合");
@@ -66,6 +74,7 @@ pub async fn run_clean(
     }
     let total_start = Instant::now();
 
+    tracing::info!("dt clean: 清空所有后端数据(Memgraph/Qdrant/SQLite)");
     println!("正在清理所有数据...");
     println!();
 
@@ -76,6 +85,12 @@ pub async fn run_clean(
         let noop = crate::infrastructure::memgraph::NoopGraphRepo;
         clean_all(&noop).await?
     };
+    tracing::debug!(
+        "dt clean: Memgraph 删除节点={} 关系={} 耗时={}ms",
+        memgraph_report.nodes_deleted,
+        memgraph_report.relationships_deleted,
+        memgraph_report.elapsed_ms,
+    );
 
     println!("Memgraph:");
     println!("  删除的节点          : {}", memgraph_report.nodes_deleted);
@@ -114,6 +129,7 @@ pub async fn run_clean(
         println!("    - {name}");
     }
     if let Some(e) = &qdrant_err {
+        tracing::warn!("dt clean: Qdrant 清理异常: {e}");
         println!("  ⚠️ {e}");
     }
 
@@ -125,6 +141,7 @@ pub async fn run_clean(
                 true
             }
             Err(e) => {
+                tracing::warn!("dt clean: SQLite 清空失败: {e}");
                 println!("  ⚠️ SQLite 清空失败: {e}");
                 false
             }
@@ -174,6 +191,14 @@ pub async fn run_clean(
         }
     );
     println!("  总耗时                   : {} ms", combined.elapsed_ms);
+    tracing::info!(
+        "dt clean: 完成 节点={} 关系={} Qdrant集合={} 快照={} 耗时={}ms",
+        combined.nodes_deleted,
+        combined.relationships_deleted,
+        combined.qdrant_collections_removed,
+        if combined.snapshots_cleared { "yes" } else { "no" },
+        combined.elapsed_ms,
+    );
 
     Ok(())
 }
@@ -224,6 +249,7 @@ pub async fn run_health(
     snapshot: Option<&dyn SnapshotRepository>,
     embed: Option<&dyn EmbedService>,
 ) -> anyhow::Result<()> {
+    tracing::info!("dt health: 开始健康检查");
     println!("正在检查后端健康状态...");
     println!();
 
@@ -236,6 +262,7 @@ pub async fn run_health(
         (false, "  ❌ Memgraph : 未配置后端".to_string())
     };
     println!("  {detail}");
+    tracing::debug!("dt health: {detail}");
     if !healthy {
         all_healthy = false;
     }
@@ -247,6 +274,7 @@ pub async fn run_health(
         (false, "  ❌ Qdrant   : 未配置后端".to_string())
     };
     println!("  {detail}");
+    tracing::debug!("dt health: {detail}");
     if !healthy {
         all_healthy = false;
     }
@@ -258,6 +286,7 @@ pub async fn run_health(
         (false, "  ❌ SQLite   : 未配置后端".to_string())
     };
     println!("  {detail}");
+    tracing::debug!("dt health: {detail}");
     if !healthy {
         all_healthy = false;
     }
@@ -269,6 +298,7 @@ pub async fn run_health(
         (false, "  ❌ SiliconFlow : 未配置后端".to_string())
     };
     println!("  {detail}");
+    tracing::debug!("dt health: {detail}");
     if !healthy {
         all_healthy = false;
     }
@@ -298,25 +328,31 @@ pub async fn run_health(
             (Some(mg), Some(qd)) => {
                 if mg == qd {
                     println!("  ✅ 索引对账 : Memgraph {mg} 方法 = Qdrant {qd} 向量");
+                    tracing::debug!("dt health: 索引对账一致 (Memgraph {mg} = Qdrant {qd})");
                 } else {
                     println!("  ⚠️ 索引对账 : Memgraph {mg} 方法 ≠ Qdrant {qd} 向量（索引漂移，建议 --full 重建）");
+                    tracing::warn!("dt health: 索引漂移 Memgraph {mg} ≠ Qdrant {qd},建议 --full 重建");
                     all_healthy = false;
                 }
             }
             (mg, qd) => {
                 println!("  ⚠️ 索引对账 : 不可用 (Memgraph={mg:?}, Qdrant={qd:?})");
+                tracing::warn!("dt health: 索引对账不可用 (Memgraph={mg:?}, Qdrant={qd:?})");
                 all_healthy = false;
             }
         }
     } else {
         println!("  ⚠️ 索引对账 : 跳过（未配置 graph/vector 后端）");
+        tracing::debug!("dt health: 索引对账跳过(未配置 graph/vector 后端)");
     }
 
     println!();
     if all_healthy {
         println!("所有后端均健康。");
+        tracing::info!("dt health: 完成,所有后端健康");
     } else {
         println!("有一个或多个后端降级或不健康。");
+        tracing::warn!("dt health: 完成,存在降级或不健康的后端");
     }
 
     Ok(())

@@ -112,10 +112,9 @@ impl PromptRegistry {
         candidates.push(PathBuf::from("config/prompts"));
 
         // 3) 用户级固定路径（与 pipeline.yaml 一致约定）
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = crate::shared::home_dir() {
             candidates.push(
-                PathBuf::from(home)
-                    .join(".config")
+                home.join(".config")
                     .join("digital-twin")
                     .join("prompts"),
             );

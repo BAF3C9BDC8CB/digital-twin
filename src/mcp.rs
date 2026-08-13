@@ -11,7 +11,10 @@
 //! 与 svc 的 redirect_stderr 同思路)。
 
 use std::future::Future;
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -31,11 +34,12 @@ use serde_json::Value;
 
 /// 把 stdout 重定向到临时文件执行 `f`, 恢复后返回捕获的输出。
 /// handler 的 `println!` 输出全部落入文件, 不污染 MCP 协议通道。
+#[cfg(unix)]
 fn capture_stdout<F>(f: F) -> String
 where
     F: FnOnce() -> anyhow::Result<()>,
 {
-    let path = format!("/tmp/dt-mcp-{}.out", std::process::id());
+    let path = std::env::temp_dir().join(format!("dt-mcp-{}.out", std::process::id()));
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -52,6 +56,41 @@ where
         libc::close(saved);
     }
     drop(file);
+    let mut output = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::remove_file(&path);
+    if let Err(e) = result {
+        output.push_str(&format!("\n[dt-mcp 错误: {e}]\n"));
+    }
+    output
+}
+
+/// Windows 版 stdout 捕获：把文件 HANDLE 转为 CRT 文件描述符（`_open_osfhandle`），
+/// 再用与 Unix 相同的 `dup2` 重定向 stdout。
+#[cfg(windows)]
+fn capture_stdout<F>(f: F) -> String
+where
+    F: FnOnce() -> anyhow::Result<()>,
+{
+    let path = std::env::temp_dir().join(format!("dt-mcp-{}.out", std::process::id()));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .expect("open capture file");
+    let fd = unsafe { libc::open_osfhandle(file.as_raw_handle() as libc::intptr_t, 0) };
+    let saved = unsafe { libc::dup(libc::STDOUT_FILENO) };
+    unsafe {
+        libc::dup2(fd, libc::STDOUT_FILENO);
+    }
+    let result = f();
+    unsafe {
+        libc::dup2(saved, libc::STDOUT_FILENO);
+        libc::close(saved);
+    }
+    unsafe { libc::close(fd) };
+    // fd 已接管文件句柄，避免 File drop 时二次 CloseHandle
+    std::mem::forget(file);
     let mut output = std::fs::read_to_string(&path).unwrap_or_default();
     let _ = std::fs::remove_file(&path);
     if let Err(e) = result {
@@ -569,10 +608,10 @@ impl Router for DtRouter {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".into()))
-        .with_writer(std::io::stderr)
-        .try_init();
+    // 复用统一异步日志管线:JSON → dt.log + stderr 人类可读(warn+);
+    // guard 存活到 server.run 结束(drop 时冲刷队列)。
+    // MCP 协议用 stdin/stdout 通信,stderr 日志不污染协议流。
+    let _log_guard = digital_twin::shared::logging::init::init_logging()?;
 
     let rt = DtRuntime::connect().await;
     tracing::info!("dt-mcp: 运行时连接完成 (graph={} vector={} embed={})",

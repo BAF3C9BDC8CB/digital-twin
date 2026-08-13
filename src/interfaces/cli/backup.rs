@@ -122,6 +122,15 @@ pub async fn create_backup() -> Result<BackupReport> {
         duration_seconds: duration,
     };
 
+    tracing::info!(
+        "dt backup: 创建完成 {} memgraph={} qdrant={} sqlite={} 耗时={:.1}s",
+        report.location.display(),
+        memgraph_ok,
+        qdrant_ok,
+        sqlite_ok,
+        duration,
+    );
+
     Ok(report)
 }
 
@@ -153,9 +162,11 @@ pub async fn restore_backup(date: &str) -> Result<()> {
 /// 扫描 `BACKUP_ROOT` 下的带日期目录，并返回
 /// 每个目录的摘要信息。
 pub async fn list_backups() -> Result<Vec<BackupEntry>> {
+    tracing::info!("dt backup list: 开始列出备份");
     let root = PathBuf::from(BACKUP_ROOT);
 
     if !root.exists() {
+        tracing::debug!("dt backup list: 备份目录不存在 {}", root.display());
         return Ok(vec![]);
     }
 
@@ -197,14 +208,17 @@ pub async fn list_backups() -> Result<Vec<BackupEntry>> {
     // 按日期降序排序
     entries.sort_by(|a, b| b.date.cmp(&a.date));
 
+    tracing::info!("dt backup list: 完成 找到 {} 个备份", entries.len());
     Ok(entries)
 }
 
 /// 按日期校验备份文件的校验和。
 pub async fn verify_backup_files(date: &str) -> Result<VerifyReport> {
+    tracing::info!("dt backup verify: 开始校验 {date}");
     let backup_dir = PathBuf::from(BACKUP_ROOT).join(date);
 
     if !backup_dir.exists() {
+        tracing::warn!("dt backup verify: 备份目录未找到 {}", backup_dir.display());
         eprintln!("备份目录未找到: {}", backup_dir.display());
         return Ok(VerifyReport {
             backup_dir,
@@ -215,5 +229,11 @@ pub async fn verify_backup_files(date: &str) -> Result<VerifyReport> {
         });
     }
 
-    crate::interfaces::cli::backup_verify::verify_backup(&backup_dir).await
+    let report = crate::interfaces::cli::backup_verify::verify_backup(&backup_dir).await?;
+    tracing::info!(
+        "dt backup verify: 完成 {date} 全部有效={} 文件数={}",
+        report.all_valid,
+        report.files.len(),
+    );
+    Ok(report)
 }

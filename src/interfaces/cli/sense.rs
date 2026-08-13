@@ -20,8 +20,13 @@ pub async fn handle_sense(
     };
     let input = input.canonicalize().unwrap_or(input);
     if !input.exists() {
+        tracing::warn!("dt sense: 路径不存在 {}", input.display());
         anyhow::bail!("path not found: {}", input.display());
     }
+
+    // 入口用 debug 级:dt sense 是 Hermes 每轮会话高频调用的命令,
+    // 默认 info 级别下不刷日志;异常(warn)与结果摘要(info)仍会记录。
+    tracing::debug!("dt sense: 开始感知 path={} json={}", input.display(), json);
 
     let svc = SenseService {
         graph,
@@ -30,6 +35,17 @@ pub async fn handle_sense(
         ignored_dirs_file,
     };
     let report = svc.sense(&input, &projects).await;
+    tracing::info!(
+        "dt sense: 完成 path={} status={:?} project={} stats={:?} degraded={:?}",
+        input.display(),
+        report.status,
+        report.project.as_ref().map(|p| p.name.as_str()).unwrap_or("-"),
+        report.stats,
+        report.degraded,
+    );
+    if !report.degraded.is_empty() {
+        tracing::warn!("dt sense: 降级后端: {}", report.degraded.join(", "));
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);

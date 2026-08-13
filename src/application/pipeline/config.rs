@@ -393,8 +393,8 @@ impl PipelineConfig {
 
 /// 解析 `~/.config/digital-twin/pipeline.yaml` 路径,不引入 `dirs` crate。
 fn home_pipeline_config() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".config/digital-twin/pipeline.yaml"))
+    let home = crate::shared::home_dir()?;
+    Some(home.join(".config/digital-twin/pipeline.yaml"))
 }
 
 impl Default for PipelineConfig {
