@@ -1,20 +1,24 @@
 """Digital-twin knowledge-graph memory provider for Hermes.
 
-每轮 prefetch：按用户消息调用 `dt search --world knowledge --limit 5 --json`
-召回知识图谱中的相关记忆（项目知识、历史决策、部署信息等），渲染为纯文本
-注入下一轮上下文。设计原则：
+决策式 KG 检索(2026-08-13 重构):不再每轮自动 prefetch 原话搜索。
+prefetch 默认关闭(DT_PREFETCH_ENABLED=0)——是否检索知识图谱由 Hermes
+主模型按会话价值判断,需要时主动调用 MCP 工具 dt_search_kg。本 provider
+只保留 system_prompt_block 注入检索决策规则(什么该查/什么不该查)。
 
-- **只读（prefetch-only）**：写入由 dt 的 hook 系统（code_modified / decision_made
-  / bug_fix_recorded 等）与 agent 主动 dt_memorize 完成，本插件不写 KG，
-  避免对话噪音污染图谱。
-- **fail-open**：dt CLI 不可用 / 超时 / 解析失败 → 返回空串，绝不影响主流程。
-- **轻量**：subprocess 超时 6s（外部 provider prefetch 有 8s 上限），单次召回
-  渲染 ≤ 1500 字符。
+保留开关 DT_PREFETCH_ENABLED=1 可恢复旧行为(每轮自动 dt search 注入),
+用于回滚对比。开启时行为同旧版:按用户消息 `dt search --world knowledge
+--limit 5 --json` 召回渲染注入。
 
-配置（可选环境变量）：
-  DT_BIN         dt 可执行文件路径（默认 ~/.local/bin/dt）
-  DT_PREFETCH_LIMIT   每次召回条数（默认 5）
-  DT_PREFETCH_MAX_CHARS 注入上下文硬上限（默认 1500）
+设计原则:
+- 只读(prefetch-only):写入由 dt hook 系统与 agent 主动 dt_memorize 完成
+- fail-open:dt CLI 不可用/超时/解析失败 → 返回空串,绝不影响主流程
+- 轻量:subprocess 超时 6s(外部 provider prefetch 有 8s 上限)
+
+配置(可选环境变量):
+  DT_BIN         dt 可执行文件路径(默认 ~/.local/bin/dt)
+  DT_PREFETCH_ENABLED  每轮自动召回开关(默认 0=关闭,主模型决策;1=旧行为)
+  DT_PREFETCH_LIMIT   每次召回条数(默认 5)
+  DT_PREFETCH_MAX_CHARS 注入上下文硬上限(默认 1500)
 """
 
 from __future__ import annotations
@@ -29,6 +33,9 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 DT_BIN = os.environ.get("DT_BIN", str(Path.home() / ".local/bin/dt"))
+# 决策式检索:默认关闭自动 prefetch,由主模型按需调用 dt_search_kg。
+# 置 1 恢复旧行为(每轮原话自动搜索注入)——仅供回滚对比。
+PREFETCH_ENABLED = os.environ.get("DT_PREFETCH_ENABLED", "0") == "1"
 PREFETCH_LIMIT = int(os.environ.get("DT_PREFETCH_LIMIT", "5"))
 MAX_CHARS = int(os.environ.get("DT_PREFETCH_MAX_CHARS", "1500"))
 SEARCH_TIMEOUT = 6.0  # subprocess 超时（外部 provider 总预算 8s）
@@ -76,14 +83,25 @@ class DigitalTwinMemoryProvider(_MemoryProviderABC or object):  # type: ignore[m
         )
 
     def system_prompt_block(self) -> str:
+        # 决策式检索:KG 由主模型按会话价值判断后主动调 dt_search_kg,
+        # 不再宣称"每轮自动召回"——避免主模型误以为注入已在后台发生。
         return (
             "## Digital-Twin KG 记忆\n"
-            "每轮会自动从知识图谱召回相关记忆（项目知识/历史决策/部署信息）注入上下文。\n"
-            "需要更精确的代码/服务检索时用 dt_search_kg / dt search 主动查询。\n"
+            "KG 检索由主模型按需决策(无自动注入):需要项目知识/服务/配置/凭据/部署/历史决策"
+            "时主动调 dt_search_kg(world=knowledge|code, project=<项目名>, limit≤5);\n"
+            "闲聊/元对话/本工具操作不查;已注入的 [DT-SENSE] 已覆盖则不重复查;"
+            "每任务 L1 自动查询 ≤1 次;\n"
+            "KG 不可达 → 读磁盘完成并标 ⚠;禁止凭记忆答项目事实、伪造结果、输出 key/密码。\n"
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """按用户消息召回 KG 记忆，返回渲染文本（空串=无召回/失败）。"""
+        """决策式检索:默认关闭自动召回,由主模型判断会话价值后主动调 dt_search_kg。
+
+        DT_PREFETCH_ENABLED=1 时恢复旧行为(每轮按用户消息原话搜索注入)。
+        返回渲染文本(空串=不注入/失败)。
+        """
+        if not PREFETCH_ENABLED:
+            return ""
         if not query or not query.strip():
             return ""
         # 跳过子代理/后台上下文，避免重复注入

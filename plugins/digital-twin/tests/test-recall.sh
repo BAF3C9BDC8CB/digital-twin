@@ -49,10 +49,9 @@ print('  加载:', 'OK' if p else 'FAIL', '| available:', p.is_available() if p 
 if [ $? -eq 0 ]; then ok "L1: provider 加载"; else bad "L1: provider 加载失败"; fi
 
 echo ""
-echo "═══ L2 系统层: MemoryManager.prefetch_all 注入 ═══"
-for q in "${QUERIES[@]}"; do
-  echo "── 查询: $q"
-  "$PY" -c "
+echo "═══ L2 系统层: MemoryManager.prefetch_all 注入(决策式:默认关闭) ═══"
+echo "── 默认(开关关):prefetch 应空注入(主模型决策,不自动搜索)"
+"$PY" -c "
 import sys
 sys.path.insert(0, '/home/luis/.hermes/hermes-agent')
 from agent.memory_manager import MemoryManager
@@ -61,16 +60,22 @@ p = load_memory_provider('digital-twin')
 mm = MemoryManager(external_prefetch_timeout=10.0)
 mm.add_provider(p)
 p.initialize('test', agent_context='primary')
-r = mm.prefetch_all('$q', session_id='test')
-if r:
-    for line in r.splitlines()[:6]:
-        print(f'  {line[:100]}')
-    print(f'  → 注入 {len(r)} chars')
-else:
-    print('  → 空注入')
+r = mm.prefetch_all('warehouse 端口', session_id='test')
+print(f'  → 注入 {len(r) if r else 0} chars(空=决策式关闭,正常)')
 "
-done
-echo "  （L2 注入非空即通过，上面每查询是否出现 [KG 记忆] 即验证）"
+echo "── 开关开启(DT_PREFETCH_ENABLED=1):恢复旧行为,非空注入"
+DT_PREFETCH_ENABLED=1 "$PY" -c "
+import sys
+sys.path.insert(0, '/home/luis/.hermes/hermes-agent')
+sys.path.insert(0, '/data/myProject/digital-twin-v2/plugins')
+import importlib.util
+spec = importlib.util.spec_from_file_location('dtmem', '/data/myProject/digital-twin-v2/plugins/digital-twin/__init__.py')
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+p = m.DigitalTwinMemoryProvider(); p.initialize('test', agent_context='primary')
+r = p.prefetch('warehouse 端口', session_id='test')
+print(f'  → 注入 {len(r)} chars' + ('(非空=旧行为恢复)' if r else '(空,检查 dt search)'))
+"
+echo "  （默认空注入=主模型决策;开关=1 非空=回滚能力保留）"
 
 echo ""
 echo "═══ L3 端到端: 真实会话（回答是否含 KG 关键信息）═══"
