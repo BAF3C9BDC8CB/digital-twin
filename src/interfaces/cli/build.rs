@@ -807,12 +807,14 @@ pub async fn handle_search(
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
 ) -> anyhow::Result<()> {
+    // 分词结果日志:验证中文切词生效(入口日志保留原始 query,jieba 分词结果在此展示)
+    let kws = crate::application::knowledge::extract::retrieve::keywords_of(&query, 5);
     tracing::info!(
-        "搜索: query={query} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
+        "搜索: query={query} 分词={kws:?} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
     );
 
     if !json {
-        println!("搜索: query=\"{query}\" world={world} limit={limit}");
+        println!("搜索: query=\"{query}\" 分词={kws:?} world={world} limit={limit}");
     }
 
     use crate::application::context::search_mcp::CrossWorldSearchTrait;

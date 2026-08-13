@@ -4,6 +4,9 @@
 //! → rerank(sigmoid) → 融合排序。任一路故障降级，不整体失败（spec §3）。
 
 use std::sync::Arc;
+use std::sync::OnceLock;
+
+use jieba_rs::Jieba;
 
 use crate::application::context::graph_parse::parse_graph_rows;
 use crate::application::context::search_mcp::SearchHit;
@@ -151,6 +154,14 @@ const STOPWORDS_MULTI: &[&str] = &[
     "相关",
     "具体",
     "详细",
+    // 口语/叙事词(常出现在长查询里,jieba 会切出,非检索内容)
+    "同样",
+    "现在",
+    "继续",
+    "后来",
+    "一起",
+    "一直",
+    "记录",
 ];
 
 /// 虚词表(单字)——切分中文连续段时剔除。
@@ -182,91 +193,38 @@ fn push_ascii(cands: &mut Vec<KwCandidate>, buf: &str, start: usize) {
     }
 }
 
-/// 中文子段产出 n-gram 候选:
-/// 2-4 字整段(权重4)+ 前缀 bigram(权重3)+ 前缀 tri/4-gram(权重2)+ 内部 bigram(权重1)。
-/// ⚠️ 切片必须按 char 边界(Vec<char> 索引),禁止按字节切 UTF-8。
-fn push_cjk_ngrams(cands: &mut Vec<KwCandidate>, sub: &[char], sub_start: usize, seg_start: usize) {
-    let l = sub.len();
-    if l < 2 {
-        return;
-    }
-    let base = seg_start + sub_start;
-    if l <= 4 {
-        // 2-4 字整段(权重4)
+/// 全局 jieba 单例:词典内嵌于二进制(约 5MB),进程内惰性加载一次。
+/// jieba-rs 0.10 的 cut(&self, ...) 线程安全,静态 OnceLock 即可并发使用。
+static JIEBA: OnceLock<Jieba> = OnceLock::new();
+
+fn jieba() -> &'static Jieba {
+    JIEBA.get_or_init(Jieba::new)
+}
+
+/// 中文段交给 jieba 切词:词典级歧义消解("南京市长江大桥"→[南京市,长江大桥])
+/// 优于 n-gram 启发式。过滤单字(含单字虚词)与多字虚词后,词按原文位置产出候选。
+fn push_cjk_jieba(cands: &mut Vec<KwCandidate>, seg: &str, seg_start: usize) {
+    for t in jieba().cut(seg, true) {
+        let word = t.word;
+        let wc = word.chars().count();
+        if wc < 2 {
+            continue; // 单字(含单字虚词)全部丢弃,单字 CONTAINS 噪声大
+        }
+        if STOPWORDS_MULTI.contains(&word) {
+            continue; // 多字虚词(怎么/进行/无法/记录…)过滤
+        }
         cands.push(KwCandidate {
-            text: sub.iter().collect(),
+            text: word.to_string(),
             weight: 4,
-            pos: base,
-            len: l,
-        });
-    }
-    // 前缀 bigram(权重3)
-    cands.push(KwCandidate {
-        text: sub[0..2].iter().collect(),
-        weight: 3,
-        pos: base,
-        len: 2,
-    });
-    // 前缀 tri/4-gram(权重2)
-    for k in 3..=l.min(4) {
-        cands.push(KwCandidate {
-            text: sub[0..k].iter().collect(),
-            weight: 2,
-            pos: base,
-            len: k,
-        });
-    }
-    // 内部 bigram(权重1)
-    for i in 1..l - 1 {
-        cands.push(KwCandidate {
-            text: sub[i..i + 2].iter().collect(),
-            weight: 1,
-            pos: base + i,
-            len: 2,
+            pos: seg_start + t.start, // Token.start 为 char 偏移,与 seg_start 同基准
+            len: wc,
         });
     }
 }
 
-/// 中文段按虚词表最长优先切分,再对每个子段产出 n-gram 候选。
-fn cjk_segment_candidates(seg: &[char], seg_start: usize) -> Vec<KwCandidate> {
-    let multi: Vec<Vec<char>> = STOPWORDS_MULTI
-        .iter()
-        .map(|s| s.chars().collect())
-        .collect();
-    let mut cands: Vec<KwCandidate> = Vec::new();
-    let mut cur: Vec<char> = Vec::new();
-    let mut cur_start = 0usize; // 相对 seg 的偏移
-    let mut j = 0usize;
-    while j < seg.len() {
-        // 最长优先:每位置先试多字虚词,取匹配中最长者;无多字命中再试单字
-        let mut best_len = 0usize;
-        for s in &multi {
-            if s.len() > best_len && j + s.len() <= seg.len() && seg[j..j + s.len()] == s[..] {
-                best_len = s.len();
-            }
-        }
-        if best_len == 0 && STOPWORDS_SINGLE.contains(&seg[j]) {
-            best_len = 1;
-        }
-        if best_len > 0 {
-            push_cjk_ngrams(&mut cands, &cur, cur_start, seg_start);
-            cur.clear();
-            j += best_len;
-        } else {
-            if cur.is_empty() {
-                cur_start = j;
-            }
-            cur.push(seg[j]);
-            j += 1;
-        }
-    }
-    push_cjk_ngrams(&mut cands, &cur, cur_start, seg_start);
-    cands
-}
-
-/// 从查询提取关键词(三态扫描):
+/// 从查询提取关键词(三态扫描 + jieba 中文切词):
 /// - ASCII 字母数字 → ASCII 段,小写化,≥2 字保留(权重5);
-/// - 非 ASCII 字母(中文等)→ 中文段,虚词表最长优先切分后产出 n-gram(权重 4/3/2/1);
+/// - 非 ASCII 字母(中文等)→ 中文段,jieba 切词后过滤虚词/单字(权重4);
 /// - 其余字符(空白/ASCII 标点/全角标点 ，。！？等)一律视为分隔符,flush 两段。
 /// 去重按 text(已小写)保留最高权重;排序 weight desc → pos asc → len desc;截断 max。
 /// 供 3.3 关键词补召回使用。
@@ -278,7 +236,7 @@ pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
     let mut cands: Vec<KwCandidate> = Vec::new();
     let mut ascii_buf = String::new();
     let mut ascii_start = 0usize;
-    let mut cjk_buf: Vec<char> = Vec::new();
+    let mut cjk_buf = String::new();
     let mut cjk_start = 0usize;
     let mut i = 0usize;
     while i < chars.len() {
@@ -286,7 +244,7 @@ pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
         if ch.is_ascii_alphanumeric() {
             // ASCII 段:从中文段切入时先 flush 中文
             if !cjk_buf.is_empty() {
-                cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+                push_cjk_jieba(&mut cands, &cjk_buf, cjk_start);
                 cjk_buf.clear();
             }
             if ascii_buf.is_empty() {
@@ -310,7 +268,7 @@ pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
                 ascii_buf.clear();
             }
             if !cjk_buf.is_empty() {
-                cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+                push_cjk_jieba(&mut cands, &cjk_buf, cjk_start);
                 cjk_buf.clear();
             }
         }
@@ -320,7 +278,7 @@ pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
         push_ascii(&mut cands, &ascii_buf, ascii_start);
     }
     if !cjk_buf.is_empty() {
-        cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+        push_cjk_jieba(&mut cands, &cjk_buf, cjk_start);
     }
     // 去重:按 text 保留最高权重(同权重保留先出现者)
     let mut by_text: std::collections::HashMap<String, KwCandidate> =
@@ -2350,19 +2308,16 @@ mod tests {
 
     #[test]
     fn keywords_of_cjk_sentence_drops_stopwords() {
-        // 中文整句:虚词(怎么/使用/呢)剔除,内容词整段+前缀/内部 n-gram 保留
+        // 中文整句:jieba 切 [怎么,使用,注册,功能,呢],虚词(怎么/使用/呢)剔除
         let kws = keywords_of("怎么使用注册功能呢", 8);
-        assert_eq!(kws, vec!["注册功能", "注册", "注册功", "册功", "功能"]);
+        assert_eq!(kws, vec!["注册", "功能"]);
         assert!(!kws.iter().any(|k| k == "怎么" || k == "使用" || k == "呢"));
     }
 
     #[test]
     fn keywords_of_mixed_cn_en_git_register() {
-        // 中英混合:ASCII 段独立成词,中文段虚词切分后整段+前缀 bigram
-        assert_eq!(
-            keywords_of("git 注册逻辑", 3),
-            vec!["git", "注册逻辑", "注册"]
-        );
+        // 中英混合:ASCII 段独立成词(git w5),中文段 jieba 切 [注册,逻辑](w4)
+        assert_eq!(keywords_of("git 注册逻辑", 3), vec!["git", "注册", "逻辑"]);
     }
 
     #[test]
