@@ -162,6 +162,18 @@ const STOPWORDS_MULTI: &[&str] = &[
     "一起",
     "一直",
     "记录",
+    // 弱口语词(浏览器dock 场景实测:想要/只有/发现 等占名额挤掉内容词)
+    "想要",
+    "只有",
+    "两个",
+    "发现",
+    "点击",
+    "额外",
+    "增加",
+    "就是",
+    "中会",
+    "这是",
+    "怎么回事",
 ];
 
 /// 虚词表(单字)——切分中文连续段时剔除。
@@ -181,12 +193,14 @@ struct KwCandidate {
     len: usize,
 }
 
-/// ASCII 段产出候选:≥2 字保留,权重 5。
+/// ASCII 段产出候选:≥2 字保留,权重 4(与中文词同权,按位置排序)。
+/// 曾用权重 5 导致英文词(mcp/ai/dock)霸榜挤掉中文核心词——实测
+/// "谷歌浏览器dock图标"查询 kw=[mcp,ai,dock] 而非 [浏览器,谷歌]。
 fn push_ascii(cands: &mut Vec<KwCandidate>, buf: &str, start: usize) {
     if buf.chars().count() >= 2 {
         cands.push(KwCandidate {
             text: buf.to_string(),
-            weight: 5,
+            weight: 4,
             pos: start,
             len: buf.chars().count(),
         });
@@ -1101,7 +1115,8 @@ impl Retriever {
         let Some(ref graph) = self.graph else {
             return Vec::new();
         };
-        let kws = keywords_of(query, 3);
+        // 5 个 kw:长查询下内容词(浏览器/谷歌)排序靠后,3 个名额不够
+        let kws = keywords_of(query, 5);
         if kws.is_empty() {
             return Vec::new();
         }
@@ -2387,6 +2402,25 @@ mod tests {
         assert!(keywords_of("怎么样", 8).is_empty());
         assert!(keywords_of("为什么", 8).is_empty());
         assert!(keywords_of("怎么使用", 8).is_empty());
+    }
+
+    #[test]
+    fn keywords_of_mixed_ascii_cjk_keeps_chinese_content() {
+        // 回归(2026-08-13 用户实测):长中英混合查询里 ASCII 词(mcp/ai/dock)
+        // 曾以权重 5 霸榜,中文核心词(浏览器/谷歌)被挤出。权重统一后
+        // 按位置排序,中文内容词必须进 kw。
+        let q = "我想要的是只有两个浏览器，一个是我个人使用的谷歌浏览器，另外一个就是谷歌浏览器mcp环境，给AI使用的，我发现我点击dock中的谷歌浏览器，dock中会额外增加一个谷歌浏览器图标，这是怎么回事？";
+        let kws = keywords_of(q, 5);
+        assert!(
+            kws.iter().any(|k| k == "浏览器" || k == "谷歌"),
+            "中文核心词(浏览器/谷歌)必须进 kw,got={kws:?}"
+        );
+        // 虚词(想要/只有/发现/点击/增加/就是)全滤
+        for w in ["想要", "只有", "发现", "点击", "增加", "就是"] {
+            assert!(!kws.contains(&w.to_string()), "虚词 {w} 未滤,got={kws:?}");
+        }
+        // ASCII 词仍保留但不再霸榜
+        assert!(kws.iter().any(|k| k == "mcp"));
     }
 
     // -----------------------------------------------------------------------
