@@ -187,7 +187,10 @@ pub fn render_human(
     }
     // 低分降级提示：全部命中低于阈值时，结果大概率与查询无关
     // （跨项目噪音/世界错配），给出显式警示而非静默返回。
-    if !result.hits.is_empty() {
+    // 注意：world=all 走跨世界 RRF 融合（fusion.rs，分值 = 1/(60+rank)，
+    // top1 恒 ≈0.0164，远低于 0.5 阈值），阈值只对单世界（code/knowledge/doc
+    // 等的语义分）有效——world=all 时跳过，避免恒误报。
+    if !result.hits.is_empty() && result.world != "all" {
         let max_score = result
             .hits
             .iter()
@@ -244,15 +247,23 @@ mod tests {
         }
     }
 
-    fn result_with(hits: Vec<SearchHit>, degraded: Vec<String>) -> CrossWorldResult {
+    fn result_with_world(
+        hits: Vec<SearchHit>,
+        degraded: Vec<String>,
+        world: &str,
+    ) -> CrossWorldResult {
         CrossWorldResult {
             query: "q".into(),
-            world: "all".into(),
+            world: world.into(),
             total: hits.len(),
             hits,
             per_world_counts: std::collections::HashMap::new(),
             degraded,
         }
+    }
+
+    fn result_with(hits: Vec<SearchHit>, degraded: Vec<String>) -> CrossWorldResult {
+        result_with_world(hits, degraded, "all")
     }
 
     fn resolver() -> ProjectPathResolver {
@@ -334,6 +345,34 @@ mod tests {
             &resolver(),
         );
         assert!(out.contains("降级") && out.contains("rerank_unavailable"));
+    }
+
+    #[test]
+    fn human_render_all_world_skips_low_score_warning() {
+        // world=all 走跨世界 RRF 融合（fusion.rs，分值 = 1/(60+rank)，
+        // top1 恒 ≈0.0164，远低于 0.5 阈值）——不得出现低分误报
+        //（修复前 RRF 分恒触发"结果可能不相关"告警）。
+        let mut h = base_hit();
+        h.score = 1.0 / 61.0; // RRF top1 量级
+        let out = render_human(&result_with(vec![h], vec![]), false, &resolver());
+        assert!(!out.contains("结果可能不相关"));
+        // 常规输出不受影响
+        assert!(out.contains("[0.0164] [Method] createApp"));
+    }
+
+    #[test]
+    fn human_render_single_world_low_score_still_warns() {
+        // 单世界（code/knowledge/doc 等）为语义分，低于阈值仍应告警，
+        // 提示文案与格式保持不变。
+        let mut h = base_hit();
+        h.score = 0.3;
+        let out = render_human(
+            &result_with_world(vec![h], vec![], "code"),
+            false,
+            &resolver(),
+        );
+        assert!(out.contains("⚠️ 结果可能不相关"));
+        assert!(out.contains("最高分 0.3000 低于阈值 0.5"));
     }
 
     #[test]

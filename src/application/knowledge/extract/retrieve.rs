@@ -80,26 +80,269 @@ pub fn clamp_unit(x: f32) -> f64 {
     x.clamp(0.0, 1.0) as f64
 }
 
-/// 从查询提取关键词(英文按空白/符号分词、中文按连续字符段)。
-/// 供 3.3 关键词补召回使用。
-pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
-    let mut kws: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for ch in query.chars() {
-        if ch.is_alphanumeric() || !ch.is_ascii() {
-            cur.push(ch);
-        } else if !cur.is_empty() {
-            if cur.chars().count() >= 2 {
-                kws.push(cur.clone());
+/// 虚词表(两字以上,最长优先匹配)——切分中文连续段时剔除。
+/// ⚠️ 代码域内容词(注册/缓存/支付 等)绝不可入表,否则关键词通道会漏掉核心实体名。
+const STOPWORDS_MULTI: &[&str] = &[
+    "怎么样",
+    "为什么",
+    "是不是",
+    "怎么",
+    "什么",
+    "如何",
+    "怎样",
+    "哪些",
+    "哪个",
+    "哪里",
+    "是否",
+    "可以",
+    "需要",
+    "应该",
+    "可能",
+    "一个",
+    "一些",
+    "这个",
+    "那个",
+    "这些",
+    "那些",
+    "进行",
+    "通过",
+    "关于",
+    "对于",
+    "基于",
+    "为了",
+    "之后",
+    "之前",
+    "时候",
+    "还是",
+    "或者",
+    "以及",
+    "没有",
+    "不是",
+    "我们",
+    "你们",
+    "他们",
+    "它们",
+    "使用",
+    "用来",
+    "直接",
+    "大概",
+    "问题",
+    "方式",
+    "方法",
+    // 否定/程度修饰词——切掉后内容词(注册/连接/缓存)才能以整段高权重独立
+    "无法",
+    "不能",
+    "不可",
+    "未能",
+    // 查询意图动词(高置信度:实体名极少以这些词开头,如"分析报告"主体是"报告";
+    // 谨慎:配置/测试/设置/查询/发布 等同时是强内容词"配置中心/测试环境",不可入表)
+    "查看",
+    "对比",
+    "组建",
+    "分析",
+    // 时态/连接/修饰词
+    "曾经",
+    "正在",
+    "已经",
+    "将要",
+    "同时",
+    "另外",
+    "主要",
+    "相关",
+    "具体",
+    "详细",
+];
+
+/// 虚词表(单字)——切分中文连续段时剔除。
+const STOPWORDS_SINGLE: &[char] = &[
+    '的', '了', '着', '过', '和', '与', '及', '或', '在', '是', '对', '为', '从', '到', '中', '内',
+    '里', '上', '下', '之', '以', '于', '而', '并', '且', '但', '也', '都', '很', '更', '最', '被',
+    '把', '给', '让', '用', '按', '向', '往', '跟', '同', '将', '就', '才', '又', '再', '还', '只',
+    '个', '这', '那', '些', '么', '吗', '呢', '吧', '啊', '等', '如', '若', '因', '由', '自', '各',
+    '每', '其', '该', '本', '何', '谁', '我', '你', '他', '她', '它', '不',
+];
+
+/// 关键词候选(去重/排序前):text 已小写。
+struct KwCandidate {
+    text: String,
+    weight: u32,
+    pos: usize,
+    len: usize,
+}
+
+/// ASCII 段产出候选:≥2 字保留,权重 5。
+fn push_ascii(cands: &mut Vec<KwCandidate>, buf: &str, start: usize) {
+    if buf.chars().count() >= 2 {
+        cands.push(KwCandidate {
+            text: buf.to_string(),
+            weight: 5,
+            pos: start,
+            len: buf.chars().count(),
+        });
+    }
+}
+
+/// 中文子段产出 n-gram 候选:
+/// 2-4 字整段(权重4)+ 前缀 bigram(权重3)+ 前缀 tri/4-gram(权重2)+ 内部 bigram(权重1)。
+/// ⚠️ 切片必须按 char 边界(Vec<char> 索引),禁止按字节切 UTF-8。
+fn push_cjk_ngrams(cands: &mut Vec<KwCandidate>, sub: &[char], sub_start: usize, seg_start: usize) {
+    let l = sub.len();
+    if l < 2 {
+        return;
+    }
+    let base = seg_start + sub_start;
+    if l <= 4 {
+        // 2-4 字整段(权重4)
+        cands.push(KwCandidate {
+            text: sub.iter().collect(),
+            weight: 4,
+            pos: base,
+            len: l,
+        });
+    }
+    // 前缀 bigram(权重3)
+    cands.push(KwCandidate {
+        text: sub[0..2].iter().collect(),
+        weight: 3,
+        pos: base,
+        len: 2,
+    });
+    // 前缀 tri/4-gram(权重2)
+    for k in 3..=l.min(4) {
+        cands.push(KwCandidate {
+            text: sub[0..k].iter().collect(),
+            weight: 2,
+            pos: base,
+            len: k,
+        });
+    }
+    // 内部 bigram(权重1)
+    for i in 1..l - 1 {
+        cands.push(KwCandidate {
+            text: sub[i..i + 2].iter().collect(),
+            weight: 1,
+            pos: base + i,
+            len: 2,
+        });
+    }
+}
+
+/// 中文段按虚词表最长优先切分,再对每个子段产出 n-gram 候选。
+fn cjk_segment_candidates(seg: &[char], seg_start: usize) -> Vec<KwCandidate> {
+    let multi: Vec<Vec<char>> = STOPWORDS_MULTI
+        .iter()
+        .map(|s| s.chars().collect())
+        .collect();
+    let mut cands: Vec<KwCandidate> = Vec::new();
+    let mut cur: Vec<char> = Vec::new();
+    let mut cur_start = 0usize; // 相对 seg 的偏移
+    let mut j = 0usize;
+    while j < seg.len() {
+        // 最长优先:每位置先试多字虚词,取匹配中最长者;无多字命中再试单字
+        let mut best_len = 0usize;
+        for s in &multi {
+            if s.len() > best_len && j + s.len() <= seg.len() && seg[j..j + s.len()] == s[..] {
+                best_len = s.len();
             }
+        }
+        if best_len == 0 && STOPWORDS_SINGLE.contains(&seg[j]) {
+            best_len = 1;
+        }
+        if best_len > 0 {
+            push_cjk_ngrams(&mut cands, &cur, cur_start, seg_start);
             cur.clear();
+            j += best_len;
+        } else {
+            if cur.is_empty() {
+                cur_start = j;
+            }
+            cur.push(seg[j]);
+            j += 1;
         }
     }
-    if !cur.is_empty() && cur.chars().count() >= 2 {
-        kws.push(cur);
+    push_cjk_ngrams(&mut cands, &cur, cur_start, seg_start);
+    cands
+}
+
+/// 从查询提取关键词(三态扫描):
+/// - ASCII 字母数字 → ASCII 段,小写化,≥2 字保留(权重5);
+/// - 非 ASCII 字母(中文等)→ 中文段,虚词表最长优先切分后产出 n-gram(权重 4/3/2/1);
+/// - 其余字符(空白/ASCII 标点/全角标点 ，。！？等)一律视为分隔符,flush 两段。
+/// 去重按 text(已小写)保留最高权重;排序 weight desc → pos asc → len desc;截断 max。
+/// 供 3.3 关键词补召回使用。
+pub(crate) fn keywords_of(query: &str, max: usize) -> Vec<String> {
+    if max == 0 {
+        return Vec::new();
     }
-    kws.truncate(max);
-    kws
+    let chars: Vec<char> = query.chars().collect();
+    let mut cands: Vec<KwCandidate> = Vec::new();
+    let mut ascii_buf = String::new();
+    let mut ascii_start = 0usize;
+    let mut cjk_buf: Vec<char> = Vec::new();
+    let mut cjk_start = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch.is_ascii_alphanumeric() {
+            // ASCII 段:从中文段切入时先 flush 中文
+            if !cjk_buf.is_empty() {
+                cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+                cjk_buf.clear();
+            }
+            if ascii_buf.is_empty() {
+                ascii_start = i;
+            }
+            ascii_buf.push(ch.to_ascii_lowercase());
+        } else if ch.is_alphabetic() && !ch.is_ascii() {
+            // 中文段:从 ASCII 段切入时先 flush ASCII
+            if !ascii_buf.is_empty() {
+                push_ascii(&mut cands, &ascii_buf, ascii_start);
+                ascii_buf.clear();
+            }
+            if cjk_buf.is_empty() {
+                cjk_start = i;
+            }
+            cjk_buf.push(ch);
+        } else {
+            // 分隔符(含全角标点):flush 两段
+            if !ascii_buf.is_empty() {
+                push_ascii(&mut cands, &ascii_buf, ascii_start);
+                ascii_buf.clear();
+            }
+            if !cjk_buf.is_empty() {
+                cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+                cjk_buf.clear();
+            }
+        }
+        i += 1;
+    }
+    if !ascii_buf.is_empty() {
+        push_ascii(&mut cands, &ascii_buf, ascii_start);
+    }
+    if !cjk_buf.is_empty() {
+        cands.extend(cjk_segment_candidates(&cjk_buf, cjk_start));
+    }
+    // 去重:按 text 保留最高权重(同权重保留先出现者)
+    let mut by_text: std::collections::HashMap<String, KwCandidate> =
+        std::collections::HashMap::new();
+    for c in cands {
+        match by_text.get(&c.text) {
+            Some(existing) if existing.weight >= c.weight => {}
+            _ => {
+                by_text.insert(c.text.clone(), c);
+            }
+        }
+    }
+    // 排序:权重降序 → 位置升序 → 长度降序
+    let mut all: Vec<KwCandidate> = by_text.into_values().collect();
+    all.sort_by(|a, b| {
+        b.weight
+            .cmp(&a.weight)
+            .then(a.pos.cmp(&b.pos))
+            .then(b.len.cmp(&a.len))
+    });
+    all.truncate(max);
+    all.into_iter().map(|c| c.text).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -888,9 +1131,15 @@ impl Retriever {
         }
     }
 
-    /// 3.3:关键词补召回——向量召回不足时,用 Memgraph 按 name/summary/keywords
+    /// 3.3:关键词补召回——向量召回不足时,用 Memgraph 按 name/keywords
     /// CONTAINS 补种子(解决专有名词节点不进向量 TopK 的问题,如 Q8 Redis 缓存)。
-    pub(crate) async fn keyword_recall(&self, query: &str, limit: usize) -> Vec<Seed> {
+    /// `project` 为 Some 时 Cypher 追加 `AND e.project = '{project}'` 过滤(转义单引号)。
+    pub(crate) async fn keyword_recall(
+        &self,
+        query: &str,
+        project: Option<&str>,
+        limit: usize,
+    ) -> Vec<Seed> {
         let Some(ref graph) = self.graph else {
             return Vec::new();
         };
@@ -898,23 +1147,39 @@ impl Retriever {
         if kws.is_empty() {
             return Vec::new();
         }
+        // 每 kw 配额:预算均分,保证所有 kw 都有种子进池(避免高权重 kw
+        // 先到先得独占 limit——如 "git 注册逻辑" 只出 git 不出注册)。
+        let per_kw_cap = (limit / kws.len().max(1)).max(1);
         let mut seeds: Vec<Seed> = Vec::new();
-        for kw in kws {
+        for kw in &kws {
             // 注意:bolt 参数化的 toLower($kw) 在 Memgraph 上返回 0 行(客户端差异),
             // 这里用转义后的字符串字面量拼接,已验证字面量 CONTAINS 正常。
             let kw_lit = kw.replace('\'', "''");
-            // 注意:WHERE 只查 name 属性——summary/keywords 可能是非字符串类型,
-            // toString 对 List/Map 返回 null 会导致整条 WHERE 失效(0 行)。
+            // 注意:遍历 List 必须用 any()——toString 对 List/Map 返回 null 会废掉
+            // 整条 WHERE;any() 逐元素求值,非字符串元素仅该条不匹配,不致命。
+            // OR 分支整体加括号,避免与 project 的 AND 结合(AND 优先级高于 OR)。
+            let mut where_clause = format!(
+                "(toLower(toString(coalesce(e.name, ''))) CONTAINS toLower('{kw_lit}') \
+                 OR any(k IN coalesce(e.keywords, []) WHERE toLower(toString(k)) CONTAINS toLower('{kw_lit}')))"
+            );
+            if let Some(p) = project {
+                let p_lit = p.replace('\'', "''");
+                where_clause.push_str(&format!(" AND e.project = '{p_lit}'"));
+            }
             let cypher = format!(
                 r#"
 MATCH (e:Entity)
-WHERE toLower(toString(coalesce(e.name, ''))) CONTAINS toLower('{kw}')
+WHERE {where_clause}
 RETURN e.entity_id AS seed_id,
        e.name AS seed_name, toString(coalesce(e.summary, '')) AS seed_summary,
-       coalesce(e.type, 'Entity') AS seed_type
-LIMIT 10
+       coalesce(e.type, 'Entity') AS seed_type,
+       elementId(e) AS seed_element_id,
+       CASE WHEN toLower(toString(e.name)) = toLower('{kw_lit}') THEN 'exact'
+            WHEN toLower(toString(e.name)) STARTS WITH toLower('{kw_lit}') THEN 'prefix'
+            ELSE 'substr' END AS match_kind
+ORDER BY CASE match_kind WHEN 'exact' THEN 0 WHEN 'prefix' THEN 1 ELSE 2 END
+LIMIT 50
 "#,
-                kw = kw_lit
             );
             match graph
                 .read_query(&cypher, std::collections::HashMap::new())
@@ -927,6 +1192,8 @@ LIMIT 10
                         rows.as_array().map(|a| a.len())
                     );
                     if let Some(arr) = rows.as_array() {
+                        // 每 kw 独立计数:严格配额,避免去重影响配额判断
+                        let mut kw_count = 0usize;
                         for row in arr {
                             let seed_id = row.get("seed_id").and_then(|v| v.as_str()).unwrap_or("");
                             if seed_id.is_empty() {
@@ -935,6 +1202,14 @@ LIMIT 10
                             if seeds.iter().any(|s| s.business_id == seed_id) {
                                 continue;
                             }
+                            // 命中质量分级:name 精确 0.95 / 前缀 0.90 / 其余子串 0.80。
+                            // exact/prefix(≥0.90)进种子桶并被强制保留;substr(0.80)只
+                            // 保证进候选,正常参与 rerank 竞争(见 search_knowledge)。
+                            let semantic = match row.get("match_kind").and_then(|v| v.as_str()) {
+                                Some("exact") => 0.95,
+                                Some("prefix") => 0.90,
+                                _ => 0.80,
+                            };
                             seeds.push(Seed {
                                 business_id: seed_id.to_string(),
                                 element_id: row
@@ -961,11 +1236,12 @@ LIMIT 10
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("Entity")
                                     .to_string(),
-                                // 关键词命中给予高语义分(0.8),确保能进 bucket_truncate
-                                // 的种子桶(seed_cap=top_n×0.6),不被向量泛化种子挤掉
-                                semantic: 0.80,
+                                semantic,
                             });
-                            if seeds.len() >= limit {
+                            kw_count += 1;
+                            // 本 kw 配额已满 → 继续下一个 kw(不 break 外层循环,
+                            // 保证低权重但相关度高的 kw 也有机会进池)
+                            if kw_count >= per_kw_cap {
                                 break;
                             }
                         }
@@ -973,10 +1249,8 @@ LIMIT 10
                 }
                 Err(e) => tracing::warn!("keyword_recall: kw={} 查询失败: {e}", kw),
             }
-            if seeds.len() >= limit {
-                break;
-            }
         }
+        seeds.truncate(limit);
         seeds
     }
 
@@ -1048,14 +1322,15 @@ ORDER BY eid, d.doc_id
 
         // 3.3:关键词补召回(与向量召回取并集,无条件执行——向量可能返回足够数量但
         // 质量差,专有名词节点仍进不来;关键词通道保证 redis/nacos 类节点必进候选)
-        let mut kw_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut kw_ids: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
         {
-            let kw_seeds = self.keyword_recall(req.query, limit).await;
+            let kw_seeds = self.keyword_recall(req.query, req.project, limit).await;
             let known: std::collections::HashSet<String> =
                 seeds.iter().map(|s| s.business_id.clone()).collect();
             for s in kw_seeds {
                 if !known.contains(&s.business_id) {
-                    kw_ids.insert(s.business_id.clone());
+                    // 记录 kw 种子分级语义分,供强制保留判断(≥0.90=exact/prefix)
+                    kw_ids.insert(s.business_id.clone(), s.semantic);
                     seeds.push(s);
                 }
             }
@@ -1099,15 +1374,18 @@ ORDER BY eid, d.doc_id
         attach_relations(&mut candidates, &expansion.edges);
         bucket_truncate(&mut candidates, rerank_top_n());
 
-        // 3.3:关键词补召回种子强制保留——分桶截断可能把它们挤出,
-        // 保证 redis/nacos 类专有名词节点必进 rerank 候选
+        // 3.3:关键词补召回种子强制保留——分桶截断可能把它们挤出。
+        // 仅 exact/prefix 命中(semantic≥0.90)无条件保留;substr(0.80)命中
+        // 正常参与 rerank 竞争,避免弱命中永久占位。
         if !kw_ids.is_empty() {
             let existing: std::collections::HashSet<String> =
                 candidates.iter().map(|c| c.business_id.clone()).collect();
             for s in seeds.iter() {
-                if kw_ids.contains(&s.business_id) && !existing.contains(&s.business_id) {
-                    let extra = merge_candidates(std::slice::from_ref(s), vec![]);
-                    candidates.extend(extra);
+                if let Some(sem) = kw_ids.get(&s.business_id) {
+                    if *sem >= 0.90 && !existing.contains(&s.business_id) {
+                        let extra = merge_candidates(std::slice::from_ref(s), vec![]);
+                        candidates.extend(extra);
+                    }
                 }
             }
         }
@@ -2064,5 +2342,371 @@ mod tests {
         assert!(should
             .iter()
             .any(|c| c["key"] == "entity_ids" && c["match"]["value"] == "E1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // 改动 1:keywords_of 三态扫描 + 虚词切分 + n-gram 加权(矩阵测试)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn keywords_of_cjk_sentence_drops_stopwords() {
+        // 中文整句:虚词(怎么/使用/呢)剔除,内容词整段+前缀/内部 n-gram 保留
+        let kws = keywords_of("怎么使用注册功能呢", 8);
+        assert_eq!(kws, vec!["注册功能", "注册", "注册功", "册功", "功能"]);
+        assert!(!kws.iter().any(|k| k == "怎么" || k == "使用" || k == "呢"));
+    }
+
+    #[test]
+    fn keywords_of_mixed_cn_en_git_register() {
+        // 中英混合:ASCII 段独立成词,中文段虚词切分后整段+前缀 bigram
+        assert_eq!(
+            keywords_of("git 注册逻辑", 3),
+            vec!["git", "注册逻辑", "注册"]
+        );
+    }
+
+    #[test]
+    fn keywords_of_redis_how_to_use() {
+        // 粘连场景:redis 与 缓存 拆开;虚词 怎么/用 剔除
+        assert_eq!(keywords_of("redis缓存怎么用", 3), vec!["redis", "缓存"]);
+    }
+
+    #[test]
+    fn keywords_of_pure_english_split_by_space() {
+        assert_eq!(
+            keywords_of("Redis cache eviction policy", 8),
+            vec!["redis", "cache", "eviction", "policy"]
+        );
+    }
+
+    #[test]
+    fn keywords_of_fullwidth_punctuation_is_delimiter() {
+        // 全角标点(，)是分隔符而非词内容——修复前会拼成 "注册，逻辑" 一个 kw
+        assert_eq!(keywords_of("注册，逻辑", 8), vec!["注册", "逻辑"]);
+    }
+
+    #[test]
+    fn keywords_of_dedups_repeated_words() {
+        assert_eq!(keywords_of("缓存 缓存", 8), vec!["缓存"]);
+        assert_eq!(keywords_of("git git", 8), vec!["git"]);
+    }
+
+    #[test]
+    fn keywords_of_empty_single_char_and_pure_punctuation() {
+        assert!(keywords_of("", 8).is_empty());
+        assert!(keywords_of("注", 8).is_empty());
+        assert!(keywords_of("，，！？", 8).is_empty());
+        assert!(keywords_of("a b", 8).is_empty()); // 单字 ASCII 丢弃
+    }
+
+    #[test]
+    fn keywords_of_long_sentence_keeps_content_and_drops_stopwords() {
+        let q = "同样还是无法注册，组建多人团队，配置了 redis 缓存和 mysql 数据库，查看之前的 git 记录对比";
+        let kws = keywords_of(q, 30);
+        assert!(kws.contains(&"注册".to_string()));
+        assert!(kws.contains(&"git".to_string()));
+        assert!(!kws.contains(&q.to_string())); // 整句绝不作为关键词
+        assert!(kws.len() <= 30);
+        // 虚词被剔除:同样/还是/了/和/之前的 都不在关键词里
+        assert!(!kws.iter().any(|k| k == "同样" || k == "还是" || k == "了"));
+    }
+
+    #[test]
+    fn keywords_of_max_zero_returns_empty() {
+        assert!(keywords_of("注册逻辑", 0).is_empty());
+        assert!(keywords_of("", 0).is_empty());
+    }
+
+    #[test]
+    fn keywords_of_snake_case_env_var_splits() {
+        // 下划线分隔的 ASCII 段各自成词,单字段丢弃
+        assert_eq!(
+            keywords_of("DT_KG_RERANK_TOP_N", 8),
+            vec!["dt", "kg", "rerank", "top"]
+        );
+    }
+
+    #[test]
+    fn keywords_of_stopword_longest_match_first() {
+        // 最长优先:怎么样/为什么 整体剔除,而非残留 怎/为 等单字
+        assert!(keywords_of("怎么样", 8).is_empty());
+        assert!(keywords_of("为什么", 8).is_empty());
+        assert!(keywords_of("怎么使用", 8).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 改动 2-5:keyword_recall(project 过滤 / keywords OR 分支 / elementId /
+    //           match_kind 分级 / LIMIT 50)+ search_knowledge 强制保留分级
+    // -----------------------------------------------------------------------
+
+    pub(crate) fn kw_row(
+        seed_id: &str,
+        name: &str,
+        seed_type: &str,
+        match_kind: &str,
+    ) -> serde_json::Value {
+        json!({
+            "seed_id": seed_id,
+            "seed_name": name,
+            "seed_summary": format!("summary-{seed_id}"),
+            "seed_type": seed_type,
+            "seed_element_id": format!("eid-{seed_id}"),
+            "match_kind": match_kind,
+        })
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_builds_cypher_and_grades_match_kind() {
+        // "git 注册逻辑" → kws = [git, 注册逻辑, 注册],每个 kw 一条查询
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![
+                json!([kw_row("g1", "git", "Entity", "exact")]),
+                json!([kw_row("c1", "注册逻辑梳理", "Knowledge", "prefix")]),
+                json!([kw_row("c2", "注册流程文档", "Knowledge", "substr")]),
+            ])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let seeds = r
+            .keyword_recall("git 注册逻辑", Some("offen-pay"), 10)
+            .await;
+        assert_eq!(seeds.len(), 3);
+        let g1 = seeds.iter().find(|s| s.business_id == "g1").unwrap();
+        assert!((g1.semantic - 0.95).abs() < 1e-9); // exact
+        assert_eq!(g1.element_id.as_deref(), Some("eid-g1")); // elementId 解析(改动 3)
+        let c1 = seeds.iter().find(|s| s.business_id == "c1").unwrap();
+        assert!((c1.semantic - 0.90).abs() < 1e-9); // prefix
+        let c2 = seeds.iter().find(|s| s.business_id == "c2").unwrap();
+        assert!((c2.semantic - 0.80).abs() < 1e-9); // substr
+                                                    // Cypher 断言:project 过滤 + keywords OR 分支 + elementId + match_kind 分级
+        let (cypher, _params) = graph.captured.lock().unwrap()[0].clone();
+        assert!(cypher.contains("AND e.project = 'offen-pay'"));
+        assert!(cypher.contains(
+            "any(k IN coalesce(e.keywords, []) WHERE toLower(toString(k)) CONTAINS toLower('git'))"
+        ));
+        assert!(cypher.contains("elementId(e) AS seed_element_id"));
+        assert!(cypher.contains("THEN 'exact'"));
+        assert!(cypher.contains("STARTS WITH toLower('git')"));
+        assert!(cypher.contains(
+            "ORDER BY CASE match_kind WHEN 'exact' THEN 0 WHEN 'prefix' THEN 1 ELSE 2 END"
+        ));
+        assert!(cypher.contains("LIMIT 50"));
+        assert!(!cypher.contains("LIMIT 10")); // 改动 5:LIMIT 10 → 50
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_without_project_omits_project_clause() {
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![json!([kw_row(
+                "c1",
+                "缓存服务",
+                "Knowledge",
+                "substr"
+            )])])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let seeds = r.keyword_recall("缓存", None, 10).await;
+        assert_eq!(seeds.len(), 1);
+        assert!((seeds[0].semantic - 0.80).abs() < 1e-9);
+        let (cypher, _) = graph.captured.lock().unwrap()[0].clone();
+        assert!(!cypher.contains("e.project"));
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_escapes_single_quote_in_project() {
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![json!([])])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let _ = r.keyword_recall("缓存", Some("off'en"), 10).await;
+        let (cypher, _) = graph.captured.lock().unwrap()[0].clone();
+        assert!(cypher.contains("e.project = 'off''en'"));
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_dedups_across_kws() {
+        // 两个 kw 命中同一 seed_id → 去重;两个 kw 都发了查询
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![
+                json!([kw_row("dup", "redis", "Entity", "exact")]),
+                json!([kw_row("dup", "缓存", "Entity", "prefix")]),
+            ])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        let seeds = r.keyword_recall("redis缓存", None, 10).await;
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0].business_id, "dup");
+        assert_eq!(graph.captured.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_quota_distributes_across_kws() {
+        // 回归(修复前缺陷):kw1 命中多时先到先得独占 limit,kw2 的查询
+        // 永远不会发出("git 注册逻辑" 只出 git 不出注册)。
+        // 新语义:limit=6, kws=3(git/注册逻辑/注册)→ per_kw_cap=2,
+        // 每个 kw 各收 2 条,三次查询都发。
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![
+                json!([
+                    kw_row("g1", "git", "Entity", "exact"),
+                    kw_row("g2", "git-commit", "Entity", "prefix"),
+                    kw_row("g3", "git-branch", "Entity", "substr"),
+                    kw_row("g4", "git-rebase", "Entity", "substr"),
+                    kw_row("g5", "git-stash", "Entity", "substr"),
+                ]),
+                json!([
+                    kw_row("r1", "注册逻辑", "Entity", "exact"),
+                    kw_row("r2", "注册中心", "Entity", "prefix"),
+                    kw_row("r3", "注册页面", "Entity", "substr"),
+                ]),
+                json!([
+                    kw_row("r4", "注册表单", "Entity", "prefix"),
+                    kw_row("r5", "注册入口", "Entity", "prefix"),
+                ]),
+            ])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        // "git 注册逻辑" → kws=["git","注册逻辑","注册"],limit=6 → per_kw_cap=2
+        let seeds = r.keyword_recall("git 注册逻辑", None, 6).await;
+        assert_eq!(seeds.len(), 6, "三个 kw 各收 2 条配额");
+        assert_eq!(
+            graph.captured.lock().unwrap().len(),
+            3,
+            "所有 kw 的查询都必须发出(修复前只发 1 次)"
+        );
+        assert!(
+            seeds.iter().any(|s| s.business_id == "r1"),
+            "kw2 种子(注册逻辑)必须进池"
+        );
+        assert!(
+            seeds.iter().any(|s| s.business_id == "r4"),
+            "kw3 种子(注册)必须进池"
+        );
+        assert!(
+            seeds.iter().any(|s| s.business_id == "g1"),
+            "kw1 种子(git)必须进池"
+        );
+        // exact 命中(0.95)优先于 substr(0.80)进池
+        let g_sem = seeds.iter().find(|s| s.business_id == "g1").unwrap().semantic;
+        assert_eq!(g_sem, 0.95);
+    }
+
+    #[tokio::test]
+    async fn keyword_recall_no_graph_and_empty_kws_short_circuit() {
+        // graph=None → 直接返回空,不发查询
+        let r = Retriever::new(None, Arc::new(empty_vector()), Arc::new(MockEmbed), None);
+        assert!(r.keyword_recall("redis", None, 10).await.is_empty());
+        // 无关键词(单字/纯标点)→ 不发查询
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::new()),
+            captured: Mutex::new(vec![]),
+        });
+        let r2 = Retriever::new(
+            Some(graph.clone()),
+            Arc::new(empty_vector()),
+            Arc::new(MockEmbed),
+            None,
+        );
+        assert!(r2.keyword_recall("的", None, 10).await.is_empty());
+        assert!(r2.keyword_recall("，，！", None, 10).await.is_empty());
+        assert_eq!(graph.captured.lock().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn search_knowledge_force_keeps_only_exact_prefix_kw_seeds() {
+        // 构造 seed_cap 个高分向量种子,把 kw 种子挤出种子桶:
+        // exact 命中(0.95)被分桶截断后仍被无条件保留;substr 命中(0.80)
+        // 不再强制保留,正常参与 rerank 竞争。
+        let top_n = rerank_top_n();
+        let seed_cap = ((top_n as f64) * 0.6).ceil() as usize;
+        let mut vector_hits: Vec<serde_json::Value> = Vec::new();
+        for i in 0..seed_cap {
+            let mut h = seed_hit(
+                0.999 - i as f64 * 0.001,
+                &format!("dt://entity/p/Service/V{i}"),
+                &["Entity"],
+            );
+            h["payload"]["name"] = json!(format!("v{i}"));
+            vector_hits.push(h);
+        }
+        let vector = MockVector {
+            hits: vector_hits,
+            captured_filter: Mutex::new(None),
+            captured_limit: Mutex::new(None),
+        };
+        let graph = Arc::new(MockGraph {
+            responses: Mutex::new(VecDeque::from(vec![
+                // ① kw "redis":name 精确命中 → semantic 0.95
+                json!([kw_row(
+                    "dt://entity/p/Service/redis",
+                    "redis",
+                    "Entity",
+                    "exact"
+                )]),
+                // ② kw "缓存":子串命中 → semantic 0.80
+                json!([kw_row(
+                    "dt://entity/p/Service/cache",
+                    "缓存服务",
+                    "Entity",
+                    "substr"
+                )]),
+                // ③ Entity 图扩展:无邻居
+                json!([]),
+                // ④ MENTIONED_IN 回退:无来源
+                json!([]),
+            ])),
+            captured: Mutex::new(vec![]),
+        });
+        let r = Retriever::new(Some(graph), Arc::new(vector), Arc::new(MockEmbed), None);
+        let req = RetrieveRequest {
+            query: "redis缓存怎么用",
+            project: None,
+            limit: seed_cap + 5,
+            max_hops: 1,
+            origin: None,
+        };
+        let out = r.search_knowledge(&req).await.unwrap();
+        assert!(
+            out.hits
+                .iter()
+                .any(|h| h.id == "dt://entity/p/Service/redis"),
+            "exact 命中(0.95)应被无条件保留"
+        );
+        assert!(
+            !out.hits
+                .iter()
+                .any(|h| h.id == "dt://entity/p/Service/cache"),
+            "substr 命中(0.80)不应强制保留"
+        );
+        assert_eq!(out.hits.len(), seed_cap + 1);
     }
 }

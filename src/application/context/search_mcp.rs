@@ -83,25 +83,14 @@ fn split_identifier(ident: &str) -> Vec<String> {
     words
 }
 
-/// 从查询提取关键词(英文按空白分词、中文按连续字符段),用于关键词兜底通道。
+/// 从查询提取关键词——薄包装，直接委托统一实现
+/// `crate::application::knowledge::extract::retrieve::keywords_of`，
+/// 避免与 retrieve.rs 各持一份实现导致行为漂移。
+///
+/// 统一实现的行为：ASCII 整词保留 + CJK 虚词切分 + n-gram 扩展，
+/// 全角标点作为分隔符处理（不再累积进关键词）。
 fn extract_keywords(query: &str, max: usize) -> Vec<String> {
-    let mut kws: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for ch in query.chars() {
-        if ch.is_alphanumeric() || !ch.is_ascii() {
-            cur.push(ch);
-        } else if !cur.is_empty() {
-            if cur.chars().count() >= 2 {
-                kws.push(cur.clone());
-            }
-            cur.clear();
-        }
-    }
-    if !cur.is_empty() && cur.chars().count() >= 2 {
-        kws.push(cur);
-    }
-    kws.truncate(max);
-    kws
+    crate::application::knowledge::extract::retrieve::keywords_of(query, max)
 }
 
 /// 由 Qdrant 命中/滚动 payload 构造 code 世界 SearchHit。
@@ -1222,6 +1211,29 @@ mod tests {
         assert!(hit.hop.is_none());
         assert!(hit.relations.is_none());
         assert!(hit.rerank_degraded.is_none());
+    }
+
+    #[test]
+    fn extract_keywords_delegates_to_unified_keywords_of() {
+        // 薄包装：extract_keywords 必须与统一实现 keywords_of 输出完全一致
+        //（委托而非各持一份实现，防止行为漂移）。覆盖中文整句/全角标点等
+        // 边界输入——统一实现行为 = ASCII 整词 + CJK 虚词切分 + n-gram、
+        // 全角标点为分隔符。
+        for q in [
+            "load balance",
+            "实现负载均衡，支持高并发",
+            "支付渠道，路由",
+            "redis 缓存、限流",
+            "！",
+        ] {
+            for max in [1usize, 3, 8] {
+                assert_eq!(
+                    extract_keywords(q, max),
+                    crate::application::knowledge::extract::retrieve::keywords_of(q, max),
+                    "委托结果不一致: query={q:?}, max={max}"
+                );
+            }
+        }
     }
 
     #[test]
