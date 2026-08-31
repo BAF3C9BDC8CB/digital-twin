@@ -19,10 +19,10 @@ providers:
     model_llm: qwen3.5
     max_tokens: 512
   openai_compatible:
-    url: https://opencode.ai/zen/go
-    api_key: sk-bYOh21Rr94LMD2CMYi26xWyh7wmkddQ1SSQUn2GEyiCqDOag6uVs6jKpgrJ09l99
+    url: https://openrouter.ai/api
+    api_key: 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
     protocol: openai
-    model_llm: deepseek-v4-flash
+    model_llm: ox-alpha
     max_concurrent: 24
     max_tokens: 512
 processors:

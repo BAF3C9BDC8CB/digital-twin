@@ -9,6 +9,7 @@ pub mod cleanup;
 pub mod build;
 pub mod event;
 pub mod learn;
+pub mod logs;
 pub mod memorize;
 pub mod search_render;
 pub mod sense;

@@ -1,9 +1,23 @@
-//! Tracing-subscriber 初始化，带 JSON 结构化文件输出（异步写入 + 日期/大小轮转）。
+//! Tracing-subscriber 初始化，带纯文本文件输出（异步写入 + 日期/大小轮转）。
 //!
 //! 配置分层的 subscriber：
 //! - 第 1 层：env-filter，用于动态级别控制（`RUST_LOG` / `DT_LOG_LEVEL`）
-//! - 第 2 层：写入文件的 JSON 格式输出器（non-blocking 异步 + RotatingWriter 轮转）
+//! - 第 2 层：写入文件的紧凑纯文本格式输出器（non-blocking 异步 + RotatingWriter 轮转）
 //! - 第 3 层：stderr 兜底（人类可读，non-blocking 异步通道），供开发使用
+//!
+//! # 格式说明（2026-08-22 起，废弃 JSON 文件层）
+//!
+//! 文件层由 JSON 行改为紧凑纯文本（一行一事件）：
+//! `2026-08-22 07:47:25.571 INFO digital_twin::interfaces::cli::build: 搜索: query="x" 分词=[...] world=code`
+//! 理由：JSON 行难直接 grep/阅读，且 MCP 协议收发把整段 json 打进单行事件，
+//! 文件快速膨胀（单日可超 50MB）。改文本后体积与可读性同时改善。
+//!
+//! # 噪音过滤
+//!
+//! 默认过滤器 `info,mcp_server=warn`：`mcp_server`（MCP 协议库）的
+//! tools/list / initialize 等收发事件从 info 降到 warn，不再入文件；
+//! 业务日志（digital_twin::* 及其余）保持 info。可用 `RUST_LOG` 或
+//! `DT_LOG_LEVEL` 完全覆盖。
 //!
 //! # 异步语义
 //!
@@ -45,7 +59,8 @@ struct LocalTimer;
 impl FormatTime for LocalTimer {
     fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
         let now = chrono::Local::now();
-        write!(w, "{}", now.format("%Y-%m-%dT%H:%M:%S%.3f%:z"))
+        // 普通日志格式: 2026-08-22 07:47:25.571(本地时区, 无 T 无时区后缀)
+        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S%.3f"))
     }
 }
 
@@ -102,20 +117,28 @@ pub fn init_logging() -> anyhow::Result<LogGuard> {
     let (stderr_writer, stderr_guard) = tracing_appender::non_blocking(std::io::stderr());
 
     // ── 环境过滤 ──────────────────────────────────────────────────
+    // 默认 `info,mcp_server=warn`：MCP 协议库的 tools/list/initialize 收发
+    // 从 info 降为 warn（不再整段 json 入文件），业务日志保持 info。
+    // RUST_LOG 优先；其次 DT_LOG_LEVEL 显式值；都未设置时用上述默认。
+    const DEFAULT_FILTER: &str = "info,mcp_server=warn";
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .or_else(|_| {
             tracing_subscriber::EnvFilter::try_new(
-                std::env::var("DT_LOG_LEVEL").unwrap_or_else(|_| "info".into()),
+                std::env::var("DT_LOG_LEVEL")
+                    .unwrap_or_else(|_| DEFAULT_FILTER.into()),
             )
         })
-        .unwrap_or_else(|_| "info".into());
+        .unwrap_or_else(|_| DEFAULT_FILTER.into());
 
-    // ── JSON 文件层 ────────────────────────────────────────────
-    let json_layer = tracing_subscriber::fmt::layer()
-        .json()
-        .flatten_event(true)
-        .with_writer(file_writer)
+    // ── 纯文本文件层（2026-08-22 起替代 JSON 层）──────────────
+    // 紧凑单行格式：`时间 LEVEL target: message field=value`——无 ANSI、
+    // 无线程 id，便于直接 tail/grep。非阻塞写入，guard 退出时冲刷。
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_thread_ids(false)
         .with_ansi(false)
+        .compact()
+        .with_writer(file_writer)
         .with_timer(LocalTimer);
 
     // ── stderr 层（紧凑、人类可读）──────────────────────────
@@ -136,7 +159,7 @@ pub fn init_logging() -> anyhow::Result<LogGuard> {
     // ── 组装 ────────────────────────────────────────────────────
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(json_layer)
+        .with(file_layer)
         .with(stderr_layer)
         .try_init()
         .map_err(|e| anyhow::anyhow!("tracing subscriber 初始化失败：{}", e))?;

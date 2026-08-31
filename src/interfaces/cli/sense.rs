@@ -39,7 +39,11 @@ pub async fn handle_sense(
         "dt sense: 完成 path={} status={:?} project={} stats={:?} degraded={:?}",
         input.display(),
         report.status,
-        report.project.as_ref().map(|p| p.name.as_str()).unwrap_or("-"),
+        report
+            .project
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("-"),
         report.stats,
         report.degraded,
     );
@@ -102,6 +106,15 @@ pub async fn handle_sense(
     if report.status == SenseStatus::RegisteredNotIndexed {
         if let Some(p) = &report.project {
             println!("  💡 已注册未构建，建议: dt build --name {}", p.name);
+        }
+    }
+    if report.status == SenseStatus::Unregistered && !report.base_children.is_empty() {
+        println!(
+            "  📁 注册容器(base): 内含 {} 个已注册子项目",
+            report.base_children.len()
+        );
+        for c in &report.base_children {
+            println!("    {}  →  {}", c.name, c.path);
         }
     }
     if !report.candidates.is_empty() {

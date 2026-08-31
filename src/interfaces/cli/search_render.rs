@@ -138,6 +138,26 @@ fn render_hit(h: &SearchHit, show_content: bool, resolver: &ProjectPathResolver)
     if !loc.is_empty() {
         out.push_str(&format!("  {loc}\n"));
     }
+    // 图增强关系(code 世界 CALLS/CONTAINS, knowledge RELATES):显示调用/被调/所属。
+    if let Some(rels) = &h.relations {
+        let mut parts: Vec<String> = Vec::new();
+        for r in rels {
+            let name = r.other_end_name.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let label = match (r.rel_type.as_str(), r.direction.as_str()) {
+                ("belongs_to", _) => "属于",
+                ("calls", _) => "调用",
+                ("called_by", _) => "被调",
+                (t, _) => t,
+            };
+            parts.push(format!("{label} {name}"));
+        }
+        if !parts.is_empty() {
+            out.push_str(&format!("  图: {}\n", parts.join("; ")));
+        }
+    }
     out
 }
 

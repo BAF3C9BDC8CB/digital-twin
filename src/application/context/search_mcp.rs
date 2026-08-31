@@ -172,8 +172,11 @@ fn hit_from_payload(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         calls,
+        // 代码实体的图键:Qdrant payload 存 entity_id(dt://entity/...),与
+        // Memgraph 节点 method_id 完全一致——用于 code 世界图增强匹配。
         element_id: payload
-            .get("method_id")
+            .get("entity_id")
+            .or_else(|| payload.get("method_id"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         score_breakdown: None,
@@ -770,6 +773,8 @@ impl CrossWorldSearch {
             });
         }
         all_hits.truncate(limit);
+        // 图增强:向量召回后,对 top 命中查 Memgraph 补 1 跳调用关系(非致命)。
+        self.enrich_code_with_graph(&mut all_hits).await;
         Ok(all_hits)
     }
 
@@ -977,6 +982,125 @@ impl CrossWorldSearch {
             }
         }
         Ok(hits)
+    }
+
+    /// 图增强:对 top-10 code 命中按 `method_id`(与 Qdrant payload entity_id
+    /// 一致)匹配 Memgraph,一次 UNWIND 批量补:所属类(CONTAINS)、调用
+    /// (CALLS out)、被调用(CALLS in),填充 relations 并标记 hop=1。
+    ///
+    /// 设计:向量召回保证准确率,图增强追加关系上下文;graph 缺失/查询
+    /// 失败一律静默降级,不影响主结果。
+    async fn enrich_code_with_graph(&self, hits: &mut Vec<SearchHit>) {
+        let Some(graph) = &self.graph else {
+            tracing::info!("code 图增强跳过: graph 不可用");
+            return;
+        };
+        if hits.is_empty() {
+            return;
+        }
+        const ENRICH_TOP: usize = 10;
+        let ids: Vec<serde_json::Value> = hits
+            .iter()
+            .take(ENRICH_TOP)
+            .filter_map(|h| h.element_id.as_ref())
+            .map(|eid| serde_json::Value::String(eid.clone()))
+            .collect();
+        if ids.is_empty() {
+            tracing::info!("code 图增强跳过: 无 element_id");
+            return;
+        }
+        tracing::info!("code 图增强: 查询 {} 个实体", ids.len());
+        let query = r#"
+            UNWIND $ids AS mid
+            MATCH (m:Method) WHERE m.method_id = mid
+            OPTIONAL MATCH (c:Class)-[:CONTAINS]->(m)
+            OPTIONAL MATCH (m)-[:CALLS]->(callee:Method)
+            OPTIONAL MATCH (caller:Method)-[:CALLS]->(m)
+            RETURN mid AS mid,
+                   collect(DISTINCT c.name) AS classes,
+                   collect(DISTINCT callee.name) AS callees,
+                   collect(DISTINCT caller.name) AS callers
+        "#;
+        let params = std::collections::HashMap::from([(
+            "ids".to_string(),
+            serde_json::Value::Array(ids),
+        )]);
+        match graph.read_query(query, params).await {
+            Ok(rows) => {
+                let Some(arr) = rows.as_array() else {
+                    tracing::warn!("code 图增强: 返回非数组");
+                    return;
+                };
+                tracing::debug!("code 图增强: rows={} ids 查询完成", arr.len());
+                let mut rel_map: std::collections::HashMap<String, Vec<RelationSnippet>> =
+                    std::collections::HashMap::new();
+                for row in arr {
+                    let Some(mid) = row.get("mid").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let names = |key: &str| -> Vec<String> {
+                        row.get(key)
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default()
+                    };
+                    let (classes, callees, callers) = (names("classes"), names("callees"), names("callers"));
+                    if classes.is_empty() && callees.is_empty() && callers.is_empty() {
+                        continue;
+                    }
+                    let mut snips: Vec<RelationSnippet> = Vec::new();
+                    for c in classes.into_iter().take(2) {
+                        snips.push(RelationSnippet {
+                            rel_type: "belongs_to".into(),
+                            other_end_id: String::new(),
+                            other_end_name: c,
+                            direction: "out".into(),
+                            confidence: 1.0,
+                            evidence: None,
+                            supplementary_count: 0,
+                        });
+                    }
+                    for cal in callees.into_iter().take(3) {
+                        snips.push(RelationSnippet {
+                            rel_type: "calls".into(),
+                            other_end_id: String::new(),
+                            other_end_name: cal,
+                            direction: "out".into(),
+                            confidence: 1.0,
+                            evidence: None,
+                            supplementary_count: 0,
+                        });
+                    }
+                    for caller in callers.into_iter().take(3) {
+                        snips.push(RelationSnippet {
+                            rel_type: "called_by".into(),
+                            other_end_id: String::new(),
+                            other_end_name: caller,
+                            direction: "in".into(),
+                            confidence: 1.0,
+                            evidence: None,
+                            supplementary_count: 0,
+                        });
+                    }
+                    rel_map.insert(mid.to_string(), snips);
+                }
+                for h in hits.iter_mut().take(ENRICH_TOP) {
+                    if let Some(eid) = &h.element_id {
+                        if let Some(snips) = rel_map.get(eid) {
+                            h.relations = Some(snips.clone());
+                            h.hop = Some(1);
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("code 图增强失败(非致命): {e}"),
+        }
     }
 }
 

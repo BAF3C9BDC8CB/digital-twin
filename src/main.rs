@@ -219,6 +219,26 @@ enum Commands {
         show_content: bool,
     },
 
+    /// 查看 digital-twin 统一日志（纯文本格式，tail/grep 语义）。
+    ///
+    /// 用法: dt logs [-f] [-k 关键词] [-n 行数]
+    ///   dt logs         — 打印最后 50 行
+    ///   dt logs -f      — 实时跟随（类似 tail -f）
+    ///   dt logs -k 搜索 — 只显示包含"搜索"的行（-k 可重复）
+    Logs {
+        /// 实时跟随输出（类似 tail -f），Ctrl-C 退出。
+        #[arg(long = "follow", short = 'f')]
+        follow: bool,
+
+        /// 只显示包含关键词的行（可重复指定多个，取并集）。
+        #[arg(long = "keyword", short = 'k')]
+        keywords: Vec<String>,
+
+        /// 显示的末尾行数（默认 50）。
+        #[arg(long = "lines", short = 'n', default_value_t = 50)]
+        lines: usize,
+    },
+
     /// 环境感知：定位目录所属项目，输出索引状态与内容简报。
     ///
     /// 用法: dt sense [path] [--json]
@@ -753,6 +773,16 @@ async fn main() -> anyhow::Result<()> {
                 path, json, projects, graph, vector, snapshot, ignored,
             )
             .await?;
+            return Ok(());
+        }
+
+        // ---- CLI 模式: dt logs ----
+        Some(Commands::Logs {
+            follow,
+            keywords,
+            lines,
+        }) => {
+            digital_twin::interfaces::cli::logs::handle_logs(follow, &keywords, lines)?;
             return Ok(());
         }
 

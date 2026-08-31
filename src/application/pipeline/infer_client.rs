@@ -562,8 +562,53 @@ impl OpenAICompatibleChatClient {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms.min(30_000))).await;
                 continue;
             }
-            let _ = resp.bytes().await;
-            return Err(format!("OpenAI-Compatible 返回 HTTP {status}"));
+            // OpenRouter 会把上游 provider 的限流包装成 HTTP 400（body 中 code=429
+            // "temporarily rate-limited upstream"），需识别后按限流处理，否则会
+            // 被当成永久错误直接降级。
+            let mut wrapped_rate_limited = false;
+            if let Ok(body) = resp.text().await {
+                // 记录截断的错误响应体用于诊断（响应体不含 API Key/提示词）。
+                let snippet: String = body.chars().take(300).collect();
+                tracing::warn!(
+                    provider = "openai_compatible",
+                    model = %model,
+                    attempt,
+                    status = %status,
+                    body_snippet = %snippet,
+                    "OpenAI-Compatible 错误响应体"
+                );
+                if body.contains("rate-limited")
+                    || body.contains("rate_limited")
+                    || body.contains("Provider returned error")
+                {
+                    // OpenRouter 上游(如 Stealth)的瞬态失败有两种包装：
+                    // 1) code=429 "temporarily rate-limited upstream"
+                    // 2) code=400 raw="ERROR"（高并发下上游连接失败）
+                    // 都按限流/瞬态处理走重试，否则会被当成永久错误直接降级。
+                    wrapped_rate_limited = true;
+                }
+            }
+            if !wrapped_rate_limited {
+                return Err(format!("OpenAI-Compatible 返回 HTTP {status}"));
+            }
+            if attempt < MAX_RETRIES {
+                // 上游共享池限流恢复时间不定，用较长退避（2s * 4^attempt）。
+                let delay_ms = 2000u64.saturating_mul(1 << attempt.min(4));
+                tracing::warn!(
+                    provider = "openai_compatible",
+                    model = %model,
+                    attempt,
+                    status = %status,
+                    retry_after_ms = delay_ms,
+                    "OpenAI-Compatible 上游限流，准备重试"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+            return Err(format!(
+                "OpenAI-Compatible 重试 {} 次后仍失败: {:?}",
+                MAX_RETRIES, last_status
+            ));
         }
         Err(format!(
             "OpenAI-Compatible 重试 {} 次后仍失败: {:?}",

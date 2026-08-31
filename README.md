@@ -166,6 +166,12 @@ dt build --source knowledge --full
 # 备份相关操作
  dt backup
  dt backup list
+
+# 查看统一日志（纯文本，默认最后 50 行；-k 可重复过滤，-f 实时跟随）
+ dt logs
+ dt logs -n 200
+ dt logs -k 搜索
+ dt logs -f
 ```
 
 `clean` 是破坏性命令，执行前请确认目标和备份状态。备份恢复、校验及其他参数请查看 `dt backup --help`。

@@ -810,6 +810,7 @@ pub async fn handle_search(
     // 分词结果日志:验证中文切词生效(入口日志保留原始 query,jieba 分词结果在此展示)。
     // 上限 20 与 keyword_recall 消费端一致,保证日志展示的 kw 即实际查询的 kw。
     let kws = crate::application::knowledge::extract::retrieve::keywords_of(&query, 20);
+    let t0 = std::time::Instant::now();
     tracing::info!(
         "搜索: query={query} 分词={kws:?} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
     );
@@ -839,12 +840,13 @@ pub async fn handle_search(
     };
     let result = cws.search(&req).await?;
     tracing::info!(
-        "搜索完成: query={:?} world={} total={} per_world={:?} degraded={:?}",
+        "搜索完成: query={:?} world={} total={} per_world={:?} degraded={:?} took_ms={}",
         result.query,
         result.world,
         result.total,
         result.per_world_counts,
         result.degraded,
+        t0.elapsed().as_millis(),
     );
 
     if json {

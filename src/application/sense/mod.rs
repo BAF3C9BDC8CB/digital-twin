@@ -69,6 +69,10 @@ pub struct SenseReport {
     pub languages: Vec<LangStat>,
     pub key_entities: Vec<KeyEntity>,
     pub candidates: Vec<Candidate>,
+    /// status=unregistered 且当前目录是已注册项目的直接父目录(容器/base)时,
+    /// 列出这些已注册子项目, 供 AI 按子项目名继续查 KG。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_children: Vec<ProjectRef>,
     pub degraded: Vec<String>,
 }
 
@@ -86,6 +90,23 @@ impl SenseService {
         let mut degraded: Vec<String> = Vec::new();
 
         let Some((name, root)) = locate::match_project(input, projects) else {
+            // 未注册: 反查"当前目录是否为已注册项目的直接父目录(容器/base)",
+            // 容器命中时给出已注册子项目清单, 并从未注册候选里剔除它们。
+            let base_children: Vec<ProjectRef> = locate::collect_base_children(input, projects)
+                .into_iter()
+                .map(|(n, p)| ProjectRef {
+                    name: n.to_string(),
+                    path: p.display().to_string(),
+                    registered: true,
+                })
+                .collect();
+            let mut candidates = discover::scan_candidates(
+                input,
+                self.ignored_dirs_file
+                    .as_deref()
+                    .unwrap_or(Path::new("/nonexistent")),
+            );
+            candidates.retain(|c| !base_children.iter().any(|b| b.path == c.path));
             return SenseReport {
                 status: SenseStatus::Unregistered,
                 project: None,
@@ -93,12 +114,8 @@ impl SenseService {
                 dirs: vec![],
                 languages: vec![],
                 key_entities: vec![],
-                candidates: discover::scan_candidates(
-                    input,
-                    self.ignored_dirs_file
-                        .as_deref()
-                        .unwrap_or(Path::new("/nonexistent")),
-                ),
+                candidates,
+                base_children,
                 degraded,
             };
         };
@@ -206,6 +223,7 @@ impl SenseService {
             languages,
             key_entities,
             candidates: vec![],
+            base_children: vec![],
             degraded,
         }
     }

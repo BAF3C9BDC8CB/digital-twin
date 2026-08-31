@@ -1,17 +1,11 @@
-//! 用于 tracing-subscriber 的 JSON 结构化日志格式化器。
+//! 日志格式化器模块。
 //!
-//! 使用 tracing-subscriber 内置的 `.json()` layer，事件为扁平化结构。
+//! 2026-08-22 起文件层由 JSON 行改为紧凑纯文本（`init.rs` 中直接使用
+//! `tracing_subscriber::fmt::layer().compact()` 构建），JSON 结构化格式已废弃。
 //!
-//! 输出示例：
-//! ```json
-//! {"timestamp":"2026-07-09T14:30:00.123456Z","level":"INFO","target":"crate::interfaces::server",
-//!  "message":"Starting project build","trace_id":"a1b2c3","plugin":"k8s"}
+//! 输出示例（文本层，一行一事件）：
+//! ```text
+//! 2026-08-22 07:47:25.571 INFO digital_twin::interfaces::cli::build: 搜索: query=prefetch 日志 分词=["prefetch", "日志"] world=code limit=3 json=false project=None show_content=false
 //! ```
 //!
-//! 注意：内置格式使用 `timestamp`（而非 `ts`），精度为微秒。
-//! 若生产环境需要完全符合规范的格式，可在以后启用
-//! `formatter_exact.rs` 中的自定义格式化器。
-
-// 本模块提供再导出与配置辅助函数。
-// 实际的 JSON layer 通过 `tracing_subscriber::fmt::layer().json()` 创建。
-// 保留本模块以供将来实现精确格式的格式化器。
+//! 保留本模块仅为历史说明；如需自定义精确格式以后再在此实现。
