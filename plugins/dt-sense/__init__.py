@@ -130,6 +130,23 @@ def _match_project(message: str) -> Path | None:
     return None
 
 
+def _match_cwd(cwd: Path) -> Path | None:
+    """Return the registry root that cwd lives under (deepest ancestor wins).
+
+    Used when the user message names no project but the session is already
+    inside a registered project directory — keep the briefing then.
+    """
+    best: Path | None = None
+    for _, path in _load_registry():
+        try:
+            cwd.relative_to(path)
+        except ValueError:
+            continue
+        if best is None or len(path.parts) > len(best.parts):
+            best = path
+    return best
+
+
 # --- sense -----------------------------------------------------------------
 
 def _run_sense(path: Path | None) -> dict | None:
@@ -186,9 +203,21 @@ def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
     ents_str = ",".join(f"{e.get('name','?')}({e.get('kind','?')},{e.get('in_degree',0)})" for e in ents[:5]) if ents else "-"
 
     candidates = sense.get("candidates") or []
+    children = sense.get("base_children") or []
     cand_str = ""
-    if status == "unregistered" and candidates:
-        tops = ",".join(str(c.get("path", "?")) for c in candidates[:3])
+    if children:
+        # 当前目录是注册容器(base): 子项目都已注册, 引导按子项目名继续查 KG,
+        # 避免 AI 把已注册子项目误判为"未注册候选"而跳过 KG。
+        shown = ", ".join(
+            f"{c.get('name','?')}(→{c.get('path','?')})" for c in children[:4]
+        )
+        cand_str = (
+            f"\n📁 当前目录是注册容器(base), 已注册子项目: {shown}"
+            f"{' 等' if len(children) > 4 else ''} — "
+            f"涉及子项目直接用 dt_search_kg(world=code, project=<子项目名>)"
+        )
+    elif status == "unregistered" and candidates:
+        tops = ", ".join(str(c.get("path", "?")) for c in candidates[:3])
         cand_str = f"\ncandidates: {tops} 未注册, 建议 dt build --full"
 
     deg_str = f"\n⚠ KG degraded: [{','.join(degraded)}] 查询可能为空, 降级读磁盘" if degraded else ""
@@ -199,9 +228,8 @@ def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
     if status == "indexed" and stats.get("methods", 0) > 0:
         pname = proj.get("name") or "?"
         indexed_hint = (
-            f"\n✅ 本项目已索引 {stats.get('methods',0)} 方法/{stats.get('classes',0)} 类——"
-            f"代码问题先用 dt_search_kg(world=code, project={pname}, limit=5) 定位, "
-            f"再读源码验证; 禁止只读源码跳过 KG"
+            f"\n✅ 已索引 {stats.get('methods',0)}m/{stats.get('classes',0)}c — "
+            f"代码问题 dt_search_kg(world=code, project={pname}, limit=5) 定位再读源码"
         )
 
     return (
@@ -210,11 +238,7 @@ def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
         f"stats: {stats.get('methods',0)}m {stats.get('classes',0)}c {stats.get('vectors',0)}v | build: {_fmt_ts(stats.get('last_build'))}\n"
         f"brief: dirs:{dirs_str} | langs:{langs_str} | 实体:{ents_str}\n"
         f"注册项目: {projects_n} 个"
-        f"{cand_str}{deg_str}{indexed_hint}\n\n"
-        f"可用dt工具: dt_search_kg(query,world=code|knowledge,project=<项目名>,limit≤5) — 代码问题推荐world=code+project; run_cypher_query(已知elementId走L2); dt_health; dt_sense\n"
-        f"knowledge世界: 已沉淀业务模式/踩坑/决策(dt learn写入), 代码任务顺带 dt_search_kg(world=knowledge,project=<项目名>) 可查互补结论\n"
-        f"搜索触发: 服务/配置/凭据/部署/历史决策→dt_search_kg; 纯代码→先dt_search_kg(world=code)定位再读源码; 闲聊→不查; 每任务L1≤1次(漏参重查计入); 10s超时=降级\n"
-        f"禁止: 凭记忆答项目事实; 伪造结果; 输出key/密码; KG故障阻塞任务→读磁盘并标⚠; 重复/碎查"
+        f"{cand_str}{deg_str}{indexed_hint}\n"
     )
 
 
@@ -243,7 +267,14 @@ def _on_pre_llm_call(
 
         cwd = Path.cwd()
         target = _match_project(user_message) if user_message else None
-        path = target or cwd
+        if target is None:
+            target = _match_cwd(cwd)
+        if target is None:
+            # 闲聊/元对话,消息未提及任何注册项目且 cwd 不在注册目录:
+            # 简报与任务无关,不注入(零 KG 开销)。
+            logger.info("dt-sense: no project match, skip briefing (session=%s)", session_id)
+            return None
+        path = target
 
         sense = _run_sense(path)
         if sense is None:

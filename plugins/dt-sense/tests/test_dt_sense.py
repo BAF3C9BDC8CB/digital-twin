@@ -34,9 +34,8 @@ def _sense(status="indexed", methods=2287, classes=357, degraded=None, project="
 class TestRenderBrief:
     def test_indexed_strong_signal(self):
         brief = m._render_brief(_sense(), Path("/data/aflmProjects/aflm/uvp-im-center"), 65)
-        assert "已索引 2287 方法/357 类" in brief
+        assert "已索引 2287m/357c" in brief
         assert "dt_search_kg(world=code, project=im-center, limit=5) 定位" in brief
-        assert "禁止只读源码跳过 KG" in brief
 
     def test_unindexed_no_signal(self):
         brief = m._render_brief(_sense(status="registered_not_indexed", methods=0, classes=0), Path("/data/myProject/digital-twin-v2"), 65)
@@ -47,16 +46,11 @@ class TestRenderBrief:
         brief = m._render_brief(_sense(degraded=["memgraph"]), Path("/data/aflmProjects/aflm/uvp-im-center"), 65)
         assert "KG degraded" in brief
 
-    def test_tool_quickref_line(self):
+    def test_no_static_rules_in_brief(self):
+        # 静态规则已收敛到 SOUL.md, 简报只留动态事实, 防回归
         brief = m._render_brief(_sense(), Path("/data/aflmProjects/aflm/uvp-im-center"), 65)
-        assert "可用dt工具: dt_search_kg(query,world=code|knowledge,project=<项目名>,limit≤5)" in brief
-        assert "run_cypher_query" in brief
-        assert "dt_health" in brief
-
-    def test_knowledge_world_hint(self):
-        brief = m._render_brief(_sense(), Path("/data/aflmProjects/aflm/uvp-im-center"), 65)
-        assert "knowledge世界" in brief
-        assert "world=knowledge" in brief
+        for leaked in ("可用dt工具", "搜索触发", "knowledge世界", "禁止:", "dt_health"):
+            assert leaked not in brief, f"静态规则泄漏进简报: {leaked}"
 
     def test_brief_size_bounded(self):
         brief = m._render_brief(_sense(), Path("/data/aflmProjects/aflm/uvp-im-center"), 65)
@@ -80,6 +74,15 @@ class TestMatchProject:
 
     def test_no_match_unrelated(self):
         p = m._match_project("今天天气怎么样？")
+        assert p is None
+
+    def test_cwd_inside_registered(self):
+        # 消息不提项目, 但 cwd 在注册目录内 → 应匹配到该项目
+        p = m._match_cwd(Path("/data/aflmProjects/aflm/uvp-im-center/src/main/java"))
+        assert p is not None and "uvp-im-center" in str(p)
+
+    def test_cwd_unrelated(self):
+        p = m._match_cwd(Path("/home/luis"))
         assert p is None
 
     def test_registry_loads(self):
