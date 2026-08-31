@@ -12,12 +12,10 @@ never crashes, no context injected on failure).
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -29,27 +27,9 @@ REGISTRY = Path(os.environ.get("DT_REGISTRY", "~/.config/digital-twin/config.yam
 HOOK_TIMEOUT_SECS = 8
 MAX_BRIEF_CHARS = 2000  # hard cap on injected context size (spill threshold is 10k)
 
-# Project-name aliases: display name -> path suffix used by dt sense resolution.
-# The registry itself is the primary source; this map only fixes known aliases
-# (e.g. user-center -> uvp-user-center). Key = exact match on user_message token.
-ALIASES = {
-    "user-center": "uvp-user-center",
-    "api-gateway": "uvp-api-gateway",
-    "app-center": "uvp-app-center",
-    "comment-center": "uvp-comment-center",
-    "im-center": "uvp-im-center",
-    "knight-center": "uvp-knight-center",
-    "label-center": "uvp-label-center",
-    "med-alliance-center": "uvp-med-alliance-center",
-    "medicals-center": "uvp-medicals-center",
-    "nurse-center": "uvp-nurse-center",
-    "oauth-center": "uvp-oauth-center",
-    "pay-center": "uvp-pay-center",
-    "user-auth-center": "uvp-user-auth-center",
-    "warehouse": "warehouse-center",
-    "digital-twin": "digital-twin-v2",
-    "dt": "digital-twin-v2",
-}
+# NOTE: 不维护硬编码项目名/别名表。项目来源唯一 = REGISTRY config.yaml
+# (~/.config/digital-twin/config.yaml)。新增项目只需在 registry 注册，
+# 插件自动可见；这里不写死任何项目名，避免"新增项目插件用不了"。
 
 # --- registry --------------------------------------------------------------
 
@@ -107,10 +87,11 @@ def _token_pattern(token: str) -> re.Pattern:
 
 
 def _match_project(message: str) -> Path | None:
-    """Return the registry root best matching user_message tokens (incl. aliases).
+    """Return the registry root best matching user_message tokens.
 
     Token match = exact project name as a standalone token (not embedded in a
     longer identifier). Longest matching project name wins (nested projects).
+    Source of project names = registry only (no hardcoded aliases).
     """
     msg = message.lower()
     best: tuple[int, Path] | None = None
@@ -121,12 +102,6 @@ def _match_project(message: str) -> Path | None:
                 best = (len(name), path)
     if best is not None:
         return best[1]
-    # aliases after registry names so real names win
-    for alias, target in ALIASES.items():
-        if _token_pattern(alias.lower()).search(msg):
-            for name, path in _load_registry():
-                if name == target:
-                    return path
     return None
 
 
@@ -135,6 +110,15 @@ def _match_cwd(cwd: Path) -> Path | None:
 
     Used when the user message names no project but the session is already
     inside a registered project directory — keep the briefing then.
+
+    Fallback: if cwd is NOT inside any registered project but IS a container
+    of registered sub-projects (e.g. /data/aflmProjects/others/pay containing
+    offen-pay + offenpay-ui), return cwd itself so dt sense emits the
+    container briefing (base_children guidance) instead of skipping entirely.
+    Without this, the agent sees no [DT-SENSE] block, guesses a project name
+    from the directory basename (e.g. project=pay), filters out every KG hit,
+    and falls back to disk spelunking — the exact failure observed in the
+    "银盛支付手续费" session.
     """
     best: Path | None = None
     for _, path in _load_registry():
@@ -144,14 +128,39 @@ def _match_cwd(cwd: Path) -> Path | None:
             continue
         if best is None or len(path.parts) > len(best.parts):
             best = path
-    return best
+    if best is not None:
+        return best
+    # cwd 不在任何注册项目下：若它是已注册子项目的容器，注入容器简报
+    if _is_container_of_registered(cwd):
+        return cwd
+    return None
+
+
+def _is_container_of_registered(cwd: Path) -> bool:
+    """True if cwd directly contains at least one registered project root."""
+    reg_roots = [Path(p) for _, p in _load_registry()]
+    try:
+        for child in cwd.iterdir():
+            if not child.is_dir():
+                continue
+            for root in reg_roots:
+                if child.resolve() == root.resolve():
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 # --- sense -----------------------------------------------------------------
 
-def _run_sense(path: Path | None) -> dict | None:
-    """Run dt sense --json for the given path (or cwd); return parsed JSON or None."""
-    cmd = [DT_BIN, "sense", "--json"]
+def _run_sense(path: Path | None) -> str | None:
+    """Run ``dt sense <path>`` (text mode) and return its stdout verbatim.
+
+    dt sense 的原生文本输出即注入内容（项目定位/索引状态/KG健康/容器子项目/
+    候选项目），插件不做二次渲染——保证注入内容始终与 dt CLI 一致，
+    新增项目/新状态自动反映，无需改插件。
+    """
+    cmd = [DT_BIN, "sense"]
     if path is not None:
         cmd.append(str(path))
     try:
@@ -168,83 +177,27 @@ def _run_sense(path: Path | None) -> dict | None:
     if proc.returncode != 0:
         logger.warning("dt-sense: dt sense exit=%s: %s", proc.returncode, proc.stderr[:200])
         return None
-    try:
-        return json.loads(proc.stdout)
-    except Exception as exc:
-        logger.warning("dt-sense: bad JSON from dt sense: %s", exc)
-        return None
-
-
-# --- rendering -------------------------------------------------------------
-
-def _fmt_ts(iso: str | None) -> str:
-    if not iso:
-        return "never"
-    try:
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return dt.astimezone().strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return iso[:16]
-
-
-def _render_brief(sense: dict, cwd: Path, projects_n: int) -> str:
-    """Render the [DT-SENSE] briefing template (fixed ≤1.5KB)."""
-    status = sense.get("status", "unknown")
-    proj = sense.get("project") or {}
-    stats = sense.get("stats") or {}
-    degraded = sense.get("degraded") or []
-    kg_status = "degraded:[" + ",".join(degraded) + "]" if degraded else "healthy"
-
-    dirs = sense.get("dirs") or []
-    langs = sense.get("languages") or []
-    ents = sense.get("key_entities") or []
-    dirs_str = ",".join(d["dir"] for d in dirs[:5]) if dirs else "-"
-    langs_str = ",".join(f"{l.get('ext','?')}:{l.get('pct',0)}%" for l in langs[:5]) if langs else "-"
-    ents_str = ",".join(f"{e.get('name','?')}({e.get('kind','?')},{e.get('in_degree',0)})" for e in ents[:5]) if ents else "-"
-
-    candidates = sense.get("candidates") or []
-    children = sense.get("base_children") or []
-    cand_str = ""
-    if children:
-        # 当前目录是注册容器(base): 子项目都已注册, 引导按子项目名继续查 KG,
-        # 避免 AI 把已注册子项目误判为"未注册候选"而跳过 KG。
-        shown = ", ".join(
-            f"{c.get('name','?')}(→{c.get('path','?')})" for c in children[:4]
-        )
-        cand_str = (
-            f"\n📁 当前目录是注册容器(base), 已注册子项目: {shown}"
-            f"{' 等' if len(children) > 4 else ''} — "
-            f"涉及子项目直接用 dt_search_kg(world=code, project=<子项目名>)"
-        )
-    elif status == "unregistered" and candidates:
-        tops = ", ".join(str(c.get("path", "?")) for c in candidates[:3])
-        cand_str = f"\ncandidates: {tops} 未注册, 建议 dt build --full"
-
-    deg_str = f"\n⚠ KG degraded: [{','.join(degraded)}] 查询可能为空, 降级读磁盘" if degraded else ""
-
-    # 已索引项目强信号：目标项目在 KG 里有实体时，明确引导 agent
-    # 用 dt_search_kg(world=code) 定位——否则 agent 可能误判"KG 无内容"而纯读源码。
-    indexed_hint = ""
-    if status == "indexed" and stats.get("methods", 0) > 0:
-        pname = proj.get("name") or "?"
-        indexed_hint = (
-            f"\n✅ 已索引 {stats.get('methods',0)}m/{stats.get('classes',0)}c — "
-            f"代码问题 dt_search_kg(world=code, project={pname}, limit=5) 定位再读源码"
-        )
-
-    return (
-        f"[DT-SENSE] {proj.get('name') or '?'} | {status} | KG {kg_status}\n"
-        f"path: {proj.get('path') or cwd}\n"
-        f"stats: {stats.get('methods',0)}m {stats.get('classes',0)}c {stats.get('vectors',0)}v | build: {_fmt_ts(stats.get('last_build'))}\n"
-        f"brief: dirs:{dirs_str} | langs:{langs_str} | 实体:{ents_str}\n"
-        f"注册项目: {projects_n} 个"
-        f"{cand_str}{deg_str}{indexed_hint}\n"
-    )
+    out = proc.stdout.strip()
+    return out if out else None
 
 
 # --- hook ------------------------------------------------------------------
 
 _seen_sessions: set[str] = set()
+
+
+def _resolve_cwd() -> Path:
+    """获取会话真实工作目录。
+
+    用 Hermes 的 resolve_agent_cwd()（优先级：会话级 cwd → TERMINAL_CWD →
+    进程 cwd）。dt-sense 原来用 Path.cwd() 只拿到 gateway 启动目录
+    （/home/luis/.hermes），导致 gateway 模式下永远匹配不到用户操作的项目。
+    """
+    try:
+        from agent.runtime_cwd import resolve_agent_cwd
+        return resolve_agent_cwd()
+    except Exception:
+        return Path.cwd()
 
 
 def _on_pre_llm_call(
@@ -265,23 +218,26 @@ def _on_pre_llm_call(
                 pass
             _seen_sessions.add(session_id)
 
-        cwd = Path.cwd()
+        cwd = _resolve_cwd()
         target = _match_project(user_message) if user_message else None
         if target is None:
             target = _match_cwd(cwd)
         if target is None:
-            # 闲聊/元对话,消息未提及任何注册项目且 cwd 不在注册目录:
-            # 简报与任务无关,不注入(零 KG 开销)。
-            logger.info("dt-sense: no project match, skip briefing (session=%s)", session_id)
-            return None
-        path = target
+            # 无项目匹配（消息未提项目名 + cwd 不在注册目录/容器）：
+            # 注入最小引导，避免 agent 完全无 KG 感知（曾导致盲查 KG / 带错 project）。
+            brief = _minimal_brief(cwd)
+            logger.info("dt-sense: no project match, minimal briefing (session=%s)", session_id)
+            return brief
 
+        path = target
         sense = _run_sense(path)
         if sense is None:
             return None  # fail-open
 
-        projects_n = len(_load_registry())
-        brief = _render_brief(sense, cwd, projects_n)
+        # 注入内容 = dt sense 输出 + 一行检索引导（append，不改写 sense 内容）。
+        # 引导补回 dt_search_kg 用法（透传后 dt sense 原生输出不含工具指引，
+        # 曾导致 agent 只翻磁盘不用 KG）。
+        brief = sense + _search_guidance(sense)
         if len(brief) > MAX_BRIEF_CHARS:
             brief = brief[:MAX_BRIEF_CHARS]
         logger.info("dt-sense: injected briefing for %s (session=%s)", path, session_id)
@@ -289,6 +245,51 @@ def _on_pre_llm_call(
     except Exception as exc:  # never crash the agent
         logger.warning("dt-sense: hook error: %s", exc)
         return None
+
+
+def _search_guidance(sense: str) -> str:
+    """根据 dt sense 输出生成一行 KG 检索引导。
+
+    - 容器(unregistered + 子项目): 引导按子项目名查
+    - indexed: 引导 dt_search_kg(world=code, project=<项目名>)
+    - 其余: 通用提示先确认项目名
+    """
+    # 提取项目名（indexed 行: "Project: <name> (...)"）
+    import re
+    m_proj = re.search(r"Project:\s*([^\s(]+)", sense)
+    m_container = re.search(r"注册容器", sense)
+    m_unreg = re.search(r"Status:\s*unregistered", sense)
+    if m_container:
+        return (
+            "\n[KG] 当前是注册容器——涉及子项目知识/代码/配置用 "
+            "dt_search_kg(project=<子项目名>) 查；不要用目录名当 project（会滤掉全部命中）。"
+        )
+    if m_proj:
+        return (
+            f"\n[KG] 项目已索引——代码/知识/配置问题先 "
+            f"dt_search_kg(project={m_proj.group(1)}, limit=5) 定位，命中直接采用，再读源码验证。"
+        )
+    if m_unreg:
+        return "\n[KG] 未注册项目——KG 无此项目索引，可先 dt build 注册或直接读磁盘。"
+    return ""
+
+
+def _minimal_brief(cwd: Path) -> str:
+    """无项目匹配时的最小引导：列出注册项目数 + 提示先 dt_sense 确认。
+
+    成本 ≤200 字符，但让 agent 知道"KG 存在、项目名从哪确认"，
+    避免完全无引导时猜测 project 名（如用目录名当 project 过滤掉全部命中）。
+    """
+    try:
+        n = len(_load_registry())
+    except Exception:
+        n = 0
+    return (
+        f"[DT-SENSE] 未匹配到注册项目（cwd={cwd}）。"
+        f"KG 有 {n} 个注册项目——涉及项目知识/代码/配置时，"
+        f"先 dt_sense 或 dt_search_kg 确认项目名再查；"
+        f"不要用目录名当 project 过滤，会滤掉全部命中。"
+    )
 
 
 def register(ctx) -> None:

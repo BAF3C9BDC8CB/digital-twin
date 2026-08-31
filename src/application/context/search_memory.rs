@@ -5,20 +5,58 @@ use std::collections::HashMap;
 use crate::application::context::search_mcp::{CrossWorldSearch, SearchHit};
 
 impl CrossWorldSearch {
-    pub(crate) async fn search_memory(&self, query: &str, limit: usize) -> Vec<SearchHit> {
+    pub(crate) async fn search_memory(
+        &self,
+        query: &str,
+        limit: usize,
+        project: Option<&str>,
+    ) -> Vec<SearchHit> {
         let Some(ref graph) = self.graph_ref() else {
             return Vec::new();
         };
+        // project 过滤：不传 project = 全局记忆（跨项目），传了则只看该项目的记忆。
+        // 转义方式与 search_config 一致（单引号转义，避免 Cypher 注入）。
+        let project_filter = project
+            .map(|p| format!(" AND n.project = '{}' ", p.replace('\'', "\\'")))
+            .unwrap_or_default();
+        // 关键词拆分：按空白/标点切分，每个关键词都要命中（AND 语义）。
+        // 避免整串 CONTAINS 对多词查询（如"净盘 分账基数"）完全不命中。
+        let keywords: Vec<&str> = query
+            .split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+            .filter(|s| !s.is_empty() && s.chars().count() >= 2)
+            .collect();
+        if keywords.is_empty() {
+            return Vec::new();
+        }
+        // 每个关键词必须出现在 name/details/summary/content 任一字段中
+        let kw_conds: Vec<String> = keywords
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                format!(
+                    "(n.name CONTAINS $kw{0} OR n.details CONTAINS $kw{0} \
+                     OR coalesce(n.summary, '') CONTAINS $kw{0} \
+                     OR coalesce(n.content, '') CONTAINS $kw{0})",
+                    i
+                )
+            })
+            .collect();
         let cypher = format!(
             "MATCH (n) WHERE (n:Modification OR n:Deployment OR n:ConfigChange \
-             OR n:BugFix OR n:Decision OR n:Conversation OR n:Session) \
-             AND (n.details CONTAINS $q OR coalesce(n.summary, '') CONTAINS $q) \
+             OR n:BugFix OR n:Decision OR n:Conversation OR n:Session OR n:Knowledge) \
+             AND {}{project_filter}\
              RETURN labels(n)[0] AS type, coalesce(n.name, n.entity_id, n.session_id, '') AS name, \
-                    coalesce(n.details, n.summary, '') AS desc, elementId(n) AS eid \
-             LIMIT {limit}"
+                    coalesce(n.details, n.summary, n.content, '') AS desc, elementId(n) AS eid \
+             LIMIT {limit}",
+            kw_conds.join(" AND ")
         );
         let mut params = HashMap::new();
-        params.insert("q".into(), serde_json::Value::String(query.to_string()));
+        for (i, kw) in keywords.iter().enumerate() {
+            params.insert(
+                format!("kw{}", i),
+                serde_json::Value::String(kw.to_string()),
+            );
+        }
         let Ok(result) = graph.read_query(&cypher, params).await else {
             return Vec::new();
         };
@@ -128,6 +166,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn memory_world_project_filter_adds_condition() {
+        let graph = Arc::new(MockGraph::new());
+        let cws = CrossWorldSearch::new(Some(graph.clone()), None, None, None);
+        let req = SearchRequest {
+            query: "S5".into(),
+            world: Some("memory".into()),
+            limit: Some(5),
+            project: Some("pay-center".into()),
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let _ = cws.search(&req).await.unwrap();
+        let captured = graph.captured_query.lock().unwrap().clone();
+        assert!(captured.contains("n.project = 'pay-center'"));
+        // 不带 project（全局）时不应出现 project 条件
+        let graph2 = Arc::new(MockGraph::new());
+        let cws2 = CrossWorldSearch::new(Some(graph2.clone()), None, None, None);
+        let req2 = SearchRequest {
+            query: "S5".into(),
+            world: Some("memory".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let _ = cws2.search(&req2).await.unwrap();
+        let captured2 = graph2.captured_query.lock().unwrap().clone();
+        assert!(!captured2.contains("n.project"));
+    }
+
+    #[tokio::test]
     async fn memory_world_queries_event_labels_and_maps_rows() {
         let graph = Arc::new(MockGraph::new());
         let cws = CrossWorldSearch::new(Some(graph.clone()), None, None, None);
@@ -153,6 +230,34 @@ mod tests {
         let captured = graph.captured_query.lock().unwrap().clone();
         assert!(captured.contains("n:Modification"));
         assert!(captured.contains("n:Decision"));
+        assert!(captured.contains("n:Knowledge"));
         assert!(captured.contains("elementId(n) AS eid"));
+    }
+
+    #[tokio::test]
+    async fn memory_world_multi_keyword_and_semantics() {
+        // 多词查询 → 拆成多个 kw 参数，AND 连接，且不出现整串 $q
+        let graph = Arc::new(MockGraph::new());
+        let cws = CrossWorldSearch::new(Some(graph.clone()), None, None, None);
+        let req = SearchRequest {
+            query: "净盘 分账基数".into(),
+            world: Some("memory".into()),
+            limit: Some(5),
+            project: None,
+            max_hops: None,
+            with_evidence: None,
+            origin: None,
+            doc_id: None,
+            file_type: None,
+            entity_type_filter: None,
+        };
+        let _ = cws.search(&req).await.unwrap();
+        let captured = graph.captured_query.lock().unwrap().clone();
+        // AND 语义：两个关键词条件都出现
+        assert!(captured.contains("CONTAINS $kw0"));
+        assert!(captured.contains("CONTAINS $kw1"));
+        assert!(captured.contains("AND"));
+        // 不应有整串 $q（旧实现）
+        assert!(!captured.contains("CONTAINS $q"));
     }
 }

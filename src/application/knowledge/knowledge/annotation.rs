@@ -8,9 +8,28 @@
 
 use std::collections::HashMap;
 
+/// 全文键：值为「段内剩余全部」，不再按 `,` 拆段。
+///
+/// 这些键承载自由文本（记忆正文、描述），其中几乎必含中文逗号/分号/冒号。
+/// 若按普通键处理会被拦腰截断（2026-08-31 实证：记忆 content 只存到第一个 `,`）。
+const WHOLE_VALUE_KEYS: &[&str] = &[
+    "content",
+    "details",
+    "description",
+    "definition",
+    "body",
+    "text",
+];
+
 /// 将分号分隔的 `key: value` details 字符串解析为 HashMap。
 ///
-/// 键值对以 `;`、`\n` 或 `,` 分隔。键和值在第一个 `=` 或 `:` 处拆分。
+/// 解析分两层：
+/// 1. 先按 `;`、`\n` 分「段」（key:value 对的标准分隔符）。
+/// 2. 段内：找首个 `=` 或 `:` 拆出键；若键属于 [`WHOLE_VALUE_KEYS`]，
+///    值取该分隔符之后直到**下一个新键段之前**的全部内容（可跨段吞并——
+///    自由文本里的中文逗号/分号/冒号不会被误伤）；否则仍按 `,` 拆成多个
+///    key:value 对（兼容 `scope: A, B` 这类多值写法）。
+///
 /// 首尾空白会被修剪。键统一转小写，便于调用方大小写不敏感匹配。
 ///
 /// # 示例
@@ -23,21 +42,82 @@ use std::collections::HashMap;
 /// ```
 pub fn parse_details(raw: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    for part in raw.split([';', '\n', ',']) {
-        let part = part.trim();
-        if part.is_empty() {
+    // 第一层：按 `;` / `\n` 分「段」。
+    let segments: Vec<&str> = raw
+        .split([';', '\n'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let mut i = 0;
+    while i < segments.len() {
+        let segment = segments[i];
+        // 段内找首个 `=` 或 `:`。
+        let Some(pos) = segment.find(['=', ':']) else {
+            // 无键的裸文本段：跳过（与旧行为一致）。
+            i += 1;
+            continue;
+        };
+        let key = segment[..pos].trim().to_lowercase();
+        if key.is_empty() {
+            i += 1;
             continue;
         }
-        // 在第一个 `=` 或 `:` 处拆分，以同时支持两种分隔符。
-        if let Some(pos) = part.find(['=', ':']) {
-            let key = part[..pos].trim().to_lowercase();
-            let value = part[pos + 1..].trim().to_string();
-            if !key.is_empty() {
-                map.insert(key, value);
+        let rest = segment[pos + 1..].trim();
+
+        if WHOLE_VALUE_KEYS.contains(&key.as_str()) {
+            // 全文键：值取本段剩余 + 吞并后续「非新键段」，直到遇到形如
+            // `<key>:`/`<key>=`（key 为字母数字/下划线/中文词）的新键段。
+            let mut value = rest.to_string();
+            let mut j = i + 1;
+            while j < segments.len() && !is_key_value_segment(segments[j]) {
+                value.push(';');
+                value.push_str(segments[j]);
+                j += 1;
             }
+            map.insert(key, value);
+            i = j;
+        } else {
+            // 普通键：段内再按 `,` 拆多个 key:value 对（兼容多值写法）。
+            if rest.is_empty() {
+                i += 1;
+                continue;
+            }
+            for part in rest.split(',') {
+                let part = part.trim();
+                if part.is_empty() {
+                    continue;
+                }
+                if let Some(p2) = part.find(['=', ':']) {
+                    let k2 = part[..p2].trim().to_lowercase();
+                    let v2 = part[p2 + 1..].trim().to_string();
+                    if !k2.is_empty() {
+                        map.insert(k2, v2);
+                    }
+                } else {
+                    // 没有第二个键的裸值：整段仍归原键（如 "scope: A, B" 的 B 归 scope）
+                    map.insert(key.clone(), part.to_string());
+                }
+            }
+            i += 1;
         }
     }
     map
+}
+
+/// 判断某段是否形如 `<key>:` / `<key>=`（即一个新的 key:value 段）。
+///
+/// 键必须是纯 ASCII（小写字母/数字/下划线/中划线）——全文值里可能恰有
+/// `<中文>=` 或 `名称: xxx` 这类片段，若把中文词也当新键边界会误伤正文。
+fn is_key_value_segment(segment: &str) -> bool {
+    let Some(pos) = segment.find(['=', ':']) else {
+        return false;
+    };
+    let key = &segment[..pos];
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// 将 details 字符串解析为值列表（分号分隔，无键前缀）。
@@ -173,5 +253,39 @@ mod tests {
         assert_eq!(m.get("severity"), Some(&"critical".to_string()));
         assert_eq!(m.get("domain"), Some(&"支付".to_string()));
         assert_eq!(m.get("project"), Some(&"test".to_string()));
+    }
+
+    #[test]
+    fn whole_value_keys_keep_full_text_with_chinese_punctuation() {
+        // 回归：2026-08-31 实证 bug——content 里的中文逗号/分号/冒号把记忆正文截断。
+        // dt-memory 插件构造的 details：name: <标题>; content: <自由文本>
+        let details = "name: 银盛支付手续费四费率规则; content: 银盛渠道手续费4项, \
+                       1.支付手续费0.38%(商户承担,结算侧扣); 2.分账0.02%(君乐承担); \
+                       净盘=订单金额-支付手续费-归集手续费; 默认值来自FeeConfigService";
+        let m = parse_details(details);
+        assert_eq!(m.get("name"), Some(&"银盛支付手续费四费率规则".to_string()));
+        let content = m.get("content").expect("content 应完整保留");
+        // 完整正文不再被逗号/分号截断
+        assert!(content.contains("银盛渠道手续费4项"));
+        assert!(content.contains("0.38%"));
+        assert!(content.contains("0.02%"));
+        assert!(content.contains("净盘=订单金额-支付手续费-归集手续费"));
+        assert!(content.contains("FeeConfigService"));
+        // 且内容应等于整段 `content:` 之后的部分（不含尾部 name 等新键）
+        assert!(!content.contains("name:"));
+    }
+
+    #[test]
+    fn whole_value_keys_with_equals_separator() {
+        let m = parse_details("details=第一段,含逗号; summary: 简短摘要");
+        assert_eq!(m.get("details"), Some(&"第一段,含逗号".to_string()));
+        assert_eq!(m.get("summary"), Some(&"简短摘要".to_string()));
+    }
+
+    #[test]
+    fn non_whole_keys_still_split_by_comma() {
+        // 非全文键保持旧行为：逗号仍可拆分多值（兼容 scope: A, B）
+        let m = parse_details("scope: A, B; confidence: 0.9");
+        assert_eq!(m.get("confidence"), Some(&"0.9".to_string()));
     }
 }

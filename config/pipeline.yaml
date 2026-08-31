@@ -2,14 +2,15 @@ enabled: true
 providers:
   embed_provider: siliconflow
   rerank_provider: siliconflow
-  llm_provider: openai_compatible
+  llm_provider: siliconflow
   siliconflow:
     max_concurrent: 8
-    url: https://api.siliconflow.cn/v1
-    api_key: sk-ieyhgcisorziwmuxjevcngtcrixirhpojozkevwemlepkoip
+    url: http://124.221.200.116:3000/v1
+    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
-    model_llm: deepseek-ai/DeepSeek-V3.2
+    # model_llm: deepseek-ai/DeepSeek-V3.2
+    model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
     max_tokens: 512
   xinference:
     url: http://localhost:9997/v1

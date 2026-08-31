@@ -116,6 +116,14 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
 const INDEX_STATEMENTS: &[&str] = &[
     // 加速调用图重建：MATCH (callee:Method {project: $project, name: called_name})
     "CREATE INDEX method_project_name IF NOT EXISTS FOR (n:Method) ON (n.project, n.name)",
+    // 2026-08-31 补：UNWIND MERGE 用 method_id/class_id/module_id 匹配，无索引时
+    // 每次 MERGE 全表扫描（Memgraph 唯一约束不隐式建索引）——yijianbao 等大项目
+    // 8 万方法 × 500 批 → 事务挂起数分钟，表现为"死锁"（全线程 park）。
+    "CREATE INDEX idx_method_method_id IF NOT EXISTS FOR (n:Method) ON (n.method_id)",
+    "CREATE INDEX idx_class_class_id IF NOT EXISTS FOR (n:Class) ON (n.class_id)",
+    "CREATE INDEX idx_module_module_id IF NOT EXISTS FOR (n:Module) ON (n.module_id)",
+    // MERGE (p:Project {name}) 高频——同样补索引
+    "CREATE INDEX idx_project_name IF NOT EXISTS FOR (n:Project) ON (n.name)",
     // 加速 retriever.rs 中的 CONTAINS 查询
     "CREATE INDEX idx_concept_name IF NOT EXISTS FOR (n:Concept) ON (n.name)",
     "CREATE INDEX idx_concept_title IF NOT EXISTS FOR (n:Concept) ON (n.title)",
@@ -309,13 +317,13 @@ mod tests {
         let mock = MockGraphRepo::new();
         let report = init_schema(&mock).await.expect("应当成功");
 
-        // 29 个约束 + 13 个常规索引
+        // 29 个约束 + 17 个常规索引（2026-08-31 补 method_id/class_id/module_id/project name 索引）
         assert_eq!(report.constraints_created, 29);
-        assert_eq!(report.indexes_created, 13);
+        assert_eq!(report.indexes_created, 17);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 42); // 29 个约束 + 13 个索引
+        assert_eq!(write_calls.len(), 46); // 29 个约束 + 17 个索引
         assert!(write_calls[0].contains("method_id_unique"));
         assert!(write_calls[28].contains("analysis_id_unique"));
     }
@@ -328,7 +336,7 @@ mod tests {
         // 第二次调用——所有语句都带 IF NOT EXISTS，因此应当成功
         let report2 = init_schema(&mock).await.unwrap();
         assert_eq!(report2.constraints_created, 29);
-        assert_eq!(report2.indexes_created, 13);
+        assert_eq!(report2.indexes_created, 17);
     }
 
     #[tokio::test]

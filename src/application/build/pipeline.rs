@@ -382,8 +382,12 @@ impl PipelineTemplate {
         // 当 store 为 false 时，我们仍运行 LLM 分析，但跳过 embed+upsert 步骤。
         let phase2_client_available = self.llm_client.is_some();
         let phase2_snapshot_available = snapshot_repo.is_some();
+        // Phase 2（方法级 LLM 分析）与 Phase 2.5/2.6（末尾补偿）统一由 llm_backfill
+        // 开关控制：--no-llm-backfill 时全部关闭（2026-08-31 修复——此前 phase2
+        // 无视开关无条件运行，全量重建时数万方法逐个调 LLM，单项目就要数小时）。
+        let phase2_enabled = self.llm_backfill;
 
-        if let (true, true) = (phase2_client_available, phase2_snapshot_available) {
+        if phase2_enabled && phase2_client_available && phase2_snapshot_available {
             let client = self.llm_client.as_ref().unwrap();
             let repo = snapshot_repo.as_ref().unwrap();
             let methods = &extraction.methods;
@@ -1055,9 +1059,15 @@ impl PipelineTemplate {
                 Ok::<_, DtError>(())
             };
 
-            let (r1, r2, r3) = tokio::join!(write_methods, write_classes, write_modules);
+            // 2026-08-31 修复：三个写入流原为 tokio::join! 并行执行，yijianbao 等
+            // 大项目（2.8万方法+数千类）触发 Memgraph 事务锁死锁——并发 UNWIND MERGE
+            // 写同一批 Project/Method 节点互相等锁，事务永不返回（Rust 全线程 park）。
+            // 改为顺序执行：串行提交事务，彻底消除锁竞争。
+            let r1 = write_methods.await;
             r1?;
+            let r2 = write_classes.await;
             r2?;
+            let r3 = write_modules.await;
             r3?;
         }
 

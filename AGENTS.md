@@ -4,7 +4,7 @@ This project uses a Memgraph knowledge graph for persistent memory.
 
 ## 执行顺序
 
-1. **环境感知（第一个动作）** — `dt_sense()`（CLI: `dt sense --json`）：项目定位/注册匹配/索引状态。已索引返回简报，未注册返回候选项目报告。
+1. **环境感知** — `dt_sense()`（CLI: `dt sense --json`）：项目定位/注册匹配/索引状态。已索引返回简报，未注册返回候选项目报告。
 2. **按需搜索** — `dt_search_kg`（详见下方决策表）。
 3. **深入探索** — 感知与搜索完成后再读代码/目录。
 
@@ -39,16 +39,23 @@ This project uses a Memgraph knowledge graph for persistent memory.
 - 降级 CLI：`dt memorize --type KnowledgeAdded --entity-id ... --entity-type ... --details ... --project ...`
 - 写入后回复：`📝 已将 [XXX] 记录到知识图谱`
 
-## 事件已自动化
+## 事件与记忆写入（实际状态，2026-08-31 验证）
 
-| 操作 | 自动 Hook | 写入标签 |
-|------|----------|---------|
-| 代码修改 | code_modified（dt build 插件） | :Modification |
-| Jenkins 部署 | jenkins_deploy_completed（jcli_build） | :Deployment |
-| Nacos 配置变更 | config_changed | :ConfigChange |
-| 架构决策 | decision_made（dt memorize） | :Decision |
-| Bug 修复 | bug_fix_recorded | :BugFix |
-| 会话结束 | session_ended | :Conversation |
-| K8s 异常/同步 | pod_event_occurred / k8s_synced | :PodEvent / :K8sSyncEvent |
+> ⚠️ 下表按**图库实证**标注：当前 Memgraph 中只有代码索引（Method/Class/Entity/Module/Document）
+> 与记忆（:Knowledge）两类节点，**无任何事件标签节点**（:Modification/:Deployment/:ConfigChange/
+> :Decision/:BugFix/:Conversation/:PodEvent/:K8sSyncEvent 均未创建）。AGENTS.md 历史版本宣称的
+> "事件由 hook 自动入库"尚未落地——只有 dt-memory 插件在会话结束/每 N 轮做 LLM 记忆提取（写 :Knowledge）。
 
-AI 只需执行正常操作，Hook 自动完成事件记录；无需手动 `dt event` 或记忆命令。
+| 写入路径 | 状态 | 实际行为 |
+|----------|------|---------|
+| 代码索引 | ✅ 生效 | `dt build` 索引项目 → Method/Class/Entity/Module/Document 节点（world=code/doc） |
+| 记忆提取（dt-memory v3） | ✅ 生效 | 会话每 N 轮/结束/压缩前，LLM 提炼 fact/decision/preference/convention → :Knowledge 节点（world=memory；项目记忆带 project，全局记忆 hermes-global）；显式 `dt_memorize` / `dt memorize` 同路径 |
+| code_modified（dt build 插件）→ :Modification | ❌ 未落地 | 事件 hook 未实现，无此类节点 |
+| jenkins_deploy_completed（jcli_build）→ :Deployment | ❌ 未落地 | 同上 |
+| config_changed → :ConfigChange | ❌ 未落地 | 同上 |
+| decision_made（dt memorize）→ :Decision | ❌ 未落地 | `dt memorize` 实际写 :Knowledge（带 --entity-type 时仅作标签参考），非 :Decision 事件节点 |
+| bug_fix_recorded → :BugFix | ❌ 未落地 | 同上 |
+| session_ended → :Conversation | ❌ 未落地 | 实际是 dt-memory `on_session_end` → LLM 记忆提取（:Knowledge），非事件节点 |
+| pod_event_occurred / k8s_synced → :PodEvent / :K8sSyncEvent | ❌ 未落地 | 同上 |
+
+**实际操作**：无需手动 `dt event`（事件路径未实现）；要留长期记忆用 `dt_memorize` / 说"记忆/记一下"。会话记录目前不进 KG——历史会话查询靠 memory 世界的 :Knowledge 记忆（llm_extract 自动提炼）。
