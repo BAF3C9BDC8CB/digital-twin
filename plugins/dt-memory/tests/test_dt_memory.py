@@ -3,14 +3,15 @@
 运行: pytest plugins/dt-memory/tests/test_dt_memory.py -v
 覆盖: v2 核心行为 ——
   * prefetch 默认零注入（普通查询不返回任何记忆）
-  * 显式记忆意图词触发定向检索（项目+全局）
-  * project 区分：项目记忆 vs 全局记忆（hermes-global）
+  * 显式记忆意图词触发定向检索（统一全局，不分项目/全局，2026-09-01）
+  * project 仅作溯源字段，不参与检索过滤
   * 写入路径 details 组装 / 检索结果过滤 / 渲染容错
 不依赖真实 dt 后端 — subprocess 调用通过 monkeypatch 打桩。
 """
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -89,8 +90,128 @@ def _stub_search(monkeypatch, hits_by_project=None):
     )
 
 
+class TestSecretEnvResolution:
+    """_get_secret_env：密钥解析必须兼容 Hermes 的 .env 加载机制。"""
+
+    def test_reads_from_env_file(self, tmp_path, monkeypatch):
+        """HERMES_HOME/.env 文件里的密钥可被读取（gateway 进程 os.environ 无 key 的场景）。"""
+        (tmp_path / ".env").write_text(
+            "# comment\nDEEPSEEK_API_KEY=sk-test-1234\nOTHER=1\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        val = _llm_mod._get_secret_env("DEEPSEEK_API_KEY")
+        assert val == "sk-test-1234"
+
+    def test_falls_back_to_process_env(self, monkeypatch):
+        """进程环境有 key 时直接命中（无 .env 场景）。"""
+        monkeypatch.setenv("SOME_KEY", "env-value")
+        val = _llm_mod._get_secret_env("SOME_KEY")
+        assert val == "env-value"
+
+    def test_missing_returns_empty(self, tmp_path, monkeypatch):
+        """都不存在 → 返回空串（调用方降级为不提取，不抛异常）。"""
+        monkeypatch.delenv("NO_SUCH_KEY", raising=False)
+        assert _llm_mod._get_secret_env("NO_SUCH_KEY") == ""
+
+
+class TestLoadLlmConfigDegrade:
+    """load_hermes_llm_config 降级链。"""
+
+    def test_provider_registry_fallback(self, tmp_path, monkeypatch):
+        """config providers 表无该 provider 时，回退到 Hermes 内置 PROVIDER_REGISTRY。"""
+        (tmp_path / "config.yaml").write_text(
+            "model:\n  provider: deepseek\n  default: deepseek-v4-flash\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        fake_registry = {
+            "deepseek": types.SimpleNamespace(
+                inference_base_url="https://api.deepseek.com/v1",
+                api_key_env_vars=("DEEPSEEK_API_KEY",),
+                base_url_env_var="",
+            ),
+        }
+        import dt_memory.llm_extract as llm_extract_mod
+        monkeypatch.setattr(
+            llm_extract_mod, "_get_secret_env",
+            lambda name: "sk-fallback" if name == "DEEPSEEK_API_KEY" else "",
+        )
+        monkeypatch.setitem(
+            sys.modules, "hermes_cli.auth", types.SimpleNamespace(
+                PROVIDER_REGISTRY=fake_registry,
+            ),
+        )
+        # 触发函数内 import hermes_cli.auth
+        cfg = llm_extract_mod.load_hermes_llm_config(str(tmp_path))
+        assert cfg is not None
+        assert cfg["base_url"] == "https://api.deepseek.com/v1"
+        assert cfg["api_key"] == "sk-fallback"
+        assert cfg["model"] == "deepseek-v4-flash"
+
+    def test_config_providers_table_priority(self, tmp_path, monkeypatch):
+        """config providers 表有该 provider 时优先使用（不触发注册表降级）。"""
+        (tmp_path / "config.yaml").write_text(
+            "model:\n  provider: my-newapi\n  default: m1\n"
+            "providers:\n"
+            "  my-newapi:\n"
+            "    api: http://127.0.0.1:9999/v1\n"
+            "    key_env: MY_NEWAPI_CHANNEL_KEY\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("MY_NEWAPI_CHANNEL_KEY", raising=False)
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        import dt_memory.llm_extract as llm_extract_mod
+        monkeypatch.setattr(
+            llm_extract_mod, "_get_secret_env",
+            lambda name: "sk-newapi" if name == "MY_NEWAPI_CHANNEL_KEY" else "",
+        )
+        cfg = llm_extract_mod.load_hermes_llm_config(str(tmp_path))
+        assert cfg is not None
+        assert cfg["base_url"] == "http://127.0.0.1:9999/v1"
+        assert cfg["api_key"] == "sk-newapi"
+
+    def test_missing_everything_returns_none(self, tmp_path, monkeypatch):
+        """config providers 表和注册表都无 → None（不抛异常）。"""
+        (tmp_path / "config.yaml").write_text(
+            "model:\n  provider: nonexistent-provider\n  default: x\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        import dt_memory.llm_extract as llm_extract_mod
+        monkeypatch.setattr(llm_extract_mod, "_get_secret_env", lambda name: "")
+        # 注册表里没有 nonexistent-provider
+        monkeypatch.setitem(
+            sys.modules, "hermes_cli.auth", types.SimpleNamespace(
+                PROVIDER_REGISTRY={},
+            ),
+        )
+        cfg = llm_extract_mod.load_hermes_llm_config(str(tmp_path))
+        assert cfg is None
+
+
 class TestV2OnDemandRecall:
     """v2 核心：按需检索，默认零注入。"""
+
+    def test_system_prompt_block_guides_search(self):
+        """system_prompt_block 应注入检索指引与全局行为准则（全局生效通道）。"""
+        p = _provider()
+        p._project = "offen-pay"
+        block = p.system_prompt_block()
+        # 记忆统一全局（不分项目/全局）
+        assert "记忆统一全局" in block
+        assert "project=offen-pay" not in block  # 不再引导按项目查
+        assert "scope=global" not in block  # 不再有全局记忆 scope 语义
+        assert "project=hermes-global" not in block
+        # 写入引导: details 带文件路径
+        assert "文件路径" in block
+        # 全局行为准则(决策表核心)
+        assert "[DT 行为准则]" in block
+        assert "dt_sense" in block
+        assert "先 dt_search_kg" in block
 
     def test_normal_query_no_injection(self, monkeypatch):
         """普通查询（无记忆意图词）→ prefetch 返回空，不触发任何检索。"""
@@ -105,20 +226,21 @@ class TestV2OnDemandRecall:
         assert p.prefetch("支付手续费怎么算的") == ""
         assert called == []  # 没有检索调用 → 零 token
 
-    def test_intent_word_triggers_project_and_global(self, monkeypatch):
-        """含'记得'触发项目+全局两侧检索。"""
+    def test_intent_word_triggers_global_search(self, monkeypatch):
+        """含'记得'触发统一全局检索（不分项目/全局）。"""
         p = _provider()
         p._project = "uvp-pay-center"
         called = []
 
         def fake_search(self, query, *, world, project, limit):
-            called.append(project)
+            called.append((project, limit))
             return [{"id": "mem-y", "title": "银盛费率", "snippet": "0.6%", "project": project, "score": 0.9}]
 
         monkeypatch.setattr(m.DtMemoryProvider, "_search_world", fake_search)
         out = p.prefetch("记得银盛费率是多少吗")
         assert "银盛费率" in out
-        assert called == ["uvp-pay-center", "hermes-global"]  # 项目 + 全局
+        # 统一全局: 一次检索, project=None, limit=双倍
+        assert called == [(None, 8)]
 
     def test_intent_word_recall_english(self, monkeypatch):
         p = _provider()
@@ -157,7 +279,7 @@ class TestV2OnDemandRecall:
         assert [h["id"] for h in hits] == ["mem-a"]  # 0.1 被滤掉
 
     def test_prefetch_renders_only_surviving_hits(self, monkeypatch):
-        """prefetch 对 _search_world 返回的命中做渲染注入（项目+全局分组）。"""
+        """prefetch 对 _search_world 返回的命中做渲染注入（统一全局，不分组）。"""
         p = _provider()
         p._project = "uvp-pay-center"
 
@@ -166,9 +288,9 @@ class TestV2OnDemandRecall:
 
         monkeypatch.setattr(m.DtMemoryProvider, "_search_world", fake_search)
         out = p.prefetch("记得银盛费率是多少吗")
-        assert "【项目记忆】" in out
-        assert "【全局记忆】" in out
-        assert out.count("银盛费率") == 2
+        assert "【项目记忆】" not in out  # 不再分组
+        assert "【全局记忆】" not in out
+        assert out.count("银盛费率") == 1  # 统一一次检索
 
 
 class TestDetailsAssembly:
@@ -201,7 +323,7 @@ class TestDetailsAssembly:
         assert captured["cmd"][-1] == "hermes-memory"
 
     def test_global_memory_project(self):
-        """全局记忆显式传 project=hermes-global。"""
+        """兼容路径: 显式传 project=hermes-global（写入侧仍支持，作为溯源字段）。"""
         p = _provider()
         captured = {}
 
@@ -218,6 +340,53 @@ class TestDetailsAssembly:
         finally:
             subprocess.run = orig
         assert captured["cmd"][-1] == "hermes-global"
+
+    def test_scope_global_forces_hermes_global_and_details(self):
+        """scope=global 时自动挂 hermes-global project（写入侧兼容保留，检索统一全局）。"""
+        p = _provider()
+        p._project = "offen-pay"
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            from types import SimpleNamespace
+            return SimpleNamespace(returncode=0, stdout='{"ok": true}', stderr="")
+
+        import subprocess
+        orig = subprocess.run
+        subprocess.run = fake_run
+        try:
+            r = p.handle_tool_call("dt_memorize", {"content": "跨项目用户偏好", "scope": "global"})
+        finally:
+            subprocess.run = orig
+        # project 参数应为 hermes-global (而非 offen-pay)
+        assert captured["cmd"][-1] == "hermes-global"
+        # details 字符串应包含 scope: global (Rust 侧 knowledge_from_details 解析)
+        # cmd 结构: [dt, memorize, type, entity_id, details, --project, project]
+        details = captured["cmd"][4]
+        assert "scope: global" in details
+
+    def test_scope_project_keeps_current_project(self):
+        """scope=project(默认) 时 project 保持当前项目, details 带 scope: project。"""
+        p = _provider()
+        p._project = "offen-pay"
+        captured = {}
+
+        def fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            from types import SimpleNamespace
+            return SimpleNamespace(returncode=0, stdout='{"ok": true}', stderr="")
+
+        import subprocess
+        orig = subprocess.run
+        subprocess.run = fake_run
+        try:
+            p.handle_tool_call("dt_memorize", {"content": "项目内事实", "scope": "project"})
+        finally:
+            subprocess.run = orig
+        assert captured["cmd"][-1] == "offen-pay"
+        details = captured["cmd"][4]
+        assert "scope: project" in details
 
     def test_entity_id_prefix_mem(self):
         p = _provider()

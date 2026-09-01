@@ -42,8 +42,11 @@ pub struct Knowledge {
     pub definition: String,
     /// 知识的来源。
     pub source: KnowledgeSource,
-    /// 所属项目名。
+    /// 所属项目名（溯源字段；记忆统一全局后不参与检索过滤，2026-09-01）。
     pub project: String,
+    /// 记忆作用域: "project" | "global" | ""。
+    /// 兼容保留；记忆统一全局后检索不再按 scope 过滤（2026-09-01）。
+    pub scope: String,
     /// 置信度 0.0–1.0。AI 生成 = 低，人工验证 = 1.0。
     pub confidence: f64,
     /// 验证者（"human" 或 null 等价物）。
@@ -119,6 +122,7 @@ impl Default for Knowledge {
             definition: String::new(),
             source: KnowledgeSource::AiSession,
             project: String::new(),
+            scope: String::new(),
             confidence: 0.5,
             verified_by: None,
             created_at: now.clone(),
@@ -441,6 +445,7 @@ mod tests {
             definition: "A definition".into(),
             source: KnowledgeSource::AiSession,
             project: "test".into(),
+            scope: "project".into(),
             confidence: 0.8,
             verified_by: Some("human".into()),
             created_at: "2026-07-09T00:00:00Z".into(),

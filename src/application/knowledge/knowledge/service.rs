@@ -282,6 +282,7 @@ impl KnowledgeService for DefaultKnowledgeService {
                 k.definition  = $definition,
                 k.source      = $source,
                 k.project     = $project,
+                k.scope       = $scope,
                 k.confidence  = $confidence,
                 k.verified_by = $verified_by,
                 k.created_at  = $created_at,
@@ -292,6 +293,7 @@ impl KnowledgeService for DefaultKnowledgeService {
                 k.summary     = $summary,
                 k.content     = $content,
                 k.definition  = $definition,
+                k.scope       = $scope,
                 k.confidence  = $confidence,
                 k.verified_by = $verified_by,
                 k.updated_at  = $updated_at
@@ -333,6 +335,10 @@ impl KnowledgeService for DefaultKnowledgeService {
         params.insert(
             "project".into(),
             serde_json::Value::String(knowledge.project.clone()),
+        );
+        params.insert(
+            "scope".into(),
+            serde_json::Value::String(knowledge.scope.clone()),
         );
         params.insert("confidence".into(), serde_json::json!(knowledge.confidence));
         params.insert(
@@ -702,6 +708,14 @@ pub fn knowledge_from_details(
             kv.get("source").map(|s| s.as_str()).unwrap_or("ai_session"),
         ),
         project: project.to_string(),
+        // scope: 解析 details 里的 scope 键(记忆作用域)。LLM 提取的
+        // 记忆条目带 scope=project|global; 显式 dt_memorize 可带 scope 覆盖。
+        // 归一化: 只接受 project/global, 其余(含空)统一为 ""(未标注)。
+        scope: match kv.get("scope").map(|s| s.trim().to_lowercase()) {
+            Some(ref s) if s == "project" => "project".to_string(),
+            Some(ref s) if s == "global" => "global".to_string(),
+            _ => String::new(),
+        },
         confidence: kv
             .get("confidence")
             .and_then(|s| s.parse::<f64>().ok())
@@ -868,6 +882,7 @@ mod tests {
             definition: "A def".into(),
             source: KnowledgeSource::AiSession,
             project: "test".into(),
+            scope: "project".into(),
             confidence: 0.8,
             verified_by: None,
             created_at: "2026-07-09T00:00:00Z".into(),

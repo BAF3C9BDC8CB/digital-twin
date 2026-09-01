@@ -7,8 +7,7 @@
 输出：结构化 JSON 列表
   [{"type": "fact|decision|preference|convention",
     "summary": "一句话摘要（会成为 KG 节点 name/title）",
-    "detail": "详细内容（会成为 content）",
-    "scope": "project|global",   # 项目记忆 or 全局记忆
+    "detail": "详细内容（会成为 content，建议带文件路径/位置便于定位）",
     "tags": ["..."],
     "importance": 1-5}]
 """
@@ -25,11 +24,59 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 
+def _get_secret_env(name: str) -> str:
+    """读取密钥环境变量，与 Hermes 运行环境保持一致。
+
+    解析顺序（2026-09-01 修复：dt-memory 后台线程跑在 gateway 进程里，
+    裸 os.environ 看不到 Hermes 从 ~/.hermes/.env 加载的密钥）：
+    1. Hermes agent.secret_scope.get_secret() —— 与主 agent 同源的密钥解析
+       （含 profile scope / .env overlay），最准确
+    2. 直接解析 HERMES_HOME/.env（fallback，import 失败或 scope 不可用时）
+    3. os.environ（最后兜底）
+    """
+    # 1. Hermes secret_scope
+    try:
+        from agent.secret_scope import get_secret as _scoped_get
+        val = _scoped_get(name)
+        if val:
+            return val
+    except Exception:
+        pass
+    # 2. HERMES_HOME/.env 文件
+    try:
+        home = (
+            os.environ.get("HERMES_HOME")
+            or os.path.expanduser("~/.hermes")
+        )
+        env_path = os.path.join(home, ".env")
+        if os.path.isfile(env_path):
+            with open(env_path, encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    k = k.strip().strip('"').strip("'")
+                    v = v.strip().strip('"').strip("'")
+                    if k == name:
+                        return v
+    except Exception:
+        pass
+    # 3. 进程环境
+    return os.environ.get(name, "")
+
+
 def load_hermes_llm_config(hermes_home: str) -> Optional[Dict[str, str]]:
     """从 Hermes config.yaml 读取 LLM 端点配置。
 
     返回 {base_url, model, api_key, api_mode}；失败返回 None（调用方降级为不提取）。
     model 优先取配置 default；若为 'auto' 则调用 /models 发现真实模型 id。
+
+    降级链（2026-09-01 修复）：
+    1. config.yaml providers 表（自定义 provider，如 my-newapi）
+    2. Hermes 内置 PROVIDER_REGISTRY（hermes_cli.auth）—— 解决
+       model.provider 指向内置 provider（如 deepseek）但 config providers 表
+       无对应条目时，插件拿不到 base_url/key_env 而静默失效的问题。
     """
     cfg_path = os.path.join(hermes_home, "config.yaml")
     try:
@@ -46,7 +93,25 @@ def load_hermes_llm_config(hermes_home: str) -> Optional[Dict[str, str]]:
     base_url = model_cfg.get("base_url") or prov_cfg.get("api") or prov_cfg.get("base_url")
     model = model_cfg.get("default") or prov_cfg.get("model") or "auto"
     key_env = prov_cfg.get("key_env") or model_cfg.get("key_env") or ""
-    api_key = os.environ.get(key_env, "") if key_env else ""
+    api_key = _get_secret_env(key_env) if key_env else ""
+
+    # 降级：config providers 表没有该 provider → 查 Hermes 内置注册表
+    if (not base_url or not api_key) and provider_name:
+        try:
+            from hermes_cli.auth import PROVIDER_REGISTRY
+            reg = PROVIDER_REGISTRY.get(provider_name)
+            if reg:
+                if not base_url:
+                    base_url = reg.inference_base_url
+                if not key_env and reg.api_key_env_vars:
+                    key_env = reg.api_key_env_vars[0]
+                    api_key = _get_secret_env(key_env) or api_key
+                # 兼容 DEEPSEEK_BASE_URL 这类 base_url 覆盖环境变量
+                if reg.base_url_env_var and os.environ.get(reg.base_url_env_var):
+                    base_url = os.environ[reg.base_url_env_var]
+        except Exception:
+            pass
+
     api_mode = model_cfg.get("api_mode", "chat_completions")
 
     if not base_url or not api_key:
@@ -129,7 +194,7 @@ def extract_memories_from_conversation(
 要求：
 1. 只提取真正长期有价值的内容；寒暄、一次性问题、代码细节不要记
 2. 每条一个 summary（≤30字，作为标题）+ detail（完整上下文）
-3. scope=project 表示跟当前项目相关；scope=global 表示跨项目通用（如用户偏好、通用工作流）
+3. detail 内注明文件路径/位置（如 `文件: /data/.../bootstrap.yml`），便于检索后定位实际位置（记忆统一全局，不分项目/全局）
 4. importance 1-5，5 最高；低于 3 的不要输出
 5. 严格输出 JSON 数组，不要任何其他文字
 
@@ -172,9 +237,8 @@ def extract_memories_from_conversation(
         etype = str(e.get("type", "fact")).strip().lower()
         if etype not in ("fact", "decision", "preference", "convention"):
             etype = "fact"
-        scope = str(e.get("scope", "project")).strip().lower()
-        if scope not in ("project", "global"):
-            scope = "project"
+        # 记忆统一全局（2026-09-01）：不分项目/全局，全部按全局写入
+        scope = "global"
         tags = e.get("tags", [])
         if not isinstance(tags, list):
             tags = []

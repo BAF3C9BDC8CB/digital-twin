@@ -6,15 +6,13 @@
 - 不再每轮把记忆原文灌进上下文（原 prefetch 每轮 dt search + 最多 8 条原文注入，
   记忆增长时 token 爆炸）。
 - 改为「引导 + 按需检索」：
-  * system_prompt_block 注入检索方式（项目记忆/全局记忆怎么用 dt_search_kg 查），
-    记忆本体不自动注入。
+  * system_prompt_block 注入检索方式（怎么用 dt_search_kg 查），记忆本体不自动注入。
   * prefetch 仅在用户消息含显式记忆意图词（记住/记一下/记忆/记得/上次/之前说）时
-    做一次定向检索（项目 + 全局各若干条），其余情况一律返回空 —— 零 token 开销。
-- 存储侧保留并强化 project 区分：
-  * 项目记忆：dt memorize --project <当前项目>（默认 hermes-memory）
-  * 全局记忆：dt memorize --project hermes-global
-  检索侧 dt search --world memory 已支持 project 过滤（search_memory.rs v2），
-  项目记忆用 dt_search_kg(world=memory, project=X)，全局不带 project。
+    做一次定向检索（统一全局若干条），其余情况一律返回空 —— 零 token 开销。
+- 记忆统一全局（2026-09-01 用户确认）：不分项目/全局，全部全局统一检索；
+  写入时 details 内带文件路径/位置标识，检索靠记忆内容定位实际文件。
+  检索侧 dt search --world memory 不再按 project 过滤（search_memory.rs v3），
+  project 参数仅作溯源字段返回，不参与过滤。
 """
 
 from __future__ import annotations
@@ -45,7 +43,7 @@ logger = __import__("logging").getLogger(__name__)
 
 _DT_BIN = os.path.expanduser("~/.local/bin/dt")
 _DEFAULT_PROJECT = "hermes-memory"
-_GLOBAL_PROJECT = "hermes-global"   # 全局记忆专用 project 名（检索时 project=hermes-global 或省略）
+_GLOBAL_PROJECT = "hermes-global"   # 全局记忆专用 project 名（写入目标；检索侧 project=hermes-global 由 Rust 映射为 scope='global' 过滤，或直接不带 project 查）
 _PREFETCH_TIMEOUT = 8.0      # seconds
 _PREFETCH_LIMIT = 4          # 定向检索每侧条数（项目/全局各 4，最多 8）
 _MIN_SCORE = 0.5             # relevance floor
@@ -166,9 +164,11 @@ class DtMemoryProvider(MemoryProvider):
         return (
             "[DT-MEMORY] 长期记忆由数字孪生(dt)提供(world=memory)，按需检索、不自动注入。\n"
             "需要历史记忆时用 MCP 工具 dt_search_kg 自行检索：\n"
-            f"- 当前项目记忆: dt_search_kg(world=memory, project={self._project}, limit=5)\n"
-            "- 全局记忆(跨项目): dt_search_kg(world=memory, limit=5) 不带 project\n"
-            "显式写入用 dt_memorize（项目记忆带 project=当前项目；全局记忆 project=hermes-global）。"
+            "- 记忆统一全局: dt_search_kg(world=memory, limit=5) 不分项目/全局，一次查完\n"
+            "显式写入用 dt_memorize（记忆统一全局，details 内注明文件路径/位置便于定位）。\n"
+            "[DT 行为准则] 每任务先 dt_sense 感知；服务/配置/凭据/部署/历史决策先 dt_search_kg(world=memory) 查一次，\n"
+            "命中即事实，0 命中才读源码；定位代码用 dt_search_kg(world=code, project=注册项目名) 再读源码验证；\n"
+            "禁止伪造结果/输出密钥；hop≥1 只当线索；用户说\"记忆/记一下\"立即 dt_memorize。"
         )
 
     # -----------------------------------------------------------------------
@@ -196,27 +196,16 @@ class DtMemoryProvider(MemoryProvider):
                 self._last_count = cached.count
                 return cached.text
 
-        # 定向检索：项目记忆 + 全局记忆
-        project_hits = self._search_world(
-            query, world="memory", project=self._project, limit=_PREFETCH_LIMIT
-        )
-        global_hits = self._search_world(
-            query, world="memory", project=_GLOBAL_PROJECT, limit=_PREFETCH_LIMIT
+        # 定向检索：记忆统一全局（不分项目/全局），一次查完
+        all_hits = self._search_world(
+            query, world="memory", project=None, limit=_PREFETCH_LIMIT * 2
         )
 
         lines = []
-        if project_hits:
-            lines.append("【项目记忆】")
-            for h in project_hits:
-                body = self._render_hit(h)
-                if body:
-                    lines.append(body)
-        if global_hits:
-            lines.append("【全局记忆】")
-            for h in global_hits:
-                body = self._render_hit(h)
-                if body:
-                    lines.append(body)
+        for h in all_hits:
+            body = self._render_hit(h)
+            if body:
+                lines.append(body)
 
         # Hard cap
         text_lines = []
@@ -385,13 +374,14 @@ class DtMemoryProvider(MemoryProvider):
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [{
             "name": "dt_memorize",
-            "description": "显式写入一条长期记忆到数字孪生 (world=memory)。项目记忆传 project=当前项目；全局记忆传 project=hermes-global",
+            "description": "显式写入一条长期记忆到数字孪生 (world=memory)。记忆统一全局，不分项目/全局；details 内注明文件路径/位置便于检索后定位",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "content": {"type": "string", "description": "记忆内容"},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "可选标签"},
-                    "project": {"type": "string", "description": "所属项目（默认当前项目；全局记忆填 hermes-global）"},
+                    "project": {"type": "string", "description": "溯源字段（记忆统一全局，不参与检索过滤）"},
+                    "scope": {"type": "string", "enum": ["project", "global"], "description": "兼容保留（记忆统一全局，检索不区分）"},
                 },
                 "required": ["content"],
             },
@@ -407,10 +397,16 @@ class DtMemoryProvider(MemoryProvider):
 
         tags = args.get("tags", [])
         project = args.get("project") or self._project
-        tag_str = "; tags: " + ",".join(tags) if tags else ""
+        scope = args.get("scope", "project")
+        if scope not in ("project", "global"):
+            scope = "project"
+        # 全局记忆: 强制挂 hermes-global 作用域, 并让 details 带 scope=global 落库
+        if scope == "global":
+            project = _GLOBAL_PROJECT
+        tag_str = "; tags: " + ", ".join(tags) if tags else ""
         # First line becomes the searchable name/title
         first_line = content.split("\n")[0].strip()[:60] or content[:60]
-        details = f"name: {first_line}; origin: user_explicit; content: {content}{tag_str}"
+        details = f"name: {first_line}; origin: user_explicit; scope: {scope}; content: {content}{tag_str}"
 
         # Generate unique entity_id
         h = hashlib.sha1(f"{self._session_id}:{content}:{time.time()}".encode()).hexdigest()[:12]
@@ -437,7 +433,7 @@ class DtMemoryProvider(MemoryProvider):
         return [
             {
                 "key": "project",
-                "description": "Digital Twin 项目名，用于记忆作用域隔离（默认 hermes-memory；全局记忆用 hermes-global）",
+                "description": "Digital Twin 溯源 project 名（记忆统一全局，检索不按此过滤；仅作内容溯源）",
                 "default": _DEFAULT_PROJECT,
                 "required": False,
             },
@@ -466,7 +462,33 @@ class DtMemoryProvider(MemoryProvider):
     # -----------------------------------------------------------------------
 
     def _infer_project(self, cwd: str) -> Optional[str]:
-        # Try to find a .git root or use directory name
+        """推断当前会话所属项目（dt 注册项目名）。
+
+        优先用 dt sense 的注册项目映射：当 cwd 是注册容器目录（或其子目录）时，
+        sense 返回 base_children，取**唯一**的注册子项目名（如 offen-pay），
+        避免落到 git root 目录名（pay）或未知名——注册名才是 dt_search_kg
+        project 过滤与 AGENTS.md 决策表约定的项目名。
+
+        sense 不可用/超时/多候选时才回退 git root 目录名。
+        """
+        try:
+            r = subprocess.run(
+                [_DT_BIN, "sense", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=6,
+                cwd=cwd,
+            )
+            if r.returncode == 0:
+                data = json.loads(r.stdout)
+                children = data.get("base_children") or []
+                # 只取已注册子项目；多候选时不猜（避免映射错项目）
+                registered = [c.get("name") for c in children if c.get("registered")]
+                if len(registered) == 1:
+                    return registered[0]
+        except Exception:
+            pass
+        # 回退：git root 目录名
         try:
             r = subprocess.run(
                 ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
@@ -491,7 +513,8 @@ class DtMemoryProvider(MemoryProvider):
         summary = entry.get("summary", "")
         if not summary:
             return
-        project = _GLOBAL_PROJECT if entry.get("scope") == "global" else self._project
+        scope = entry.get("scope", "project")  # project | global
+        project = _GLOBAL_PROJECT if scope == "global" else self._project
         etype = entry.get("type", "fact")
         detail = entry.get("detail", "")
         tags = entry.get("tags", [])
@@ -507,9 +530,9 @@ class DtMemoryProvider(MemoryProvider):
             h = hashlib.sha1(f"llm:{summary}:{time.time()}".encode()).hexdigest()[:12]
             entity_id = f"mem-{h}"
 
-        tag_str = "; tags: " + ",".join(tags) if tags else ""
+        tag_str = "; tags: " + ", ".join(tags) if tags else ""
         details = (
-            f"name: {summary}; origin: llm_auto; type: {etype}; "
+            f"name: {summary}; origin: llm_auto; type: {etype}; scope: {scope}; "
             f"content: {detail}{tag_str}"
         )
         self._dt_memorize(entity_id, details, project)

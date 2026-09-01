@@ -17,12 +17,14 @@ This project uses a Memgraph knowledge graph for persistent memory.
 |------|------|
 | 闲聊/元对话/本工具操作 | 不查 |
 | [DT-SENSE] 已覆盖 | 不查 |
-| 服务/配置/凭据/部署/历史决策 | `dt_search_kg(limit=5)`；hop=0 当事实，hop≥1 只当线索，跨项目丢弃 |
+| 服务/配置/凭据/部署/历史决策 | `dt_search_kg(limit=5, world=memory)` 一次查完；**记忆全部全局统一**（不分项目/全局），命中即事实，0 命中才读源码；hop=0 当事实，hop≥1 只当线索 |
 | 定位/理解代码 | 先 `dt_search_kg(world=code, project=<项目名>)` 定位再读源码验证；仅搜索不可用/超时才纯读源码并标 ⚠ |
 | 精确属性（已知 elementId） | memgraph `run_cypher_query`，显式 RETURN 字段白名单 |
 | 每任务 L1≤1 次 | 先定 2-4 个关键词一次查完，不碎查/宽泛词 |
 
 **代码任务带 `world=code + project=<项目名>`**（knowledge 世界不索引代码实体）；project 限定消除跨项目噪音（KG 命中=事实，仅 dt_search_kg 不可用/超时才纯读源码并标注 ⚠）。委派子代理时任务书必须写明此规则（子代理不注入 DT-SENSE 简报，任务书是它唯一的 KG 准则来源）。
+
+**记忆统一全局**（2026-09-01 用户确认）：记忆不分项目/全局，全部全局统一检索；写入时 details 内带文件路径/位置标识，检索靠记忆内容定位实际文件。`project` 参数仅作溯源字段，不参与过滤。
 
 **降级与禁止**：
 - dt_sense 永不失败：degraded=后端缺失，stats 全 0 ≠ 没代码；sense/search 10s 超时按降级
@@ -35,8 +37,8 @@ This project uses a Memgraph knowledge graph for persistent memory.
 
 用户说 "记忆" / "记一下" / "记住这个" / "记下来" / "记住" 时——**必须立即写入 KG**，这是命令不是建议：
 
-- 首选 MCP `dt_memorize(type="KnowledgeAdded", entity_id=..., entity_type=..., details=..., project=...)`
-- 降级 CLI：`dt memorize --type KnowledgeAdded --entity-id ... --entity-type ... --details ... --project ...`
+- 首选 MCP `dt_memorize(type="KnowledgeAdded", entity_id=..., entity_type=..., details=...)`；**记忆统一全局**，details 内注明文件路径/位置（如 `文件: /data/.../bootstrap.yml 端口9216`），便于检索后定位实际位置；无需区分项目/全局
+- 降级 CLI：`dt memorize --type KnowledgeAdded --entity-id ... --entity-type ... --details ...`
 - 写入后回复：`📝 已将 [XXX] 记录到知识图谱`
 
 ## 事件与记忆写入（实际状态，2026-08-31 验证）
@@ -49,7 +51,7 @@ This project uses a Memgraph knowledge graph for persistent memory.
 | 写入路径 | 状态 | 实际行为 |
 |----------|------|---------|
 | 代码索引 | ✅ 生效 | `dt build` 索引项目 → Method/Class/Entity/Module/Document 节点（world=code/doc） |
-| 记忆提取（dt-memory v3） | ✅ 生效 | 会话每 N 轮/结束/压缩前，LLM 提炼 fact/decision/preference/convention → :Knowledge 节点（world=memory；项目记忆带 project，全局记忆 hermes-global）；显式 `dt_memorize` / `dt memorize` 同路径 |
+| 记忆提取（dt-memory v3） | ✅ 生效 | 会话每 N 轮/结束/压缩前，LLM 提炼 fact/decision/preference/convention → :Knowledge 节点（world=memory；**记忆统一全局**，2026-09-01 起不分项目/全局，details 带文件路径）；显式 `dt_memorize` / `dt memorize` 同路径 |
 | code_modified（dt build 插件）→ :Modification | ❌ 未落地 | 事件 hook 未实现，无此类节点 |
 | jenkins_deploy_completed（jcli_build）→ :Deployment | ❌ 未落地 | 同上 |
 | config_changed → :ConfigChange | ❌ 未落地 | 同上 |

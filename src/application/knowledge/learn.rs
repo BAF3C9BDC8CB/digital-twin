@@ -165,6 +165,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 definition: format!("{} 的解决方案模式", request.task),
                 source: KnowledgeSource::AiTask,
                 project: project.to_string(),
+                scope: "project".to_string(),
                 confidence: 0.7,
                 verified_by: None,
                 created_at: now.clone(),

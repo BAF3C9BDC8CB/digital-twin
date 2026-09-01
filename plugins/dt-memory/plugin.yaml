@@ -1,6 +1,6 @@
 name: dt-memory
 version: 1.0.0
-description: "Digital Twin memory — Memgraph+Qdrant 知识图谱作为 Hermes 长期记忆。写入走 dt memorize(knowledge世界, project=hermes-memory 隔离), 检索按 id 前缀过滤(mem-/hermes-memory/hermes-user)。"
+description: "Digital Twin memory — Memgraph+Qdrant 知识图谱作为 Hermes 长期记忆。记忆统一全局(2026-09-01): 不分项目/全局, 写入 details 带文件路径/位置, 检索按 world=memory 全库语义召回, project 仅作溯源。"
 hooks:
   - on_session_end
   - on_pre_compress
