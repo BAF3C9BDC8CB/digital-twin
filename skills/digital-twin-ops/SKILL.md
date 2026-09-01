@@ -82,6 +82,31 @@ sense 三态: indexed → L1 可行; 未注册/未索引 → 磁盘直查; degra
 - `project` 参数仅作溯源, 不参与检索过滤
 - 检索记忆: `dt_search_kg(world="memory", ...)`
 
+### 4.1 记忆验证与失效处置（AI 自主判定，无审核）
+
+拿到记忆后**先验证再使用**：用现实对照（`which`/`ls`/`systemctl`/读配置/查服务），
+确认记忆内容是否仍然有效。验证结果决定处置：
+
+| 验证结果 | 处置 | 工具 |
+|----------|------|------|
+| 有效 | 正常使用 | — |
+| **完全失效/无用**（如软件已卸载、路径已删、配置已废弃） | **删除** | `dt_memorize(action="delete", entity_id=...)` |
+| **部分过时**（如端口变了、地址换了） | **版本化更新** | `dt_memorize(action="update", supersede=旧id, details=新内容)` |
+| 模糊/无法验证 | 保留，但回答时注明"记忆可能过时" | — |
+
+**删除是 AI 自主决策，无需用户审核**——但必须基于实际验证（工具输出），
+禁止仅凭猜测删除。删除走 `dt_memorize(action="delete")`：
+- 图节点 + Qdrant 向量**原子删除**，不留残留
+- 删除后不再被检索召回
+- 反悔可走 `dt backup` 恢复（每日备份）
+
+**版本化更新**（supersede）：
+- 旧节点置 archived，新节点 `[:EVOLVED_FROM]->(old)`，保留完整演化链
+- 用于"内容仍有用但部分事实过时"——保留历史可审计
+
+**示例**：记忆说"支付平台部署在 9216 端口" → 验证发现已改 9220 →
+`dt_memorize(action="update", type="KnowledgeAdded", entity_id="<原id>", supersede="<原id>", details="name: 支付平台端口; content: 端口已改为 9220 (文件: /data/.../bootstrap.yml)")`
+
 ## 5. 缓存
 
 - sense `(project, cwd)` TTL 120s; search `(project, query)` 60s; 写操作(dt_memorize/dt_build)后失效; 跨会话不缓存

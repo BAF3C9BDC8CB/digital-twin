@@ -66,6 +66,8 @@ enum Commands {
     /// 持久化到 Knowledge World 子图中。
     ///
     /// 用法: dt memorize <type> <entity-id> <details> [--project <name>]
+    ///       dt memorize --action delete <entity-id> <details>   # 删除记忆（图+向量）
+    ///       dt memorize --action update <entity-id> <details> --supersede <old-id>  # 版本化更新
     Memorize {
         /// 知识类型: Decision | KnowledgeAdded | Environment | Dependencies。
         knowledge_type: String,
@@ -75,6 +77,14 @@ enum Commands {
 
         /// 人类可读的详情，key: value 格式（分号分隔）。
         details: String,
+
+        /// 操作类型: write(默认) | delete | update/supersede。
+        #[arg(long = "action")]
+        action: Option<String>,
+
+        /// 版本化更新时被取代的旧实体 ID。
+        #[arg(long = "supersede")]
+        supersede: Option<String>,
 
         /// 实体类型标签（如 ArchitectureDecision、Knowledge、Experience）。
         #[arg(long = "entity-type")]
@@ -512,15 +522,20 @@ async fn main() -> anyhow::Result<()> {
             knowledge_type,
             entity_id,
             details,
+            action,
+            supersede,
             entity_type,
             project,
         }) => {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue =
-                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
-            let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
+            let queue = embed.clone().map(|e| {
+                Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(
+                    e,
+                ))
+            });
+            let sync_acc = build_sync_acc(graph.clone(), vector.clone(), queue).await;
             digital_twin::interfaces::cli::memorize::handle_memorize(
                 knowledge_type,
                 entity_id,
@@ -529,6 +544,10 @@ async fn main() -> anyhow::Result<()> {
                 details,
                 graph,
                 sync_acc,
+                action,
+                supersede,
+                vector,
+                embed,
             )
             .await?;
             return Ok(());
@@ -540,8 +559,11 @@ async fn main() -> anyhow::Result<()> {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue =
-                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
+            let queue = embed.map(|e| {
+                Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(
+                    e,
+                ))
+            });
             let kg_bridge = build_kg_bridge(graph, vector, queue).await;
             digital_twin::interfaces::cli::event::handle_event(
                 hook_name,
@@ -567,8 +589,11 @@ async fn main() -> anyhow::Result<()> {
             let graph = connect_graph().await;
             let embed = connect_embed().await;
             let vector = connect_vector().await;
-            let queue =
-                embed.map(|e| Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(e)));
+            let queue = embed.map(|e| {
+                Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(
+                    e,
+                ))
+            });
             let sync_acc = build_sync_acc(graph.clone(), vector, queue).await;
             digital_twin::interfaces::cli::learn::handle_learn(
                 task, entities, pattern, pitfalls, decisions, thread_id, success, project, graph,
@@ -606,9 +631,9 @@ async fn main() -> anyhow::Result<()> {
                     let graph = graph.unwrap();
                     let embed = embed.unwrap();
 
-                    let queue = Arc::new(digital_twin::application::sync::queue::VectorQueue::spawn(
-                        embed.clone(),
-                    ));
+                    let queue = Arc::new(
+                        digital_twin::application::sync::queue::VectorQueue::spawn(embed.clone()),
+                    );
 
                     let incremental = !full;
                     digital_twin::interfaces::cli::sync::handle_kg_sync(

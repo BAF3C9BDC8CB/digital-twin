@@ -590,16 +590,57 @@ class DtMemoryProvider(MemoryProvider):
             return
 
         prefix = "MEMORY" if target == "memory" else "USER"
+
+        # AI 验证记忆失效后的处置：
+        # - remove → KG 真正删除（图+向量），不留 [REMOVED] 占位
+        # - replace → KG 版本化更新（supersede），旧记忆归档保留版本链
+        # - add → 新增
         if action == "remove":
-            details = f"[REMOVED] {old_text}"
+            # 若 old_text 带 entity_id（如 "mem-xxxx"）则直接删；否则写删除标记记忆
+            if old_text.startswith("mem-") or old_text.startswith("hermes-") or old_text.startswith("auto-"):
+                self._dt_memorize_delete(old_text)
+            else:
+                details = f"[REMOVED] {old_text}"
+                first_line = details.split("\n")[0].strip()[:60] or details[:60]
+                full = f"name: {prefix}-{first_line}; origin: agent_curated; content: {details}"
+                h = hashlib.sha1(f"{action}:{target}:{old_text}:{content}:{time.time()}".encode()).hexdigest()[:12]
+                entity_id = f"hermes-{prefix.lower()}-{action}-{h}"
+                self._dt_memorize(entity_id, full)
         elif action == "replace":
-            details = f"[REPLACED] {old_text} -> {content}"
+            # 版本化更新：新内容覆盖旧内容，走 EVOLVED_FROM 版本链
+            self._dt_memorize_supersede(old_text, content, target)
         else:
             details = f"[ADDED] {content}"
+            first_line = details.split("\n")[0].strip()[:60] or details[:60]
+            full = f"name: {prefix}-{first_line}; origin: agent_curated; content: {details}"
+            h = hashlib.sha1(f"{action}:{target}:{old_text}:{content}:{time.time()}".encode()).hexdigest()[:12]
+            entity_id = f"hermes-{prefix.lower()}-{action}-{h}"
+            self._dt_memorize(entity_id, full)
 
-        first_line = details.split("\n")[0].strip()[:60] or details[:60]
-        full = f"name: {prefix}-{first_line}; origin: agent_curated; content: {details}"
-        h = hashlib.sha1(f"{action}:{target}:{old_text}:{content}:{time.time()}".encode()).hexdigest()[:12]
-        entity_id = f"hermes-{prefix.lower()}-{action}-{h}"
+    def _dt_memorize_delete(self, entity_id: str) -> bool:
+        """真正删除 KG 记忆节点（图 + 向量）。"""
+        try:
+            r = subprocess.run(
+                [_DT_BIN, "memorize", "KnowledgeAdded", entity_id, "", "--action", "delete"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False
 
-        self._dt_memorize(entity_id, full)
+    def _dt_memorize_supersede(self, old_id: str, new_content: str, target: str) -> bool:
+        """版本化更新：新内容覆盖旧记忆，旧节点归档（EVOLVED_FROM 版本链）。"""
+        try:
+            first_line = new_content.split("\n")[0].strip()[:60] or new_content[:60]
+            details = f"name: {first_line}; origin: agent_curated; content: {new_content}"
+            r = subprocess.run(
+                [_DT_BIN, "memorize", "KnowledgeAdded", old_id, details, "--action", "update", "--supersede", old_id],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            return r.returncode == 0
+        except Exception:
+            return False

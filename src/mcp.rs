@@ -112,63 +112,82 @@ impl DtRouter {
         match tool_name {
             "dt_search_kg" => {
                 let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let world = str_arg(&arguments, "world", false)?.unwrap_or_else(|| "knowledge".to_string());
+                let world =
+                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "knowledge".to_string());
                 let project = str_arg(&arguments, "project", false)?;
                 let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
                 let g = rt.graph.clone();
                 let v = rt.vector.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::build::handle_search(
-                            query, world.to_string(), limit, true, project, None, None, false, g, v,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::build::handle_search(
+                                query,
+                                world.to_string(),
+                                limit,
+                                true,
+                                project,
+                                None,
+                                None,
+                                false,
+                                g,
+                                v,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
             }
             "dt_search" => {
                 let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let world = str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
+                let world =
+                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
                 let project = str_arg(&arguments, "project", false)?;
                 let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
                 let g = rt.graph.clone();
                 let v = rt.vector.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::build::handle_search(
-                            query, world.to_string(), limit, true, project, None, None, false, g, v,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::build::handle_search(
+                                query,
+                                world.to_string(),
+                                limit,
+                                true,
+                                project,
+                                None,
+                                None,
+                                false,
+                                g,
+                                v,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
             }
             "dt_sense" => {
-                let path = str_arg(&arguments, "path", false)?
-                    .map(std::path::PathBuf::from);
+                let path = str_arg(&arguments, "path", false)?.map(std::path::PathBuf::from);
                 let projects = rt.projects.clone();
                 let g = rt.graph.clone();
                 let v = rt.vector.clone();
                 let snap = rt.snapshot.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::sense::handle_sense(
-                            path, true, projects, g, v, snap, None,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::sense::handle_sense(
+                                path, true, projects, g, v, snap, None,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -179,18 +198,33 @@ impl DtRouter {
                 let entity_type = str_arg(&arguments, "entity_type", false)?;
                 let project = str_arg(&arguments, "project", false)?;
                 let details = str_arg(&arguments, "details", true)?.unwrap_or_default();
+                let action =
+                    str_arg(&arguments, "action", false)?.unwrap_or_else(|| "write".into());
+                let supersede = str_arg(&arguments, "supersede", false)?;
                 let g = rt.graph.clone();
                 let acc = rt.sync_acc.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::memorize::handle_memorize(
-                            knowledge_type, entity_id, entity_type, project, details, g, acc,
-                        ))
-                }))
-
+                let v = rt.vector.clone();
+                let e = rt.embed.clone();
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::memorize::handle_memorize(
+                                knowledge_type,
+                                entity_id,
+                                entity_type,
+                                project,
+                                details,
+                                g,
+                                acc,
+                                Some(action),
+                                supersede,
+                                v,
+                                e,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -201,7 +235,8 @@ impl DtRouter {
                 // HookContext JSON, 触发 mcp_event hook。
                 let event_type = str_arg(&arguments, "type", true)?.unwrap_or_default();
                 let entity_id = str_arg(&arguments, "entity_id", true)?.unwrap_or_default();
-                let entity_type = str_arg(&arguments, "entity_type", false)?.unwrap_or_else(|| "Event".to_string());
+                let entity_type = str_arg(&arguments, "entity_type", false)?
+                    .unwrap_or_else(|| "Event".to_string());
                 let project = str_arg(&arguments, "project", false)?.unwrap_or_default();
                 let details = str_arg(&arguments, "details", true)?.unwrap_or_default();
                 let ctx = serde_json::json!({
@@ -215,16 +250,19 @@ impl DtRouter {
                 });
                 let engine = rt.hook_engine.clone();
                 let bridge = rt.kg_bridge.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::event::handle_event(
-                            "mcp_event".to_string(), ctx.to_string(), engine, bridge,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::event::handle_event(
+                                "mcp_event".to_string(),
+                                ctx.to_string(),
+                                engine,
+                                bridge,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -240,16 +278,17 @@ impl DtRouter {
                 let project = str_arg(&arguments, "project", false)?;
                 let g = rt.graph.clone();
                 let acc = rt.sync_acc.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::learn::handle_learn(
-                            task, entities, pattern, pitfalls, decisions, thread_id, success, project, g, acc,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::learn::handle_learn(
+                                task, entities, pattern, pitfalls, decisions, thread_id, success,
+                                project, g, acc,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -266,34 +305,52 @@ impl DtRouter {
                 let scan = rt.scan_config.clone();
                 if all {
                     let projects = rt.projects.clone();
-                    let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(digital_twin::interfaces::cli::build::handle_build_all(
-                                projects, full, true, true, g, v, e, snap,
-                                batch.expect("config.yaml batch 缺失"), scan.expect("scan 配置缺失"),
-                            ))
-                    }))
-
+                    let out = tokio::task::spawn_blocking(move || {
+                        capture_stdout(move || {
+                            tokio::runtime::Runtime::new().unwrap().block_on(
+                                digital_twin::interfaces::cli::build::handle_build_all(
+                                    projects,
+                                    full,
+                                    true,
+                                    true,
+                                    g,
+                                    v,
+                                    e,
+                                    snap,
+                                    batch.expect("config.yaml batch 缺失"),
+                                    scan.expect("scan 配置缺失"),
+                                ),
+                            )
+                        })
+                    })
                     .await
-
                     .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                     Ok(out)
                 } else {
                     let path = str_arg(&arguments, "path", true)?.unwrap_or_default();
                     let path = std::path::PathBuf::from(path);
-                    let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(digital_twin::interfaces::cli::build::handle_build(
-                                path, name, None, full, true, true, g, v, e, snap,
-                                batch.expect("config.yaml batch 缺失"), scan.expect("scan 配置缺失"),
-                            ))
-                    }))
-
+                    let out = tokio::task::spawn_blocking(move || {
+                        capture_stdout(move || {
+                            tokio::runtime::Runtime::new().unwrap().block_on(
+                                digital_twin::interfaces::cli::build::handle_build(
+                                    path,
+                                    name,
+                                    None,
+                                    full,
+                                    true,
+                                    true,
+                                    g,
+                                    v,
+                                    e,
+                                    snap,
+                                    batch.expect("config.yaml batch 缺失"),
+                                    scan.expect("scan 配置缺失"),
+                                ),
+                            )
+                        })
+                    })
                     .await
-
                     .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                     Ok(out)
@@ -303,16 +360,20 @@ impl DtRouter {
                 let config_chunks = bool_arg(&arguments, "config_chunks")?.unwrap_or(false);
                 let g = rt.graph.clone();
                 let q = rt.queue.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::sync::handle_kg_sync(
-                            false, None, config_chunks, g, q,
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::sync::handle_kg_sync(
+                                false,
+                                None,
+                                config_chunks,
+                                g,
+                                q,
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -322,50 +383,73 @@ impl DtRouter {
                 let v = rt.vector.clone();
                 let snap = rt.snapshot.clone();
                 let e = rt.embed.clone();
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(digital_twin::interfaces::cli::cleanup::run_health(
-                            g.as_deref(), v.as_deref(), snap.as_deref(), e.as_deref(),
-                        ))
-                }))
-
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(
+                            digital_twin::interfaces::cli::cleanup::run_health(
+                                g.as_deref(),
+                                v.as_deref(),
+                                snap.as_deref(),
+                                e.as_deref(),
+                            ),
+                        )
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
             }
             "dt_backup" => {
-                let action = str_arg(&arguments, "action", false)?.unwrap_or_else(|| "backup".to_string());
+                let action =
+                    str_arg(&arguments, "action", false)?.unwrap_or_else(|| "backup".to_string());
                 let date = str_arg(&arguments, "date", false)?;
-                let out = tokio::task::spawn_blocking(move || capture_stdout(move || {
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    match action.as_str() {
-                        "list" => {
-                            let entries = rt.block_on(digital_twin::interfaces::cli::backup::list_backups())?;
-                            println!("{}", serde_json::to_string_pretty(&entries).unwrap_or_default());
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        match action.as_str() {
+                            "list" => {
+                                let entries = rt.block_on(
+                                    digital_twin::interfaces::cli::backup::list_backups(),
+                                )?;
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&entries).unwrap_or_default()
+                                );
+                            }
+                            "restore" => {
+                                let d =
+                                    date.ok_or_else(|| anyhow::anyhow!("restore 需要 date 参数"))?;
+                                rt.block_on(
+                                    digital_twin::interfaces::cli::backup::restore_backup(&d),
+                                )?;
+                                println!("恢复完成: {d}");
+                            }
+                            "verify" => {
+                                let d =
+                                    date.ok_or_else(|| anyhow::anyhow!("verify 需要 date 参数"))?;
+                                let report = rt.block_on(
+                                    digital_twin::interfaces::cli::backup::verify_backup_files(&d),
+                                )?;
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                                );
+                            }
+                            _ => {
+                                let report = rt.block_on(
+                                    digital_twin::interfaces::cli::backup::create_backup(),
+                                )?;
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                                );
+                            }
                         }
-                        "restore" => {
-                            let d = date.ok_or_else(|| anyhow::anyhow!("restore 需要 date 参数"))?;
-                            rt.block_on(digital_twin::interfaces::cli::backup::restore_backup(&d))?;
-                            println!("恢复完成: {d}");
-                        }
-                        "verify" => {
-                            let d = date.ok_or_else(|| anyhow::anyhow!("verify 需要 date 参数"))?;
-                            let report = rt.block_on(digital_twin::interfaces::cli::backup::verify_backup_files(&d))?;
-                            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
-                        }
-                        _ => {
-                            let report = rt.block_on(digital_twin::interfaces::cli::backup::create_backup())?;
-                            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
-                        }
-                    }
-                    Ok(())
-                }))
-
+                        Ok(())
+                    })
+                })
                 .await
-
                 .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
 
                 Ok(out)
@@ -395,9 +479,10 @@ fn str_arg(arguments: &Value, key: &str, required: bool) -> Result<Option<String
 
 fn int_arg(arguments: &Value, key: &str) -> Result<Option<u64>, ToolError> {
     match arguments.get(key) {
-        Some(Value::Number(n)) => n.as_u64().map(Some).ok_or_else(|| {
-            ToolError::InvalidParameters(format!("参数 {key} 应为整数"))
-        }),
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ToolError::InvalidParameters(format!("参数 {key} 应为整数"))),
         Some(Value::Null) | None => Ok(None),
         Some(v) => Err(ToolError::InvalidParameters(format!(
             "参数 {key} 应为整数, 实际: {v}"
@@ -481,7 +566,7 @@ impl Router for DtRouter {
             ),
             Tool::new(
                 "dt_memorize".to_string(),
-                "写入知识节点到KG(架构决策/用户说记住)。type: Decision/KnowledgeAdded/Environment/Dependencies".to_string(),
+                "写入知识节点到KG(架构决策/用户说记住)。type: Decision/KnowledgeAdded/Environment/Dependencies。action: write(默认)/delete/update——delete 删除记忆(图+向量), update 版本化更新(配 supersede 指定旧ID)".to_string(),
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -489,7 +574,9 @@ impl Router for DtRouter {
                         "entity_id": {"type": "string", "description": "唯一标识"},
                         "entity_type": {"type": "string", "description": "实体类型"},
                         "project": {"type": "string", "description": "所属项目"},
-                        "details": {"type": "string", "description": "详细内容"}
+                        "details": {"type": "string", "description": "详细内容"},
+                        "action": {"type": "string", "description": "write(默认)|delete|update/supersede。AI 验证记忆失效后: 完全无用→delete, 部分过时→update+supersede"},
+                        "supersede": {"type": "string", "description": "版本化更新时被取代的旧 entity_id"}
                     },
                     "required": ["type", "entity_id", "details"]
                 }),
@@ -614,8 +701,12 @@ async fn main() -> anyhow::Result<()> {
     let _log_guard = digital_twin::shared::logging::init::init_logging()?;
 
     let rt = DtRuntime::connect().await;
-    tracing::info!("dt-mcp: 运行时连接完成 (graph={} vector={} embed={})",
-        rt.graph.is_some(), rt.vector.is_some(), rt.embed.is_some());
+    tracing::info!(
+        "dt-mcp: 运行时连接完成 (graph={} vector={} embed={})",
+        rt.graph.is_some(),
+        rt.vector.is_some(),
+        rt.embed.is_some()
+    );
     let router = RouterService(DtRouter { rt: Arc::new(rt) });
     let server = Server::new(router);
     let transport = ByteTransport::new(tokio::io::stdin(), tokio::io::stdout());

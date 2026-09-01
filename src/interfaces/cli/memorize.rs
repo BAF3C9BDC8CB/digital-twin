@@ -8,12 +8,17 @@ use crate::application::knowledge::knowledge::service::{
     DefaultKnowledgeService, KnowledgeService,
 };
 use crate::application::sync::batch::SyncAccumulator;
-use crate::domain::traits::GraphRepository;
+use crate::domain::traits::{EmbedService, GraphRepository, VectorRepository};
 
 /// 处理 `dt memorize`——写入知识条目（Knowledge、Experience、Concept、Domain、Playbook）。
 ///
 /// `graph` 必须由调用方预先连接。
 /// `sync_acc` 将节点入队，供后台（非阻塞）同步到 Qdrant。
+///
+/// 支持三种 action：
+/// - 默认（write）：写入/覆盖知识条目
+/// - `--delete <entity_id>`：删除一条知识/记忆（图 + 向量）
+/// - `--supersede <old_id>`：版本化更新（新节点 EVOLVED_FROM 旧节点，旧节点置 archived）
 pub async fn handle_memorize(
     knowledge_type: String,
     entity_id: String,
@@ -22,10 +27,109 @@ pub async fn handle_memorize(
     details: String,
     graph: Option<Arc<dyn GraphRepository>>,
     sync_acc: Option<Arc<SyncAccumulator>>,
+    action: Option<String>,
+    supersede: Option<String>,
+    vector: Option<Arc<dyn VectorRepository>>,
+    embed: Option<Arc<dyn EmbedService>>,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "dt CLI: memorize --type {knowledge_type} --entity-id {entity_id} --details {details}",
     );
+
+    let action = action.as_deref().unwrap_or("write").to_lowercase();
+
+    // ── 删除路径：AI 验证记忆失效后处置 ──────────────────────────
+    if action == "delete" {
+        let svc = graph
+            .as_ref()
+            .map(|g| DefaultKnowledgeService::new(Arc::clone(g)));
+        match svc {
+            Some(svc) => {
+                let entity_id_for_delete = if entity_id.is_empty() {
+                    // 兼容：--delete <id> 时 entity_id 参数位可能为空，用第一个非空参数
+                    details.trim()
+                } else {
+                    entity_id.as_str()
+                };
+                if entity_id_for_delete.is_empty() {
+                    eprintln!("删除失败: 未提供 entity_id");
+                    return Ok(());
+                }
+                match svc.delete_knowledge(entity_id_for_delete).await {
+                    Ok(()) => println!("已删除: id={}", entity_id_for_delete),
+                    Err(e) => eprintln!("删除失败: {e}"),
+                }
+                // 显式删除 Qdrant 向量（svc 无 vector 时兜底；delete_knowledge 内部
+                // 有 vector 时也会删，这里是双保险）
+                if let Some(ref v) = vector {
+                    if let Err(e) = crate::application::sync::kg_bridge::delete_kg_vector(
+                        v.as_ref(),
+                        entity_id_for_delete,
+                    )
+                    .await
+                    {
+                        eprintln!("向量删除失败(图已删): {e}");
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("图数据库不可用——删除未执行");
+                eprintln!("删除失败: 图数据库不可用");
+            }
+        }
+        return Ok(());
+    }
+
+    // ── 版本化更新路径：AI 验证记忆部分过时后处置 ────────────────
+    if action == "update" || action == "supersede" {
+        let old_id = supersede
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&entity_id);
+        // 带向量化构造：update_knowledge 内部会删旧向量 + 建新向量
+        let svc = match (graph.as_ref(), embed.as_ref(), vector.as_ref()) {
+            (Some(g), Some(e), Some(v)) => Some(DefaultKnowledgeService::with_vectorization(
+                Arc::clone(g),
+                Arc::clone(e),
+                Arc::clone(v),
+            )),
+            (Some(g), _, _) => Some(DefaultKnowledgeService::new(Arc::clone(g))),
+            _ => None,
+        };
+        match svc {
+            Some(svc) => {
+                match svc
+                    .update_knowledge(old_id, &details, "ai-verification")
+                    .await
+                {
+                    Ok(()) => {
+                        println!(
+                            "已更新: {} → 新版本 (diff={})",
+                            old_id,
+                            details.chars().take(50).collect::<String>()
+                        );
+                        // 旧节点向量删除兜底（update_knowledge 有 vector 时内部已删）
+                        if let Some(ref v) = vector {
+                            if let Err(e) = crate::application::sync::kg_bridge::delete_kg_vector(
+                                v.as_ref(),
+                                old_id,
+                            )
+                            .await
+                            {
+                                eprintln!("旧版本向量删除失败(图已更新): {e}");
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("更新失败: {e}"),
+                }
+            }
+            None => {
+                tracing::warn!("图数据库不可用——更新未执行");
+                eprintln!("更新失败: 图数据库不可用");
+            }
+        }
+        return Ok(());
+    }
 
     let project_name = project.as_deref().unwrap_or("unknown");
     let etype = entity_type.as_deref().unwrap_or(&knowledge_type);

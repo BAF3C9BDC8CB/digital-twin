@@ -57,10 +57,13 @@ impl CrossWorldSearch {
         rows.into_iter()
             .filter_map(|row| {
                 let payload = row.get("payload").cloned().unwrap_or_default();
-                let score = row
-                    .get("score")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
+                // 过滤已归档版本（supersede 后的旧节点）。旧节点向量在
+                // supersede 时已被删除，但兜底再查一次 payload.status。
+                let status = payload.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if status == "archived" {
+                    return None;
+                }
+                let score = row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 if score < 0.3 {
                     return None; // 分数阈值, 低相关不召回
                 }
@@ -173,6 +176,7 @@ impl CrossWorldSearch {
         let cypher = format!(
             "MATCH (n) WHERE (n:Modification OR n:Deployment OR n:ConfigChange OR \
              n:BugFix OR n:Decision OR n:Conversation OR n:Session OR n:Knowledge) \
+             AND coalesce(n.status, 'active') <> 'archived' \
              AND ({}){project_filter}\
              RETURN labels(n)[0] AS type, coalesce(n.name, n.entity_id, n.session_id, '') AS name, \
                     coalesce(n.details, n.summary, n.content, '') AS desc, elementId(n) AS eid, \
@@ -220,10 +224,7 @@ impl CrossWorldSearch {
                             .to_string(),
                         file_type: None,
                         file_type_label: None,
-                        score: row
-                            .get("score")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0),
+                        score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
                         source_ref: None,
                         metadata: None,
                         file_path: None,
@@ -298,7 +299,6 @@ mod tests {
             Ok(crate::domain::types::HealthStatus::Healthy)
         }
     }
-
 
     #[tokio::test]
     async fn memory_world_project_filter_adds_condition() {

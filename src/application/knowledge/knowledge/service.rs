@@ -75,6 +75,15 @@ pub trait KnowledgeService: Send + Sync {
         diff: &str,
         session_id: &str,
     ) -> Result<(), DtError>;
+
+    /// 删除一条知识/记忆节点（图 + 向量原子删除）。
+    ///
+    /// 用于 AI 验证记忆失效后的处置：
+    /// - 图侧：`MATCH (n) WHERE n.knowledge_id = $id DELETE n`
+    /// - 向量侧：删除 Qdrant `kg_nodes` 中 business_id 匹配的 point
+    ///
+    /// 若节点不存在返回 Ok(())（幂等删除）。
+    async fn delete_knowledge(&self, entity_id: &str) -> Result<(), DtError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +197,7 @@ impl DefaultKnowledgeService {
         };
 
         let props = serde_json::json!({
+            "knowledge_id": knowledge.knowledge_id,
             "name": knowledge.name,
             "title": knowledge.title,
             "domain": knowledge.domain,
@@ -616,8 +626,9 @@ impl KnowledgeService for DefaultKnowledgeService {
         let version_id = format!("dt://knowledge-version/{}/v{}", knowledge_id, new_version);
         let now = chrono::Utc::now().to_rfc3339();
 
-        // 2. 创建新版本节点，从旧节点复制属性。
+        // 2. 创建新版本节点，从旧节点复制属性，应用 diff 更新内容。
         // Cypher 从旧节点读取、创建新节点并将二者关联。
+        // 旧节点置 status=archived（不再被检索召回），新节点 status=active。
         let write_cypher = r#"
             MATCH (old:Knowledge {knowledge_id: $knowledge_id})
             CREATE (new:Knowledge {
@@ -625,8 +636,8 @@ impl KnowledgeService for DefaultKnowledgeService {
                 name: old.name,
                 title: old.title,
                 domain: old.domain,
-                summary: old.summary,
-                content: old.content,
+                summary: $diff,
+                content: $diff,
                 definition: old.definition,
                 source: old.source,
                 project: old.project,
@@ -634,7 +645,8 @@ impl KnowledgeService for DefaultKnowledgeService {
                 verified_by: old.verified_by,
                 created_at: old.created_at,
                 updated_at: $updated_at,
-                version: $new_version
+                version: $new_version,
+                status: 'active'
             })
             CREATE (new)-[:EVOLVED_FROM]->(old)
             CREATE (kv:KnowledgeVersion {
@@ -646,7 +658,9 @@ impl KnowledgeService for DefaultKnowledgeService {
                 timestamp: $timestamp
             })
             CREATE (kv)-[:RECORDS]->(new)
-            SET old.updated_at = $updated_at
+            SET old.updated_at = $updated_at,
+                old.status = 'archived',
+                old.superseded_by = $new_knowledge_id
         "#;
 
         let mut write_params = std::collections::HashMap::new();
@@ -656,7 +670,7 @@ impl KnowledgeService for DefaultKnowledgeService {
         );
         write_params.insert(
             "new_knowledge_id".into(),
-            serde_json::Value::String(new_knowledge_id),
+            serde_json::Value::String(new_knowledge_id.clone()),
         );
         write_params.insert("new_version".into(), serde_json::json!(new_version));
         write_params.insert("version_id".into(), serde_json::Value::String(version_id));
@@ -666,9 +680,74 @@ impl KnowledgeService for DefaultKnowledgeService {
             serde_json::Value::String(session_id.to_string()),
         );
         write_params.insert("timestamp".into(), serde_json::Value::String(now.clone()));
-        write_params.insert("updated_at".into(), serde_json::Value::String(now));
+        write_params.insert("updated_at".into(), serde_json::Value::String(now.clone()));
 
         self.graph.write_query(write_cypher, write_params).await?;
+
+        // 3. 新版本节点向量化（否则新内容检索不到）。
+        // 同时删除旧节点向量，防止旧内容继续被召回。
+        tracing::debug!(
+            "[update_knowledge] 向量化条件: self.embed={} self.vector={}",
+            self.embed.is_some(),
+            self.vector.is_some()
+        );
+        if let Some(ref vector) = self.vector {
+            crate::application::sync::kg_bridge::delete_kg_vector(vector.as_ref(), knowledge_id)
+                .await?;
+            let new_knowledge = Knowledge {
+                knowledge_id: new_knowledge_id.clone(),
+                name: diff.split([';', '\n']).next().unwrap_or("").trim().to_string(),
+                title: String::new(),
+                domain: String::new(),
+                summary: diff.to_string(),
+                content: diff.to_string(),
+                definition: String::new(),
+                source: KnowledgeSource::AiSession,
+                project: String::new(),
+                scope: String::new(),
+                confidence: 0.7,
+                verified_by: None,
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                version: new_version,
+            };
+            if let Err(e) = self.auto_vectorize_knowledge(&new_knowledge).await {
+                tracing::warn!("update_knowledge 新版本向量化失败：{e}");
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn delete_knowledge(&self, entity_id: &str) -> Result<(), DtError> {
+        // 图侧：探测所有业务 ID 键（与 business_id 的 21 键优先级一致），
+        // 删除匹配的节点及其关系。幂等：无匹配则无操作。
+        let delete_cypher = r#"
+            MATCH (n)
+            WHERE n.entity_id = $id OR n.knowledge_id = $id OR n.concept_id = $id
+               OR n.experience_id = $id OR n.playbook_id = $id OR n.domain_id = $id
+               OR n.server_id = $id OR n.database_id = $id OR n.service_id = $id
+               OR n.instance_id = $id OR n.endpoint_id = $id OR n.doc_id = $id
+               OR n.config_id = $id OR n.thread_id = $id OR n.requirement_id = $id
+               OR n.decision_id = $id OR n.event_id = $id OR n.session_id = $id
+               OR n.version_id = $id OR n.observation_id = $id OR n.analysis_id = $id
+            DETACH DELETE n
+        "#;
+        let mut params = std::collections::HashMap::new();
+        params.insert(
+            "id".into(),
+            serde_json::Value::String(entity_id.to_string()),
+        );
+        self.graph.write_query(delete_cypher, params).await?;
+
+        // 向量侧：删除 kg_nodes 中 business_id 匹配的 point。
+        // 与图侧删除保持同步，防止向量残留导致 stale 记忆被召回。
+        if let Some(ref vector) = self.vector {
+            crate::application::sync::kg_bridge::delete_kg_vector(vector.as_ref(), entity_id)
+                .await?;
+        }
+
+        tracing::info!("[knowledge] 已删除实体: {entity_id}");
         Ok(())
     }
 }
