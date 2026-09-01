@@ -4,13 +4,14 @@ providers:
   rerank_provider: siliconflow
   llm_provider: siliconflow
   siliconflow:
-    max_concurrent: 8
+    max_concurrent: 48
     url: http://124.221.200.116:3000/v1
     api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
     # model_llm: deepseek-ai/DeepSeek-V3.2
-    model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+    # model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+    model_llm: tencent/Hunyuan-MT-7B
     max_tokens: 512
   xinference:
     url: http://localhost:9997/v1
@@ -20,8 +21,8 @@ providers:
     model_llm: qwen3.5
     max_tokens: 512
   openai_compatible:
-    url: https://openrouter.ai/api
-    api_key: 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
+    url: http://124.221.200.116:3000/v1
+    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
     protocol: openai
     model_llm: ox-alpha
     max_concurrent: 24
