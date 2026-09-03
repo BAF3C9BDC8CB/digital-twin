@@ -38,3 +38,13 @@ processors:
 llm:
   temperature: 0.1
   max_tokens: 4096
+kg_router:
+  enabled: true
+  early_exit:
+    # L0 提前拦截：纯规则判断查询是否值得检索，拦截"你好/谢谢/1+1/天气不错"等闲聊。
+    # 命中任一实体/检索意图特征必放行；未命中闲聊词则默认放行（保守策略）。
+    enabled: true
+  result_filter:
+    # 结果过滤（第三层）：默认关闭，保证与 dt search 结果一致；开启后复用 LLM 移除不相关项。
+    enabled: false
+    threshold: 0.6

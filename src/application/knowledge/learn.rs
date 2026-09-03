@@ -561,6 +561,9 @@ mod tests {
             self.update_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+        async fn delete_knowledge(&self, _entity_id: &str) -> Result<(), DtError> {
+            Ok(())
+        }
     }
 
     fn spy() -> (

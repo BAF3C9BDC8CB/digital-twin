@@ -343,6 +343,11 @@ pub struct KgRouterConfig {
     #[serde(default)]
     pub result_filter: ResultFilterConfig,
 
+    /// L0 提前拦截（early-exit）配置：判断查询是否值得检索，避免闲聊/寒暄
+    /// 也触发搜索。对应文档「三级 Router」的 L0 Gate 层。
+    #[serde(default)]
+    pub early_exit: EarlyExitConfig,
+
     /// 可观测性配置。
     #[serde(default)]
     pub observability: ObservabilityConfig,
@@ -353,8 +358,28 @@ impl Default for KgRouterConfig {
         Self {
             enabled: true,
             result_filter: ResultFilterConfig::default(),
+            early_exit: EarlyExitConfig::default(),
             observability: ObservabilityConfig::default(),
         }
+    }
+}
+
+/// L0 提前拦截（early-exit）配置。
+///
+/// 在 `dt router` 真正发起检索之前，先用纯规则判断查询是否值得搜索：
+/// 命中项目/服务/类名/配置名等实体特征或检索意图词 → 放行；
+/// 只有寒暄/算术/通用闲聊 → 直接返回「无需检索」，省掉一次 KG 搜索。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EarlyExitConfig {
+    /// 启用 L0 提前拦截。默认开启——仅拦截明显无需检索的查询，
+    /// 命中任一实体/意图特征即放行，不影响 `dt search` 一致性。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for EarlyExitConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 
