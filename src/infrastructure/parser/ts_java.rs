@@ -246,7 +246,6 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-
     #[test]
     fn can_parse_java_file() {
         assert!(TsJavaParser.can_parse(&PathBuf::from("Foo.java")));

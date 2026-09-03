@@ -4,8 +4,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 fn dt_mcp_bin() -> String {
-    std::env::var("CARGO_BIN_EXE_dt_mcp")
-        .unwrap_or_else(|_| "target/debug/dt-mcp".to_string())
+    std::env::var("CARGO_BIN_EXE_dt_mcp").unwrap_or_else(|_| "target/debug/dt-mcp".to_string())
 }
 
 fn run_mcp(input: &str) -> String {
@@ -16,7 +15,12 @@ fn run_mcp(input: &str) -> String {
         .spawn()
         .expect("failed to spawn dt-mcp");
 
-    child.stdin.as_mut().unwrap().write_all(input.as_bytes()).unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
     drop(child.stdin.take());
 
     let output = child.wait_with_output().expect("failed to wait dt-mcp");
@@ -39,12 +43,14 @@ fn test_mcp_initialize_and_list_tools() {
     let lines: Vec<&str> = out.lines().collect();
     assert!(lines.len() >= 2, "expected >=2 response lines, got: {out}");
 
-    let init: serde_json::Value = serde_json::from_str(lines[0]).expect("init response should be JSON");
+    let init: serde_json::Value =
+        serde_json::from_str(lines[0]).expect("init response should be JSON");
     assert_eq!(init["id"], 1);
     assert_eq!(init["result"]["serverInfo"]["name"], "digital-twin");
     assert!(init["result"]["capabilities"]["tools"].is_object());
 
-    let tools: serde_json::Value = serde_json::from_str(lines[1]).expect("tools/list response should be JSON");
+    let tools: serde_json::Value =
+        serde_json::from_str(lines[1]).expect("tools/list response should be JSON");
     assert_eq!(tools["id"], 2);
     let names: Vec<&str> = tools["result"]["tools"]
         .as_array()
@@ -55,15 +61,26 @@ fn test_mcp_initialize_and_list_tools() {
     assert_eq!(
         names,
         vec![
-            "dt_search_kg", "dt_search", "dt_sense", "dt_memorize", "dt_event",
-            "dt_learn", "dt_build", "dt_kg_sync", "dt_health", "dt_backup",
+            "dt_search_kg",
+            "dt_search",
+            "dt_sense",
+            "dt_memorize",
+            "dt_event",
+            "dt_learn",
+            "dt_build",
+            "dt_kg_sync",
+            "dt_health",
+            "dt_backup",
         ],
         "tool list must match required 10 dt_* tools"
     );
 
     // 抽查 schema: dt_search_kg 要求 query 必填
     let tools_arr = tools["result"]["tools"].as_array().unwrap();
-    let search_tool = tools_arr.iter().find(|t| t["name"] == "dt_search_kg").unwrap();
+    let search_tool = tools_arr
+        .iter()
+        .find(|t| t["name"] == "dt_search_kg")
+        .unwrap();
     assert_eq!(search_tool["inputSchema"]["required"][0], "query");
 }
 
@@ -77,8 +94,14 @@ fn test_mcp_health_call() {
 
     let out = run_mcp(input);
     let lines: Vec<&str> = out.lines().collect();
-    let call: serde_json::Value = serde_json::from_str(lines[1]).expect("call response should be JSON");
+    let call: serde_json::Value =
+        serde_json::from_str(lines[1]).expect("call response should be JSON");
     assert_eq!(call["id"], 2);
-    let text = call["result"]["content"][0]["text"].as_str().expect("should have text");
-    assert!(text.contains("正在检查后端健康状态"), "health output: {text}");
+    let text = call["result"]["content"][0]["text"]
+        .as_str()
+        .expect("should have text");
+    assert!(
+        text.contains("正在检查后端健康状态"),
+        "health output: {text}"
+    );
 }

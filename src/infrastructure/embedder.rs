@@ -5,7 +5,7 @@
 //! 构建 provider 路由器。
 
 use crate::domain::error::DtError;
-use crate::domain::traits::{EmbedService, RerankService};
+use crate::domain::traits::{EmbedService, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -153,6 +153,12 @@ pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
 
 /// 构建一个作为 [`RerankService`] 使用的 [`EmbedProviderRouter`]（S5 首个业务调用点）。
 pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService> {
+    Arc::new(build_provider_router(cfg))
+}
+
+/// 构建一个作为 [`LlmService`] 使用的 [`EmbedProviderRouter`]——复用现有 LLM 接入，
+/// 供鉴别/过滤等需要自然语言判别的调用使用。与 embed/rerank 共享同一 provider 配置。
+pub fn create_llm_router(cfg: ProviderConfig) -> Arc<dyn LlmService> {
     Arc::new(build_provider_router(cfg))
 }
 

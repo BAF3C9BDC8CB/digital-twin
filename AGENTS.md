@@ -2,6 +2,10 @@
 
 This project uses a Memgraph knowledge graph for persistent memory.
 
+> 🧭 **适用对象**：本文档是**完整 KG 行为准则汇总**，专供**非 Hermes 环境**使用——包括 OpenCode、直接读目录的其他 agent、以及委派子代理的任务书（子代理不注入 DT-SENSE 简报，任务书是它唯一的 KG 准则来源）。
+>
+> **Hermes 环境无需读取本文**：KG 行为准则已由 dt-memory 插件 `system_prompt_block` 编程注入（cwd 无关、每会话必生效），Hermes 项目上下文由优先级更高的 `.hermes.md` 承接。**Hermes 下**再读本文的全局规则会与插件注入重复，故项目根以 `.hermes.md` 为准，本文仅服务非 Hermes。
+
 ## 执行顺序
 
 1. **环境感知** — `dt_sense()`（CLI: `dt sense --json`）：项目定位/注册匹配/索引状态。已索引返回简报，未注册返回候选项目报告。
@@ -61,3 +65,16 @@ This project uses a Memgraph knowledge graph for persistent memory.
 | pod_event_occurred / k8s_synced → :PodEvent / :K8sSyncEvent | ❌ 未落地 | 同上 |
 
 **实际操作**：无需手动 `dt event`（事件路径未实现）；要留长期记忆用 `dt_memorize` / 说"记忆/记一下"。会话记录目前不进 KG——历史会话查询靠 memory 世界的 :Knowledge 记忆（llm_extract 自动提炼）。
+
+---
+
+## 本项目特有补充（在全局准则之上，本项目落地细节）
+
+### 项目名与路径
+- 注册项目名：`digital-twin-v2`；路径：`/data/myProject/digital-twin-v2`。
+- 本项目是 KG 工具链自身，代码实体在 `world=code`、文档在 `world=doc`、记忆在 `world=memory`。
+
+### 本项目构建注意
+- LLM 并发默认 `glmcoding.max_concurrent: 4`（32 会触发 429/502 限流，见 2026-08-09 排查）。
+- API Key 用环境变量，禁止写入本文件或提交到 Git；配置用空值占位。
+- 单文件更新走 `scripts/opencode-after-edit.sh`（`dt build --file`），不当作全量构建替代品。

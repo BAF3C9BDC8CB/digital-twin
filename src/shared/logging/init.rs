@@ -124,8 +124,7 @@ pub fn init_logging() -> anyhow::Result<LogGuard> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .or_else(|_| {
             tracing_subscriber::EnvFilter::try_new(
-                std::env::var("DT_LOG_LEVEL")
-                    .unwrap_or_else(|_| DEFAULT_FILTER.into()),
+                std::env::var("DT_LOG_LEVEL").unwrap_or_else(|_| DEFAULT_FILTER.into()),
             )
         })
         .unwrap_or_else(|_| DEFAULT_FILTER.into());

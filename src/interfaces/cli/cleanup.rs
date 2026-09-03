@@ -196,7 +196,11 @@ pub async fn run_clean(
         combined.nodes_deleted,
         combined.relationships_deleted,
         combined.qdrant_collections_removed,
-        if combined.snapshots_cleared { "yes" } else { "no" },
+        if combined.snapshots_cleared {
+            "yes"
+        } else {
+            "no"
+        },
         combined.elapsed_ms,
     );
 
@@ -331,7 +335,9 @@ pub async fn run_health(
                     tracing::debug!("dt health: 索引对账一致 (Memgraph {mg} = Qdrant {qd})");
                 } else {
                     println!("  ⚠️ 索引对账 : Memgraph {mg} 方法 ≠ Qdrant {qd} 向量（索引漂移，建议 --full 重建）");
-                    tracing::warn!("dt health: 索引漂移 Memgraph {mg} ≠ Qdrant {qd},建议 --full 重建");
+                    tracing::warn!(
+                        "dt health: 索引漂移 Memgraph {mg} ≠ Qdrant {qd},建议 --full 重建"
+                    );
                     all_healthy = false;
                 }
             }

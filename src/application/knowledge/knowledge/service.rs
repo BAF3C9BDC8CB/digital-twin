@@ -696,7 +696,12 @@ impl KnowledgeService for DefaultKnowledgeService {
                 .await?;
             let new_knowledge = Knowledge {
                 knowledge_id: new_knowledge_id.clone(),
-                name: diff.split([';', '\n']).next().unwrap_or("").trim().to_string(),
+                name: diff
+                    .split([';', '\n'])
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
                 title: String::new(),
                 domain: String::new(),
                 summary: diff.to_string(),

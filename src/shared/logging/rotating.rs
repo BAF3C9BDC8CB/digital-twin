@@ -253,10 +253,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "dt-rotating-test-{tag}-{}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("dt-rotating-test-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
@@ -264,7 +261,10 @@ mod tests {
 
     #[test]
     fn parses_regular_and_seq_names() {
-        assert_eq!(parse_dt_name("dt.2026-08-13.log"), Some(("2026-08-13".into(), 0)));
+        assert_eq!(
+            parse_dt_name("dt.2026-08-13.log"),
+            Some(("2026-08-13".into(), 0))
+        );
         assert_eq!(
             parse_dt_name("dt.2026-08-13.2.log"),
             Some(("2026-08-13".into(), 2))
@@ -281,7 +281,7 @@ mod tests {
         let mut w = RotatingWriter::new(dir.clone(), 10, 30).unwrap();
         w.write_all(b"12345").unwrap(); // size 5
         w.write_all(b"67890").unwrap(); // size 10,未超
-        // 再写 10 字节触发轮转(10+10>10) → .1
+                                        // 再写 10 字节触发轮转(10+10>10) → .1
         w.write_all(b"abcdefghij").unwrap();
         // 验证:同日内存在两个序号文件
         let date = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -367,7 +367,11 @@ mod tests {
         let mut w = RotatingWriter::new(dir.clone(), 10 * 1024 * 1024, 30).unwrap();
         w.write_all(b"-more").unwrap();
         let link = fs::read_link(dir.join("dt.log")).unwrap();
-        assert_eq!(link, dir.join(format!("dt.{date}.5.log")), "应续写最大序号 .5");
+        assert_eq!(
+            link,
+            dir.join(format!("dt.{date}.5.log")),
+            "应续写最大序号 .5"
+        );
         let content = fs::read_to_string(dir.join(format!("dt.{date}.5.log"))).unwrap();
         assert!(content.ends_with("-more"));
         let _ = fs::remove_dir_all(&dir);
@@ -379,7 +383,10 @@ mod tests {
         fs::write(dir.join("dt.log"), "old-history").unwrap();
         let mut w = RotatingWriter::new(dir.clone(), 10 * 1024 * 1024, 30).unwrap();
         // dt.log 变软链
-        assert!(fs::symlink_metadata(dir.join("dt.log")).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(dir.join("dt.log"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
         // 有 legacy 归档
         let legacy = fs::read_dir(&dir)
             .unwrap()

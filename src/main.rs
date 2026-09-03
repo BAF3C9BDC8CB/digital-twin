@@ -277,6 +277,44 @@ enum Commands {
         #[arg(long = "config-chunks")]
         config_chunks: bool,
     },
+
+    /// 智能路由搜索 — 多层路由规则的增强版搜索。
+    ///
+    /// 自动分析查询意图，选择最佳检索策略，LLM 过滤结果。
+    /// 用法: dt router <query> [options]
+    Router {
+        /// 搜索查询字符串。
+        query: String,
+
+        /// 搜索世界限定。
+        #[arg(long = "world", default_value = "all")]
+        world: String,
+
+        /// 结果数量上限。
+        #[arg(long = "limit", default_value = "10")]
+        limit: usize,
+
+        /// 输出纯 JSON。
+        #[arg(long = "json")]
+        json: bool,
+
+        /// 限定到某个项目。
+        #[arg(long = "project", short = 'p')]
+        project: Option<String>,
+
+        /// 启用 LLM 智能过滤。
+        /// 未指定时读取配置 `kg_router.result_filter.enabled`。
+        #[arg(long = "filter", value_name = "BOOL")]
+        enable_filter: Option<bool>,
+
+        /// 过滤相关性阈值（0.0-1.0）。
+        #[arg(long = "threshold", default_value = "0.6")]
+        filter_threshold: f32,
+
+        /// 显示路由决策过程。
+        #[arg(long = "explain")]
+        explain: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -496,6 +534,31 @@ async fn main() -> anyhow::Result<()> {
                 memgraph
                     .as_ref()
                     .map(|c| c as &dyn digital_twin::domain::traits::GraphRepository),
+            )
+            .await?;
+            return Ok(());
+        }
+
+        // ---- CLI 模式: dt router (智能路由搜索) ----
+        Some(Commands::Router {
+            query,
+            world,
+            limit,
+            json,
+            project,
+            enable_filter,
+            filter_threshold,
+            explain,
+        }) => {
+            digital_twin::interfaces::cli::router::handle_router_search(
+                &query,
+                &world,
+                limit,
+                json,
+                &project,
+                enable_filter,
+                filter_threshold,
+                explain,
             )
             .await?;
             return Ok(());

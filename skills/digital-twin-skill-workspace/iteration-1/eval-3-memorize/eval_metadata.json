@@ -1,0 +1,19 @@
+{
+  "eval_id": 3,
+  "eval_name": "memorize",
+  "prompt": "记住：下次部署优先用蓝绿发布方案，只在周末切。",
+  "assertions": [
+    {
+      "text": "立即调用了 dt_memorize（而非仅口头答应）",
+      "expectation": "with_skill 输出应实际调用 dt_memorize 工具写入记忆。"
+    },
+    {
+      "text": "details 使用了结构化 key: value 格式且包含 name/content",
+      "expectation": "details 应为多行 key: value 结构，含 name 与 content 字段。"
+    },
+    {
+      "text": "提供了稳定的 entity_id",
+      "expectation": "entity_id 应为可读、带日期标识的字符串（如 blue-green-deploy-pragma-YYYY-MM）。"
+    }
+  ]
+}

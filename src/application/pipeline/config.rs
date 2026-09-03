@@ -38,6 +38,10 @@ pub struct PipelineConfig {
     /// 以及每项能力使用哪个模型。
     #[serde(default)]
     pub providers: Option<ProvidersConfig>,
+
+    /// KG Router 路由与过滤配置。
+    #[serde(default)]
+    pub kg_router: Option<KgRouterConfig>,
 }
 
 const fn default_enabled() -> bool {
@@ -328,6 +332,94 @@ impl Default for OpenAICompatibleProviderConfig {
     }
 }
 
+/// KG Router 配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KgRouterConfig {
+    /// 启用任务感知路由。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// 搜索结果智能过滤配置。
+    #[serde(default)]
+    pub result_filter: ResultFilterConfig,
+
+    /// 可观测性配置。
+    #[serde(default)]
+    pub observability: ObservabilityConfig,
+}
+
+impl Default for KgRouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            result_filter: ResultFilterConfig::default(),
+            observability: ObservabilityConfig::default(),
+        }
+    }
+}
+
+/// 搜索结果过滤配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResultFilterConfig {
+    /// 启用过滤功能。
+    /// 默认关闭——保证 `dt router` 结果与 `dt search` 一致；开启后复用现有 LLM
+    /// 移除与查询完全不符的结果（可通过配置文件或 `--filter true` 开启）。
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// 相关性阈值（0.0-1.0），低于此值的结果被移除。
+    #[serde(default = "default_filter_threshold")]
+    pub threshold: f32,
+
+    /// 过滤判断时 LLM 最大 token 数。
+    #[serde(default = "default_filter_max_tokens")]
+    pub max_tokens: u32,
+
+    /// 过滤判断时的温度参数（建议 0.0 确定性推理）。
+    #[serde(default)]
+    pub temperature: f32,
+}
+
+const fn default_filter_threshold() -> f32 {
+    0.6
+}
+
+const fn default_filter_max_tokens() -> u32 {
+    200
+}
+
+impl Default for ResultFilterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // 默认关闭，保证与 dt search 结果一致；可配置开启
+            threshold: default_filter_threshold(),
+            max_tokens: default_filter_max_tokens(),
+            temperature: 0.0,
+        }
+    }
+}
+
+/// 可观测性配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityConfig {
+    /// 记录所有 LLM 调用到 Memgraph。
+    #[serde(default = "default_true")]
+    pub log_calls: bool,
+
+    /// 记录过滤详情。
+    #[serde(default = "default_true")]
+    pub log_filter_results: bool,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            log_calls: true,
+            log_filter_results: true,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 加载
 // ---------------------------------------------------------------------------
@@ -403,8 +495,9 @@ impl Default for PipelineConfig {
             enabled: true,
             processors: ProcessorsConfig::default(),
             llm: Some(LlmConfig::default()),
-            ecosystem: None,
-            providers: None,
+            ecosystem: Some(EcosystemConfig::default()),
+            providers: Some(ProvidersConfig::default()),
+            kg_router: Some(KgRouterConfig::default()),
         }
     }
 }

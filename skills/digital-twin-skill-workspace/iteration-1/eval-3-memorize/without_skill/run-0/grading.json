@@ -1,0 +1,28 @@
+{
+  "eval_id": 3,
+  "eval_name": "memorize",
+  "config": "without_skill",
+  "expectations": [
+    {
+      "text": "立即调用了 dt_memorize（而非仅口头答应）",
+      "passed": true,
+      "evidence": "输出'已记住，并已通过 dt_memorize 写入知识图谱（memory world）'，明确调用 dt_memorize。"
+    },
+    {
+      "text": "使用了结构化 details 且包含 name/content",
+      "passed": false,
+      "evidence": "输出未展示结构化 details 的多行 key: value 装配，仅文字描述'部署策略:优先使用蓝绿发布'。无法确认 details 遵循了 name/content 结构化格式。"
+    },
+    {
+      "text": "提供了稳定的 entity_id",
+      "passed": false,
+      "evidence": "entity_id 为 deploy-blue-green-weekend，无日期标识，风格欠规范（对比 with_skill 的 deploy-blue-green-weekends-2026-09）。"
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.33
+  }
+}

@@ -11,6 +11,7 @@ pub mod event;
 pub mod learn;
 pub mod logs;
 pub mod memorize;
+pub mod router;
 pub mod search_render;
 pub mod sense;
 pub mod sync;

@@ -184,7 +184,10 @@ pub fn render_human(
     let mut order: Vec<String> = Vec::new();
     let mut buckets: HashMap<String, Vec<&SearchHit>> = HashMap::new();
     for h in &result.hits {
-        let key = h.project.clone().unwrap_or_else(|| "（无项目）".to_string());
+        let key = h
+            .project
+            .clone()
+            .unwrap_or_else(|| "（无项目）".to_string());
         if !buckets.contains_key(&key) {
             order.push(key.clone());
         }

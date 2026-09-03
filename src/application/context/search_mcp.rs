@@ -645,7 +645,9 @@ impl CrossWorldSearch {
             // （ensure_collection 非 code_methods 默认单向量）——按集合区分查询。
             let is_classes = col == crate::shared::collections::CODE_CLASSES;
             let search_res = if is_classes {
-                vector.search(col, query_vec.clone(), internal_limit as u64).await
+                vector
+                    .search(col, query_vec.clone(), internal_limit as u64)
+                    .await
             } else {
                 vector
                     .search_named(
@@ -731,7 +733,8 @@ impl CrossWorldSearch {
                                     continue;
                                 }
                                 if let Some(pr) = project {
-                                    if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr {
+                                    if p.get("project").and_then(|v| v.as_str()).unwrap_or("") != pr
+                                    {
                                         continue;
                                     }
                                 }
@@ -743,7 +746,9 @@ impl CrossWorldSearch {
                                     .unwrap_or_else(|| {
                                         format!(
                                             "{}:{}",
-                                            p.get("file_path").and_then(|v| v.as_str()).unwrap_or("?"),
+                                            p.get("file_path")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("?"),
                                             name
                                         )
                                     });
@@ -1021,10 +1026,8 @@ impl CrossWorldSearch {
                    collect(DISTINCT callee.name) AS callees,
                    collect(DISTINCT caller.name) AS callers
         "#;
-        let params = std::collections::HashMap::from([(
-            "ids".to_string(),
-            serde_json::Value::Array(ids),
-        )]);
+        let params =
+            std::collections::HashMap::from([("ids".to_string(), serde_json::Value::Array(ids))]);
         match graph.read_query(query, params).await {
             Ok(rows) => {
                 let Some(arr) = rows.as_array() else {
@@ -1050,7 +1053,8 @@ impl CrossWorldSearch {
                             })
                             .unwrap_or_default()
                     };
-                    let (classes, callees, callers) = (names("classes"), names("callees"), names("callers"));
+                    let (classes, callees, callers) =
+                        (names("classes"), names("callees"), names("callers"));
                     if classes.is_empty() && callees.is_empty() && callers.is_empty() {
                         continue;
                     }

@@ -1,0 +1,19 @@
+{
+  "eval_id": 1,
+  "eval_name": "locate-code",
+  "prompt": "帮我找到 EmbedService 类的实现代码，看看它的 embed_batch / health_check 方法是怎么写的。",
+  "assertions": [
+    {
+      "text": "执行了代码定位三段序（遍历利用了 dt_sense 或 dt_search_kg）",
+      "expectation": "with_skill 输出应体现先探查项目(dt_sense)再图谱定位(dt_search_kg world=code)，并在最后 read_file 验证实现。"
+    },
+    {
+      "text": "返回了文件路径和行号",
+      "expectation": "输出应包含 EmbedService 所在的 file_path 和 start_line（如 src/domain/traits.rs 342-348 附近）"
+    },
+    {
+      "text": "没有使用盲目的全局 grep 作为主要定位手段",
+      "expectation": "定位主要依赖 dt_search_kg(world=code)，而非直接 search_files 全库搜索。"
+    }
+  ]
+}

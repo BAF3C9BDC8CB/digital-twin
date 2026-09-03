@@ -2611,7 +2611,11 @@ mod tests {
             "kw1 种子(git)必须进池"
         );
         // exact 命中(0.95)优先于 substr(0.80)进池
-        let g_sem = seeds.iter().find(|s| s.business_id == "g1").unwrap().semantic;
+        let g_sem = seeds
+            .iter()
+            .find(|s| s.business_id == "g1")
+            .unwrap()
+            .semantic;
         assert_eq!(g_sem, 0.95);
     }
 

@@ -60,6 +60,20 @@ _MEMORY_INTENT_KEYWORDS = (
     "recall", "memory", "remember",
 )
 
+# 代码定位意图词：命中则自动 prefetch world=code（本次审计整改方向 C）。
+# 目标：大代码会话在深读码前，把已索引的代码符号命中前置注入，
+# 替代"靠模型自觉先查 KG"。相关度地板 + limit 控制注入量与 token 成本。
+_CODE_LOCATION_INTENT_KEYWORDS = (
+    "定位", "在哪", "哪里", "实现", "怎么实现", "查一下", "找到", "看下",
+    "分析", "封装", "逆向", "排查", "修复", "修改", "接口", "代码",
+    "调用链", "链路", "符号", "方法", "函数", "类",
+)
+# 代码世界检索参数：更小 limit（只给 top 候选）+ 更严地板防噪音
+_CODE_PREFETCH_LIMIT = 5
+_CODE_MIN_SCORE = 0.5
+# 代码命中过滤：跳过 mem- 白名单（代码实体 id 前缀为数字/dt://，会被记忆过滤误杀）
+
+
 # ---------------------------------------------------------------------------
 # Internal state
 # ---------------------------------------------------------------------------
@@ -166,9 +180,12 @@ class DtMemoryProvider(MemoryProvider):
             "需要历史记忆时用 MCP 工具 dt_search_kg 自行检索：\n"
             "- 记忆统一全局: dt_search_kg(world=memory, limit=5) 不分项目/全局，一次查完\n"
             "显式写入用 dt_memorize（记忆统一全局，details 内注明文件路径/位置便于定位）。\n"
-            "[DT 行为准则] 每任务先 dt_sense 感知；服务/配置/凭据/部署/历史决策先 dt_search_kg(world=memory) 查一次，\n"
-            "命中即事实，0 命中才读源码；定位代码用 dt_search_kg(world=code, project=注册项目名) 再读源码验证；\n"
-            "禁止伪造结果/输出密钥；hop≥1 只当线索；用户说\"记忆/记一下\"立即 dt_memorize。"
+            "[DT 行为准则] 代码类会话三段序（红线，读码前必做，逐条执行）：\n"
+            "  ① 环境感知：dt_sense() 拿项目简报/目录画像/关键实体（进项目目录第一步必做）；\n"
+            "  ② 定位先于读码：dt_search_kg(world=code, project=注册项目名) 定位目标符号/文件区间，命中即事实再读码验证；\n"
+            "  ③ 才读码：任一 read_file/search_files 目标为代码路径前，① ② 必须已完成，否则先回退补 ①②。\n"
+            "服务/配置/凭据/部署/历史决策 → dt_search_kg(world=memory) 查一次；命中即事实，0 命中才读源码。\n"
+            "禁止伪造结果/输出密钥；hop≥1 只当线索；用户说\"记忆/记一下\"立即 dt_memorize。\n"
         )
 
     # -----------------------------------------------------------------------
@@ -179,12 +196,30 @@ class DtMemoryProvider(MemoryProvider):
         q = query.lower()
         return any(kw.lower() in q for kw in _MEMORY_INTENT_KEYWORDS)
 
+    def _has_code_intent(self, query: str) -> bool:
+        """代码定位意图：定位/理解/修改某类/某文件/某符号。这类会话应
+        先经 world=code 定位再读码（本次审计整改方向 C）。"""
+        q = query.lower()
+        # 排除纯记忆/问候语，避免把"记住xx"误判为代码定位
+        if self._has_memory_intent(query):
+            return False
+        return any(kw.lower() in q for kw in _CODE_LOCATION_INTENT_KEYWORDS)
+
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         if not query or len(query.strip()) < _MIN_QUERY_LEN:
             return ""
         if self._context != "primary":
             return ""
-        # v2: 只有显式记忆意图词才触发检索；否则零注入（省 token）
+        # 方向 C：代码定位意图 → 自动 prefetch world=code（先于读码）
+        if self._has_code_intent(query):
+            code_text = self._prefetch_code(query)
+            if code_text:
+                return code_text
+            # 代码世界无命中或降级：不注入记忆，走 memory 分支（若有记忆意图）
+            if not self._has_memory_intent(query):
+                self._last_count = 0
+                return ""
+        # v2: 只有显式记忆意图词才触发记忆检索；否则零注入（省 token）
         if not self._has_memory_intent(query):
             self._last_count = 0
             return ""
@@ -274,6 +309,102 @@ class DtMemoryProvider(MemoryProvider):
         alt = snippet if body == title else title
         entry = f"- {body}{tag}" + (f" ({alt})" if alt and alt != body else "")
         return entry if body else ""
+
+    # -----------------------------------------------------------------------
+    # 方向 C：代码定位意图 → 自动 prefetch world=code（本次审计整改）
+    # -----------------------------------------------------------------------
+
+    def _search_world_code(
+        self, query: str, *, project: Optional[str], limit: int
+    ) -> List[Dict[str, Any]]:
+        """dt search --world code [--project <p>] — 返回代码候选首部。
+
+        代码实体 id 前缀为数字/dt://，不会被 _search_world 的记忆过滤
+        （mem-/hermes-/auto-）保留 —— 因此这里独立实现，不做记忆白名单过滤，
+        仅按相关度排序 + 地板过滤，返回 top-N 候选供模型定位。
+        """
+        cmd = [_DT_BIN, "search", "--json", "--limit", str(limit), "--world", "code"]
+        if project:
+            cmd += ["--project", project]
+        cmd.append(query)
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=_PREFETCH_TIMEOUT,
+            )
+            if r.returncode != 0:
+                return []
+            data = json.loads(r.stdout)
+        except Exception:
+            return []
+        hits = data.get("hits", [])
+        if not hits:
+            return []
+        # 仅按相关度排序 + 地板过滤（代码候选不带 mem- 前缀，无需记忆白名单）
+        hits = [h for h in hits if (h.get("score") or 0) >= _CODE_MIN_SCORE]
+        hits.sort(key=lambda h: h.get("score") or 0, reverse=True)
+        return hits[:limit]
+
+    def _render_code_hit(self, h: Dict[str, Any]) -> str:
+        """代码命中渲染：标题(file:line) + 签名 + project，供模型定位。"""
+        title = h.get("title") or h.get("name") or ""
+        path = h.get("file_path") or ""
+        line = h.get("start_line") or ""
+        sig = h.get("signature") or ""
+        proj = h.get("project") or ""
+        snippet = h.get("snippet") or h.get("llm_analysis") or ""
+        loc = f"{path}:{line}" if path else ""
+        body = f"{title} ({loc})" if loc else title
+        parts = [body]
+        if sig:
+            parts.append(f"签名: {sig[:120]}")
+        if snippet:
+            parts.append(f"摘要: {snippet[:160]}")
+        if proj:
+            parts.append(f"[{proj}]")
+        return " · ".join(p for p in parts if p)
+
+    def _prefetch_code(self, query: str) -> str:
+        """预取 world=code 候选，注入为可定位线索（不替代 dt_sense 简报）。
+
+        带 project 过滤时用会话推断的项目名；project=None（未注册）则
+        做一次全局 code 检索，命中即候选、0 命中则返回空（让上层降级为
+        dt_sense 简报 + 读盘兜底），避免宽泛检索刷 token。
+        """
+        project = self._project or None
+        hits = self._search_world_code(
+            query, project=project, limit=_CODE_PREFETCH_LIMIT
+        )
+        if not hits:
+            # 未注册项目（project 为默认值）时再试一次全局 code，避免漏掉跨项目符号
+            if project == _DEFAULT_PROJECT:
+                hits = self._search_world_code(
+                    query, project=None, limit=_CODE_PREFETCH_LIMIT
+                )
+            if not hits:
+                self._last_count = 0
+                return ""
+        lines = []
+        for h in hits:
+            body = self._render_code_hit(h)
+            if body:
+                lines.append(body)
+        # Hard cap
+        text_lines = []
+        total = 0
+        for ln in lines:
+            if total + len(ln) > _MAX_INJECT_CHARS:
+                break
+            text_lines.append(ln)
+            total += len(ln)
+        if not text_lines:
+            self._last_count = 0
+            return ""
+        self._last_count = len(text_lines)
+        return "KG 代码候选(定位先于读码):\n" + "\n".join(text_lines)
+
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         # Fire-and-forget background prefetch for next turn

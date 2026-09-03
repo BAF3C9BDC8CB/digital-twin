@@ -229,7 +229,7 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
 
 /// 为搜索创建 embed 客户端，从 `config/pipeline.yaml` 读取配置。
 /// 使用 provider 路由同时支持 SiliconFlow 与 XInference。
-fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
+pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
     use crate::infrastructure::embedder::ProviderConfig;
 
     let pipeline_cfg = match PipelineConfig::load() {
@@ -282,11 +282,11 @@ fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderC
     }
 }
 
-fn create_search_embed_client() -> Arc<dyn EmbedService> {
+pub(crate) fn create_search_embed_client() -> Arc<dyn EmbedService> {
     crate::infrastructure::embedder::create_embed_router(provider_config_from_pipeline())
 }
 
-fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService> {
+pub(crate) fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService> {
     crate::infrastructure::embedder::create_rerank_router(provider_config_from_pipeline())
 }
 
@@ -336,9 +336,7 @@ fn load_siliconflow_api_key() -> String {
 /// 远程源管线）共用同一路由逻辑，保证 provider 配置一处生效。
 /// 并发上限统一从当前 `llm_provider` 的 `max_concurrent` 读取；
 /// 单次回复上限从同 provider 的 `max_tokens` 读取（默认 512，可按模型调整）。
-fn build_llm_client(
-    pipeline_config: &PipelineConfig,
-) -> (Arc<dyn ChatClient>, String, u32) {
+fn build_llm_client(pipeline_config: &PipelineConfig) -> (Arc<dyn ChatClient>, String, u32) {
     let llm_provider = pipeline_config
         .providers
         .as_ref()

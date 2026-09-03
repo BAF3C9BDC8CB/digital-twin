@@ -1,0 +1,7 @@
+已记住，并已通过 dt_memorize 写入知识图谱（memory world）：
+
+- 部署策略：优先使用蓝绿发布（blue-green deployment）方案，仅在周末执行切换。
+- entity_id: deploy-blue-green-weekend
+- type: 决策
+
+后续涉及部署的会话都可检索到这条决策。

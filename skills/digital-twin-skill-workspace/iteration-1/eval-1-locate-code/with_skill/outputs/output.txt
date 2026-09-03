@@ -1,0 +1,99 @@
+EmbedService 实现定位结果
+=========================
+
+一、Trait 定义（接口契约）
+-------------------------
+`EmbedService` 是一个 trait（抽象接口），定义在：
+
+  src/domain/traits.rs:342-348
+
+包含两个异步方法：
+  - async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError>;
+      为一组文本生成 embedding。
+  - async fn health_check(&self) -> Result<HealthStatus, DtError>;
+      检查服务健康状态。
+
+注意：EmbedService 本身只是接口，真正的实现分布在多个具体类型上（Rust trait 无单一类文件）。
+
+二、具体实现类型
+---------------
+在生产代码中有三类真实实现，另一类是默认 no-op：
+
+1. XInferenceClient —— src/infrastructure/xinference.rs:207-259（embed_batch + health_check）
+2. SiliconFlowClient —— src/infrastructure/siliconflow.rs:378-441
+3. EmbedProviderRouter —— src/infrastructure/provider_router.rs:177-221（路由分发，委托给上两者）
+4. NoopEmbedService —— src/infrastructure/embedder.rs:40-51（默认空实现，返回全 0 向量）
+
+其余 8 处均为测试/占位实现（MockEmbed、StubEmbed、FailEmbed），位于 *_test 模块中，非生产实现。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+XInferenceClient（src/infrastructure/xinference.rs:207-259）
+─────────────────────────────────────
+embed_batch:                                   (L208-246)
+  1. texts 为空 → 直接返回 Ok(vec![])。
+  2. 构造请求体 {"model": self.model_embed, "input": texts,
+     "encoding_format": "float"}。
+  3. 用 self.post("/embeddings").json(&body) 发起 POST，包在
+     request_with_retry(..., "embed") 里做自动重试。
+  4. 解析响应 JSON，取 data 数组，每个 item 里的 index 和 embedding
+     (Vec<f32>)。
+  5. 按 index 排序后返回，保证结果顺序与输入对齐。
+
+health_check:                                 (L248-258)
+  请求 GET {base_url}/models：
+    - 成功 (is_success) → Ok(HealthStatus::Healthy)
+    - 非 2xx → Ok(Unhealthy("XInference 健康检查: HTTP {code}"))
+    - 网络错误 → Ok(Unhealthy("XInference 健康检查: {e}"))
+  始终返回 Ok，不会向上抛错。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SiliconFlowClient（src/infrastructure/siliconflow.rs:378-441）
+─────────────────────────────────────
+embed_batch:                                   (L380-418)
+  逻辑与 XInference 几乎一致：空输入短路 → POST /embeddings（带重试）
+  → 解析 data 数组 → 按 index 排序返回。仅错误消息前缀为 "SiliconFlow"。
+
+health_check:                                 (L421-440)
+  请求 GET {base_url}/models，比 XInference 多带
+  Authorization: Bearer {api_key} 头。其余状态返回逻辑相同
+  (Healthy / Unhealthy(HTTP {code}) / Unhealthy({err}))，同样不抛错。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EmbedProviderRouter（src/infrastructure/provider_router.rs:177-221）
+─────────────────────────────────────
+embed_batch:                                   (L178-183)
+  按配置选出当前生效的 embed provider：
+    - SiliconFlow → 委托 c.embed_batch(texts)
+    - XInference  → 委托 c.embed_batch(texts)
+  是纯分发，不实现具体向量生成逻辑。
+
+health_check:                                 (L185-220)
+  1. 优先检查配置的 embed provider；若配置了却不可用，回退到任一
+     可用 provider。
+  2. 未配置 provider → Ok(Unhealthy("未配置任何 provider"))。
+  3. 额外的"伴生 provider"（非当前主 provider）也检查，但宕机不
+     视为失败（用 let _ = 忽略其结果）。
+  4. 只返回主 provider 的结果。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NoopEmbedService（src/infrastructure/embedder.rs:40-51）
+─────────────────────────────────────
+embed_batch: 每个文本返回一个长度为 self.dim（默认 1024）的全 0 向量。
+health_check: 恒定 Ok(HealthStatus::Healthy)。
+
+三、方法行为小结
+---------------
+- embed_batch 定义统一为 `&[String] -> Result<Vec<Vec<f32>>, DtError>`，
+  语义是"按输入顺序返回等长 embedding 向量"（实现通过 index 排序保证顺序）。
+- health_check 一律返回 Result<HealthStatus, DtError>，但生产实现
+  (XInference/SiliconFlow) 内部把网络/HTTP 异常映射为
+  HealthStatus::Unhealthy，几乎不抛 Err，只有解析/构造层面的错误才抛出。
+
+四、定位过程说明
+---------------
+按 skill 三段序执行：
+  1. dt_sense → 项目 digital-twin-v2 已索引（methods=3028 classes=310）。
+  2. dt_search_kg(world="code") → 命中 EmbedService 类在
+     src/domain/traits.rs:342-348；并发现多个 embed_batch 实现。
+  3. search_files("impl EmbedService for") 枚举出全部 12 处实现，
+     区分出 4 个生产实现与 8 个测试桩，随后 read_file 逐一读码验证。

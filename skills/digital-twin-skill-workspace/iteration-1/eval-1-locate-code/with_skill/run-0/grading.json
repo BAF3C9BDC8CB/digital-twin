@@ -1,0 +1,28 @@
+{
+  "eval_id": 1,
+  "eval_name": "locate-code",
+  "config": "with_skill",
+  "expectations": [
+    {
+      "text": "执行了代码定位三段序（先 dt_sense → dt_search_kg(world=code) → read_file）",
+      "passed": true,
+      "evidence": "输出第92-99行'定位过程说明'明确列出：1) dt_sense→项目已索引 2) dt_search_kg(world=\"code\")→命中 EmbedService 3) search_files 枚举 impl + read_file 验证。三段序完整执行且显式说明。"
+    },
+    {
+      "text": "返回了文件路径和行号",
+      "passed": true,
+      "evidence": "输出给出 src/domain/traits.rs:342-348 trait 定义，以及 XInferenceClient xinference.rs:207-259、SiliconFlowClient siliconflow.rs:378-441、EmbedProviderRouter provider_router.rs:177-221、NoopEmbedService embedder.rs:40-51 全部实现位置。"
+    },
+    {
+      "text": "没有使用盲目的全局 grep 作为主要定位手段",
+      "passed": true,
+      "evidence": "定位以 dt_search_kg(world=\"code\") 命中 traits.rs 为入口，search_files 仅用于在已定位后枚举 impl 变体，非主定位手段。"
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  }
+}

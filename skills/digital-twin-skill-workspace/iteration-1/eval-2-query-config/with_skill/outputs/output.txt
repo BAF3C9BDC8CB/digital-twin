@@ -1,0 +1,25 @@
+digital-twin-v2 项目当前配置了三种 LLM 提供方，默认/实际启用的为 siliconflow。
+
+=== 启用的提供方: siliconflow（llm_provider: siliconflow）===
+  url:          http://124.221.200.116:3000/v1
+  model_llm:    tencent/Hunyuan-MT-7B        <- 当前 LLM 模型
+  model_embed:  BAAI/bge-m3
+  model_reranker: BAAI/bge-reranker-v2-m3
+  max_tokens:   512
+  注：配置中还注释保留了两种旧模型：
+     deepseek-ai/DeepSeek-V3.2
+     deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+
+=== 备用提供方（已配置，当前未启用）===
+  xinference:        qwen3.5          (url: http://localhost:9997/v1)
+  openai_compatible: ox-alpha        (protocol: openai, url: http://124.221.200.116:3000/v1, max_tokens: 512)
+
+=== 代码侧默认值 ===
+  src/application/pipeline/config.rs:192-194  default_llm_provider() 返回 "siliconflow"，
+  与配置文件中 llm_provider: siliconflow 一致。
+
+结论：digital-twin-v2 当前实际使用的 LLM 模型为 SiliconFlow 的 tencent/Hunyuan-MT-7B
+（默认提供方 siliconflow，若该模型不可用可切换为备注中的 DeepSeek 模型或 openai_compatible 的 ox-alpha）。
+
+来源：~/.config/digital-twin/pipeline.yaml（运行时配置，权威）；代码默认见 src/application/pipeline/config.rs。
+（注：选项中的 deepseek-v4-flash 仅是探活脚本 docs/skill-refs/scripts/llm_endpoint_probe.py 的默认参数，非本项目配置。）

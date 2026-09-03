@@ -11,9 +11,7 @@ use crate::application::pipeline::config::PipelineConfig;
 use crate::application::sync::batch::SyncAccumulator;
 use crate::application::sync::kg_bridge::KgBridge;
 use crate::application::sync::queue::VectorQueue;
-use crate::domain::traits::{
-    EmbedService, GraphRepository, SnapshotRepository, VectorRepository,
-};
+use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BatchConfig, ScanConfig};
 use serde::Deserialize;
 
@@ -237,8 +235,7 @@ pub async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
-        .await
+    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
     {
         Ok(client) => {
             tracing::info!("Memgraph 已连接: {bolt_url}");
@@ -274,8 +271,7 @@ pub async fn connect_memgraph() -> Option<crate::infrastructure::memgraph::Memgr
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
     let password = cfg.services.graph.password.as_deref().unwrap_or("");
 
-    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password)
-        .await
+    match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
     {
         Ok(client) => {
             tracing::info!("Memgraph 已连接: {bolt_url}");
@@ -363,8 +359,7 @@ pub async fn build_kg_bridge(
     let g = graph?;
     let embed = queue.as_ref()?.embed_service().clone();
     let v = vector.unwrap_or_else(|| {
-        Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo)
-            as Arc<dyn VectorRepository>
+        Arc::new(crate::infrastructure::qdrant::repo::NoopVectorRepo) as Arc<dyn VectorRepository>
     });
     let bridge = KgBridge::new(g, embed, v);
     Some(Arc::new(bridge.with_queue(queue?)))
@@ -423,9 +418,7 @@ impl DtRuntime {
         let snapshot = connect_snapshot().await;
         let hook_engine = connect_hook_engine().await;
 
-        let queue = embed
-            .clone()
-            .map(|e| Arc::new(VectorQueue::spawn(e)));
+        let queue = embed.clone().map(|e| Arc::new(VectorQueue::spawn(e)));
         let kg_bridge = build_kg_bridge(graph.clone(), vector.clone(), queue.clone()).await;
         let sync_acc = build_sync_acc(graph.clone(), vector.clone(), queue.clone()).await;
 

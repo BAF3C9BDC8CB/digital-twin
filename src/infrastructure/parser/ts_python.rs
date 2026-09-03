@@ -35,7 +35,7 @@ impl TsPythonParser {
                     start_line,
                     end_line,
                     method_ids: Vec::new(),
-                description: String::new(),
+                    description: String::new(),
                 });
             }
         }
@@ -303,5 +303,4 @@ fn find_class_methods(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-
 }

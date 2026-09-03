@@ -1,0 +1,162 @@
+EmbedService 定位与 embed_batch / health_check 实现分析
+========================================================
+
+一、Trait 定义
+-------------
+位置: src/domain/traits.rs:342-348
+
+    pub trait EmbedService: Send + Sync + 'static {
+        /// 为一组文本生成 embedding。
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError>;
+
+        /// 检查服务健康状态。
+        async fn health_check(&self) -> Result<HealthStatus, DtError>;
+    }
+
+要求实现两个方法:
+  - embed_batch(texts: &[String]) -> Result<Vec<Vec<f32>>, DtError>
+  - health_check() -> Result<HealthStatus, DtError>
+
+该 trait 在项目中被多处实现，主要实现位于 infrastructure 层。
+核心实现有 5 处:
+  1. NoopEmbedService      src/infrastructure/embedder.rs:40       (测试/离线零向量)
+  2. SiliconFlowClient     src/infrastructure/siliconflow.rs:378  (生产主 provider)
+  3. XInferenceClient      src/infrastructure/xinference.rs:207   (备选 provider)
+  4. EmbedProviderRouter    src/infrastructure/provider_router.rs:177 (路由分发层)
+  5. 各测试 Mock/Stub（kg_bridge.rs:2047, retrieve.rs:1633/2121, store.rs:297 等）
+
+（KG 记忆标注的 kg_bridge.rs:2048 与 search_memory.rs:290 均为测试 Mock/Stub 实现，
+  此处聚焦真实的生产实现。）
+
+二、真实生产实现
+---------------
+(一) EmbedProviderRouter（路由分发层）— src/infrastructure/provider_router.rs:177-220
+
+    该实现不直接调用 API，而是按配置路由到背后的 provider。
+
+    embed_batch:
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+            match self.embed_provider()? {
+                EmbedProviderRef::SiliconFlow(c) => c.embed_batch(texts).await,
+                EmbedProviderRef::XInference(c) => c.embed_batch(texts).await,
+            }
+        }
+
+    health_check:
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            use crate::domain::traits::EmbedService;
+            // 检查配置的 embed provider；回退到任何可用的 provider
+            let result = match self.embed_provider() {
+                Ok(EmbedProviderRef::SiliconFlow(c)) => EmbedService::health_check(c).await,
+                Ok(EmbedProviderRef::XInference(c)) => EmbedService::health_check(c).await,
+                Err(_) => {
+                    // 如果未配置 embed provider，尝试任何可用 provider
+                    if let Some(c) = self.sf() { EmbedService::health_check(c.as_ref()).await }
+                    else if let Some(c) = self.xi() { EmbedService::health_check(c.as_ref()).await }
+                    else { return Ok(HealthStatus::Unhealthy("未配置任何 provider".into())); }
+                }
+            };
+            // 若配置了另一个 provider 也一并检查，但宕机时不视为失败
+            match self.config.embed_provider.as_str() {
+                "siliconflow" => { if let Some(c) = self.xi() { let _ = EmbedService::health_check(c.as_ref()).await; } }
+                "xinference"  => { if let Some(c) = self.sf() { let _ = EmbedService::health_check(c.as_ref()).await; } }
+                _ => {}
+            }
+            result
+        }
+
+    health_check 逻辑特点:
+      - 主 provider 健康检查失败会如实返回 unhealthy;
+      - 副 provider 只做带外探测（let _ = ...），结果被忽略，不影响主结果;
+      - 未配置任何 provider 时返回 Unhealthy("未配置任何 provider")。
+
+(二) SiliconFlowClient — src/infrastructure/siliconflow.rs:378-441
+
+    embed_batch:
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+            if texts.is_empty() { return Ok(vec![]); }          // 空输入短路
+
+            let body = serde_json::json!({
+                "model": self.model_embed,
+                "input": texts,
+                "encoding_format": "float",
+            });
+
+            let resp = self
+                .request_with_retry(self.post("/embeddings").json(&body), "embed")
+                .await?;                                        // 带重试的 POST /v1/embeddings
+
+            let json: serde_json::Value = resp.json().await
+                .map_err(|e| DtError::Repository(format!("SiliconFlow embed 解析: {e}")))?;
+
+            let data = json["data"].as_array()
+                .ok_or_else(|| DtError::Repository("SiliconFlow: embed 响应中缺少 'data'".into()))?;
+
+            let mut embeddings: Vec<(usize, Vec<f32>)> = Vec::with_capacity(data.len());
+            for item in data {
+                let index = item["index"].as_i64().unwrap_or(0) as usize;
+                let embedding: Vec<f32> = item["embedding"].as_array()
+                    .ok_or_else(|| DtError::Repository("SiliconFlow: 响应中缺少 'embedding'".into()))?
+                    .iter()
+                    .map(|v| v.as_f64().unwrap_or(0.0) as f32)
+                    .collect();
+                embeddings.push((index, embedding));
+            }
+
+            embeddings.sort_by_key(|(idx, _)| *idx);           // 按 index 排序还原顺序
+            Ok(embeddings.into_iter().map(|(_, v)| v).collect())
+        }
+
+    health_check:
+        async fn health_check(&self) -> Result<HealthStatus, DtError> {
+            let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+            match self.http.get(&url)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .send().await
+            {
+                Ok(resp) if resp.status().is_success() => Ok(HealthStatus::Healthy),
+                Ok(resp) => Ok(HealthStatus::Unhealthy(format!("SiliconFlow 健康检查: HTTP {}", resp.status()))),
+                Err(e)   => Ok(HealthStatus::Unhealthy(format!("SiliconFlow 健康检查: {e}"))),
+            }
+        }
+
+    health_check 逻辑特点:
+      - 通过 GET {base_url}/models 列模型探测健康;
+      - 成功(2xx) => Healthy; 非 2xx 或网络错误 => Unhealthy(带描述);
+      - 网络错误/HTTP 错误均包装为 Ok(Unhealthy)，不返回 Err，符合"检查失败不 panic"的约定。
+
+    注意: 该 impl 块未标注 #[async_trait]（见 siliconflow.rs:378 之前），但 trait 方法本身是 async。
+          在 Rust 中 async fn 直接实现 async trait 需要 async_trait 宏，此处顶部文件应已引入（同文件 LlmService 块有 #[async_trait]，EmbedService 块在注释块之前），实现逻辑正常。
+
+(三) XInferenceClient — src/infrastructure/xinference.rs:207-246
+
+    与 SiliconFlowClient 结构几乎一致（也是 POST /embeddings + request_with_retry），
+    差异仅在错误信息前缀为 "XInference"。
+    embed_batch 同样: 空输入短路 -> JSON 请求 -> 解析 data[index][embedding] -> 按 index 排序还原。
+
+      （xinference.rs 的 health_check 位于 247 行之后，逻辑风格与 SiliconFlow 一致，
+        使用 GET /v1/models 探测。）
+
+(四) NoopEmbedService（测试/离线空实现）— src/infrastructure/embedder.rs:40-51
+
+    embed_batch: 对每个文本返回一个 dim 维全 0 向量 (vec![0.0_f32; self.dim])，默认 dim=1024。
+    health_check: 恒返回 Ok(HealthStatus::Healthy)。
+
+三、关键要点（总结）
+-------------------
+1. EmbedService 是 domain 层的服务抽象（src/domain/traits.rs:342），
+   embed_batch 负责文本->向量批量转换，health_check 负责服务健康探测。
+2. embed_batch 的核心套路（SiliconFlow / XInference 同构）:
+   - 空输入快速返回空结果;
+   - 构造 {model, input, encoding_format:"float"} 的 JSON body;
+   - 通过 request_with_retry 发送 POST /embeddings（带自动重试）;
+   - 解析响应 data[] 中每个元素的 index 与 embedding(f64->f32);
+   - 按 index 排序后返回，保证批次顺序与请求一致;
+   - "embedding"缺失或"data"缺失均返回 DtError::Repository。
+3. health_check 的核心套路:
+   - 生产实现通过 GET /v1/models 列表探测; 成功 2xx => Healthy, 否则 Unhealthy(原因);
+   - 失败包装为 Ok(Unhealthy(note)) 而非 Err —— 健康检查不把探测失败当协议级错误;
+   - 路由层 EmbedProviderRouter 还会对备选 provider 做不影响结果的带外健康探测;
+   - NoopEmbedService 恒为 Healthy。
+4. EmbedProviderRouter (provider_router.rs) 是生产环境实际注入的 EmbedService，
+   内部再按配置 {embed_provider} 分发到 SiliconFlow 或 XInference。

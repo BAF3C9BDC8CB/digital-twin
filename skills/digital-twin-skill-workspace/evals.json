@@ -1,0 +1,23 @@
+{
+  "skill_name": "digital-twin-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这个项目用了什么 LLM 模型？帮我查一下配置。",
+      "expected_output": "Agent 走记忆优先路径：先 dt_search_kg(world=memory) 检索模型配置，命中即返回位置提示，不输出密钥。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "帮我找到 EmbedService 类的实现代码，看看它的 embed_batch 方法是怎么写的。",
+      "expected_output": "Agent 走代码三段序：dt_sense() → dt_search_kg(world=code) 定位 → read_file 读码验证，返回文件路径和行号。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "记住：下次部署优先用蓝绿发布方案，只在周末切。",
+      "expected_output": "Agent 立即调用 dt_memorize，details 使用结构化 key:value 格式，type=decision。",
+      "files": []
+    }
+  ]
+}

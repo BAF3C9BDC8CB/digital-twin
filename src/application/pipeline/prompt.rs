@@ -113,11 +113,7 @@ impl PromptRegistry {
 
         // 3) 用户级固定路径（与 pipeline.yaml 一致约定）
         if let Some(home) = crate::shared::home_dir() {
-            candidates.push(
-                home.join(".config")
-                    .join("digital-twin")
-                    .join("prompts"),
-            );
+            candidates.push(home.join(".config").join("digital-twin").join("prompts"));
         }
 
         // 4) 可执行文件所在目录的 config/prompts

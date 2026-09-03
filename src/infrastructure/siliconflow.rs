@@ -341,7 +341,6 @@ impl SiliconFlowClient {
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": false,
-            "enable_thinking": false,
         });
 
         let resp = self

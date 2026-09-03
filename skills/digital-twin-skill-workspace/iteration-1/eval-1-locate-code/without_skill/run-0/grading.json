@@ -1,0 +1,28 @@
+{
+  "eval_id": 1,
+  "eval_name": "locate-code",
+  "config": "without_skill",
+  "expectations": [
+    {
+      "text": "执行了代码定位三段序（先 dt_sense → dt_search_kg(world=code) → read_file）",
+      "passed": false,
+      "evidence": "输出无显式三段序说明。直接通过'KG 记忆标注'和自身代码知识定位到文件，未展示 dt_sense → dt_search_kg(world=code) → read_file 的标准流程。过程不透明、不可复现。"
+    },
+    {
+      "text": "返回了文件路径和行号",
+      "passed": true,
+      "evidence": "输出给出 src/domain/traits.rs:342-348 trait，及各实现文件行号(xinference.rs:207、siliconflow.rs:378、provider_router.rs:177、embedder.rs:40)。"
+    },
+    {
+      "text": "没有使用盲目的全局 grep 作为主要定位手段",
+      "passed": false,
+      "evidence": "虽未用 grep，但定位依赖'记忆标注'和模型既有知识，非标准化的 dt_search_kg(world=code) 图谱定位。方法不可泛化/复现。"
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.33
+  }
+}

@@ -28,4 +28,3 @@ pub fn home_dir() -> Option<PathBuf> {
     }
     None
 }
-

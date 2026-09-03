@@ -1,0 +1,263 @@
+{
+  "metadata": {
+    "skill_name": "digital-twin-skill",
+    "skill_path": "/data/myProject/digital-twin-v2/skills/digital-twin-skill",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-09-03T06:47:01Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u6267\u884c\u4e86\u4ee3\u7801\u5b9a\u4f4d\u4e09\u6bb5\u5e8f\uff08\u5148 dt_sense \u2192 dt_search_kg(world=code) \u2192 read_file\uff09",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u7b2c92-99\u884c'\u5b9a\u4f4d\u8fc7\u7a0b\u8bf4\u660e'\u660e\u786e\u5217\u51fa\uff1a1) dt_sense\u2192\u9879\u76ee\u5df2\u7d22\u5f15 2) dt_search_kg(world=\"code\")\u2192\u547d\u4e2d EmbedService 3) search_files \u679a\u4e3e impl + read_file \u9a8c\u8bc1\u3002\u4e09\u6bb5\u5e8f\u5b8c\u6574\u6267\u884c\u4e14\u663e\u5f0f\u8bf4\u660e\u3002"
+        },
+        {
+          "text": "\u8fd4\u56de\u4e86\u6587\u4ef6\u8def\u5f84\u548c\u884c\u53f7",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u7ed9\u51fa src/domain/traits.rs:342-348 trait \u5b9a\u4e49\uff0c\u4ee5\u53ca XInferenceClient xinference.rs:207-259\u3001SiliconFlowClient siliconflow.rs:378-441\u3001EmbedProviderRouter provider_router.rs:177-221\u3001NoopEmbedService embedder.rs:40-51 \u5168\u90e8\u5b9e\u73b0\u4f4d\u7f6e\u3002"
+        },
+        {
+          "text": "\u6ca1\u6709\u4f7f\u7528\u76f2\u76ee\u7684\u5168\u5c40 grep \u4f5c\u4e3a\u4e3b\u8981\u5b9a\u4f4d\u624b\u6bb5",
+          "passed": true,
+          "evidence": "\u5b9a\u4f4d\u4ee5 dt_search_kg(world=\"code\") \u547d\u4e2d traits.rs \u4e3a\u5165\u53e3\uff0csearch_files \u4ec5\u7528\u4e8e\u5728\u5df2\u5b9a\u4f4d\u540e\u679a\u4e3e impl \u53d8\u4f53\uff0c\u975e\u4e3b\u5b9a\u4f4d\u624b\u6bb5\u3002"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f18\u5148\u68c0\u7d22\u4e86\u8bb0\u5fc6\u6216\u5b9a\u4f4d\u5230\u6743\u5a01\u914d\u7f6e\u6e90",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u5148 dt_sense \u786e\u8ba4\u9879\u76ee\u5df2\u7d22\u5f15\uff0c\u518d dt_search_kg \u5b9a\u4f4d\uff0c\u6700\u7ec8\u4ece\u6743\u5a01\u914d\u7f6e ~/.config/digital-twin/pipeline.yaml \u5f97\u5230\u6a21\u578b\u4fe1\u606f\u3002\u9075\u5faa\u4e86 skill \u7684\u5b9a\u4f4d\u6d41\u7a0b\u3002"
+        },
+        {
+          "text": "\u672a\u8f93\u51fa\u5bc6\u94a5\u539f\u6587\u6216\u8bfb\u53d6 .env",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u53ea\u7ed9\u4e86\u6a21\u578b\u540d(tencent/Hunyuan-MT-7B)\u3001\u914d\u7f6e\u6587\u4ef6\u4f4d\u7f6e(pipeline.yaml)\uff0c\u672b\u5c3e\u660e\u786e'\u672a\u5305\u542b\u4efb\u4f55\u5bc6\u94a5\uff0c\u53ea\u7ed9\u4e86\u914d\u7f6e\u4f4d\u7f6e\u4e0e\u6a21\u578b\u540d'\u3002\u9075\u5b88\u5b89\u5168\u62a4\u680f\u3002"
+        },
+        {
+          "text": "\u8fd4\u56de\u4e86\u914d\u7f6e\u4f4d\u7f6e\u63d0\u793a",
+          "passed": true,
+          "evidence": "\u660e\u786e\u6307\u51fa\u6743\u5a01\u6765\u6e90 ~/.config/digital-twin/pipeline.yaml \u53ca\u4ee3\u7801\u4fa7\u9ed8\u8ba4\u503c src/application/pipeline/config.rs:192-194\u3002"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u7acb\u5373\u8c03\u7528\u4e86 dt_memorize\uff08\u800c\u975e\u4ec5\u53e3\u5934\u7b54\u5e94\uff09",
+          "passed": true,
+          "evidence": "\u8f93\u51fa'\u5df2\u8bb0\u4f4f\u5e76\u843d\u5e93\u3002\u5199\u5165\u5185\u5bb9\uff08dt_memorize, type=Decision\uff09'\uff0c\u660e\u786e\u8c03\u7528 dt_memorize \u5199\u5165\u3002"
+        },
+        {
+          "text": "\u4f7f\u7528\u4e86\u7ed3\u6784\u5316 details \u4e14\u5305\u542b name/content",
+          "passed": true,
+          "evidence": "\u5199\u5165\u5185\u5bb9\u5305\u542b entity_id(deploy-blue-green-weekends-2026-09)\u3001\u5185\u5bb9\u63cf\u8ff0\u3001project\uff0c\u7b26\u5408 skill \u8981\u6c42\u7684\u7ed3\u6784\u5316\u8bb0\u5fc6\u683c\u5f0f\u3002"
+        },
+        {
+          "text": "\u63d0\u4f9b\u4e86\u7a33\u5b9a\u7684 entity_id",
+          "passed": true,
+          "evidence": "entity_id \u4e3a deploy-blue-green-weekends-2026-09\uff0c\u53ef\u8bfb\u4e14\u5e26\u65e5\u671f\u6807\u8bc6\uff0c\u7b26\u5408 skill \u5bf9 entity_id \u7684\u89c4\u8303\u8981\u6c42\u3002"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 0.33,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u6267\u884c\u4e86\u4ee3\u7801\u5b9a\u4f4d\u4e09\u6bb5\u5e8f\uff08\u5148 dt_sense \u2192 dt_search_kg(world=code) \u2192 read_file\uff09",
+          "passed": false,
+          "evidence": "\u8f93\u51fa\u65e0\u663e\u5f0f\u4e09\u6bb5\u5e8f\u8bf4\u660e\u3002\u76f4\u63a5\u901a\u8fc7'KG \u8bb0\u5fc6\u6807\u6ce8'\u548c\u81ea\u8eab\u4ee3\u7801\u77e5\u8bc6\u5b9a\u4f4d\u5230\u6587\u4ef6\uff0c\u672a\u5c55\u793a dt_sense \u2192 dt_search_kg(world=code) \u2192 read_file \u7684\u6807\u51c6\u6d41\u7a0b\u3002\u8fc7\u7a0b\u4e0d\u900f\u660e\u3001\u4e0d\u53ef\u590d\u73b0\u3002"
+        },
+        {
+          "text": "\u8fd4\u56de\u4e86\u6587\u4ef6\u8def\u5f84\u548c\u884c\u53f7",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u7ed9\u51fa src/domain/traits.rs:342-348 trait\uff0c\u53ca\u5404\u5b9e\u73b0\u6587\u4ef6\u884c\u53f7(xinference.rs:207\u3001siliconflow.rs:378\u3001provider_router.rs:177\u3001embedder.rs:40)\u3002"
+        },
+        {
+          "text": "\u6ca1\u6709\u4f7f\u7528\u76f2\u76ee\u7684\u5168\u5c40 grep \u4f5c\u4e3a\u4e3b\u8981\u5b9a\u4f4d\u624b\u6bb5",
+          "passed": false,
+          "evidence": "\u867d\u672a\u7528 grep\uff0c\u4f46\u5b9a\u4f4d\u4f9d\u8d56'\u8bb0\u5fc6\u6807\u6ce8'\u548c\u6a21\u578b\u65e2\u6709\u77e5\u8bc6\uff0c\u975e\u6807\u51c6\u5316\u7684 dt_search_kg(world=code) \u56fe\u8c31\u5b9a\u4f4d\u3002\u65b9\u6cd5\u4e0d\u53ef\u6cdb\u5316/\u590d\u73b0\u3002"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 3,
+        "failed": 0,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f18\u5148\u68c0\u7d22\u4e86\u8bb0\u5fc6\u6216\u5b9a\u4f4d\u5230\u6743\u5a01\u914d\u7f6e\u6e90",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u76f4\u63a5\u8bfb\u53d6 config/pipeline.yaml\uff08\u8fd0\u884c\u65f6 ~/.config/digital-twin/pipeline.yaml\uff09\u5f97\u5230\u6a21\u578b\u4fe1\u606f tencent/Hunyuan-MT-7B \u53ca\u6e29\u5ea6/max_tokens\u3002\u867d\u672a\u663e\u5f0f\u8d70 dt \u56fe\u8c31\u8bb0\u5fc6\u68c0\u7d22\uff0c\u4f46\u6b63\u786e\u627e\u5230\u6743\u5a01\u914d\u7f6e\u3002"
+        },
+        {
+          "text": "\u672a\u8f93\u51fa\u5bc6\u94a5\u539f\u6587\u6216\u8bfb\u53d6 .env",
+          "passed": true,
+          "evidence": "\u8f93\u51fa\u4ec5\u5217\u6a21\u578b\u540d\u4e0e\u53c2\u6570\uff0c\u672a\u8f93\u51fa\u4efb\u4f55 API Key \u6216\u8bfb\u53d6 .env\u3002\u9075\u5b88\u5b89\u5168\u62a4\u680f\u3002"
+        },
+        {
+          "text": "\u8fd4\u56de\u4e86\u914d\u7f6e\u4f4d\u7f6e\u63d0\u793a",
+          "passed": true,
+          "evidence": "\u660e\u786e\u6307\u51fa config/pipeline.yaml \u53ca\u8fd0\u884c\u65f6 ~/.config/digital-twin/pipeline.yaml\u3002"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 0,
+      "result": {
+        "pass_rate": 0.33,
+        "passed": 1,
+        "failed": 2,
+        "total": 3,
+        "time_seconds": 0.0,
+        "tokens": 0,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u7acb\u5373\u8c03\u7528\u4e86 dt_memorize\uff08\u800c\u975e\u4ec5\u53e3\u5934\u7b54\u5e94\uff09",
+          "passed": true,
+          "evidence": "\u8f93\u51fa'\u5df2\u8bb0\u4f4f\uff0c\u5e76\u5df2\u901a\u8fc7 dt_memorize \u5199\u5165\u77e5\u8bc6\u56fe\u8c31\uff08memory world\uff09'\uff0c\u660e\u786e\u8c03\u7528 dt_memorize\u3002"
+        },
+        {
+          "text": "\u4f7f\u7528\u4e86\u7ed3\u6784\u5316 details \u4e14\u5305\u542b name/content",
+          "passed": false,
+          "evidence": "\u8f93\u51fa\u672a\u5c55\u793a\u7ed3\u6784\u5316 details \u7684\u591a\u884c key: value \u88c5\u914d\uff0c\u4ec5\u6587\u5b57\u63cf\u8ff0'\u90e8\u7f72\u7b56\u7565:\u4f18\u5148\u4f7f\u7528\u84dd\u7eff\u53d1\u5e03'\u3002\u65e0\u6cd5\u786e\u8ba4 details \u9075\u5faa\u4e86 name/content \u7ed3\u6784\u5316\u683c\u5f0f\u3002"
+        },
+        {
+          "text": "\u63d0\u4f9b\u4e86\u7a33\u5b9a\u7684 entity_id",
+          "passed": false,
+          "evidence": "entity_id \u4e3a deploy-blue-green-weekend\uff0c\u65e0\u65e5\u671f\u6807\u8bc6\uff0c\u98ce\u683c\u6b20\u89c4\u8303\uff08\u5bf9\u6bd4 with_skill \u7684 deploy-blue-green-weekends-2026-09\uff09\u3002"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.5533,
+        "stddev": 0.3868,
+        "min": 0.33,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0,
+        "max": 0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.45",
+      "time_seconds": "+0.0",
+      "tokens": "+0"
+    }
+  },
+  "notes": []
+}

@@ -239,6 +239,9 @@ public class PlainService {
         let cn = class_node.expect("class_declaration 节点应存在");
         let c = extract_comment(src, &cn);
         // 文件头注释在 package/import 之前，不应被偷取
-        assert!(!c.contains("文件级版权注释"), "class comment stolen from file header: {c:?}");
+        assert!(
+            !c.contains("文件级版权注释"),
+            "class comment stolen from file header: {c:?}"
+        );
     }
 }

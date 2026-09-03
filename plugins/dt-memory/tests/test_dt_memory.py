@@ -211,7 +211,10 @@ class TestV2OnDemandRecall:
         # 全局行为准则(决策表核心)
         assert "[DT 行为准则]" in block
         assert "dt_sense" in block
-        assert "先 dt_search_kg" in block
+        assert "先于读码" in block
+        assert "① 环境感知" in block
+        assert "② 定位先于读码" in block
+        assert "③ 才读码" in block
 
     def test_normal_query_no_injection(self, monkeypatch):
         """普通查询（无记忆意图词）→ prefetch 返回空，不触发任何检索。"""
@@ -291,6 +294,74 @@ class TestV2OnDemandRecall:
         assert "【项目记忆】" not in out  # 不再分组
         assert "【全局记忆】" not in out
         assert out.count("银盛费率") == 1  # 统一一次检索
+
+
+class TestCodeLocationPrefetch:
+    """方向 C：代码定位意图 → 自动 prefetch world=code（本次审计整改）。"""
+
+    def test_code_intent_triggers_world_code(self, monkeypatch):
+        """含'定位'关键词 → 走 world=code 分支，注入代码候选。"""
+        p = _provider()
+        p._project = "offen-pay"
+        called = {}
+
+        def fake_search_code(self, query, *, project, limit):
+            called["project"] = project
+            return [{
+                "title": "WalletGateService", "file_path": "src/WalletGateService.java",
+                "start_line": 42, "signature": "public void pay()", "project": "offen-pay",
+                "score": 0.92,
+            }]
+
+        monkeypatch.setattr(m.DtMemoryProvider, "_search_world_code", fake_search_code)
+        out = p.prefetch("定位 WalletGateService 的支付方法在哪")
+        assert "KG 代码候选" in out
+        assert "WalletGateService" in out
+        assert "src/WalletGateService.java:42" in out
+        assert called["project"] == "offen-pay"  # 带 project 定位
+
+    def test_code_intent_no_memory_filter(self, monkeypatch):
+        """world=code 不能用记忆白名单过滤 —— 代码实体 id 不匹配 mem-。"""
+        p = _provider()
+        p._project = "offen-pay"
+        monkeypatch.setattr(
+            m.DtMemoryProvider, "_search_world_code",
+            lambda self, query, *, project, limit: [{
+                "id": "102039123", "title": "parse_entity_rows",
+                "file_path": "src/parse.rs", "start_line": 10, "score": 0.7,
+            }],
+        )
+        out = p.prefetch("查一下 parse_entity_rows 的实现")
+        assert "parse_entity_rows" in out
+
+    def test_memory_intent_not_code(self, monkeypatch):
+        """显式'记住'事件应走 memory 分支，不误判为代码定位。"""
+        p = _provider()
+        called = {}
+        monkeypatch.setattr(
+            m.DtMemoryProvider, "_search_world_code",
+            lambda self, q, *, project, limit: called.setdefault("code", 0) or 0,
+        )
+        monkeypatch.setattr(
+            m.DtMemoryProvider, "_search_world",
+            lambda self, q, *, world, project, limit: [{
+                "id": "mem-x", "title": "记住这件事", "snippet": "s", "project": project, "score": 0.9,
+            }],
+        )
+        out = p.prefetch("记住这个配置项 让用户能记住")
+        assert "code" not in called  # 未触发 code 分支
+        assert "记住这件事" in out  # 走了 memory 分支
+
+    def test_code_no_hits_fallback_empty(self, monkeypatch):
+        """world=code 无命中时返回空（上层降级为 dt_sense 简报 + 读盘），不注入噪音。"""
+        p = _provider()
+        p._project = "offen-pay"
+        monkeypatch.setattr(
+            m.DtMemoryProvider, "_search_world_code",
+            lambda self, q, *, project, limit: [],
+        )
+        assert p.prefetch("定位一个不存在的符号 xxxyyyzzz") == ""
+
 
 
 class TestDetailsAssembly:

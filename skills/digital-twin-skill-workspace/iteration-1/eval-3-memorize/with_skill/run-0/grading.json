@@ -1,0 +1,28 @@
+{
+  "eval_id": 3,
+  "eval_name": "memorize",
+  "config": "with_skill",
+  "expectations": [
+    {
+      "text": "立即调用了 dt_memorize（而非仅口头答应）",
+      "passed": true,
+      "evidence": "输出'已记住并落库。写入内容（dt_memorize, type=Decision）'，明确调用 dt_memorize 写入。"
+    },
+    {
+      "text": "使用了结构化 details 且包含 name/content",
+      "passed": true,
+      "evidence": "写入内容包含 entity_id(deploy-blue-green-weekends-2026-09)、内容描述、project，符合 skill 要求的结构化记忆格式。"
+    },
+    {
+      "text": "提供了稳定的 entity_id",
+      "passed": true,
+      "evidence": "entity_id 为 deploy-blue-green-weekends-2026-09，可读且带日期标识，符合 skill 对 entity_id 的规范要求。"
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "failed": 0,
+    "total": 3,
+    "pass_rate": 1.0
+  }
+}

@@ -158,9 +158,11 @@ impl PipelineTemplate {
         // "已删除"（否则会误删 Memgraph 中其他文件的方法节点）。
         let (files_to_process, deleted) = match &self.target_file {
             Some(_) => (all_files.clone(), Vec::new()),
-            None => strategy
-                .select_files(root, &all_files, snapshot_repo.as_deref(), project)
-                .await?,
+            None => {
+                strategy
+                    .select_files(root, &all_files, snapshot_repo.as_deref(), project)
+                    .await?
+            }
         };
         let files_changed = files_to_process.len();
 
@@ -1489,13 +1491,16 @@ impl PipelineTemplate {
                 tracing::warn!("Class 描述补偿已达 20 轮上限, 停止（仍有缺口留待下次构建）");
                 break;
             }
-        // 缺口 = description 为空/缺失 且 (llm_status 缺失 或 = failed)。
-        let mut params = std::collections::HashMap::new();
-        params.insert("project".to_string(), serde_json::Value::String(project.to_string()));
+            // 缺口 = description 为空/缺失 且 (llm_status 缺失 或 = failed)。
+            let mut params = std::collections::HashMap::new();
+            params.insert(
+                "project".to_string(),
+                serde_json::Value::String(project.to_string()),
+            );
 
-        let rows = match graph
-            .read_query(
-                "MATCH (c:Class) \
+            let rows = match graph
+                .read_query(
+                    "MATCH (c:Class) \
                 WHERE c.project = $project \
                   AND ((c.description IS NULL OR c.description = '') \
                        OR c.vectorized IS NULL OR c.vectorized = false) \
@@ -1504,43 +1509,60 @@ impl PipelineTemplate {
                        c.start_line AS start_line, c.end_line AS end_line, \
                        coalesce(c.description, '') AS desc_text \
                 LIMIT 300",
-                params.clone(),
-            )
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Class 描述补偿扫描失败（非致命）: {e}");
-                return Ok(0);
-            }
-        };
+                    params.clone(),
+                )
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Class 描述补偿扫描失败（非致命）: {e}");
+                    return Ok(0);
+                }
+            };
 
-        let mut jobs: Vec<(String, String, String, usize, usize, String)> = Vec::new();
-        if let Some(arr) = rows.as_array() {
-            for row in arr {
-                // read_query 返回对象格式（字段名访问，见 search_config.rs 同款解析）。
-                let class_id = row.get("class_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let file_path = row.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let start = row.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let end = row.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let desc_text = row.get("desc_text").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                if !class_id.is_empty() && !file_path.is_empty() {
-                    jobs.push((class_id, name, file_path, start, end, desc_text));
+            let mut jobs: Vec<(String, String, String, usize, usize, String)> = Vec::new();
+            if let Some(arr) = rows.as_array() {
+                for row in arr {
+                    // read_query 返回对象格式（字段名访问，见 search_config.rs 同款解析）。
+                    let class_id = row
+                        .get("class_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = row
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let file_path = row
+                        .get("file_path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let start =
+                        row.get("start_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let end = row.get("end_line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    let desc_text = row
+                        .get("desc_text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if !class_id.is_empty() && !file_path.is_empty() {
+                        jobs.push((class_id, name, file_path, start, end, desc_text));
+                    }
                 }
             }
-        }
-        if jobs.is_empty() {
-            tracing::info!("Class 描述补偿: 本项目无缺口（全部已有描述）");
-            return Ok(0);
-        }
-        tracing::info!("Class 描述补偿: {} 个类待分析", jobs.len());
+            if jobs.is_empty() {
+                tracing::info!("Class 描述补偿: 本项目无缺口（全部已有描述）");
+                return Ok(0);
+            }
+            tracing::info!("Class 描述补偿: {} 个类待分析", jobs.len());
 
-        // 并发处理：每类独立 async 任务（与 Phase 2 同用 phase2_concurrency）。
-        let concurrency = self.phase2_concurrency.max(1);
-        let llm_max_tokens = self.llm_max_tokens;
-        let round_jobs = jobs.len();
-        let results: Vec<(String, bool)> = stream::iter(jobs.into_iter().map(|(class_id, name, file_path, start, end, existing_desc)| {
+            // 并发处理：每类独立 async 任务（与 Phase 2 同用 phase2_concurrency）。
+            let concurrency = self.phase2_concurrency.max(1);
+            let llm_max_tokens = self.llm_max_tokens;
+            let round_jobs = jobs.len();
+            let results: Vec<(String, bool)> = stream::iter(jobs.into_iter().map(|(class_id, name, file_path, start, end, existing_desc)| {
             let client = client.clone();
             let embed_c = embed.clone();
             let vector_c = vector.clone();
@@ -1765,20 +1787,20 @@ impl PipelineTemplate {
         .collect::<Vec<_>>()
         .await;
 
-        let succeeded = results.iter().filter(|(_, ok)| *ok).count();
-        let failed = results.iter().filter(|(_, ok)| !*ok).count();
-        tracing::info!(
-            "Class 描述补偿: {} 待处理, {} 成功, {} 失败",
-            results.len(),
-            succeeded,
-            failed
-        );
-        total_succeeded += succeeded;
-        total_failed += failed;
-        // 本轮无待处理（无缺口）或全部失败（无可进展）→ 结束循环。
-        if round_jobs == 0 || succeeded == 0 {
-            break;
-        }
+            let succeeded = results.iter().filter(|(_, ok)| *ok).count();
+            let failed = results.iter().filter(|(_, ok)| !*ok).count();
+            tracing::info!(
+                "Class 描述补偿: {} 待处理, {} 成功, {} 失败",
+                results.len(),
+                succeeded,
+                failed
+            );
+            total_succeeded += succeeded;
+            total_failed += failed;
+            // 本轮无待处理（无缺口）或全部失败（无可进展）→ 结束循环。
+            if round_jobs == 0 || succeeded == 0 {
+                break;
+            }
         }
         tracing::info!(
             "Class 描述补偿总览: {} 轮, {} 成功, {} 失败",
@@ -1842,9 +1864,15 @@ async fn delete_files_from_graph(graph: &dyn GraphRepository, project: &str, fil
             "project".to_string(),
             serde_json::Value::String(project.to_string()),
         );
-        params2.insert("names".to_string(), serde_json::Value::Array(
-            file_names.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
-        ));
+        params2.insert(
+            "names".to_string(),
+            serde_json::Value::Array(
+                file_names
+                    .iter()
+                    .map(|s| serde_json::Value::String(s.clone()))
+                    .collect(),
+            ),
+        );
         let _ = graph
             .write_query(
                 "MATCH (n:Entity {project: $project}) \

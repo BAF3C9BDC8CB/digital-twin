@@ -1,0 +1,45 @@
+digital-twin-v2 项目使用的 LLM 配置查询结果
+============================================
+
+一、结论（当前生效配置）
+------------------------
+本项目（digital-twin-v2，即 KG 工具链 dt）的 LLM 配置在 config/pipeline.yaml
+（运行时加载 ~/.config/digital-twin/pipeline.yaml，两者内容一致）。
+
+当前激活的配置：
+  - LLM 提供方 (llm_provider): siliconflow
+  - LLM 模型    (model_llm):   tencent/Hunyuan-MT-7B
+  - 推理并发     (max_concurrent): 48
+  - 温度         (temperature): 0.1
+  - LLM max_tokens（管线外层）: 4096（provider 内 max_tokens: 512）
+
+二、关联的其他模型/服务
+----------------------
+同一个 siliconflow provider 还承载了嵌入与重排序：
+  - 嵌入模型  (model_embed):    BAAI/bge-m3
+  - 重排序模型 (model_reranker): BAAI/bge-reranker-v2-m3
+
+配置中还定义了另外两个可切换但在当前路由（siliconflow）下未启用的提供方，
+其 LLM 模型仅为备选/占位：
+  - xinference:         model_llm = qwen3.5（本地 /localhost:9997/v1）
+  - openai_compatible:  model_llm = ox-alpha（协议 openai）
+
+三、注释中出现的候选/历史模型（未激活）
+-------------------------------------
+在 model_llm 附近以注释形式保留了以下曾被尝试或备选 deepseek 模型：
+  - deepseek-ai/DeepSeek-V3.2
+  - deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+  - 代码回退默认（pipeline.yaml 缺失时）：siliconflow model_llm = Qwen3-14B
+    （见 src/infrastructure/embedder.rs default_siliconflow()）
+
+四、配置依据（文件与代码定位）
+------------------------------
+  - config/pipeline.yaml 第 5 行 llm_provider: siliconflow
+  - config/pipeline.yaml 第 14 行 model_llm: tencent/Hunyuan-MT-7B（激活行）
+  - config/pipeline.yaml 第 12-13 行：注释掉的 DeepSeek 备选模型
+  - 运行时加载路径：src/application/pipeline/config.rs（~/.config/digital-twin/pipeline.yaml）
+  - 回退默认值：src/infrastructure/embedder.rs:88（Qwen3-14B）
+
+== 一句话答复 ==
+当前 digital-twin-v2 的 LLM 走 siliconflow 提供方，模型为 tencent/Hunyuan-MT-7B；
+同源备选模型 list 里含 deepseek-ai/DeepSeek-V3.2 与 DeepSeek-R1-0528-Qwen3-8B（均被注释掉）。
