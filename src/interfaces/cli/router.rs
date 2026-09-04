@@ -710,18 +710,41 @@ fn casual_vocab_external() -> &'static Vec<String> {
 ///
 /// 返回空 Vec 表示未找到可用文件；调用方应回退到内置默认词表。
 fn load_casual_words() -> Option<Vec<String>> {
+    load_external_wordlist("DT_CASUAL_WORDS_FILE", "casual-words.txt", "闲聊词表")
+}
+
+/// 从 `config/anchorless-words.txt` 加载无锚点词表（每行一词，`#` 注释，空行忽略）。
+///
+/// 查找顺序（与闲聊词表一致）：
+/// 1. 环境变量 `DT_ANCHORLESS_WORDS_FILE`
+/// 2. `<CWD>/config/anchorless-words.txt`
+/// 3. `~/.config/digital-twin/anchorless-words.txt`
+/// 4. `<可执行文件目录>/config/anchorless-words.txt`
+///
+/// 返回空 Vec 表示未找到可用文件；调用方应回退到内置默认词表。
+fn load_anchorless_words() -> Option<Vec<String>> {
+    load_external_wordlist("DT_ANCHORLESS_WORDS_FILE", "anchorless-words.txt", "无锚点词表")
+}
+
+/// 通用外部词表加载器：按 环境变量 → CWD config → ~/.config/digital-twin → exe config
+/// 顺序查找外部词表 txt（每行一词，`#` 注释，空行忽略），解析后返回首个非空文件。
+///
+/// casual 与 anchorless 两套词表共用此逻辑，仅 环境变量名/文件名/日志标签 不同。
+/// 注：home 候选是 `~/.config/digital-twin/<name>`（config 前缀在 home 下不重复），
+/// CWD/exe 候选才是 `<base>/config/<name>`。
+fn load_external_wordlist(env_var: &str, filename: &str, label: &str) -> Option<Vec<String>> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    if let Ok(file) = std::env::var("DT_CASUAL_WORDS_FILE") {
+    if let Ok(file) = std::env::var(env_var) {
         candidates.push(PathBuf::from(file));
     }
-    candidates.push(PathBuf::from("config/casual-words.txt"));
+    candidates.push(PathBuf::from("config").join(filename));
     if let Some(home) = crate::shared::home_dir() {
-        candidates.push(home.join(".config/digital-twin/casual-words.txt"));
+        candidates.push(home.join(".config/digital-twin").join(filename));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("config/casual-words.txt"));
+            candidates.push(exe_dir.join("config").join(filename));
         }
     }
 
@@ -731,15 +754,15 @@ fn load_casual_words() -> Option<Vec<String>> {
         };
         let words = parse_casual_words(&content);
         if !words.is_empty() {
-            tracing::debug!(path = %path.display(), "加载闲聊词表语料 {}", words.len());
+            tracing::debug!(path = %path.display(), "加载{label}语料 {}", words.len());
             return Some(words);
         }
     }
-    tracing::debug!("未找到闲聊词表文件，使用内置默认词表");
+    tracing::debug!("未找到{label}文件，使用内置默认词表");
     None
 }
 
-/// 解析闲聊词表文本：每行一词，`#` 开头为注释，空行忽略，行首尾空白剔除。
+/// 解析词表文本：每行一词，`#` 开头为注释，空行忽略，行首尾空白剔除。
 /// 仅保留含至少一个字母/数字/中日韩字符的行——纯符号分隔线（` ``` `、`***`、`---`）被丢弃。
 fn parse_casual_words(content: &str) -> Vec<String> {
     content
@@ -777,45 +800,6 @@ fn anchorless_vocab_external() -> &'static Vec<String> {
             .map(|s| s.to_lowercase())
             .collect(),
     })
-}
-
-/// 从 `config/anchorless-words.txt` 加载无锚点词表（每行一词，`#` 注释，空行忽略）。
-///
-/// 查找顺序（与闲聊词表一致）：
-/// 1. 环境变量 `DT_ANCHORLESS_WORDS_FILE`
-/// 2. `<CWD>/config/anchorless-words.txt`
-/// 3. `~/.config/digital-twin/anchorless-words.txt`
-/// 4. `<可执行文件目录>/config/anchorless-words.txt`
-///
-/// 返回空 Vec 表示未找到可用文件；调用方应回退到内置默认词表。
-fn load_anchorless_words() -> Option<Vec<String>> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Ok(file) = std::env::var("DT_ANCHORLESS_WORDS_FILE") {
-        candidates.push(PathBuf::from(file));
-    }
-    candidates.push(PathBuf::from("config/anchorless-words.txt"));
-    if let Some(home) = crate::shared::home_dir() {
-        candidates.push(home.join(".config/digital-twin/anchorless-words.txt"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("config/anchorless-words.txt"));
-        }
-    }
-
-    for path in &candidates {
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let words = parse_casual_words(&content);
-        if !words.is_empty() {
-            tracing::debug!(path = %path.display(), "加载无锚点词表语料 {}", words.len());
-            return Some(words);
-        }
-    }
-    tracing::debug!("未找到无锚点词表文件，使用内置默认词表");
-    None
 }
 
 /// 将外部词表与内置默认 [`GENERIC_ANCHORLESS_WORDS`] 做并集合并（只增不减），
