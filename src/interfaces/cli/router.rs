@@ -22,7 +22,10 @@ use crate::domain::traits::LlmService;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// 处理 `dt router` —— 智能路由搜索。
+/// 处理 `dt router` —— 智能路由搜索（统一搜索入口）。
+///
+/// 自 dt search 统一后，router 吸收其全部能力：显式 `--file-type` /
+/// `--content-type` / `--show-content` 过滤优先于意图推断，展示层共用。
 pub async fn handle_router_search(
     query: &str,
     world: &str,
@@ -32,6 +35,9 @@ pub async fn handle_router_search(
     enable_filter: Option<bool>, // --filter：Some(true) 强制开 / Some(false) 强制关 / None 跟随配置
     filter_threshold: f32,       // --threshold：覆盖配置阈值（<=0 表示沿用配置）
     explain: bool,               // --explain：打印路由决策过程
+    file_type: Option<String>,   // --file-type：显式文件类型/后缀过滤（优先于意图推断）
+    content_type: Option<String>, // --content-type：显式实体类型过滤（优先于意图推断）
+    show_content: bool,          // --show-content：展开命中正文原文块
 ) -> Result<(), DtError> {
     // 读取配置开关
     let cfg = PipelineConfig::load().unwrap_or_default();
@@ -93,7 +99,14 @@ pub async fn handle_router_search(
     let intent = analyze_query_intent(query);
 
     // ---- 第二层：路由决策（决定检索参数）----
-    let route = build_route(&intent, world, use_filter, threshold);
+    let route = build_route(
+        &intent,
+        world,
+        use_filter,
+        threshold,
+        file_type.clone(),
+        content_type.clone(),
+    );
 
     if explain {
         println!("=== 路由决策 ===");
@@ -190,8 +203,11 @@ pub async fn handle_router_search(
         let resolver = crate::interfaces::cli::search_render::ProjectPathResolver::new(
             crate::interfaces::cli::build::project_roots_from_config(),
         );
-        let out =
-            crate::interfaces::cli::search_render::render_human(&final_result, false, &resolver);
+        let out = crate::interfaces::cli::search_render::render_human(
+            &final_result,
+            show_content,
+            &resolver,
+        );
         print!("{}", out);
     }
 
@@ -231,19 +247,125 @@ impl RoutePlan {
 
 /// L0 提前拦截：判断查询是否值得检索。
 ///
-/// 采用**单一贪心分词分类器**（无子串白名单）：只有当查询能用 [`CASUAL_VOCAB`]
-/// 从头到尾完整切分（每个词都是闲聊/寒暄/天气/算术/应答词）时才判断为无需检索；
-/// 只要带进任一技术词（类名/服务名/配置/api/接口/方法…，都不在闲聊词表里）
-/// 即无法完整切分 → 放行检索。
-///
-/// 这样天然泛化、不依赖固定短语："天气怎么样/天气咋样/今天多少度/how is the weather"
-/// 都能被完整切分而拦截；而"支付超时怎么配置/天气api接口/幂等逻辑在哪"因含技术词被放行。
-/// 对应文档「三级 Router」的 L0 Gate 层。
+/// 两道闸：
+/// 1. 闲聊词表完整切分（寒暄/天气/算术）→ 无需检索；
+/// 2. 检索锚点检测（[`has_search_anchor`]）——任务性口头语（"帮我实现"、
+///    "给我一些建议"、"分析某个文件的内容"）不含闲聊词（实现/建议/文件 不在闲聊表），
+///    却也不指向任何具体可检索对象，同样拦截。
 fn should_search(query: &str) -> bool {
-    // 统一拦闲聊：能完整切分 → 无需检索；否则 → 检索。
-    // 词表 = 外部 `casual-words.txt` 与内置 [`CASUAL_VOCAB`] 的并集（外部只增不减）。
-    !is_casual_query(query, casual_vocab_external().as_slice())
+    if is_casual_query(query, casual_vocab_external().as_slice()) {
+        return false;
+    }
+    has_search_anchor(query)
 }
+
+/// 判断查询是否携带可检索的具体对象（检索锚点）。
+///
+/// 仅在闲聊闸放行后调用。规则：
+/// 1. 强信号（任一命中即视为有锚点）：
+///    - 代码语法：`::`、`(`、`fn `/`def `/`class ` 等；
+///    - 文件后缀（.rs/.py/.php/.md/.yaml…）或路径（含 `/`、`\`、`://`）；
+///    - ASCII 标识符样式（驼峰/蛇形，如 MemgraphClient、getBalance）；
+///    - ASCII 内容词（≥2 字，如 api、config、redis、payment）——由 keywords_of 保留。
+/// 2. 中文内容词（jieba 切词去虚词后，≥2 字）：
+///    - 只要有一个词不在 [`GENERIC_ANCHORLESS_WORDS`] 通用词表里，即视为有具体对象
+///      （支付/订单/幂等/超时/缓存…都是可检索业务概念）；
+///    - 全部落在通用词表（或没有内容词）→ 无锚点（如"帮我实现"只剩"实现"）。
+fn has_search_anchor(query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    // 1. 强信号：代码语法 / 文件后缀 / 路径 / 标识符样式
+    if query.contains("::")
+        || query.contains('(')
+        || query.contains("fn ")
+        || query.contains("def ")
+        || query.contains("class ")
+        || query.contains("public ")
+        || query.contains("private ")
+    {
+        return true;
+    }
+    if query.chars().any(|c| c == '/' || c == '\\')
+        || query.contains("://")
+        || FILE_SUFFIX_ANCHORS
+            .iter()
+            .any(|s| query.to_lowercase().contains(s))
+    {
+        return true;
+    }
+    // ASCII 标识符样式（驼峰大写 / 蛇形下划线）
+    let ascii_tokens: Vec<&str> = q
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if ascii_tokens.iter().any(|t| {
+        t.len() >= 2
+            && (t.chars().any(|c| c.is_ascii_uppercase()) || t.contains('_'))
+    }) {
+        return true;
+    }
+    // 2. 内容词：jieba 去虚词后，任一非通用词即视为锚点。
+    //    通用词表 = 内置默认 + 外部 `config/anchorless-words.txt`（并集，只增不减）。
+    let kws =
+        crate::application::knowledge::extract::retrieve::keywords_of(query, 20);
+    kws.iter()
+        .any(|kw| !anchorless_vocab_external().contains(&kw.to_lowercase()))
+}
+
+/// 视为强检索锚点的文件后缀（命中即放行）。
+const FILE_SUFFIX_ANCHORS: &[&str] = &[
+    ".rs", ".py", ".php", ".java", ".js", ".ts", ".tsx", ".jsx", ".go", ".c", ".cpp",
+    ".h", ".hpp", ".cs", ".kt", ".swift", ".rb", ".scala", ".md", ".yaml", ".yml",
+    ".json", ".xml", ".toml", ".ini", ".conf", ".sql", ".sh", ".bash", ".css", ".html",
+    ".vue", ".svelte", ".txt", ".log", ".properties", ".gradle", ".lock",
+];
+
+/// 通用任务/指代词表——单独出现不代表可检索的具体对象（无检索锚点）。
+///
+/// 供 [`has_search_anchor`] 使用：查询去虚词后的内容词若**全部**落在本表
+/// （或无内容词），判为无锚点（如"帮我实现"只剩"实现"、"给我建议"只剩"建议"）。
+/// ⚠️ 绝不收录真实技术/业务词（支付/订单/缓存/接口/幂等/超时/模型/api/redis…），
+/// 否则会误拦"支付超时怎么配置 / 接口怎么了 / 服务怎么了"等有效查询。
+const GENERIC_ANCHORLESS_WORDS: &[&str] = &[
+    // 任务动词（无宾语时无具体对象可查）
+    "实现", "帮助", "帮忙", "设计", "开发", "编写", "编写一", "写", "写一", "写一个",
+    "改造", "重构", "修复", "解决", "处理", "排查", "检查", "测试", "调试", "优化",
+    "改善", "提升", "改进", "分析", "介绍", "说明", "总结", "梳理", "描述", "解释",
+    "建议", "推荐", "评估", "规划", "思考", "想想", "看看", "了解", "学习", "研究",
+    "使用", "运用", "操作", "创建", "新增", "添加", "删除", "修改", "完成", "搞定",
+    "考虑", "讨论", "聊聊", "看看", "查看", "介绍下",
+    // 诊断/根因类（"帮我检查确定的原因"这类缺宾语，无具体可检索对象）
+    "确定", "确认", "判断", "查明", "定位", "找出", "找到", "发现", "原因", "根因",
+    "来源", "根本", "本质", "关键", "问题", "问题点", "异常", "故障", "错误", "报错",
+    "当前", "现在", "之前", "刚才", "此时", "此刻", "整体", "全部", "整个", "本次",
+    "这次", "上次", "近期", "最近",
+    // 动词+一下 的 jieba 粘连词（"检查一下/看下/分析一下"整词出现）
+    "检查一下", "看一下", "看下", "分析一下", "排查一下", "确定一下", "确认一下",
+    "介绍一下", "讲解一下", "说一下", "讲一下", "试一下", "测一下", "研究一下",
+    "了解一下", "评估一下", "想想看",
+    // 抽象/泛指名词（无具体指向；服务/接口/配置等真实技术词绝不入表）
+    "文件", "代码", "内容", "功能", "模块", "项目", "程序", "应用", "方案", "思路",
+    "想法", "需求", "任务", "工作", "情况", "事情", "东西", "业务", "产品", "页面",
+    "组件", "工具", "数据", "流程", "逻辑", "场景", "能力", "特性", "属性", "结构",
+    "架构", "层面", "部分", "方面", "框架", "平台", "文档", "手册", "类型", "类别",
+    "区别", "原理", "概述", "流程", "步骤", "操作", "用法", "用途",
+    // 指代/量词/疑问（jieba 去虚词后可能残留）
+    "一些", "某些", "某个", "某种", "一个", "那个", "这个", "哪些", "什么", "怎么",
+    "怎样", "如何", "为啥", "为什么", "要", "会", "能", "可以", "应该", "想要",
+    "需要", "就是", "还有", "然后", "之后", "的话", "的话", "吗", "呢",
+    // jieba 误切碎片（常见于"介绍+一下/有+哪些/怎么+办"等粘连，非真实业务词）
+    "下有", "一下", "有哪", "有哪些", "有一", "干嘛", "怎么办", "来", "去", "搞",
+    "弄", "做", "整", "弄一", "搞一", "整一", "聊", "谈", "讲", "说", "看", "找",
+    // 英文通用（任务动词/泛指）
+    "implement", "implementation", "help", "advice", "suggestion", "suggest",
+    "analyze", "analyse", "analysis", "explain", "introduce", "optimize", "improve",
+    "design", "develop", "create", "write", "make", "build", "fix", "solve", "check",
+    "test", "review", "how", "what", "why", "do", "some", "about", "thing", "stuff",
+    "feature", "module", "project", "function", "method", "code", "file", "idea",
+    "plan", "problem", "issue", "way",
+];
 
 /// 闲聊词表（内容级，非短语级）。
 ///
@@ -641,6 +763,74 @@ fn merge_casual_vocab(external: &[String]) -> Vec<String> {
     merged
 }
 
+/// 外部无锚点词表（`config/anchorless-words.txt`），进程内只加载一次。
+///
+/// 返回合并后的完整词表：**外部文件中的词与内置 [`GENERIC_ANCHORLESS_WORDS`]
+/// 总会并集合并**，外部只增不减——避免用户只加了几个词却静默丢失全部默认覆盖。
+/// 若没有可用外部文件，则直接使用内置默认词表。
+fn anchorless_vocab_external() -> &'static Vec<String> {
+    static MERGED: OnceLock<Vec<String>> = OnceLock::new();
+    MERGED.get_or_init(|| match load_anchorless_words() {
+        Some(external) => merge_anchorless_vocab(&external),
+        None => GENERIC_ANCHORLESS_WORDS
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect(),
+    })
+}
+
+/// 从 `config/anchorless-words.txt` 加载无锚点词表（每行一词，`#` 注释，空行忽略）。
+///
+/// 查找顺序（与闲聊词表一致）：
+/// 1. 环境变量 `DT_ANCHORLESS_WORDS_FILE`
+/// 2. `<CWD>/config/anchorless-words.txt`
+/// 3. `~/.config/digital-twin/anchorless-words.txt`
+/// 4. `<可执行文件目录>/config/anchorless-words.txt`
+///
+/// 返回空 Vec 表示未找到可用文件；调用方应回退到内置默认词表。
+fn load_anchorless_words() -> Option<Vec<String>> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Ok(file) = std::env::var("DT_ANCHORLESS_WORDS_FILE") {
+        candidates.push(PathBuf::from(file));
+    }
+    candidates.push(PathBuf::from("config/anchorless-words.txt"));
+    if let Some(home) = crate::shared::home_dir() {
+        candidates.push(home.join(".config/digital-twin/anchorless-words.txt"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("config/anchorless-words.txt"));
+        }
+    }
+
+    for path in &candidates {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let words = parse_casual_words(&content);
+        if !words.is_empty() {
+            tracing::debug!(path = %path.display(), "加载无锚点词表语料 {}", words.len());
+            return Some(words);
+        }
+    }
+    tracing::debug!("未找到无锚点词表文件，使用内置默认词表");
+    None
+}
+
+/// 将外部词表与内置默认 [`GENERIC_ANCHORLESS_WORDS`] 做并集合并（只增不减），
+/// 小写化后去重。返回完整词表。
+fn merge_anchorless_vocab(external: &[String]) -> Vec<String> {
+    let mut merged: Vec<String> = external.iter().map(|s| s.to_lowercase()).collect();
+    for &w in GENERIC_ANCHORLESS_WORDS {
+        let lw = w.to_lowercase();
+        if !merged.iter().any(|e| e == &lw) {
+            merged.push(lw);
+        }
+    }
+    merged
+}
+
 /// 分析查询意图。
 fn analyze_query_intent(query: &str) -> QueryIntent {
     let q = query.to_lowercase();
@@ -692,12 +882,14 @@ fn analyze_query_intent(query: &str) -> QueryIntent {
     QueryIntent::HybridSearch
 }
 
-/// 根据意图 + world 生成路由决策。
+/// 根据意图 + world + 显式过滤生成路由决策。
 fn build_route(
     intent: &QueryIntent,
     world: &str,
     enable_filter: bool,
     filter_threshold: f32,
+    explicit_file_type: Option<String>,
+    explicit_content_type: Option<String>,
 ) -> RoutePlan {
     // world 显式指定时优先尊重用户；否则用 `all`（跨世界检索，与 `dt search` 一致），
     // 避免凭意图擅自缩窄到单一世界导致结果不一致。
@@ -707,7 +899,8 @@ fn build_route(
         world.to_string()
     };
 
-    let (file_type, entity_type, max_hops) = if world.is_empty() || world == "all" {
+    // 意图推断的默认过滤（world 缩窄时按意图给文件/实体类型 + 图跳数）。
+    let (mut file_type, mut entity_type, max_hops) = if world.is_empty() || world == "all" {
         // 默认跨世界检索：不缩窄类型，保证与 `dt search` 结果一致，
         // 增强维度交给 LLM 过滤层（第三层）。
         (None, None, None)
@@ -720,6 +913,13 @@ fn build_route(
             QueryIntent::HybridSearch => (None, None, None),
         }
     };
+    // 用户显式 --file-type / --content-type 优先于意图推断（吸收 dt search 能力）。
+    if explicit_file_type.is_some() {
+        file_type = explicit_file_type;
+    }
+    if explicit_content_type.is_some() {
+        entity_type = explicit_content_type;
+    }
 
     RoutePlan {
         world: route_world,
@@ -760,39 +960,129 @@ async fn filter_hits_with_llm(
 
     let mut filtered = Vec::new();
     for h in hits {
-        let relevance = judge_relevance(llm, query, &h.title, &h.snippet).await?;
+        let relevance = judge_relevance(llm, query, &h).await?;
         if relevance {
             filtered.push(h);
         } else if explain {
-            tracing::info!("LLM 过滤移除: {} (score={:.2})", h.title, h.score);
+            tracing::info!(
+                "LLM 过滤移除: {} (world={} score={:.2})",
+                h.title,
+                h.source_world,
+                h.score
+            );
         }
     }
     Ok(filtered)
 }
 
+/// 组装单条搜索命中的展示上下文（供 LLM 相关性判断），按世界类型差异化：
+/// code 命中带 文件路径/签名/所属类/LLM 分析；knowledge 带摘要/图关系；doc 带原文块；
+/// 所有命中统一带 来源世界/项目/实体类型/文件类型/图距离。
+fn format_hit_context(h: &crate::application::context::search_mcp::SearchHit) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("标题: {}", h.title));
+    if let Some(p) = &h.project {
+        parts.push(format!("项目: {}", p));
+    }
+    parts.push(format!("来源世界: {}", h.source_world));
+    if !h.entity_type.is_empty() {
+        parts.push(format!("实体类型: {}", h.entity_type));
+    }
+    if let Some(ft) = &h.file_type_label {
+        parts.push(format!("文件类型: {}", ft));
+    }
+    if let Some(sig) = &h.signature {
+        parts.push(format!("签名: {}", sig));
+    }
+    if let Some(fp) = &h.file_path {
+        parts.push(format!("文件路径: {}", fp));
+        if let (Some(sl), Some(el)) = (h.start_line, h.end_line) {
+            parts.push(format!("行号: L{}-{}", sl, el));
+        }
+    }
+    if let Some(sr) = &h.source_ref {
+        parts.push(format!("来源: {}", sr));
+    }
+    // code 世界：llm_analysis（用途/逻辑）是方法级别的实质内容
+    if let Some(la) = &h.llm_analysis {
+        if !la.trim().is_empty() {
+            parts.push(format!("方法分析: {}", la));
+        }
+    }
+    // knowledge 世界：snippet 即摘要（可能已含 evidence 的引用）
+    if !h.snippet.is_empty() && h.source_world == "knowledge" {
+        parts.push(format!("摘要: {}", h.snippet));
+    }
+    // doc 世界：content 为原文块（比 snippet 更完整）；无 content 用 snippet
+    if h.source_world == "doc" {
+        let body = h
+            .content
+            .clone()
+            .or_else(|| Some(h.snippet.clone()))
+            .unwrap_or_default();
+        if !body.is_empty() {
+            parts.push(format!("文档内容: {}", body));
+        }
+    }
+    // 图关系（code CONTAINS/CALLS，knowledge RELATES）辅助判断所属上下文
+    if let Some(rels) = &h.relations {
+        let names: Vec<String> = rels
+            .iter()
+            .filter_map(|r| {
+                let n = r.other_end_name.trim();
+                if n.is_empty() {
+                    None
+                } else {
+                    Some(format!("{} {}", r.rel_type, n))
+                }
+            })
+            .collect();
+        if !names.is_empty() {
+            parts.push(format!("图关系: {}", names.join("; ")));
+        }
+    }
+    if let Some(hop) = h.hop {
+        parts.push(format!("图距离(hop): {}", hop));
+    }
+    parts.join("\n")
+}
+
 /// 让 LLM 判断单个命中是否与查询相关。
+///
+/// 提示词包含三层规则：
+/// 1. 「检索锚点判定」——查询若只由通用动词/寒暄/无具体对象构成（如"帮我实现"、
+///    "给我一些建议"、"介绍一下"），则任何命中都不该被检索到 → 判「不相关」，
+///    避免过度检索的噪声结果进入上下文。
+/// 2. 「code 命中」必须看方法签名/所属类/文件路径，仅在查询明确涉及该文件/方法时相关；
+///    只撞上方法名（如 help / execute / recommend 等通用动词名）不算相关。
+/// 3. 「doc/knowledge 命中」看摘要/原文与查询的具体对象（业务实体/配置项/文件）一致。
 async fn judge_relevance(
     llm: &dyn LlmService,
     query: &str,
-    title: &str,
-    snippet: &str,
+    h: &crate::application::context::search_mcp::SearchHit,
 ) -> Result<bool, DtError> {
     let system_prompt = r#"你是搜索结果相关性评估专家。根据用户查询和单条搜索结果，判断它是否真正相关。
-只用一行输出，格式严格为：
-相关 / 不相关
-- "相关"：结果内容能直接回答或有力支撑查询
-- "不相关"：结果与查询无关，或仅有表面关键词重合"#;
+
+判定规则：
+1. 查询若只含通用意图词（如"帮我实现"、"给我建议"、"介绍一下"、"分析一下"），不含任何具体对象（代码符号、文件名、配置项、业务名、报错等），则任何命中都是多余检索 → 判"不相关"。
+2. 代码类命中（Method/Class）：查询只要涉及该文件/方法/类所在的项目、路径、文件、业务领域，或方法名与查询关键词一致，即判"相关"。
+3. 文档/知识类命中：摘要/原文与查询对象（含业务概念、配置项、技术术语）相关即判"相关"；仅字符串表面相同但语义无关时判"不相关"。
+4. 拿不准时倾向"相关"（宁可多留，不要误删有效结果）。
+
+输出格式（只输出一行，不要解释）：
+相关 或 不相关"#;
 
     let user_prompt = format!(
-        "查询：{}\n\n结果标题：{}\n结果摘要：{}",
-        query, title, snippet
+        "查询：{}\n\n单条搜索结果：\n{}\n\n结论：",
+        query,
+        format_hit_context(h)
     );
 
     let resp = match llm.chat(system_prompt, &user_prompt, 0.0, 200).await {
         Ok(r) => r,
         Err(e) => {
             // 个别 LLM 判断失败：保守保留该条结果，不因暂态错误删除有效命中。
-            tracing::warn!("LLM 相关性判断失败({e})，保守保留该条: {} ", title);
+            tracing::warn!("LLM 相关性判断失败({e})，保守保留该条: {} ", h.title);
             return Ok(true);
         }
     };
@@ -801,17 +1091,24 @@ async fn judge_relevance(
     // 响应可能带前后空格/标点/追问，这里取首个判定词。
     let norm = resp.trim();
 
-    // 若同时出现两个词（模型展开解释），保守保留——避免误删真实相关结果。
-    if norm.contains("相关") && norm.contains("不相关") {
-        return Ok(true);
-    }
-
-    // 明确以“不相关”开口 → 判定不相关，移除。
+    // 1. 明确以“不相关”开头 → 不相关，移除。
+    //    必须先于子串检查：字符串“不相关”本身包含子串“相关”，若先查 contains("相关")
+    //    会把“不相关”误判成“模型展开解释”而保守保留，导致 LLM 过滤失效。
     if norm.starts_with("不相关") {
         return Ok(false);
     }
 
-    // 包含“相关”→ 保留
+    // 2. 同时出现两个词（模型展开解释/带条件），保守保留——避免误删真实相关结果。
+    if norm.contains("相关") && norm.contains("不相关") {
+        return Ok(true);
+    }
+
+    // 3. 其余位置明确出现“不相关”（如“该结果不相关”）→ 移除。
+    if norm.contains("不相关") {
+        return Ok(false);
+    }
+
+    // 4. 包含“相关”→ 保留
     Ok(norm.contains("相关"))
 }
 
@@ -878,6 +1175,24 @@ mod tests {
         assert!(should_search("getBalance"));
         assert!(should_search("CrossWorldSearchTrait"));
         assert!(!should_search("how are you"));
+    }
+
+    #[test]
+    fn anchorless_task_chatter_is_blocked_at_l0() {
+        // 任务性口头语：含"实现/建议/分析"等通用词，但没有具体检索对象
+        // （无代码符号/文件/配置/业务实体），L0 锚点闸应拦截 → 不触发 KG 检索。
+        assert!(!should_search("帮我实现"));
+        assert!(!should_search("给我一些建议"));
+        assert!(!should_search("分析某个文件的内容"));
+        assert!(!should_search("介绍一下有哪些模块"));
+        assert!(!should_search("有什么问题"));
+        // 有具体业务对象/文件名 → 放行
+        assert!(should_search("帮我实现一个轮询功能"));
+        assert!(should_search("帮我实现轮询"));
+        assert!(should_search("支付超时怎么配置"));
+        assert!(should_search("分析 Wxapp.php"));
+        assert!(should_search("接口怎么了"));
+        assert!(should_search("服务怎么了"));
     }
 
     #[test]

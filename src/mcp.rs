@@ -1,9 +1,12 @@
-//! dt-mcp — digital-twin 的 MCP server(Rust 实现, 10 个 dt_* 工具)
+//! dt-mcp — digital-twin 的 MCP server(Rust 实现, 11 个 dt_* 工具)
 //!
 //! 直接调用 `digital_twin::interfaces::cli` 的 handler 与 `runtime::DtRuntime`,
 //! 不再走 CLI 子进程。工具名与参数 schema 对齐旧 mcp-server.py:
-//!   dt_search_kg / dt_search / dt_sense / dt_memorize / dt_event / dt_learn
-//!   / dt_build / dt_kg_sync / dt_health / dt_backup
+//!   dt_router / dt_search_kg / dt_search / dt_sense / dt_memorize / dt_event
+//!   / dt_learn / dt_build / dt_kg_sync / dt_health / dt_backup
+//!
+//! dt_router 是统一检索入口(对应 CLI `dt router`), 具备 L0 拦截 + 意图路由
+//! + LLM 过滤; dt_search_kg/dt_search 保留为底层兼容检索(直接 handle_search)。
 //!
 //! 输出适配: CLI handler 直接 `println!` 到 stdout, 而 MCP server 的 stdout
 //! 是 JSON-RPC 协议通道 —— 因此 call_tool 内把 stdout 重定向到临时文件,
@@ -110,6 +113,52 @@ impl DtRouter {
     async fn call(&self, tool_name: &str, arguments: Value) -> Result<String, ToolError> {
         let rt = &self.rt;
         match tool_name {
+            "dt_router" => {
+                // 智能路由搜索（dt router CLI 的 MCP 出口）：
+                // L0 拦截(闲聊/无锚点) + 意图路由 + LLM 过滤，跨 code/doc/knowledge/memory。
+                let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
+                let world =
+                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
+                let project = str_arg(&arguments, "project", false)?;
+                let limit = int_arg(&arguments, "limit")?.unwrap_or(5) as usize;
+                let enable_filter = match str_arg(&arguments, "filter", false)? {
+                    Some(v) if v == "true" => Some(true),
+                    Some(v) if v == "false" => Some(false),
+                    _ => None, // 跟随配置 kg_router.result_filter.enabled
+                };
+                let threshold = str_arg(&arguments, "threshold", false)?
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0); // <=0 表示沿用配置
+                let file_type = str_arg(&arguments, "file_type", false)?;
+                let content_type = str_arg(&arguments, "content_type", false)?;
+                let show_content = bool_arg(&arguments, "show_content")?.unwrap_or(false);
+                let out = tokio::task::spawn_blocking(move || {
+                    capture_stdout(move || {
+                        tokio::runtime::Runtime::new().unwrap().block_on(async {
+                            digital_twin::interfaces::cli::router::handle_router_search(
+                                &query,
+                                &world,
+                                limit,
+                                true,
+                                &project,
+                                enable_filter,
+                                threshold,
+                                false, // explain: MCP 内不需要路由决策打印
+                                file_type,
+                                content_type,
+                                show_content,
+                            )
+                            .await
+                            .map_err(|e| anyhow::anyhow!("{e}"))?;
+                            Ok(())
+                        })
+                    })
+                })
+                .await
+                .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
+
+                Ok(out)
+            }
             "dt_search_kg" => {
                 let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
                 let world =
@@ -527,6 +576,25 @@ impl Router for DtRouter {
 
     fn list_tools(&self) -> Vec<Tool> {
         vec![
+            Tool::new(
+                "dt_router".to_string(),
+                "智能路由搜索(统一检索): 自动识别意图路由 world + L0 闲聊/无锚点拦截 + 可选 LLM 过滤, 跨 code/doc/knowledge/config/memory。查代码/文件/文档/记忆/配置统一用它; 命中先读取确认, 0 命中才读源码。参数: query/world(默认all)/project/limit(默认5)/filter(可选 true|false)/file_type/content_type/show_content".to_string(),
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "自然语言搜索关键词/定位目标"},
+                        "world": {"type": "string", "description": "检索世界: all|code|knowledge|doc|config|memory, 默认 all(跨世界)"},
+                        "project": {"type": "string", "description": "限定项目名(查代码/文档必带)"},
+                        "limit": {"type": "integer", "description": "返回数量, 默认 5"},
+                        "filter": {"type": "string", "description": "LLM 相关性过滤: true 强制开 / false 强制关 / 省略跟随配置"},
+                        "threshold": {"type": "string", "description": "过滤阈值 0-1, 默认跟随配置 0.6"},
+                        "file_type": {"type": "string", "description": "按文件类型过滤: document/code/config 或后缀 md/yaml/rs…"},
+                        "content_type": {"type": "string", "description": "按实体类型过滤: Method/Class/Config/Service…"},
+                        "show_content": {"type": "boolean", "description": "展开命中正文原文块"}
+                    },
+                    "required": ["query"]
+                }),
+            ),
             Tool::new(
                 "dt_search_kg".to_string(),
                 "搜索知识图谱(GraphRAG 混合检索), 返回 JSON。world: knowledge(默认)/code/doc/config/memory/all; 已知精确方法/类名直接作为 query 触发精确匹配; 推荐带 project 过滤".to_string(),

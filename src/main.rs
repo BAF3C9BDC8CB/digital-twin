@@ -278,10 +278,13 @@ enum Commands {
         config_chunks: bool,
     },
 
-    /// 智能路由搜索 — 多层路由规则的增强版搜索。
+    /// 智能路由搜索（统一检索入口）。
     ///
-    /// 自动分析查询意图，选择最佳检索策略，LLM 过滤结果。
-    /// 用法: dt router <query> [options]
+    /// 用法: dt router <query> [--world all|code|knowledge|doc|config|memory] [--limit 10]
+    ///       [--json] [--project P] [--filter BOOL] [--threshold 0.6] [--file-type F]
+    ///       [--content-type T] [--show-content] [--explain]
+    /// 统一 dt search 与 dt router：自动意图路由 + L0 闲聊/无锚点拦截 + LLM 过滤，
+    /// 并保留显式 --file-type/--content-type/--show-content 精确过滤。
     Router {
         /// 搜索查询字符串。
         query: String,
@@ -314,6 +317,18 @@ enum Commands {
         /// 显示路由决策过程。
         #[arg(long = "explain")]
         explain: bool,
+
+        /// 按文件类型过滤：类别名（document/code/config）或具体后缀（md/yaml/java…）。
+        #[arg(long = "file-type")]
+        file_type: Option<String>,
+
+        /// 按内容类型过滤：LLM 语义类型（Config/Service/Standard…）或 AST 类型（Method/Class…）。
+        #[arg(long = "content-type", alias = "type")]
+        content_type: Option<String>,
+
+        /// 展开命中正文原文块（Config/Method/Doc 的 content 原样逐行显示）。
+        #[arg(long = "show-content")]
+        show_content: bool,
     },
 }
 
@@ -539,7 +554,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI 模式: dt router (智能路由搜索) ----
+        // ---- CLI 模式: dt router (智能路由搜索, 统一检索入口) ----
         Some(Commands::Router {
             query,
             world,
@@ -549,6 +564,9 @@ async fn main() -> anyhow::Result<()> {
             enable_filter,
             filter_threshold,
             explain,
+            file_type,
+            content_type,
+            show_content,
         }) => {
             digital_twin::interfaces::cli::router::handle_router_search(
                 &query,
@@ -559,6 +577,9 @@ async fn main() -> anyhow::Result<()> {
                 enable_filter,
                 filter_threshold,
                 explain,
+                file_type,
+                content_type,
+                show_content,
             )
             .await?;
             return Ok(());
