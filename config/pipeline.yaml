@@ -45,6 +45,7 @@ kg_router:
     # 命中任一实体/检索意图特征必放行；未命中闲聊词则默认放行（保守策略）。
     enabled: true
   result_filter:
-    # 结果过滤（第三层）：默认关闭，保证与 dt search 结果一致；开启后复用 LLM 移除不相关项。
-    enabled: false
+    # 结果过滤（第三层）：开启后复用 LLM 逐条判断命中相关性，移除不相关项，
+    # 解决 dt router 全量跨世界检索把无关项目/文档噪音注入上下文的问题。
+    enabled: true
     threshold: 0.6
