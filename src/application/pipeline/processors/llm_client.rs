@@ -54,6 +54,8 @@ pub struct LlmClientProcessor {
     provider: String,
     prompt_registry: Arc<PromptRegistry>,
     llm_config: LlmConfig,
+    /// 文档分级门控（doc-gate）。默认关闭时文档一律详细提取。
+    doc_gate: Option<crate::application::pipeline::config::DocGateConfig>,
 }
 
 impl LlmClientProcessor {
@@ -65,12 +67,25 @@ impl LlmClientProcessor {
         prompt_registry: Arc<PromptRegistry>,
         llm_config: LlmConfig,
     ) -> Self {
+        Self::with_doc_gate(client, model, provider, prompt_registry, llm_config, None)
+    }
+
+    /// 创建 LLM 分析处理器，并携带可选的文档分级门控配置。
+    pub fn with_doc_gate(
+        client: Arc<dyn ChatClient>,
+        model: String,
+        provider: String,
+        prompt_registry: Arc<PromptRegistry>,
+        llm_config: LlmConfig,
+        doc_gate: Option<crate::application::pipeline::config::DocGateConfig>,
+    ) -> Self {
         Self {
             client,
             model,
             provider,
             prompt_registry,
             llm_config,
+            doc_gate,
         }
     }
 }
@@ -113,7 +128,58 @@ impl Processor for LlmClientProcessor {
 
         // 2. 文档/Nacos 配置走块级提取；其他情况走旧式单次调用。
         if prompt_name == "document_with_nlp" || prompt_name == "nacos_config" {
-            self.execute_block_extraction(ctx, &prompt_name).await
+            // 文档分级门控（doc-gate）：对非 Nacos 文档，先用 LLM 判定
+            // 文档价值（high/medium/low），决定是否做详细实体/关系提取。
+            // high=详细；medium=只提实体+摘要（抑制关系）；low=跳过 LLM
+            // 提取仅保留块索引。Nacos 配置恒为 Config 类型，不做分级。
+            if prompt_name == "document_with_nlp" {
+                let doc_gate = match &self.doc_gate {
+                    Some(g) if g.enabled => Some(g.clone()),
+                    _ => None,
+                };
+                if let Some(gate) = doc_gate {
+                    let level = self
+                        .judge_document_level(ctx, &gate)
+                        .await
+                        .unwrap_or(gate.fallback);
+                    tracing::info!(
+                        file = %ctx.file_path.display(),
+                        level = ?level,
+                        "doc-gate 判定完成"
+                    );
+                    match level {
+                        crate::application::pipeline::config::DocGateLevel::High => {
+                            // 详细提取（现状）
+                            return self
+                                .execute_block_extraction(ctx, &prompt_name, false)
+                                .await;
+                        }
+                        crate::application::pipeline::config::DocGateLevel::Medium => {
+                            // 只提实体 + 摘要，剥离关系三元组
+                            return self.execute_block_extraction(ctx, &prompt_name, true).await;
+                        }
+                        crate::application::pipeline::config::DocGateLevel::Low => {
+                            // 跳过块级 LLM 提取：输出空图（consolidate 仍写
+                            // Document 节点 + doc_chunks 块索引，不建实体/关系）
+                            let mut output = ProcessorOutput::new();
+                            let chunk_out = ctx.get_output("chunk");
+                            let block_count = chunk_out
+                                .and_then(|c| c.get("chunks"))
+                                .and_then(|v| v.as_array())
+                                .map(|a| a.len())
+                                .unwrap_or(0);
+                            output.set("graphs", &Vec::<ExtractedGraph>::new());
+                            output.set("prompt_name", prompt_name);
+                            output.set("model", self.model.clone());
+                            output.set("degraded_count", 0u32);
+                            output.set("block_count", block_count);
+                            return Ok(output);
+                        }
+                    }
+                }
+            }
+            self.execute_block_extraction(ctx, &prompt_name, false)
+                .await
         } else {
             self.execute_single_call(ctx, &prompt_name).await
         }
@@ -121,6 +187,50 @@ impl Processor for LlmClientProcessor {
 }
 
 impl LlmClientProcessor {
+    /// 文档分级门控：用 LLM 判定文档价值档位（high/medium/low）。
+    ///
+    /// 输出严格 JSON `{"value": "high|medium|low", "reason": "..."}`。
+    /// 只取文档前 `preview_chars` 字符控制成本；解析失败返回 None（由
+    /// 调用方降级到配置的 fallback 档）。判定维度：
+    /// - 文档类型（架构/规范/接口契约 → high；README/手册 → medium；流水/临时 → low）
+    /// - 可提取的知识密度（实体/关系是否有长期复用价值）
+    async fn judge_document_level(
+        &self,
+        ctx: &PipelineContext,
+        gate: &crate::application::pipeline::config::DocGateConfig,
+    ) -> Option<crate::application::pipeline::config::DocGateLevel> {
+        let preview: String = ctx.file_text.chars().take(gate.preview_chars).collect();
+        let system_prompt = r#"你是文档价值分级专家。判断给定文档是否值得进行
+详细的实体/关系知识图谱提取。仅输出 JSON。
+
+输出格式（严格 JSON，不要 markdown 围栏，不要额外说明）：
+{"value": "high|medium|low", "reason": "一句话理由"}
+
+分级标准：
+- "high"：架构设计、技术方案、接口契约、规范/标准/SOP、配置说明、
+  协议定义等——实体与关系有长期复用价值，值得详细提取（实体+关系）。
+- "medium"：README、使用说明、操作手册、团队约定、会议纪要等——
+  有一定知识密度，但关系价值有限，只提取实体+摘要即可。
+- "low"：变更记录、流水账、日志、临时笔记、草稿、目录索引、模板
+  填充说明等——知识密度低，不值得 LLM 详细提取，仅保留原文检索。
+
+判断依据：文档类型、信息密度、实体/关系的可复用性。"#;
+        let user_prompt = format!(
+            "文件：{}\n\n文档内容（节选）：\n{}",
+            ctx.file_path.display(),
+            preview
+        );
+        let resp = self
+            .chat_content(system_prompt, &user_prompt)
+            .await
+            .map_err(|e| {
+                tracing::warn!("doc-gate 判定调用失败, 降级: {}", e);
+                e
+            })
+            .ok()?;
+        parse_doc_gate_json(&resp)
+    }
+
     /// 旧式单次调用路径（`code_with_ast` / `raw_text`）：渲染一次、
     /// 调用一次，返回未解析的响应。输出形状不变。
     async fn execute_single_call(
@@ -155,10 +265,14 @@ impl LlmClientProcessor {
     /// 时使用 F4 专用解析（name/purpose schema → ExtractedEntity），
     /// 否则使用通用 `parse_block_response`。
     /// 即使重试一次后解析仍失败的块，降级为 `degraded = true` 的空图（§5.5）。
+    ///
+    /// `strip_relations = true`（doc-gate medium 档）时，剥离所有块的
+    /// 关系三元组——只保留实体 + 摘要（图瘦身、去噪音边）。
     async fn execute_block_extraction(
         &self,
         ctx: &PipelineContext,
         prompt_name: &str,
+        strip_relations: bool,
     ) -> Result<ProcessorOutput, DtError> {
         let mut output = ProcessorOutput::new();
 
@@ -206,7 +320,7 @@ impl LlmClientProcessor {
             (block_index, result)
         }})).buffer_unordered(limit).collect::<Vec<_>>().await;
         results.sort_by_key(|(index, _)| *index);
-        let graphs: Vec<ExtractedGraph> = results
+        let mut graphs: Vec<ExtractedGraph> = results
             .iter()
             .map(|(_, (_, graph))| graph.clone())
             .collect();
@@ -216,6 +330,13 @@ impl LlmClientProcessor {
             .collect();
 
         let degraded_count = graphs.iter().filter(|g| g.degraded).count();
+
+        // doc-gate medium 档：剥离关系三元组，只保留实体 + 摘要。
+        if strip_relations {
+            for g in graphs.iter_mut() {
+                g.relations.clear();
+            }
+        }
 
         // 每个 chunk 的分析已经固化在 graph.block_summary；保留旧 response
         // 字段以兼容 DeepSeek/SiliconFlow 及旧消费者。
@@ -296,6 +417,36 @@ impl LlmClientProcessor {
             .first()
             .map(|c| c.message.content.clone())
             .unwrap_or_default())
+    }
+}
+
+/// 解析 doc-gate LLM 判定的 JSON 输出，映射到文档价值档位。
+///
+/// 接受 `{"value": "high|medium|low", "reason": "..."}`，容忍 ```json
+/// 围栏与前后杂讯；无法解析或无 value 字段时返回 `None`（调用方按配置
+/// fallback 降级，默认 high——宁多提取不漏知识）。
+fn parse_doc_gate_json(raw: &str) -> Option<crate::application::pipeline::config::DocGateLevel> {
+    use crate::application::pipeline::config::DocGateLevel;
+    let trimmed = raw.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(trimmed);
+    // 容忍前后杂讯：从第一个 { 到最后一个 } 截取。
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let json = &body[start..=end];
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let value = v.get("value")?.as_str()?;
+    match value.to_ascii_lowercase().as_str() {
+        "high" => Some(DocGateLevel::High),
+        "medium" | "mid" => Some(DocGateLevel::Medium),
+        "low" => Some(DocGateLevel::Low),
+        _ => None,
     }
 }
 
@@ -489,6 +640,43 @@ mod tests {
     fn selects_raw_text_when_no_upstream_output() {
         let ctx = make_context("readme.md", "# Hello", vec![]);
         assert_eq!(select_prompt(&ctx), "raw_text");
+    }
+
+    #[test]
+    fn parse_doc_gate_json_accepts_clean_and_fenced() {
+        use crate::application::pipeline::config::DocGateLevel;
+        // 干净输出
+        assert_eq!(
+            parse_doc_gate_json(r#"{"value": "high", "reason": "架构文档"}"#),
+            Some(DocGateLevel::High)
+        );
+        assert_eq!(
+            parse_doc_gate_json(r#"{"value": "medium", "reason": "README"}"#),
+            Some(DocGateLevel::Medium)
+        );
+        assert_eq!(
+            parse_doc_gate_json(r#"{"value": "low", "reason": "变更记录"}"#),
+            Some(DocGateLevel::Low)
+        );
+        // ```json 围栏 + 前后杂讯
+        assert_eq!(
+            parse_doc_gate_json("```json\n{\"value\": \"high\", \"reason\": \"x\"}\n```"),
+            Some(DocGateLevel::High)
+        );
+        assert_eq!(
+            parse_doc_gate_json("判定如下：{\"value\": \"low\", \"reason\": \"流水账\"} 完毕"),
+            Some(DocGateLevel::Low)
+        );
+        // 大小写不敏感
+        assert_eq!(
+            parse_doc_gate_json(r#"{"value": "MEDIUM"}"#),
+            Some(DocGateLevel::Medium)
+        );
+        // 无法解析 → None
+        assert_eq!(parse_doc_gate_json("不确定"), None);
+        assert_eq!(parse_doc_gate_json(""), None);
+        assert_eq!(parse_doc_gate_json(r#"{"wrong_field": "high"}"#), None);
+        assert_eq!(parse_doc_gate_json(r#"{"value": "extreme"}"#), None);
     }
 
     #[test]

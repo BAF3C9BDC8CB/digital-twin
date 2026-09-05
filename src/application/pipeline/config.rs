@@ -46,6 +46,13 @@ pub struct PipelineConfig {
     /// KG Router 路由与过滤配置。
     #[serde(default)]
     pub kg_router: Option<KgRouterConfig>,
+
+    /// 文档分级门控（doc-gate）配置：构建时用 LLM 判断文档价值
+    /// （high/medium/low），决定是否做详细的实体/关系提取。
+    /// high=详细提取；medium=只提实体+摘要（抑制关系）；low=跳过 LLM
+    /// 提取，仅保留块级索引（doc_chunks）与 Document 节点。
+    #[serde(default)]
+    pub doc_gate: Option<DocGateConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,54 @@ impl Default for ProcessorsConfig {
             embed: true,
         }
     }
+}
+
+/// 文档分级门控（doc-gate）配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocGateConfig {
+    /// 总开关：false（默认）时文档一律走详细提取（现状行为）。
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// LLM 判定采样的文档前 N 字符（默认 4000，控制 gate 调用成本）。
+    #[serde(default = "default_gate_preview_chars")]
+    pub preview_chars: usize,
+
+    /// gate 判定失败时降级的提取档位：high（保守）/ medium / low。
+    #[serde(default)]
+    pub fallback: DocGateLevel,
+}
+
+/// 文档价值档位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DocGateLevel {
+    /// 详细提取：实体 + 关系 + 摘要（现状 document_with_nlp 全量）。
+    High,
+    /// 只提取实体 + 摘要，抑制关系三元组（图瘦身，去噪音边）。
+    Medium,
+    /// 跳过 LLM 提取：仅块级索引（doc_chunks 向量）+ Document 节点。
+    Low,
+}
+
+impl Default for DocGateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preview_chars: default_gate_preview_chars(),
+            fallback: DocGateLevel::High,
+        }
+    }
+}
+
+impl Default for DocGateLevel {
+    fn default() -> Self {
+        DocGateLevel::High
+    }
+}
+
+const fn default_gate_preview_chars() -> usize {
+    4000
 }
 
 /// LLM 推理参数（唯一能力块：代码/文档分析与路由过滤共用）。
@@ -494,6 +549,7 @@ impl Default for PipelineConfig {
             ecosystem: Some(EcosystemConfig::default()),
             providers: Some(ProvidersConfig::default()),
             kg_router: Some(KgRouterConfig::default()),
+            doc_gate: Some(DocGateConfig::default()),
         }
     }
 }

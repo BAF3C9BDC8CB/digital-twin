@@ -374,12 +374,14 @@ async fn run_pipeline_analysis(
         match PromptRegistry::load_default() {
             Ok(prompts) => {
                 let llm_config = pipeline_config.llm.as_ref().cloned().unwrap_or_default();
-                registry.register(Box::new(LlmClientProcessor::new(
+                let doc_gate = pipeline_config.doc_gate.as_ref().cloned();
+                registry.register(Box::new(LlmClientProcessor::with_doc_gate(
                     infer_client.clone(),
                     infer_model.clone(),
                     "siliconflow".to_string(),
                     Arc::new(prompts),
                     llm_config,
+                    doc_gate,
                 )));
                 tracing::info!("  处理器: LlmClient");
             }
