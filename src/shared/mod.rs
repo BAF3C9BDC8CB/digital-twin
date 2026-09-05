@@ -1,6 +1,7 @@
 pub mod chunker;
 pub mod collections;
 pub mod coordinator;
+pub mod llm_parse;
 pub mod logging;
 
 use std::path::PathBuf;

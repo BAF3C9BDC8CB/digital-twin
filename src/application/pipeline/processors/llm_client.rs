@@ -133,13 +133,9 @@ impl Processor for LlmClientProcessor {
             // high=详细；medium=只提实体+摘要（抑制关系）；low=跳过 LLM
             // 提取仅保留块索引。Nacos 配置恒为 Config 类型，不做分级。
             if prompt_name == "document_with_nlp" {
-                let doc_gate = match &self.doc_gate {
-                    Some(g) if g.enabled => Some(g.clone()),
-                    _ => None,
-                };
-                if let Some(gate) = doc_gate {
+                if let Some(gate) = self.doc_gate.as_ref().filter(|g| g.enabled) {
                     let level = self
-                        .judge_document_level(ctx, &gate)
+                        .judge_document_level(ctx, gate)
                         .await
                         .unwrap_or(gate.fallback);
                     tracing::info!(
@@ -303,8 +299,12 @@ impl LlmClientProcessor {
         // 全局在飞请求由客户端 semaphore（provider max_concurrent）统一限流——
         // 不再按文件/文件内独立限流，任何文件只要全局并发未满就继续取块。
         let limit = chunks_owned.len().max(1);
+
+        // 用 Arc 共享 doc_id，避免每个闭包都 clone 字符串
+        let doc_id = Arc::new(doc_id);
+
         let mut results = stream::iter(chunks_owned.into_iter().enumerate().map(|(pos, chunk)| {
-            let doc_id = doc_id.clone();
+            let doc_id = Arc::clone(&doc_id);
             async move {
             let block_index = chunk.get("chunk_index").and_then(|v| v.as_u64()).unwrap_or(pos as u64);
             let block_text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or_default();
@@ -320,14 +320,17 @@ impl LlmClientProcessor {
             (block_index, result)
         }})).buffer_unordered(limit).collect::<Vec<_>>().await;
         results.sort_by_key(|(index, _)| *index);
-        let mut graphs: Vec<ExtractedGraph> = results
-            .iter()
-            .map(|(_, (_, graph))| graph.clone())
-            .collect();
+
+        // 先提取所有原始响应（需要在 into_iter 消耗 results 前）
         let raw_responses: Vec<String> = results
-            .into_iter()
-            .filter_map(|(_, (raw, _))| raw)
+            .iter()
+            .filter_map(|(_, (raw, _))| raw.as_ref())
+            .cloned()
             .collect();
+
+        // 直接移动 graph 所有权，避免 clone
+        let mut graphs: Vec<ExtractedGraph> =
+            results.into_iter().map(|(_, (_, graph))| graph).collect();
 
         let degraded_count = graphs.iter().filter(|g| g.degraded).count();
 
@@ -427,22 +430,14 @@ impl LlmClientProcessor {
 /// fallback 降级，默认 high——宁多提取不漏知识）。
 fn parse_doc_gate_json(raw: &str) -> Option<crate::application::pipeline::config::DocGateLevel> {
     use crate::application::pipeline::config::DocGateLevel;
-    let trimmed = raw.trim();
-    let body = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .map(|s| s.trim())
-        .unwrap_or(trimmed);
-    // 容忍前后杂讯：从第一个 { 到最后一个 } 截取。
-    let start = body.find('{')?;
-    let end = body.rfind('}')?;
-    if end <= start {
-        return None;
+
+    #[derive(serde::Deserialize)]
+    struct Response {
+        value: String,
     }
-    let json = &body[start..=end];
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let value = v.get("value")?.as_str()?;
-    match value.to_ascii_lowercase().as_str() {
+
+    let resp: Response = crate::shared::llm_parse::parse_llm_json(raw)?;
+    match resp.value.to_ascii_lowercase().as_str() {
         "high" => Some(DocGateLevel::High),
         "medium" | "mid" => Some(DocGateLevel::Medium),
         "low" => Some(DocGateLevel::Low),

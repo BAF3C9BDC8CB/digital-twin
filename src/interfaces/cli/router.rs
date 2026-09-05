@@ -197,7 +197,7 @@ pub async fn handle_router_search(
         entity_type_filter: route.entity_type.clone(),
     };
 
-    let result = cws.search(&req).await?;
+    let mut result = cws.search(&req).await?;
 
     if explain {
         println!(
@@ -233,28 +233,19 @@ pub async fn handle_router_search(
     }
 
     // ---- 输出（复用 dt search 渲染，展示一致）----
-    let total = final_hits.len();
-    let final_result = crate::application::context::search_mcp::CrossWorldResult {
-        query: result.query.clone(),
-        world: result.world.clone(),
-        hits: final_hits,
-        total,
-        per_world_counts: result.per_world_counts.clone(),
-        degraded: result.degraded.clone(),
-    };
+    // 直接修改 result，避免重建整个结构体（省 5 个字段的 clone）
+    result.hits = final_hits;
+    result.total = result.hits.len();
 
     if json_output {
-        let out = crate::interfaces::cli::search_render::render_json(&final_result);
+        let out = crate::interfaces::cli::search_render::render_json(&result);
         println!("{}", out);
     } else {
         let resolver = crate::interfaces::cli::search_render::ProjectPathResolver::new(
             crate::interfaces::cli::build::project_roots_from_config(),
         );
-        let out = crate::interfaces::cli::search_render::render_human(
-            &final_result,
-            show_content,
-            &resolver,
-        );
+        let out =
+            crate::interfaces::cli::search_render::render_human(&result, show_content, &resolver);
         print!("{}", out);
     }
 
@@ -1524,22 +1515,16 @@ async fn judge_relevance(
 
 /// 从 LLM 相关性判断输出中解析 JSON `{"relevant": bool}`。
 /// 返回 None 表示无法解析（调用方降级文本解析）。容忍 ```json 围栏与前后杂讯。
+/// 从相关性过滤 LLM 输出中解析 JSON `{"relevant": bool}`。
+/// 返回 None 表示无法解析（调用方降级到文本解析）。容忍 ```json 围栏与前后杂讯。
 fn parse_relevance_json(resp: &str) -> Option<bool> {
-    let trimmed = resp.trim();
-    let body = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .map(|s| s.trim())
-        .unwrap_or(trimmed)
-        .trim_end_matches("```")
-        .trim();
-    let start = body.find('{')?;
-    let end_rel = body.rfind('}')?;
-    if end_rel <= start {
-        return None;
+    #[derive(serde::Deserialize)]
+    struct Response {
+        relevant: bool,
     }
-    let obj: serde_json::Value = serde_json::from_str(&body[start..=end_rel]).ok()?;
-    obj.get("relevant").and_then(|v| v.as_bool())
+
+    let parsed: Response = crate::shared::llm_parse::parse_llm_json(resp)?;
+    Some(parsed.relevant)
 }
 
 /// 旧文本格式降级解析：响应中出现"不相关"则 false，否则视为相关（保守保留）。
@@ -1616,21 +1601,13 @@ async fn judge_search_with_llm(
 /// 从 LLM 门控输出中解析 JSON `{"search": bool}`。
 /// 返回 None 表示无法解析（调用方按失败处理）。容忍 ```json 围栏与前后杂讯。
 fn parse_gate_json(resp: &str) -> Option<bool> {
-    let trimmed = resp.trim();
-    let body = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .map(|s| s.trim())
-        .unwrap_or(trimmed)
-        .trim_end_matches("```")
-        .trim();
-    let start = body.find('{')?;
-    let end = body.rfind('}')?;
-    if end <= start {
-        return None;
+    #[derive(serde::Deserialize)]
+    struct Response {
+        search: bool,
     }
-    let obj: serde_json::Value = serde_json::from_str(&body[start..=end]).ok()?;
-    obj.get("search").and_then(|v| v.as_bool())
+
+    let parsed: Response = crate::shared::llm_parse::parse_llm_json(resp)?;
+    Some(parsed.search)
 }
 
 #[cfg(test)]

@@ -6,8 +6,14 @@
 
 use crate::application::pipeline::output::ProcessorOutput;
 use crate::application::pipeline::virtual_file::FileSourceKind;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// 缓存的模板变量正则表达式 `${...}`，避免重复编译。
+static TEMPLATE_VAR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\$\{([^}]+)\}").expect("硬编码的正则表达式必须有效"));
 
 /// 针对单个文件流过整个流水线的共享上下文。
 #[derive(Debug, Clone)]
@@ -81,10 +87,8 @@ impl PipelineContext {
     pub fn resolve(&self, template: &str) -> String {
         let mut result = template.to_string();
 
-        // 匹配 `${...}` 占位符。
-        let re = regex::Regex::new(r"\$\{([^}]+)\}").unwrap();
-
-        for cap in re.captures_iter(template) {
+        // 使用缓存的正则表达式匹配 `${...}` 占位符。
+        for cap in TEMPLATE_VAR_RE.captures_iter(template) {
             let full_match = cap.get(0).unwrap().as_str().to_string();
             let inner = cap.get(1).unwrap().as_str();
 

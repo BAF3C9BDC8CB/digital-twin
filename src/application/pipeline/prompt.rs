@@ -15,9 +15,15 @@
 //! let (system, user) = registry.render("code_with_ast", &ctx)?;
 //! ```
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// 缓存的模板变量正则表达式 `${...}`，与 context.rs 共享相同模式。
+static TEMPLATE_VAR_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\$\{([^}]+)\}").expect("硬编码的正则表达式必须有效"));
 
 // ---------------------------------------------------------------------------
 // Prompt
@@ -185,15 +191,14 @@ impl PromptRegistry {
 ///
 /// 路径在 `context` 中不存在的占位符保持原样。
 fn render_template(template: &str, context: &serde_json::Value) -> String {
-    // 匹配 `${...}` 但不匹配 `$${...}`（转义）。
-    let re = regex::Regex::new(r"\$\{([^}]+)\}").expect("硬编码的正则必须有效");
-
-    re.replace_all(template, |caps: &regex::Captures<'_>| {
-        let key_path = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        resolve_json_path(context, key_path)
-            .unwrap_or_else(|| caps.get(0).unwrap().as_str().to_string())
-    })
-    .to_string()
+    // 使用缓存的正则表达式匹配 `${...}` 占位符。
+    TEMPLATE_VAR_RE
+        .replace_all(template, |caps: &regex::Captures<'_>| {
+            let key_path = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            resolve_json_path(context, key_path)
+                .unwrap_or_else(|| caps.get(0).unwrap().as_str().to_string())
+        })
+        .to_string()
 }
 
 /// 沿点分路径（例如 `"tree_sitter.entities"`）在 JSON 值中遍历。

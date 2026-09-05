@@ -155,7 +155,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
                 name: name.clone(),
                 title: format!("{} — 执行模式", request.task),
                 domain: domain.clone(),
-                summary: with_keywords(pattern.clone(), &request.task),
+                summary: with_keywords(pattern, &request.task),
                 content: format!(
                     "# {}\n\n## 模式\n\n{}\n\n## 涉及实体\n\n{}",
                     request.task,
@@ -188,7 +188,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
             let experience = Experience {
                 experience_id,
                 title: format!("{} — 踩坑 #{}", request.task, i + 1),
-                summary: with_keywords(pitfall.clone(), &request.task),
+                summary: with_keywords(pitfall, &request.task),
                 content: format!(
                     "## 坑点\n{}\n\n## 任务\n{}\n\n## 涉及实体\n{}",
                     pitfall,
@@ -216,7 +216,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
             let experience = Experience {
                 experience_id,
                 title: format!("{} — 决策 #{}", request.task, i + 1),
-                summary: decision.clone(),
+                summary: decision.to_string(),
                 content: format!("## 决策\n{}\n\n## 任务上下文\n{}", decision, request.task,),
                 domain: domain.clone(),
                 severity: ExperienceSeverity::Info,
@@ -399,7 +399,7 @@ impl<S: KnowledgeService + 'static> LearnService for LearnServiceImpl<S> {
 /// 中文任务（如"消息撤回链路"）常被英文查询词（recall/withdraw）检索不到——
 /// 在 summary 尾部追加"（keywords: recall, withdraw, ...）"让向量空间同时
 /// 覆盖中英文语义。内置常见业务关键词映射，映射不到的保留原文。
-fn with_keywords(text: String, task: &str) -> String {
+fn with_keywords(text: &str, task: &str) -> String {
     const MAP: &[(&str, &[&str])] = &[
         ("撤回", &["recall", "withdraw", "revoke"]),
         ("消息", &["message", "msg"]),
@@ -427,7 +427,7 @@ fn with_keywords(text: String, task: &str) -> String {
         }
     }
     if kws.is_empty() {
-        text
+        text.to_string()
     } else {
         format!("{}（keywords: {}）", text.trim_end(), kws.join(", "))
     }

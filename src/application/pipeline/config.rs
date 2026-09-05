@@ -492,44 +492,70 @@ impl PipelineConfig {
 
     /// 当前生效的 LLM 模型名（`llm.model`），空则回退默认。
     pub fn llm_model(&self) -> String {
-        self.llm
-            .as_ref()
-            .and_then(|c| {
-                if c.model.is_empty() {
-                    None
-                } else {
-                    Some(c.model.clone())
-                }
-            })
-            .unwrap_or_else(|| crate::infrastructure::siliconflow::llm_model_from_env())
+        model_or_env(
+            self.llm.as_ref(),
+            crate::infrastructure::siliconflow::llm_model_from_env,
+        )
     }
 
     /// 当前生效的 embed 模型名（`embed.model`），空则回退默认。
     pub fn embed_model(&self) -> String {
-        self.embed
-            .as_ref()
-            .and_then(|c| {
-                if c.model.is_empty() {
-                    None
-                } else {
-                    Some(c.model.clone())
-                }
-            })
-            .unwrap_or_else(|| crate::infrastructure::siliconflow::embed_model_from_env())
+        model_or_env(
+            self.embed.as_ref(),
+            crate::infrastructure::siliconflow::embed_model_from_env,
+        )
     }
 
     /// 当前生效的 rerank 模型名（`rerank.model`），空则回退默认。
     pub fn rerank_model(&self) -> String {
-        self.rerank
-            .as_ref()
-            .and_then(|c| {
-                if c.model.is_empty() {
-                    None
-                } else {
-                    Some(c.model.clone())
-                }
-            })
-            .unwrap_or_else(|| crate::infrastructure::siliconflow::reranker_model_from_env())
+        model_or_env(
+            self.rerank.as_ref(),
+            crate::infrastructure::siliconflow::reranker_model_from_env,
+        )
+    }
+}
+
+/// 从配置中提取模型名，空则回退环境变量默认值。
+///
+/// 统一处理 llm/embed/rerank 三种配置的模型名提取逻辑：
+/// 1. 配置存在且 `model` 非空 → 返回配置值
+/// 2. 配置缺失或 `model` 为空 → 调用 `env_fallback()` 获取默认值
+fn model_or_env<C>(config: Option<&C>, env_fallback: fn() -> String) -> String
+where
+    C: HasModel,
+{
+    config
+        .and_then(|c| {
+            let m = c.model();
+            if m.is_empty() {
+                None
+            } else {
+                Some(m.to_string())
+            }
+        })
+        .unwrap_or_else(env_fallback)
+}
+
+/// 提供 `.model()` 访问器的配置类型 trait。
+trait HasModel {
+    fn model(&self) -> &str;
+}
+
+impl HasModel for LlmConfig {
+    fn model(&self) -> &str {
+        &self.model
+    }
+}
+
+impl HasModel for EmbedConfig {
+    fn model(&self) -> &str {
+        &self.model
+    }
+}
+
+impl HasModel for RerankConfig {
+    fn model(&self) -> &str {
+        &self.model
     }
 }
 
