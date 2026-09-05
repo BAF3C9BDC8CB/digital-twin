@@ -67,6 +67,14 @@ impl CrossWorldSearch {
                 if score < 0.3 {
                     return None; // 分数阈值, 低相关不召回
                 }
+                // business_id：区分记忆 vs 代码实体的关键字段。
+                let bid = payload
+                    .get("business_id")
+                    .or_else(|| payload.get("knowledge_id"))
+                    .or_else(|| payload.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let name = payload
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -89,13 +97,55 @@ impl CrossWorldSearch {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                // ── 记忆过滤（防止代码/实体污染）────────────────────────
+                // kg_nodes 集合混存了代码索引实体（build 时从代码提取，
+                // business_id="dt://entity/..."、type=service/config/...、
+                // origin=extracted）与真正的记忆（dt-memory 插件写入，
+                // business_id="mem-..."/"hermes-..."/"auto-..."）。
+                // 若不过滤，world=memory 语义检索会把大量代码实体当记忆返回，
+                // 且 entity_type 被硬编码为 "Knowledge" 造成"记忆里混入代码"的错觉。
+                let is_memory = is_memory_payload(&payload, &bid);
+                if !is_memory {
+                    return None;
+                }
+                let name = payload
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let desc = payload
+                    .get("content")
+                    .or_else(|| payload.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let proj = payload
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // 实体类型：取 payload 真实 type（如 knowledge/experience/concept），
+                // 避免硬编码 "Knowledge" 掩盖真实来源。
+                let entity_type = payload
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| {
+                        payload
+                            .get("labels")
+                            .and_then(|v| v.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_else(|| "Knowledge".to_string());
                 Some(SearchHit {
                     id: kid.clone(),
                     title: name,
                     snippet: desc,
                     content: None,
                     source_world: "memory".into(),
-                    entity_type: "Knowledge".into(),
+                    entity_type,
                     file_type: None,
                     file_type_label: None,
                     score,
@@ -251,6 +301,80 @@ impl CrossWorldSearch {
     }
 }
 
+/// 判断一个 kg_nodes payload 是否属于**真正的记忆/知识条目**，而非
+/// 从代码提取的索引实体。
+///
+/// # 为什么需要
+///
+/// `kg_nodes` 集合混存了两种来源：
+/// - **记忆**：dt-memory 插件经 `dt memorize` 写入的 Knowledge/Experience/
+///   Concept/Domain/Playbook 节点。business_id 为 `mem-*`/`hermes-*`/`auto-*`
+///   （dt-memory 插件生成的 id）或以 `dt://knowledge`/`dt://experience` 等
+///   知识世界 URI 开头，type 为 lowercase 的标签名（knowledge/experience/...）。
+/// - **代码索引实体**：`dt build` 从代码提取，business_id 为
+///   `dt://entity/<project>/...`，type 为 service/config/...，origin=extracted。
+///
+/// 若不做区分，`world=memory` 的向量检索会把大量代码实体当记忆返回，
+/// 造成"记忆里混入 code 内容"的错觉（此前 entity_type 还被硬编码为
+/// "Knowledge"，进一步掩盖真实来源）。
+fn is_memory_payload(payload: &serde_json::Value, business_id: &str) -> bool {
+    let bid = business_id.trim().to_lowercase();
+    let bid_lc = bid.as_str();
+
+    // 1. 显式排除代码/实体索引：business_id 为 dt://entity/...（构建提取的实体）
+    if bid_lc.starts_with("dt://entity/") {
+        return false;
+    }
+    // 2. 显式排除从代码提取的原生实体（origin=extracted）
+    let origin = payload
+        .get("origin")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if origin == "extracted" || origin == "learned" && bid_lc.is_empty() {
+        // "learned" 是 build_payload 的默认 origin，但知识世界节点同样会落到
+        // "learned"。因此仅当 business_id 无知识世界特征时才据此排除。
+        return false;
+    }
+    // 3. 记忆/知识世界特征（任一满足即视为记忆）
+    if bid_lc.starts_with("mem-")
+        || bid_lc.starts_with("hermes-")
+        || bid_lc.starts_with("auto-")
+        || bid_lc.starts_with("dt://knowledge/")
+        || bid_lc.starts_with("dt://experience/")
+        || bid_lc.starts_with("dt://concept/")
+        || bid_lc.starts_with("dt://domain/")
+        || bid_lc.starts_with("dt://playbook/")
+    {
+        return true;
+    }
+    // 4. type 为知识世界标签（knowledge/experience/concept/domain/playbook）
+    if let Some(t) = payload.get("type").and_then(|v| v.as_str()) {
+        let t = t.trim().to_lowercase();
+        if matches!(
+            t.as_str(),
+            "knowledge" | "experience" | "concept" | "domain" | "playbook" | "learning"
+        ) {
+            return true;
+        }
+    }
+    // 5. 兜底：labels 含知识世界标签
+    if let Some(arr) = payload.get("labels").and_then(|v| v.as_array()) {
+        for l in arr {
+            if let Some(s) = l.as_str() {
+                let s = s.to_lowercase();
+                if matches!(
+                    s.as_str(),
+                    "knowledge" | "experience" | "concept" | "domain" | "playbook"
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +520,50 @@ mod tests {
         assert!(captured.contains("AND"));
         // 不应有整串 $q（旧实现）
         assert!(!captured.contains("CONTAINS $q"));
+    }
+
+    #[test]
+    fn is_memory_payload_accepts_real_memories() {
+        use serde_json::json;
+        // dt-memory 插件显式写入的记忆（business_id = mem-xxx）
+        let mem = json!({"business_id":"mem-a1b2c3","name":"支付迁移","type":"knowledge","origin":"user_explicit","project":"hermes-global"});
+        assert!(is_memory_payload(&mem, "mem-a1b2c3"));
+        // hermes- 前缀（agent_curated）
+        let hermes =
+            json!({"business_id":"hermes-memory-add-x","name":"约定","labels":["Knowledge"]});
+        assert!(is_memory_payload(&hermes, "hermes-memory-add-x"));
+        // auto- 前缀（LLM 自动提取）
+        let auto = json!({"business_id":"auto-9f82","name":"经验","type":"experience"});
+        assert!(is_memory_payload(&auto, "auto-9f82"));
+        // dt://knowledge URI（知识世界节点）
+        let dk = json!({"business_id":"dt://knowledge/pay/rule","name":"规则","type":"knowledge"});
+        assert!(is_memory_payload(&dk, "dt://knowledge/pay/rule"));
+        // type=concept（概念）
+        let concept = json!({"name":"分账基数","type":"concept"});
+        assert!(is_memory_payload(&concept, "dt://concept/x")); // 由 type 判别
+                                                                // 纯标签兜底
+        let labels_only = json!({"name":"经验教训","labels":["Experience"]});
+        assert!(is_memory_payload(&labels_only, "custom-id"));
+    }
+
+    #[test]
+    fn is_memory_payload_rejects_code_entities() {
+        use serde_json::json;
+        // dt://entity/... 代码索引实体（service/config）
+        let svc = json!({"business_id":"dt://entity/digital-twin-v2/Service/skill%20loading","name":"Skill Loading","type":"Service","origin":"extracted","project":"digital-twin-v2"});
+        assert!(!is_memory_payload(
+            &svc,
+            "dt://entity/digital-twin-v2/Service/skill%20loading"
+        ));
+        let cfg = json!({"business_id":"dt://entity/p/Config/x","name":"X","type":"config","origin":"extracted"});
+        assert!(!is_memory_payload(&cfg, "dt://entity/p/Config/x"));
+        // 非记忆标签 (type=channel/document/service) + 非知识 business_id
+        let ch = json!({"name":"渠道","type":"channel","origin":"extracted","business_id":"dt://entity/p/Channel/c"});
+        assert!(!is_memory_payload(&ch, "dt://entity/p/Channel/c"));
+        // business_id 空且 type 非知识 → 排除
+        let empty = json!({"name":"某实体","type":"service","origin":"learned"});
+        assert!(!is_memory_payload(&empty, ""));
+        // 空 payload 一律排除
+        assert!(!is_memory_payload(&json!({}), ""));
     }
 }

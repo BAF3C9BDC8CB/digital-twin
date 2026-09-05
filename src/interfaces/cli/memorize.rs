@@ -134,9 +134,20 @@ pub async fn handle_memorize(
     let project_name = project.as_deref().unwrap_or("unknown");
     let etype = entity_type.as_deref().unwrap_or(&knowledge_type);
 
-    let svc = graph
-        .as_ref()
-        .map(|g| DefaultKnowledgeService::new(Arc::clone(g)));
+    // 带向量化构建：write 分支（knowledge/experience/concept/domain/playbook）
+    // 写入图节点后应自动向量化进 kg_nodes。若 embed+vector 均可用则用
+    // with_vectorization（触发 auto_vectorize_*），否则回退纯图写入。
+    // 修复前 write 分支统一用 DefaultKnowledgeService::new()（无向量化），
+    // 导致记忆只进 Memgraph 从不进 kg_nodes —— 走向量检索永远召不回记忆。
+    let svc = match (graph.as_ref(), embed.as_ref(), vector.as_ref()) {
+        (Some(g), Some(e), Some(v)) => Some(DefaultKnowledgeService::with_vectorization(
+            Arc::clone(g),
+            Arc::clone(e),
+            Arc::clone(v),
+        )),
+        (Some(g), _, _) => Some(DefaultKnowledgeService::new(Arc::clone(g))),
+        _ => None,
+    };
 
     // 根据 knowledge_type 路由到正确的实体构造函数。
     match knowledge_type.to_lowercase().as_str() {
