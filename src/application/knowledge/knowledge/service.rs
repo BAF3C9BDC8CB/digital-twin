@@ -779,11 +779,19 @@ pub fn knowledge_from_details(
 
     Knowledge {
         knowledge_id: knowledge_id.to_string(),
+        // name 语义保持不变：仅取 `name` 键，缺失时回退 entity_type（兼容旧行为，
+        // 避免依赖 name=entity_type 的消费方被破坏）。
         name: kv
             .get("name")
             .cloned()
             .unwrap_or_else(|| entity_type.to_string()),
-        title: kv.get("title").cloned().unwrap_or_default(),
+        // title 对齐插件：dt-memory 统一写 `name:`，旧调用写 `title:`。
+        // title 优先取 `title`，缺失时回退 `name`（插件只写 name 时 title 不再为空）。
+        title: kv
+            .get("title")
+            .or_else(|| kv.get("name"))
+            .cloned()
+            .unwrap_or_default(),
         domain: kv.get("domain").cloned().unwrap_or_default(),
         summary: kv.get("summary").cloned().unwrap_or_default(),
         content: kv.get("content").cloned().unwrap_or_default(),
@@ -822,9 +830,17 @@ pub fn experience_from_details(experience_id: &str, project: &str, details: &str
     let kv = parse_details(details);
     let now = chrono::Utc::now().to_rfc3339();
 
+    // 标题键对齐：插件（dt-memory）统一写 `name:`，旧调用写 `title:`。
+    // 二者都识别为标题来源（title 优先向后兼容，name 兜底对齐插件）。
+    let title = kv
+        .get("title")
+        .or_else(|| kv.get("name"))
+        .cloned()
+        .unwrap_or_default();
+
     Experience {
         experience_id: experience_id.to_string(),
-        title: kv.get("title").cloned().unwrap_or_default(),
+        title,
         summary: kv.get("summary").cloned().unwrap_or_default(),
         content: kv.get("content").cloned().unwrap_or_default(),
         domain: kv.get("domain").cloned().unwrap_or_default(),
@@ -839,10 +855,16 @@ pub fn experience_from_details(experience_id: &str, project: &str, details: &str
 /// 从 CLI details 字符串构建 [`Concept`] 结构体。
 pub fn concept_from_details(concept_id: &str, details: &str) -> Concept {
     let kv = parse_details(details);
+    // name/title 双向对齐（与 knowledge/experience 一致）
+    let name = kv
+        .get("name")
+        .or_else(|| kv.get("title"))
+        .cloned()
+        .unwrap_or_default();
 
     Concept {
         concept_id: concept_id.to_string(),
-        name: kv.get("name").cloned().unwrap_or_default(),
+        name,
         definition: kv.get("definition").cloned().unwrap_or_default(),
         domain: kv.get("domain").cloned().unwrap_or_default(),
         summary: kv.get("summary").cloned().unwrap_or_default(),
@@ -852,10 +874,16 @@ pub fn concept_from_details(concept_id: &str, details: &str) -> Concept {
 /// 从 CLI details 字符串构建 [`Domain`] 结构体。
 pub fn domain_from_details(domain_id: &str, details: &str) -> Domain {
     let kv = parse_details(details);
+    // name/title 双向对齐
+    let name = kv
+        .get("name")
+        .or_else(|| kv.get("title"))
+        .cloned()
+        .unwrap_or_default();
 
     Domain {
         domain_id: domain_id.to_string(),
-        name: kv.get("name").cloned().unwrap_or_default(),
+        name,
         description: kv.get("description").cloned().unwrap_or_default(),
     }
 }
@@ -864,10 +892,16 @@ pub fn domain_from_details(domain_id: &str, details: &str) -> Domain {
 pub fn playbook_from_details(playbook_id: &str, project: &str, details: &str) -> Playbook {
     let kv = parse_details(details);
     let now = chrono::Utc::now().to_rfc3339();
+    // name/title 双向对齐
+    let name = kv
+        .get("name")
+        .or_else(|| kv.get("title"))
+        .cloned()
+        .unwrap_or_default();
 
     Playbook {
         playbook_id: playbook_id.to_string(),
-        name: kv.get("name").cloned().unwrap_or_default(),
+        name,
         description: kv.get("description").cloned().unwrap_or_default(),
         steps: vec![], // 步骤需要 JSON；无法从扁平 details 字符串解析
         domain: kv.get("domain").cloned().unwrap_or_default(),
@@ -1152,6 +1186,47 @@ mod tests {
             "title: Something happened",
         );
         assert_eq!(e.severity, ExperienceSeverity::Info);
+    }
+
+    #[test]
+    fn experience_from_details_accepts_name_key() {
+        // 回归：dt-memory 插件 details 统一用 `name:` 键，旧调用用 `title:`。
+        // experience_from_details 需同时识别 name/title 为标题来源。
+        let e = experience_from_details(
+            "dt://experience/test/003",
+            "test",
+            "name: Nacos 配置中心连接经验; summary: nacos 用 8848; severity: warning",
+        );
+        assert_eq!(e.title, "Nacos 配置中心连接经验"); // name 键应映射到 title
+        assert_eq!(e.summary, "nacos 用 8848");
+        assert_eq!(e.severity, ExperienceSeverity::Warning);
+    }
+
+    #[test]
+    fn knowledge_from_details_accepts_name_key_for_title() {
+        // 回归：插件只写 `name:`，knowledge.title 应回退到 name 而非为空。
+        let k = knowledge_from_details(
+            "dt://knowledge/test/004",
+            "KnowledgeAdded",
+            "test",
+            "name: Redis 超时配置; origin: user_explicit; content: 建议 300ms",
+        );
+        assert_eq!(k.name, "Redis 超时配置");
+        assert_eq!(k.title, "Redis 超时配置"); // title 回退到 name（对齐插件）
+        assert_eq!(k.content, "建议 300ms");
+    }
+
+    #[test]
+    fn knowledge_from_details_title_precedence() {
+        // 同时提供 name+title 时，title 优先作为 title（向后兼容旧调用）
+        let k = knowledge_from_details(
+            "dt://knowledge/test/005",
+            "KnowledgeAdded",
+            "test",
+            "name: 备用名; title: 正式标题",
+        );
+        assert_eq!(k.name, "备用名");
+        assert_eq!(k.title, "正式标题");
     }
 
     #[test]
