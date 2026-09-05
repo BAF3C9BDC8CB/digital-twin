@@ -1,0 +1,166 @@
+{
+ "source_file": "guides/daily-briefing-bot.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 227,
+ "num_entities": 17,
+ "num_relations": 1,
+ "processing_time_sec": 0.951,
+ "entities": [
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 5,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "早晨",
+   "type": "TIME",
+   "count": 4,
+   "content": [
+    "在本教程中，你将构建一个个人简报机器人，它每天早晨自动启动，研究你关心的主题，汇总发现，并将简洁的简报直接推送到你的 Telegram 或 Discord",
+    "你只需在早晨喝咖啡时阅读简报即可",
+    "现在让我们将其设置为每天早晨自动运行",
+    "获取早晨概览和傍晚回顾："
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "— gateway 守护进程负责处理 cron 执行：",
+    "最终确定的内容将写入 cron 任务",
+    "但请记住 — cron 任务在全新会话中运行，不保留对话记忆"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "第二步：创建 Cron 任务",
+    "定时任务（Cron）"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Cron 任务在"
+   ]
+  },
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Gateway 正在运行"
+   ]
+  },
+  {
+   "text": "cron调度",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "cron 调度"
+   ]
+  },
+  {
+   "text": "上午8:00",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "上午 8:00"
+   ]
+  },
+  {
+   "text": "中运行",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "中运行 — 不保留之前对话的任何记忆，也不了解你\"之前设置\"的任何内容"
+   ]
+  },
+  {
+   "text": "傍晚",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "获取早晨概览和傍晚回顾："
+   ]
+  },
+  {
+   "text": "周一",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "使用针对周一至周五的 cron 表达式："
+   ]
+  },
+  {
+   "text": "周五",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "使用针对周一至周五的 cron 表达式："
+   ]
+  },
+  {
+   "text": "周末",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "不需要周末简报"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第一步：手动测试工作流"
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第三步：自定义简报"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第二步：创建 Cron 任务"
+   ]
+  },
+  {
+   "text": "第四",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第四步：管理你的任务"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "周五",
+   "source_type": "DATE",
+   "target": "周一",
+   "target_type": "DATE",
+   "label": "conj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "使用针对周一至周五的 cron 表达式："
+   ]
+  }
+ ]
+}

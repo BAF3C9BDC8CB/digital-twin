@@ -1,0 +1,289 @@
+{
+ "src_dir": "/data/myProject/digital-twin-v2/hermes-docs-zh",
+ "out_dir": "/data/myProject/digital-twin-v2/hermes-docs-zh-hanlp",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "model_load_sec": 5.6,
+ "extract_total_sec": 81.81,
+ "wall_sec": 81.865,
+ "files": [
+  {
+   "file": "README.md",
+   "sentences": 86,
+   "entities": 7,
+   "relations": 0,
+   "time_sec": 0.39
+  },
+  {
+   "file": "developer-guide/adding-tools.md",
+   "sentences": 331,
+   "entities": 11,
+   "relations": 0,
+   "time_sec": 0.707
+  },
+  {
+   "file": "developer-guide/architecture.md",
+   "sentences": 268,
+   "entities": 15,
+   "relations": 0,
+   "time_sec": 0.944
+  },
+  {
+   "file": "developer-guide/contributing.md",
+   "sentences": 376,
+   "entities": 20,
+   "relations": 4,
+   "time_sec": 0.907
+  },
+  {
+   "file": "developer-guide/creating-skills.md",
+   "sentences": 521,
+   "entities": 16,
+   "relations": 2,
+   "time_sec": 1.456
+  },
+  {
+   "file": "developer-guide/plugins.md",
+   "sentences": 2158,
+   "entities": 47,
+   "relations": 5,
+   "time_sec": 4.592
+  },
+  {
+   "file": "getting-started/installation.md",
+   "sentences": 336,
+   "entities": 28,
+   "relations": 6,
+   "time_sec": 1.168
+  },
+  {
+   "file": "getting-started/learning-path.md",
+   "sentences": 121,
+   "entities": 13,
+   "relations": 1,
+   "time_sec": 0.469
+  },
+  {
+   "file": "getting-started/nix-setup.md",
+   "sentences": 1386,
+   "entities": 49,
+   "relations": 4,
+   "time_sec": 3.282
+  },
+  {
+   "file": "getting-started/platform-support.md",
+   "sentences": 74,
+   "entities": 6,
+   "relations": 0,
+   "time_sec": 0.26
+  },
+  {
+   "file": "getting-started/quickstart.md",
+   "sentences": 472,
+   "entities": 26,
+   "relations": 0,
+   "time_sec": 1.239
+  },
+  {
+   "file": "getting-started/termux.md",
+   "sentences": 284,
+   "entities": 14,
+   "relations": 0,
+   "time_sec": 0.638
+  },
+  {
+   "file": "getting-started/updating.md",
+   "sentences": 277,
+   "entities": 16,
+   "relations": 0,
+   "time_sec": 0.963
+  },
+  {
+   "file": "guides/daily-briefing-bot.md",
+   "sentences": 227,
+   "entities": 17,
+   "relations": 1,
+   "time_sec": 0.951
+  },
+  {
+   "file": "guides/python-library.md",
+   "sentences": 503,
+   "entities": 11,
+   "relations": 1,
+   "time_sec": 1.081
+  },
+  {
+   "file": "guides/team-telegram-assistant.md",
+   "sentences": 411,
+   "entities": 28,
+   "relations": 1,
+   "time_sec": 1.13
+  },
+  {
+   "file": "guides/tips.md",
+   "sentences": 315,
+   "entities": 15,
+   "relations": 0,
+   "time_sec": 1.034
+  },
+  {
+   "file": "guides/use-voice-mode-with-hermes.md",
+   "sentences": 404,
+   "entities": 16,
+   "relations": 0,
+   "time_sec": 0.848
+  },
+  {
+   "file": "user-guide/cli.md",
+   "sentences": 596,
+   "entities": 29,
+   "relations": 3,
+   "time_sec": 1.78
+  },
+  {
+   "file": "user-guide/configuration.md",
+   "sentences": 3119,
+   "entities": 124,
+   "relations": 10,
+   "time_sec": 9.748
+  },
+  {
+   "file": "user-guide/features/batch-processing.md",
+   "sentences": 305,
+   "entities": 6,
+   "relations": 1,
+   "time_sec": 0.97
+  },
+  {
+   "file": "user-guide/features/browser.md",
+   "sentences": 904,
+   "entities": 44,
+   "relations": 1,
+   "time_sec": 2.862
+  },
+  {
+   "file": "user-guide/features/code-execution.md",
+   "sentences": 459,
+   "entities": 19,
+   "relations": 3,
+   "time_sec": 1.006
+  },
+  {
+   "file": "user-guide/features/context-files.md",
+   "sentences": 283,
+   "entities": 12,
+   "relations": 2,
+   "time_sec": 0.697
+  },
+  {
+   "file": "user-guide/features/cron.md",
+   "sentences": 1150,
+   "entities": 62,
+   "relations": 3,
+   "time_sec": 3.601
+  },
+  {
+   "file": "user-guide/features/delegation.md",
+   "sentences": 513,
+   "entities": 18,
+   "relations": 1,
+   "time_sec": 2.309
+  },
+  {
+   "file": "user-guide/features/hooks.md",
+   "sentences": 3048,
+   "entities": 55,
+   "relations": 2,
+   "time_sec": 6.734
+  },
+  {
+   "file": "user-guide/features/mcp.md",
+   "sentences": 605,
+   "entities": 15,
+   "relations": 1,
+   "time_sec": 1.838
+  },
+  {
+   "file": "user-guide/features/memory.md",
+   "sentences": 251,
+   "entities": 23,
+   "relations": 2,
+   "time_sec": 0.974
+  },
+  {
+   "file": "user-guide/features/plugins.md",
+   "sentences": 794,
+   "entities": 22,
+   "relations": 0,
+   "time_sec": 1.933
+  },
+  {
+   "file": "user-guide/features/provider-routing.md",
+   "sentences": 175,
+   "entities": 1,
+   "relations": 0,
+   "time_sec": 0.464
+  },
+  {
+   "file": "user-guide/features/skills.md",
+   "sentences": 1109,
+   "entities": 36,
+   "relations": 8,
+   "time_sec": 3.208
+  },
+  {
+   "file": "user-guide/features/tools.md",
+   "sentences": 377,
+   "entities": 8,
+   "relations": 0,
+   "time_sec": 0.986
+  },
+  {
+   "file": "user-guide/features/voice-mode.md",
+   "sentences": 702,
+   "entities": 39,
+   "relations": 3,
+   "time_sec": 1.701
+  },
+  {
+   "file": "user-guide/messaging.md",
+   "sentences": 732,
+   "entities": 27,
+   "relations": 1,
+   "time_sec": 2.645
+  },
+  {
+   "file": "user-guide/messaging/discord.md",
+   "sentences": 1334,
+   "entities": 45,
+   "relations": 3,
+   "time_sec": 4.486
+  },
+  {
+   "file": "user-guide/messaging/telegram.md",
+   "sentences": 1922,
+   "entities": 61,
+   "relations": 6,
+   "time_sec": 5.874
+  },
+  {
+   "file": "user-guide/security.md",
+   "sentences": 1020,
+   "entities": 48,
+   "relations": 2,
+   "time_sec": 2.934
+  },
+  {
+   "file": "user-guide/sessions.md",
+   "sentences": 879,
+   "entities": 48,
+   "relations": 2,
+   "time_sec": 3.001
+  }
+ ],
+ "grand_total": {
+  "files": 39,
+  "sentences": 28827,
+  "entities": 1097,
+  "relations": 79
+ }
+}

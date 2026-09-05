@@ -1,0 +1,168 @@
+{
+  "source_file": "guides/tips.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 14,
+  "num_relations": 9,
+  "processing_time_sec": 149.75,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "AI agent for automation tasks."
+    },
+    {
+      "name": "CLI",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Command-line interface tool."
+    },
+    {
+      "name": "AGENTS.md",
+      "type": "File",
+      "aliases": [],
+      "summary": "File for project context and instructions."
+    },
+    {
+      "name": "SOUL.md",
+      "type": "File",
+      "aliases": [],
+      "summary": "File for customizing agent's personality."
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Command-line access tool."
+    },
+    {
+      "name": "Docker",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Containerization platform."
+    },
+    {
+      "name": "FastAPI",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Web framework for REST APIs."
+    },
+    {
+      "name": "SQLAlchemy",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Database ORM library."
+    },
+    {
+      "name": "pytest",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Python testing framework."
+    },
+    {
+      "name": "Memory",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Agent's memory for storing facts."
+    },
+    {
+      "name": "Skill",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Agent's skill for workflows."
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for agents."
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for agents."
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for agents."
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "AGENTS.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "使用 AGENTS.md 文件处理重复指令。"
+    },
+    {
+      "head": "CLI",
+      "tail": "/skills",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "输入 /skills 浏览可用的 skill。"
+    },
+    {
+      "head": "Memory",
+      "tail": "AGENTS.md",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "AGENTS.md 包含项目架构决策。"
+    },
+    {
+      "head": "Skill",
+      "tail": "delegate_task",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "使用 delegate_task 并行分配子任务。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Docker",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "对不可信代码使用 Docker。"
+    },
+    {
+      "head": "CLI",
+      "tail": "/compress",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "运行 /compress 对话历史进行摘要。"
+    },
+    {
+      "head": "Memory",
+      "tail": "MEMORY.md",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "MEMORY.md 约 2,200 字符限制记忆。"
+    },
+    {
+      "head": "Skill",
+      "tail": "execute_code",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "使用 execute_code 进行批量操作。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "在 Telegram 使用 /sethome 设置主频道。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 3323,
+    "completion_tokens": 3855,
+    "total_tokens": 7178,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 3291
+  }
+}

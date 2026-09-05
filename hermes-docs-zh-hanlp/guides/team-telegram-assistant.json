@@ -1,0 +1,259 @@
+{
+ "source_file": "guides/team-telegram-assistant.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 411,
+ "num_entities": 28,
+ "num_relations": 1,
+ "processing_time_sec": 1.13,
+ "entities": [
+  {
+   "text": "Telegram",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "每个 Telegram 机器人都从",
+    "打开 Telegram",
+    "在 Telegram 上给机器人发消息：",
+    "Telegram 设置"
+   ]
+  },
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "第二步：配置 Gateway",
+    "第三步：启动 Gateway",
+    "Gateway 日志"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "仅 Linux：开机启动的系统服务",
+    "这会创建一个后台服务：Linux 上默认为用户级",
+    "查看实时日志（Linux）"
+   ]
+  },
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "1小时",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "1 小时",
+    "5 次审批失败后，该平台进入 1 小时锁定状态"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "Cron 任务的 prompt 在完全全新的会话中运行，不保留任何先前对话的记忆",
+    "Cron 任务定义"
+   ]
+  },
+  {
+   "text": "Docker",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "使用 Docker 保障安全",
+    "在共享团队机器人上，使用 Docker 作为终端后端，让 agent 命令在容器中运行，而非直接在宿主机上运行："
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "ORG",
+   "count": 2,
+   "content": [
+    "Linux——管理默认用户服务",
+    "（Linux）或"
+   ]
+  },
+  {
+   "text": "10分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "速率限制防止暴力破解：每用户每 10 分钟 1 次请求，每平台最多 3 个待审批码"
+   ]
+  },
+  {
+   "text": "60s",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "[Gateway] Cron scheduler started (tick every 60s)"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Cron 任务输出"
+   ]
+  },
+  {
+   "text": "Cronscheduler",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "[Gateway] Cron scheduler started (tick every 60s)"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "MONEY",
+   "count": 1,
+   "content": [
+    "Linux 服务器——显式系统服务命令"
+   ]
+  },
+  {
+   "text": "Linux系统",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "则创建开机启动的 Linux 系统服务"
+   ]
+  },
+  {
+   "text": "Telegram机器人",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "第一步：创建 Telegram 机器人"
+   ]
+  },
+  {
+   "text": "chmod0600",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "chmod 0600"
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "是机器人投递 cron 任务结果和主动消息的地方"
+   ]
+  },
+  {
+   "text": "cronremove",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/cron remove"
+   ]
+  },
+  {
+   "text": "gateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "先在前台运行 gateway，确认一切正常："
+   ]
+  },
+  {
+   "text": "macOSPATH",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "macOS PATH"
+   ]
+  },
+  {
+   "text": "off",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "off   new   all   verbose"
+   ]
+  },
+  {
+   "text": "weekday",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "Every weekday at 9am, check the GitHub repository at"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第一步：创建 Telegram 机器人"
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第三步：启动 Gateway"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第二步：配置 Gateway"
+   ]
+  },
+  {
+   "text": "第五",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第五步：配置机器人"
+   ]
+  },
+  {
+   "text": "第六",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第六步：设置定时任务"
+   ]
+  },
+  {
+   "text": "第四",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第四步：设置团队访问权限"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "Cronscheduler",
+   "source_type": "PERSON",
+   "target": "60s",
+   "target_type": "PERSON",
+   "label": "nn+prnmod",
+   "via": 5,
+   "count": 1,
+   "content": [
+    "[Gateway] Cron scheduler started (tick every 60s)"
+   ]
+  }
+ ]
+}

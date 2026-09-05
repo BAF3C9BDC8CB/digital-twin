@@ -1,0 +1,427 @@
+{
+ "source_file": "user-guide/sessions.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 879,
+ "num_entities": 48,
+ "num_relations": 2,
+ "processing_time_sec": 3.001,
+ "entities": [
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "Gateway 监视器认领切换请求，并向目标适配器请求新线程：",
+    "Gateway 确认成功后，CLI 打印",
+    "Gateway 消息",
+    "Gateway 路由索引"
+   ]
+  },
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "90天",
+   "type": "DATE",
+   "count": 2,
+   "content": [
+    "删除 90 天前已结束的 session（默认）",
+    "清理 90 天前的 session"
+   ]
+  },
+  {
+   "text": "Telegram",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "Telegram 消息",
+    "Telegram 私信"
+   ]
+  },
+  {
+   "text": "WhatsApp",
+   "type": "ORG",
+   "count": 2,
+   "content": [
+    "WhatsApp 消息",
+    "WhatsApp 私信"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "Hermes 在第一次交换后自动为每个 session 生成简短的描述性标题（3–7 个词）",
+    "如果 session 尚未在数据库中创建（例如在发送第一条消息之前运行"
+   ]
+  },
+  {
+   "text": "10",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的"
+   ]
+  },
+  {
+   "text": "100",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "最多 100 个字符"
+   ]
+  },
+  {
+   "text": "1440分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "— 在主文字频道下创建 1440 分钟自动归档的线程"
+   ]
+  },
+  {
+   "text": "15MB",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的"
+   ]
+  },
+  {
+   "text": "20",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "列出最近的 session（默认：最近 20 个）"
+   ]
+  },
+  {
+   "text": "200",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "长消息（用户 300 字符，助手 200 字符/3 行）"
+   ]
+  },
+  {
+   "text": "24",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "（默认 24）小时运行一次"
+   ]
+  },
+  {
+   "text": "2w",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "qmd --older-than 2w"
+   ]
+  },
+  {
+   "text": "2周前",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "将 2 周前已结束的 Telegram session 导出为 QMD 文件"
+   ]
+  },
+  {
+   "text": "300",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "长消息（用户 300 字符，助手 200 字符/3 行）"
+   ]
+  },
+  {
+   "text": "60秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "平台未启用/gateway 未运行 → CLI 在 60 秒后超时并显示明确消息，CLI session 保持完整"
+   ]
+  },
+  {
+   "text": "90",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "（默认 90）天的已结束 session"
+   ]
+  },
+  {
+   "text": "90天前",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "预览 90 天前已结束的 session，不写入文件"
+   ]
+  },
+  {
+   "text": "Alice",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Alice 和 Bob 可以在同一个 Discord 频道中与 Hermes 对话，而不共享对话历史"
+   ]
+  },
+  {
+   "text": "CLI",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "从 CLI 恢复之前的对话："
+   ]
+  },
+  {
+   "text": "CLI/TUI",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "——CLI/TUI session 使用 6 位十六进制后缀（例如"
+   ]
+  },
+  {
+   "text": "CLISession",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "CLI Session 恢复"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Hermes 通过"
+   ]
+  },
+  {
+   "text": "ISO",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "、纯数字天数或 ISO 时间戳）、"
+   ]
+  },
+  {
+   "text": "JPEG",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "后续轮次不会自动将原始 JPEG 带入上下文，只携带写入对话的内容，例如用户的请求、简短的图片描述、本地缓存路径或最终的助手回复"
+   ]
+  },
+  {
+   "text": "JSON",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "导出文件每行包含一个 JSON 对象，包含完整的 session 元数据和所有消息"
+   ]
+  },
+  {
+   "text": "Lark消息",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "飞书/Lark 消息"
+   ]
+  },
+  {
+   "text": "Markdown",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "Markdown 格式，直接输出到 stdout"
+   ]
+  },
+  {
+   "text": "N分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "— 在 N 分钟不活跃后重置"
+   ]
+  },
+  {
+   "text": "QQ",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "QQ Bot（腾讯 QQ）通过官方 API v2"
+   ]
+  },
+  {
+   "text": "Research",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/title My Research"
+   ]
+  },
+  {
+   "text": "Twilio",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "通过 Twilio 的短信"
+   ]
+  },
+  {
+   "text": "Using",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Using Hermes"
+   ]
+  },
+  {
+   "text": "WAL",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "SQLite 数据库使用 WAL 模式支持并发读取和单写入，非常适合 gateway 的多平台架构"
+   ]
+  },
+  {
+   "text": "authflow",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"debugging auth flow\""
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "定时 cron 任务"
+   ]
+  },
+  {
+   "text": "gateway",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "SQLite 数据库使用 WAL 模式支持并发读取和单写入，非常适合 gateway 的多平台架构"
+   ]
+  },
+  {
+   "text": "handofftelegram",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/handoff telegram"
+   ]
+  },
+  {
+   "text": "insights",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes insights"
+   ]
+  },
+  {
+   "text": "my",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "→ 恢复 \"my project #3\""
+   ]
+  },
+  {
+   "text": "sessionsearch",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "\"当用户引用过去对话中的内容，或你怀疑存在相关的先前上下文时，在要求用户重复之前先使用 sessionsearch 召回"
+   ]
+  },
+  {
+   "text": "±5",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "— FTS5 匹配点前后各 ±5 条消息，锚点消息有标记（命中上下文）"
+   ]
+  },
+  {
+   "text": "一个",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "一个用户的长时间工具密集型任务不会污染另一个用户的上下文窗口"
+   ]
+  },
+  {
+   "text": "一周",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "将最近一周的所有 Telegram session 导出到一个文件，并脱敏"
+   ]
+  },
+  {
+   "text": "历史",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "— 完整消息历史（role、content、toolcalls、toolname、tokencount）"
+   ]
+  },
+  {
+   "text": "数百",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的"
+   ]
+  },
+  {
+   "text": "腾讯",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "QQ Bot（腾讯 QQ）通过官方 API v2"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "15MB",
+   "source_type": "QUANTITY",
+   "target": "10",
+   "target_type": "QUANTITY",
+   "label": "dep",
+   "via": null,
+   "count": 1,
+   "content": [
+    "数据库增长缓慢（典型情况：数百个 session 约 10–15 MB），session 历史为跨历史对话的"
+   ]
+  },
+  {
+   "source": "QQ",
+   "source_type": "WORK_OF_ART",
+   "target": "腾讯",
+   "target_type": "ORG",
+   "label": "nn",
+   "via": null,
+   "count": 1,
+   "content": [
+    "QQ Bot（腾讯 QQ）通过官方 API v2"
+   ]
+  }
+ ]
+}

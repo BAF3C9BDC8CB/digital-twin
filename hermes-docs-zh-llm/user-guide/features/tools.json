@@ -1,0 +1,175 @@
+{
+  "source_file": "user-guide/features/tools.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 14,
+  "num_relations": 6,
+  "processing_time_sec": 108.14,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [
+        "Hermes"
+      ],
+      "summary": "Agent framework for tools execution"
+    },
+    {
+      "name": "Honcho",
+      "type": "Service",
+      "aliases": [
+        "memory provider"
+      ],
+      "summary": "Memory management plugin"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [
+        "command executor"
+      ],
+      "summary": "Tool for executing commands and managing files"
+    },
+    {
+      "name": "browser_navigate",
+      "type": "Tool",
+      "aliases": [
+        "browser automation"
+      ],
+      "summary": "Browser navigation and interaction tool"
+    },
+    {
+      "name": "web_search",
+      "type": "Tool",
+      "aliases": [
+        "web search"
+      ],
+      "summary": "Web search and content extraction tool"
+    },
+    {
+      "name": "Docker",
+      "type": "Technology",
+      "aliases": [
+        "containerization"
+      ],
+      "summary": "Container technology for execution"
+    },
+    {
+      "name": "SSH",
+      "type": "Technology",
+      "aliases": [
+        "Secure Shell"
+      ],
+      "summary": "Secure remote access technology"
+    },
+    {
+      "name": "Vercel",
+      "type": "Platform",
+      "aliases": [
+        "cloud platform"
+      ],
+      "summary": "Cloud execution platform"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [
+        "programming language"
+      ],
+      "summary": "Programming language used"
+    },
+    {
+      "name": "cronjob",
+      "type": "Tool",
+      "aliases": [
+        "scheduler"
+      ],
+      "summary": "Cron-based task scheduling tool"
+    },
+    {
+      "name": "send_message",
+      "type": "Tool",
+      "aliases": [
+        "message tool"
+      ],
+      "summary": "Message delivery and automation tool"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [
+        "configuration file"
+      ],
+      "summary": "Hermes configuration file"
+    },
+    {
+      "name": ".env",
+      "type": "File",
+      "aliases": [
+        "environment file"
+      ],
+      "summary": "Environment variables file"
+    },
+    {
+      "name": "memory",
+      "type": "Concept",
+      "aliases": [
+        "memory management"
+      ],
+      "summary": "Concept for persistent memory"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "terminal",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "工具是扩展 Agent 能力的函数。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Docker",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "terminal: backend: docker"
+    },
+    {
+      "head": "terminal",
+      "tail": "Docker",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "docker run -d ... sleep 2h"
+    },
+    {
+      "head": "Tool Gateway",
+      "tail": "memory",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Honcho 跨会话记忆作为记忆提供者插件提供"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "cronjob",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "支持创建/列出/更新/暂停/恢复/运行/删除操作的定时任务"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "web_search",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Hermes 内置了丰富的工具注册表，涵盖网页搜索..."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 2833,
+    "completion_tokens": 2568,
+    "total_tokens": 5401,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 2801
+  }
+}

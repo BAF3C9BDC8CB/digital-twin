@@ -1,0 +1,409 @@
+{
+ "source_file": "user-guide/features/skills.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 1109,
+ "num_entities": 36,
+ "num_relations": 8,
+ "processing_time_sec": 3.208,
+ "entities": [
+  {
+   "text": "skills",
+   "type": "PERSON",
+   "count": 19,
+   "content": [
+    "fallback skills",
+    "Browse all hub skills (official first)",
+    "hermes skills"
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 4,
+   "content": [
+    "通过第三方 URL 或 GitHub 安装时，Hermes 会安装",
+    "作为社区来源集成的第三方 skills 市场",
+    "当你已审查第三方 skill 并希望覆盖非危险性策略阻止时，使用",
+    "从中安装的 skills 经过标准安全扫描，首次安装时显示第三方警告面板"
+   ]
+  },
+  {
+   "text": "GitHub",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "通过第三方 URL 或 GitHub 安装时，Hermes 会安装",
+    "——当作者在自己的站点上托管 skill 时非常有用（无 hub 列表，无需输入 GitHub 路径）",
+    "将其推送到 GitHub 后，任何 Hermes 用户都可以订阅并安装："
+   ]
+  },
+  {
+   "text": "browse",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "hermes skills browse"
+   ]
+  },
+  {
+   "text": "hermes",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "hermes skills browse"
+   ]
+  },
+  {
+   "text": "originhash",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "origin hash",
+    "→ 可以安全拉取上游变更，复制新的捆绑版本，记录新的 origin hash"
+   ]
+  },
+  {
+   "text": "Skills",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "捆绑 Skills 目录",
+    "条件激活（Fallback Skills）"
+   ]
+  },
+  {
+   "text": "URL",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "通过第三方 URL 或 GitHub 安装时，Hermes 会安装",
+    "标识符：URL 本身（无需前缀）"
+   ]
+  },
+  {
+   "text": "hash",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "每次同步时，Hermes 重新计算本地副本的哈希并与 origin hash 比较：",
+    "你新复制粘贴的内容（当前捆绑哈希）与那个过时的 origin hash 不匹配，因此同步继续将其标记为用户修改"
+   ]
+  },
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "哈希",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "这使用存储的来源标识符加上当前上游捆绑包内容哈希来检测漂移",
+    "记录一个清单，将每个 skill 名称映射到同步时的内容哈希（"
+   ]
+  },
+  {
+   "text": "第三方",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "）被视为内置信任，不显示第三方警告面板",
+    "内置信任，无第三方警告"
+   ]
+  },
+  {
+   "text": "1-2MB",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "发送的 1-2 MB PNG 则保留原始字节完整无损"
+   ]
+  },
+  {
+   "text": "1280",
+   "type": "MONEY",
+   "count": 1,
+   "content": [
+    "会将其重新压缩至约 200 KB、1280 px，严重影响可读性"
+   ]
+  },
+  {
+   "text": "200KB",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "会将其重新压缩至约 200 KB、1280 px，严重影响可读性"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "Skills hub 操作使用 GitHub API，未认证用户的速率限制为每小时 60 次请求"
+   ]
+  },
+  {
+   "text": "Darwin）",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "macOS（Darwin）"
+   ]
+  },
+  {
+   "text": "GitHub",
+   "type": "FAC",
+   "count": 1,
+   "content": [
+    "Hermes 可以直接从 GitHub 仓库和基于 GitHub 的 tap 安装"
+   ]
+  },
+  {
+   "text": "GitHub",
+   "type": "MONEY",
+   "count": 1,
+   "content": [
+    "GitHub 速率限制"
+   ]
+  },
+  {
+   "text": "GitHub",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "添加的 GitHub 仓库"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "Hermes 在仓库的"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "macOS and Linux"
+   ]
+  },
+  {
+   "text": "MyOrg",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "My Org Platform Team"
+   ]
+  },
+  {
+   "text": "NVIDIA",
+   "type": "NORP",
+   "count": 1,
+   "content": [
+    "— NVIDIA 官方验证的技能（带签名"
+   ]
+  },
+  {
+   "text": "PNG",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "发送的 1-2 MB PNG 则保留原始字节完整无损"
+   ]
+  },
+  {
+   "text": "Steptwo",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Step two"
+   ]
+  },
+  {
+   "text": "devops",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "├── devops/"
+   ]
+  },
+  {
+   "text": "first",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Browse all hub skills (official first)"
+   ]
+  },
+  {
+   "text": "macOS",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "macOS（Darwin）"
+   ]
+  },
+  {
+   "text": "one",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Step one"
+   ]
+  },
+  {
+   "text": "px",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "会将其重新压缩至约 200 KB、1280 px，严重影响可读性"
+   ]
+  },
+  {
+   "text": "skills",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "从中安装的 skills 经过标准安全扫描，首次安装时显示第三方警告面板"
+   ]
+  },
+  {
+   "text": "skillsbrowse",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/skills browse"
+   ]
+  },
+  {
+   "text": "哈希",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "每次同步时，Hermes 重新计算本地副本的哈希并与 origin hash 比较："
+   ]
+  },
+  {
+   "text": "哈希",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "你新复制粘贴的内容（当前捆绑哈希）与那个过时的 origin hash 不匹配，因此同步继续将其标记为用户修改"
+   ]
+  },
+  {
+   "text": "斜杠",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "斜杠命令（在聊天中）"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "browse",
+   "source_type": "PERSON",
+   "target": "hermes",
+   "target_type": "PERSON",
+   "label": "nn",
+   "via": null,
+   "count": 3,
+   "content": [
+    "hermes skills browse"
+   ]
+  },
+  {
+   "source": "GitHub",
+   "source_type": "PRODUCT",
+   "target": "URL",
+   "target_type": "PRODUCT",
+   "label": "conj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "通过第三方 URL 或 GitHub 安装时，Hermes 会安装"
+   ]
+  },
+  {
+   "source": "PNG",
+   "source_type": "PRODUCT",
+   "target": "1-2MB",
+   "target_type": "QUANTITY",
+   "label": "clf",
+   "via": null,
+   "count": 1,
+   "content": [
+    "发送的 1-2 MB PNG 则保留原始字节完整无损"
+   ]
+  },
+  {
+   "source": "macOS",
+   "source_type": "PERSON",
+   "target": "Darwin）",
+   "target_type": "PERSON",
+   "label": "prnmod",
+   "via": null,
+   "count": 1,
+   "content": [
+    "macOS（Darwin）"
+   ]
+  },
+  {
+   "source": "px",
+   "source_type": "QUANTITY",
+   "target": "200KB",
+   "target_type": "QUANTITY",
+   "label": "clf",
+   "via": null,
+   "count": 1,
+   "content": [
+    "会将其重新压缩至约 200 KB、1280 px，严重影响可读性"
+   ]
+  },
+  {
+   "source": "px",
+   "source_type": "QUANTITY",
+   "target": "1280",
+   "target_type": "MONEY",
+   "label": "nummod",
+   "via": null,
+   "count": 1,
+   "content": [
+    "会将其重新压缩至约 200 KB、1280 px，严重影响可读性"
+   ]
+  },
+  {
+   "source": "skills",
+   "source_type": "PERSON",
+   "target": "first",
+   "target_type": "PERSON",
+   "label": "prnmod",
+   "via": null,
+   "count": 1,
+   "content": [
+    "Browse all hub skills (official first)"
+   ]
+  },
+  {
+   "source": "第三",
+   "source_type": "ORDINAL",
+   "target": "GitHub",
+   "target_type": "PRODUCT",
+   "label": "nummod+nn",
+   "via": 2,
+   "count": 1,
+   "content": [
+    "通过第三方 URL 或 GitHub 安装时，Hermes 会安装"
+   ]
+  }
+ ]
+}

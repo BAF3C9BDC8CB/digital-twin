@@ -1,0 +1,313 @@
+{
+  "source_file": "user-guide/features/browser.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 3,
+  "num_entities": 29,
+  "num_relations": 16,
+  "processing_time_sec": 237.33,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "浏览器自动化代理"
+    },
+    {
+      "name": "Browserbase",
+      "type": "Service",
+      "aliases": [],
+      "summary": "云端浏览器提供商"
+    },
+    {
+      "name": "Browser Use",
+      "type": "Service",
+      "aliases": [],
+      "summary": "备选云端浏览器提供商"
+    },
+    {
+      "name": "Firecrawl",
+      "type": "Service",
+      "aliases": [],
+      "summary": "内置抓取功能的云端浏览器"
+    },
+    {
+      "name": "Camofox",
+      "type": "Service",
+      "aliases": [],
+      "summary": "本地反检测浏览服务器"
+    },
+    {
+      "name": "agent-browser",
+      "type": "Module",
+      "aliases": [],
+      "summary": "浏览器连接模块"
+    },
+    {
+      "name": "hermes setup",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Hermes 安装工具"
+    },
+    {
+      "name": "hermes tools",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Hermes 工具管理命令"
+    },
+    {
+      "name": ".env",
+      "type": "File",
+      "aliases": [],
+      "summary": "环境变量文件"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "配置文件"
+    },
+    {
+      "name": "accessibility tree",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "基于文本的网页快照"
+    },
+    {
+      "name": "CDP",
+      "type": "Technology",
+      "aliases": [
+        "Chrome DevTools Protocol"
+      ],
+      "summary": "Chrome DevTools Protocol"
+    },
+    {
+      "name": "Hermes CLI",
+      "type": "Tool",
+      "aliases": [
+        "hermes-cli"
+      ],
+      "summary": "命令行工具用于浏览器自动化和调试"
+    },
+    {
+      "name": "browser",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Hermes中的浏览器工具集，用于页面交互和控制"
+    },
+    {
+      "name": "Chrome",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Google浏览器，支持远程调试和CDP"
+    },
+    {
+      "name": "Brave",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "浏览器，支持远程调试和CDP"
+    },
+    {
+      "name": "Chromium",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "开源浏览器引擎，支持远程调试"
+    },
+    {
+      "name": "Edge",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Microsoft Edge浏览器，支持远程调试"
+    },
+    {
+      "name": "user-data-dir",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "浏览器配置文件目录，用于隔离调试会话"
+    },
+    {
+      "name": "remote-debugging-port",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "用于浏览器远程调试的端口，需手动开启"
+    },
+    {
+      "name": "MCP",
+      "type": "Tool",
+      "aliases": [
+        "chrome-devtools-mcp"
+      ],
+      "summary": "中间件协议，用于浏览器通信和控制"
+    },
+    {
+      "name": "Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "浏览器自动化代理工具"
+    },
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [],
+      "summary": "浏览器会话管理和服务提供者"
+    },
+    {
+      "name": "browser_cdp",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "使用Chrome DevTools Protocol的浏览器命令工具"
+    },
+    {
+      "name": "browser_dialog",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "处理原生JS对话框的工具"
+    },
+    {
+      "name": "browser_snapshot",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "获取浏览器快照和iframe结构的工具"
+    },
+    {
+      "name": "JavaScript",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "用于浏览器交互的脚本语言"
+    },
+    {
+      "name": "Frame tree",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "浏览器iframe的层次结构"
+    },
+    {
+      "name": "Dialog policy",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "定义对话框处理策略的配置"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "Browserbase",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent 内置完整的浏览器自动化工具集，支持多种后端选项：Browserbase"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Firecrawl",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Firecrawl 云端模式 — 通过 Firecrawl 使用内置抓取功能的云端浏览器"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Camofox",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Camofox 本地模式 — 通过 Camofox 实现本地反检测浏览"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "CDP",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 /browser connect 使用 /browser connect 是交互式 CLI 斜杠命令 — 不由 gateway 分发。若在 WebUI...尝试运行，消息将作为纯文本发送给 Agent，命令不会执行。请从终端启动 Hermes... /browser connect"
+    },
+    {
+      "head": "CDP",
+      "tail": "Chromium",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 /browser connect 将浏览器工具连接到本地运行的 Chrome、Brave、Chromium 或 Edge 实例"
+    },
+    {
+      "head": "Hermes CLI",
+      "tail": "browser",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "browser工具集必须包含在配置的toolsets列表中。"
+    },
+    {
+      "head": "Hermes CLI",
+      "tail": "agent-browser",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "安装agent-browser CLI以使用浏览器工具。"
+    },
+    {
+      "head": "Hermes CLI",
+      "tail": "CDP",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "通过CDP连接后，浏览器工具在实时浏览器上运行。"
+    },
+    {
+      "head": "browser_navigate",
+      "tail": "browser_snapshot",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "browser_navigate必须在其他任何浏览器工具之前调用。"
+    },
+    {
+      "head": "browser",
+      "tail": "CDP",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CDP工具用于其他浏览器操作的逃生舱口。"
+    },
+    {
+      "head": "Hermes CLI",
+      "tail": "Browserbase",
+      "type": "DEPENDS_ON",
+      "confidence": 0.8,
+      "evidence": "Browserbase提供浏览器自动化服务。"
+    },
+    {
+      "head": "agent-browser",
+      "tail": "CDP",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "agent-browser驱动本地Chromium安装使用浏览器工具。"
+    },
+    {
+      "head": "Agent",
+      "tail": "browser_snapshot",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中提到Agent使用browser_snapshot获取iframe结构。"
+    },
+    {
+      "head": "Browserbase",
+      "tail": "CDP",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Browserbase使用CDP代理进行跨域iframe处理。"
+    },
+    {
+      "head": "browser_cdp",
+      "tail": "CDP",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "browser_cdp方法调用CDP协议。"
+    },
+    {
+      "head": "Dialog policy",
+      "tail": "must_respond",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "对话框策略包含must_respond默认策略。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 8778,
+    "completion_tokens": 6286,
+    "total_tokens": 15064,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 96,
+    "prompt_cache_miss_tokens": 8682
+  }
+}

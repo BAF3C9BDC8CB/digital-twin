@@ -1,0 +1,154 @@
+{
+  "source_file": "user-guide/features/context-files.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 13,
+  "num_relations": 7,
+  "processing_time_sec": 151.82,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [
+        "Hermes"
+      ],
+      "summary": "AI agent that manages context files and behaviors."
+    },
+    {
+      "name": "AGENTS.md",
+      "type": "File",
+      "aliases": [],
+      "summary": "Main project context file defining project structure and rules."
+    },
+    {
+      "name": "SOUL.md",
+      "type": "File",
+      "aliases": [],
+      "summary": "File defining agent's personality and communication style."
+    },
+    {
+      "name": "\\.cursorrules",
+      "type": "File",
+      "aliases": [],
+      "summary": "Cursor IDE rules file for project context."
+    },
+    {
+      "name": "\\.cursor\\/rules\\/.mdc",
+      "type": "File",
+      "aliases": [],
+      "summary": "Cursor IDE rule modules for context files."
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Command-line interface tool for executing commands."
+    },
+    {
+      "name": "read_file",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Tool for reading files during agent operations."
+    },
+    {
+      "name": "search_files",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Tool for searching files in the project."
+    },
+    {
+      "name": "SubdirectoryHintTracker",
+      "type": "Module",
+      "aliases": [
+        "agent/subdirectory_hints.py"
+      ],
+      "summary": "Module that tracks directory hints during tool calls."
+    },
+    {
+      "name": "prompt_builder.py",
+      "type": "Module",
+      "aliases": [
+        "agent/prompt_builder.py"
+      ],
+      "summary": "Module that builds context files prompt."
+    },
+    {
+      "name": "Prompt Injection",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Security threat detected in context files."
+    },
+    {
+      "name": "Gradual Discovery",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Mechanism for loading context files on-demand."
+    },
+    {
+      "name": "Security Scan",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Process to scan context files for threats."
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "AGENTS.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent loads AGENTS.md for project context."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "SOUL.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "SOUL.md is loaded for agent identity."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "terminal",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Agent uses terminal for navigation."
+    },
+    {
+      "head": "SubdirectoryHintTracker",
+      "tail": "read_file",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "SubdirectoryHintTracker monitors read_file calls."
+    },
+    {
+      "head": "prompt_builder.py",
+      "tail": "AGENTS.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "build_context_files_prompt reads AGENTS.md content."
+    },
+    {
+      "head": "Gradual Discovery",
+      "tail": "SubdirectoryHintTracker",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "Gradual Discovery is implemented by SubdirectoryHintTracker."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Security Scan",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent performs security scan on context files."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 2616,
+    "completion_tokens": 3881,
+    "total_tokens": 6497,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 2584
+  }
+}

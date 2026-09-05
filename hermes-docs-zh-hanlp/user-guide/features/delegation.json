@@ -1,0 +1,172 @@
+{
+ "source_file": "user-guide/features/delegation.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 513,
+ "num_entities": 18,
+ "num_relations": 1,
+ "processing_time_sec": 2.309,
+ "entities": [
+  {
+   "text": "2025",
+   "type": "DATE",
+   "count": 3,
+   "content": [
+    "\"Research the current state of WebAssembly in 2025\"",
+    "\"Research the current state of RISC-V adoption in 2025\"",
+    "\"Research quantum computing progress in 2025\""
+   ]
+  },
+  {
+   "text": "10",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "/review                       # 评审最近 10 条消息中呈现的工作",
+    "最近 10 条用户/助手消息被快照为评审者的起始证据（工具输出和系统消息被排除）"
+   ]
+  },
+  {
+   "text": "50",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "每个子智能体都有迭代次数限制（默认：50），控制其可进行的工具调用轮次：",
+    "Max turns per child (default: 50)"
+   ]
+  },
+  {
+   "text": "10分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "早期版本曾设有硬性上限（300 秒，后为 600 秒），但这会在任务执行过程中误杀正常工作的子智能体：深度代码审查、大规模研究分发以及慢速推理模型经常需要超过 10 分钟，而它们全程都在稳定推进"
+   ]
+  },
+  {
+   "text": "27",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "的情况下，树可达到 3×3×3 = 27 个并发叶子智能体"
+   ]
+  },
+  {
+   "text": "300秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "早期版本曾设有硬性上限（300 秒，后为 600 秒），但这会在任务执行过程中误杀正常工作的子智能体：深度代码审查、大规模研究分发以及慢速推理模型经常需要超过 10 分钟，而它们全程都在稳定推进"
+   ]
+  },
+  {
+   "text": "30秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "childtimeoutseconds: 1800  # 选择启用的硬性上限（下限 30 秒）"
+   ]
+  },
+  {
+   "text": "600秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "早期版本曾设有硬性上限（300 秒，后为 600 秒），但这会在任务执行过程中误杀正常工作的子智能体：深度代码审查、大规模研究分发以及慢速推理模型经常需要超过 10 分钟，而它们全程都在稳定推进"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "如果 Hermes 在完成后、交付前重启，待处理事件会被恢复，并继续经过相同的所有权检查"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "仅 Python 代码执行"
+   ]
+  },
+  {
+   "text": "f\"Error",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "print(f\"Error: ...\") -> logger.error(...)"
+   ]
+  },
+  {
+   "text": "perchild",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Max turns per child (default: 50)"
+   ]
+  },
+  {
+   "text": "proxies",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "LiteLLM proxies, …)."
+   ]
+  },
+  {
+   "text": "topic",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Research topic A\""
+   ]
+  },
+  {
+   "text": "两者",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "两者都未设置时，子智能体继承父智能体的提供商和凭证"
+   ]
+  },
+  {
+   "text": "台子",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "完成后，完整评审作为常规后台子智能体完成事件重新进入同一会话——你的主智能体可以看到并据此行动（修复问题、推送后续提交、回复你）"
+   ]
+  },
+  {
+   "text": "叶子子",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "— 对叶子子智能体屏蔽（默认）"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "，第二双眼睛在你继续工作的同时对其进行调查"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "perchild",
+   "source_type": "PERSON",
+   "target": "50",
+   "target_type": "CARDINAL",
+   "label": "dep+dep",
+   "via": 5,
+   "count": 1,
+   "content": [
+    "Max turns per child (default: 50)"
+   ]
+  }
+ ]
+}

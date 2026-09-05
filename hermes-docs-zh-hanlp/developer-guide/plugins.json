@@ -1,0 +1,454 @@
+{
+ "source_file": "developer-guide/plugins.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 2158,
+ "num_entities": 47,
+ "num_relations": 5,
+ "processing_time_sec": 4.592,
+ "entities": [
+  {
+   "text": "144",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "sqrt(144)",
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "text": "JSON",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "阻断决策的结构化 JSON 输出",
+    "处理器未返回 JSON 字符串："
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "非 Python 扩展接口",
+    "支持与 Python 插件钩子相同的所有事件（"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "ORG",
+   "count": 2,
+   "content": [
+    "Hermes 也接受完全不是 Python 插件的扩展",
+    "接入——无需 Python 代码："
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "第一步：创建插件目录",
+    "新会话创建（仅第一轮）"
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "第三步：编写工具 schema",
+    "对于通过 pip 分发的第三方插件，在你自己的"
+   ]
+  },
+  {
+   "text": ".g",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "\"Source unit (e.g., 'km', 'lb', 'F', 'GB')\""
+   ]
+  },
+  {
+   "text": "1.0.0",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "version = \"1.0.0\""
+   ]
+  },
+  {
+   "text": "100",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "100 F → 37.78 C"
+   ]
+  },
+  {
+   "text": "210",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "text": "5km",
+   "type": "QUANTITY",
+   "count": 1,
+   "content": [
+    "5 km → 3.11 mi"
+   ]
+  },
+  {
+   "text": "75%",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "Anthropic 和 OpenRouter 会缓存系统提示词前缀，保持其稳定可在多轮对话中节省 75% 以上的输入 token"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你的插件需要 API 密钥："
+   ]
+  },
+  {
+   "text": "CLI",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "CLI/网关销毁活跃会话"
+   ]
+  },
+  {
+   "text": "ChromeCDP",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "要用你自己的实现替换内置工具（例如将默认浏览器工具替换为有头 Chrome CDP 后端，或将"
+   ]
+  },
+  {
+   "text": "Delegateagoalto",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Delegate a goal to a subagent\""
+   ]
+  },
+  {
+   "text": "GitHub仓库",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "（自定义 GitHub 仓库、私有技能索引）"
+   ]
+  },
+  {
+   "text": "Mathexpressiontoevaluate",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "text": "None",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "sessionid: str   None, platform: str"
+   ]
+  },
+  {
+   "text": "None",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "返回 None 或不返回 → 不注入（仅观察）"
+   ]
+  },
+  {
+   "text": "Normalize",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Normalize to Celsius"
+   ]
+  },
+  {
+   "text": "PEP440",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "在允许列表条目中使用 PEP 440 固定版本（"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "懒加载可选 Python 依赖"
+   ]
+  },
+  {
+   "text": "STT",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "对于 STT，将"
+   ]
+  },
+  {
+   "text": "Schema",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Schema 描述过于模糊："
+   ]
+  },
+  {
+   "text": "URL",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "为了获得更好的安装体验，使用带有描述和注册 URL 的富格式："
+   ]
+  },
+  {
+   "text": "defmyhandler",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "def myhandler(args: dict, kwargs) -> str"
+   ]
+  },
+  {
+   "text": "delivery",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Default channel for cron delivery\""
+   ]
+  },
+  {
+   "text": "e.g.",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "text": "hermeslogs",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes logs"
+   ]
+  },
+  {
+   "text": "imggen",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"my-imggen\""
+   ]
+  },
+  {
+   "text": "my",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"\"\"Handler for hermes my-plugin .\"\"\""
+   ]
+  },
+  {
+   "text": "my-sdk>",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"my-sdk>=1.2,<2\""
+   ]
+  },
+  {
+   "text": "name",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes name"
+   ]
+  },
+  {
+   "text": "plugin:",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "skillview(\"plugin:skill\")"
+   ]
+  },
+  {
+   "text": "pluginconfig",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Show plugin config\""
+   ]
+  },
+  {
+   "text": "safenow",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "safe now"
+   ]
+  },
+  {
+   "text": "schema",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "schema 为何重要："
+   ]
+  },
+  {
+   "text": "skills",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes skills"
+   ]
+  },
+  {
+   "text": "sqrt",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "sqrt(144)"
+   ]
+  },
+  {
+   "text": "stuff",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Does stuff\""
+   ]
+  },
+  {
+   "text": "weather",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "不会崩溃，代理中也不会报错——只会显示\"Plugin weather disabled (missing: WEATHERAPIKEY)\""
+   ]
+  },
+  {
+   "text": "中将",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "中将可选依赖声明为"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第二步：编写清单文件"
+   ]
+  },
+  {
+   "text": "第五",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第五步：编写注册代码"
+   ]
+  },
+  {
+   "text": "第六",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第六步：测试"
+   ]
+  },
+  {
+   "text": "第四",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第四步：编写工具处理器"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "210",
+   "source_type": "PERCENT",
+   "target": "144",
+   "target_type": "CARDINAL",
+   "label": "nummod+nummod",
+   "via": 16,
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "source": "Mathexpressiontoevaluate",
+   "source_type": "PERSON",
+   "target": "e.g.",
+   "target_type": "PERSON",
+   "label": "dep",
+   "via": null,
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "source": "e.g.",
+   "source_type": "PERSON",
+   "target": "210",
+   "target_type": "PERCENT",
+   "label": "dep+nummod",
+   "via": 16,
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "source": "e.g.",
+   "source_type": "PERSON",
+   "target": "144",
+   "target_type": "CARDINAL",
+   "label": "dep+nummod",
+   "via": 16,
+   "count": 1,
+   "content": [
+    "\"Math expression to evaluate (e.g., '210', 'sqrt(144)')\""
+   ]
+  },
+  {
+   "source": "sqrt",
+   "source_type": "PERSON",
+   "target": "144",
+   "target_type": "CARDINAL",
+   "label": "dep",
+   "via": null,
+   "count": 1,
+   "content": [
+    "sqrt(144)"
+   ]
+  }
+ ]
+}

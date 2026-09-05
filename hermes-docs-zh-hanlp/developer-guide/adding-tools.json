@@ -1,0 +1,99 @@
+{
+ "source_file": "developer-guide/adding-tools.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 331,
+ "num_entities": 11,
+ "num_relations": 0,
+ "processing_time_sec": 0.707,
+ "entities": [
+  {
+   "text": "py",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "toolsets.py"
+   ]
+  },
+  {
+   "text": ".g",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"City name or coordinates (e.g. 'London' or '51.5,-0.1')\""
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你的工具需要 API 密钥，将其添加到"
+   ]
+  },
+  {
+   "text": "JSON",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "Handler 返回 JSON 字符串，错误以"
+   ]
+  },
+  {
+   "text": "Wizard",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "可选：Setup Wizard 集成"
+   ]
+  },
+  {
+   "text": "args",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "(args: dict, kwargs)"
+   ]
+  },
+  {
+   "text": "check",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "--- Availability check ---"
+   ]
+  },
+  {
+   "text": "异步Handler",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "异步 Handler"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第一步：创建内置工具文件"
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第三步：添加发现导入"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第二步：将内置工具添加到 Toolset"
+   ]
+  }
+ ],
+ "relations": []
+}

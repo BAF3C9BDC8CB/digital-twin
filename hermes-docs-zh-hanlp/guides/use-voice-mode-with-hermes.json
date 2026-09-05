@@ -1,0 +1,142 @@
+{
+ "source_file": "guides/use-voice-mode-with-hermes.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 404,
+ "num_entities": 16,
+ "num_relations": 0,
+ "processing_time_sec": 0.848,
+ "entities": [
+  {
+   "text": "uvpip",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "uv pip"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "GPE",
+   "count": 2,
+   "content": [
+    "希望 Hermes 加入 Discord 语音频道进行实时对话",
+    "如果 Hermes 开始/停止过于激进，调整："
+   ]
+  },
+  {
+   "text": "Telegram",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "Telegram、Discord",
+    "Telegram 设置"
+   ]
+  },
+  {
+   "text": "join",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "/voice join"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "第一步：确保普通 Hermes 先正常运行",
+    "建议的第一周方案"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "ElevenLabs 或 OpenAI 的 API 密钥 / 配额"
+   ]
+  },
+  {
+   "text": "Edge",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "Edge 转换路径的"
+   ]
+  },
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "libopus0",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "portaudio19-dev ffmpeg libopus0"
+   ]
+  },
+  {
+   "text": "opus",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "portaudio ffmpeg opus"
+   ]
+  },
+  {
+   "text": "tmux",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "与你的终端或 tmux 习惯冲突："
+   ]
+  },
+  {
+   "text": "第三",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第三步：安装系统依赖"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第二步：安装所需的额外依赖"
+   ]
+  },
+  {
+   "text": "第五",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第五步：推荐配置"
+   ]
+  },
+  {
+   "text": "第四",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第四步：选择 STT 和 TTS 提供商"
+   ]
+  },
+  {
+   "text": "语音频道",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "使用场景三：Discord 语音频道"
+   ]
+  }
+ ],
+ "relations": []
+}

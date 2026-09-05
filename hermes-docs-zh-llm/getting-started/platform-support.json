@@ -1,0 +1,174 @@
+{
+  "source_file": "getting-started/platform-support.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 13,
+  "num_relations": 7,
+  "processing_time_sec": 129.29,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [
+        "Hermes"
+      ],
+      "summary": "Hermes Agent service for platform support."
+    },
+    {
+      "name": "macOS",
+      "type": "Platform",
+      "aliases": [
+        "Apple Silicon"
+      ],
+      "summary": "Apple-based platform for desktop."
+    },
+    {
+      "name": "Windows",
+      "type": "Platform",
+      "aliases": [
+        "Windows 10/11"
+      ],
+      "summary": "Microsoft Windows operating system."
+    },
+    {
+      "name": "Linux",
+      "type": "Platform",
+      "aliases": [
+        "WSL2"
+      ],
+      "summary": "Linux operating system with WSL support."
+    },
+    {
+      "name": "WSL2",
+      "type": "Platform",
+      "aliases": [
+        "Windows Subsystem for Linux"
+      ],
+      "summary": "Linux environment on Windows."
+    },
+    {
+      "name": "Docker",
+      "type": "Tool",
+      "aliases": [
+        "Docker Container"
+      ],
+      "summary": "Containerization tool for installations."
+    },
+    {
+      "name": "Android",
+      "type": "Platform",
+      "aliases": [
+        "Termux"
+      ],
+      "summary": "Mobile operating system."
+    },
+    {
+      "name": "Termux",
+      "type": "Tool",
+      "aliases": [
+        "Android app"
+      ],
+      "summary": "Terminal emulator for Android."
+    },
+    {
+      "name": "Nix",
+      "type": "Platform",
+      "aliases": [
+        "NixOS"
+      ],
+      "summary": "Package manager and Linux distribution."
+    },
+    {
+      "name": "pypi",
+      "type": "Tool",
+      "aliases": [
+        "Python Package Index"
+      ],
+      "summary": "Python package repository for installations."
+    },
+    {
+      "name": "brew",
+      "type": "Tool",
+      "aliases": [
+        "Homebrew"
+      ],
+      "summary": "Package manager for macOS and Linux."
+    },
+    {
+      "name": "install.sh",
+      "type": "File",
+      "aliases": [
+        "shell script"
+      ],
+      "summary": "Shell script for installation purposes."
+    },
+    {
+      "name": "install.ps1",
+      "type": "File",
+      "aliases": [
+        "PowerShell script"
+      ],
+      "summary": "PowerShell script for installation."
+    }
+  ],
+  "relations": [
+    {
+      "head": "macOS",
+      "tail": "install.sh",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Desktop, install.sh for macOS installation."
+    },
+    {
+      "head": "macOS",
+      "tail": "Hermes Desktop",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Desktop used for macOS."
+    },
+    {
+      "head": "Docker",
+      "tail": "docker pull",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Docker pull for Docker installation."
+    },
+    {
+      "head": "pypi",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "installs via pypi for Hermes Agent."
+    },
+    {
+      "head": "brew",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "brew install hermes-agent for installation."
+    },
+    {
+      "head": "Termux",
+      "tail": "install.sh",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "install.sh for Termux installation."
+    },
+    {
+      "head": "Nix",
+      "tail": "install.sh",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "install.sh for Nix installation."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 980,
+    "completion_tokens": 3089,
+    "total_tokens": 4069,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 948
+  }
+}

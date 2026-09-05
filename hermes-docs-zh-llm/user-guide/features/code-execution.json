@@ -1,0 +1,160 @@
+{
+  "source_file": "user-guide/features/code-execution.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 15,
+  "num_relations": 7,
+  "processing_time_sec": 113.47,
+  "entities": [
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [],
+      "summary": "核心代理系统，管理工具调用和代码执行"
+    },
+    {
+      "name": "execute_code",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "代码执行工具，允许agent运行Python脚本"
+    },
+    {
+      "name": "hermes_tools.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "Hermes生成的Python模块，提供RPC存根"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "编程语言，用于编写执行脚本"
+    },
+    {
+      "name": "Unix 域套接字",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "IPC机制，用于进程间通信"
+    },
+    {
+      "name": "web_search",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "搜索网络工具，返回查询结果"
+    },
+    {
+      "name": "web_extract",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "提取网页内容工具"
+    },
+    {
+      "name": "read_file",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "读取文件内容工具"
+    },
+    {
+      "name": "write_file",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "写入文件内容工具"
+    },
+    {
+      "name": "search_files",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "搜索文件工具"
+    },
+    {
+      "name": "patch",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "文件替换工具"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令行终端工具"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "配置文件，控制代码执行模式"
+    },
+    {
+      "name": "Agent",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "智能代理，使用工具和代码执行"
+    },
+    {
+      "name": "LLM",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "大型语言模型，生成响应和调用工具"
+    }
+  ],
+  "relations": [
+    {
+      "head": "execute_code",
+      "tail": "hermes_tools.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "脚本使用 hermes_tools.py 存根模块。"
+    },
+    {
+      "head": "execute_code",
+      "tail": "Python",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "脚本是 Python 脚本，运行在 Python 解释器中。"
+    },
+    {
+      "head": "execute_code",
+      "tail": "Unix 域套接字",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 Unix 域套接字与 Hermes 通信。"
+    },
+    {
+      "head": "Agent",
+      "tail": "execute_code",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "agent 使用 execute_code 编写多步骤工作流。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "execute_code",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 生成 hermes_tools.py 并管理执行。"
+    },
+    {
+      "head": "execute_code",
+      "tail": "web_search",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "脚本调用 web_search 函数。"
+    },
+    {
+      "head": "execute_code",
+      "tail": "config.yaml",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "config.yaml 控制 code execution mode。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 3048,
+    "completion_tokens": 2996,
+    "total_tokens": 6044,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 3016
+  }
+}

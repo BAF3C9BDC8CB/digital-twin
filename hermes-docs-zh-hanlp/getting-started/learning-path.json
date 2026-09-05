@@ -1,0 +1,129 @@
+{
+ "source_file": "getting-started/learning-path.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 121,
+ "num_entities": 13,
+ "num_relations": 1,
+ "processing_time_sec": 0.469,
+ "entities": [
+  {
+   "text": "Cron",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "> Cron 任务让 Hermes Agent 按计划执行任务——每日摘要、定期检查、自动报告——无需您在场",
+    "Cron   调度周期性 agent 任务   Cron"
+   ]
+  },
+  {
+   "text": "1小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "初级   快速上手，进行基本对话，使用内置工具   安装 → 快速入门 → CLI 用法 → 配置   约 1 小时"
+   ]
+  },
+  {
+   "text": "2–3小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "中级   搭建消息机器人，使用记忆、cron 任务、技能等高级功能   会话 → 消息 → 工具 → 技能 → 记忆 → Cron   约 2–3 小时"
+   ]
+  },
+  {
+   "text": "4–6小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "高级   构建自定义工具、创建技能、使用强化学习训练模型、参与项目贡献   架构 → 添加工具 → 创建技能 → 强化学习训练 → 贡献指南   约 4–6 小时"
+   ]
+  },
+  {
+   "text": "Agent",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "如果您尚未安装 Hermes Agent，请先阅读安装指南，然后完成快速入门"
+   ]
+  },
+  {
+   "text": "Agent",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "> Cron 任务让 Hermes Agent 按计划执行任务——每日摘要、定期检查、自动报告——无需您在场"
+   ]
+  },
+  {
+   "text": "Cron调度",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Cron 调度"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "添加工具页面面向 Hermes 核心内置开发，而非常规用户/自定义工具路径"
+   ]
+  },
+  {
+   "text": "HermesAgent",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Hermes Agent 功能丰富——CLI 助手、Telegram/Discord 机器人、任务自动化、强化学习训练等"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "\"我想将其作为 Python 库使用\""
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "代码执行   运行以编程方式调用 Hermes 工具的 Python 脚本   代码执行"
+   ]
+  },
+  {
+   "text": "Telegram",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Telegram 配置"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "→ 前往快速入门，运行您的第一次对话"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "Cron",
+   "source_type": "PERSON",
+   "target": "Cron",
+   "target_type": "PERSON",
+   "label": "nn+dep",
+   "via": 4,
+   "count": 1,
+   "content": [
+    "Cron   调度周期性 agent 任务   Cron"
+   ]
+  }
+ ]
+}

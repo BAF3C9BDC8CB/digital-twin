@@ -1,0 +1,132 @@
+{
+ "source_file": "getting-started/termux.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 284,
+ "num_entities": 14,
+ "num_relations": 0,
+ "processing_time_sec": 0.638,
+ "entities": [
+  {
+   "text": "Android",
+   "type": "ORG",
+   "count": 14,
+   "content": [
+    "在 Android 上通过 Termux 运行 Hermes",
+    "这是在 Android 手机上通过",
+    "它为你提供手机上可用的本地 CLI，以及目前已知可在 Android 上干净安装的核心扩展功能",
+    "部分功能仍依赖桌面/服务器风格的依赖项，这些依赖项尚未为 Android 发布，或尚未在手机上验证：",
+    "目前不支持 Android",
+    "未发布 Android wheel 包"
+   ]
+  },
+  {
+   "text": "Termux",
+   "type": "PRODUCT",
+   "count": 4,
+   "content": [
+    "已验证的 Termux 安装包含：",
+    "Hermes 现已内置 Termux 感知的安装路径：",
+    "已验证的 Termux 路径有意跳过 Node/浏览器引导",
+    "改用已验证的 Termux 包："
+   ]
+  },
+  {
+   "text": "Docker",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "基于 Docker 的终端隔离在 Termux 内不可用",
+    "Docker 后端不可用"
+   ]
+  },
+  {
+   "text": "wheel",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "pip setuptools wheel"
+   ]
+  },
+  {
+   "text": "CLI",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Hermes CLI"
+   ]
+  },
+  {
+   "text": "Telegramgateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Telegram gateway 支持（手动 / 尽力而为的后台运行）"
+   ]
+  },
+  {
+   "text": "Termux 包",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "使用 Termux 包安装："
+   ]
+  },
+  {
+   "text": "WhatsApp",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "跳过未经验证的浏览器 / WhatsApp 引导"
+   ]
+  },
+  {
+   "text": "clangrust",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "clang rust"
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "cron 支持"
+   ]
+  },
+  {
+   "text": "install",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "uv pip install"
+   ]
+  },
+  {
+   "text": "rust",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "python clang rust"
+   ]
+  },
+  {
+   "text": "update",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "pkg update"
+   ]
+  },
+  {
+   "text": "克隆Hermes",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "克隆 Hermes"
+   ]
+  }
+ ],
+ "relations": []
+}

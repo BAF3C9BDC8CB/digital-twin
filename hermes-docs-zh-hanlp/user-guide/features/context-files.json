@@ -1,0 +1,134 @@
+{
+ "source_file": "user-guide/features/context-files.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 283,
+ "num_entities": 12,
+ "num_relations": 2,
+ "processing_time_sec": 0.697,
+ "entities": [
+  {
+   "text": "000",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "— 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）",
+    "当文件超过 20,000 个字符时，截断提示如下："
+   ]
+  },
+  {
+   "text": "20",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "— 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）",
+    "当文件超过 20,000 个字符时，截断提示如下："
+   ]
+  },
+  {
+   "text": ".md",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "[BLOCKED: AGENTS.md contained potential prompt injection (promptinjection). Content not loaded.]"
+   ]
+  },
+  {
+   "text": "10%",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "10%（显示字符数并建议使用文件工具）"
+   ]
+  },
+  {
+   "text": "20",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "— 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）"
+   ]
+  },
+  {
+   "text": "20K",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "— 远低于 20K 字符"
+   ]
+  },
+  {
+   "text": "70",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "— 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "这意味着使用 Hermes 时，现有的 Cursor 规范会自动生效"
+   ]
+  },
+  {
+   "text": "IDE",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Hermes 兼容 Cursor IDE 的"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "Python code follows PEP 8, use type hints everywhere"
+   ]
+  },
+  {
+   "text": "catcredentials",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "cat credentials"
+   ]
+  },
+  {
+   "text": "monorepo",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "对于 monorepo，在嵌套的 AGENTS.md 文件中放置子目录专属指令："
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "20",
+   "source_type": "CARDINAL",
+   "target": "000",
+   "target_type": "CARDINAL",
+   "label": "dep+nummod",
+   "via": 5,
+   "count": 1,
+   "content": [
+    "— 超过 20,000 个字符的文件进行首尾截断（70% 头部，20% 尾部，中间插入标记）"
+   ]
+  },
+  {
+   "source": "20",
+   "source_type": "CARDINAL",
+   "target": "000",
+   "target_type": "CARDINAL",
+   "label": "nummod+nummod",
+   "via": 6,
+   "count": 1,
+   "content": [
+    "当文件超过 20,000 个字符时，截断提示如下："
+   ]
+  }
+ ]
+}

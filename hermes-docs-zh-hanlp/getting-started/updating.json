@@ -1,0 +1,139 @@
+{
+ "source_file": "getting-started/updating.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 277,
+ "num_entities": 16,
+ "num_relations": 0,
+ "processing_time_sec": 0.963,
+ "entities": [
+  {
+   "text": "uvpip",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "uv pip"
+   ]
+  },
+  {
+   "text": "5–15秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "Bot 在重启期间会短暂下线（通常为 5–15 秒），之后恢复服务"
+   ]
+  },
+  {
+   "text": "Desktop",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "进程持有 venv 入口点可执行文件的句柄，它将拒绝运行 — 最常见的情况是 Hermes Desktop 应用启动的后端进程、另一个终端中打开的"
+   ]
+  },
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Gateway 自动重启"
+   ]
+  },
+  {
+   "text": "GiB",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "单个超过 1 GiB 的文件会被跳过，因此大型会话数据库不会拖慢更新）"
+   ]
+  },
+  {
+   "text": "Gitpull",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Git pull"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "由服务管理的 gateway（Linux 上的 systemd、macOS 上的 launchd）通过服务管理器重启"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Linux: systemctl --user disable hermes-gateway"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "子进程继承此保护，因此 Python 环境不会因连接断开而处于半安装状态"
+   ]
+  },
+  {
+   "text": "SSH",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "，因此关闭 SSH 会话或终端窗口不再会在安装中途终止它"
+   ]
+  },
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "在 Windows 上，如果"
+   ]
+  },
+  {
+   "text": "audit",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "报告 npm audit 问题：在标记的目录中运行"
+   ]
+  },
+  {
+   "text": "main",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "pull origin main"
+   ]
+  },
+  {
+   "text": "uninstall",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes uninstall"
+   ]
+  },
+  {
+   "text": "upnewdependencies",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Reinstall (picks up new dependencies)"
+   ]
+  },
+  {
+   "text": "数分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "在大型 home 目录上可能增加数分钟）、"
+   ]
+  }
+ ],
+ "relations": []
+}

@@ -1,0 +1,133 @@
+{
+ "source_file": "guides/tips.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 315,
+ "num_entities": 15,
+ "num_relations": 0,
+ "processing_time_sec": 1.034,
+ "entities": [
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "避免 Windows 编码陷阱",
+    "在 Windows 上，某些默认编码（如",
+    "这样可以让 PowerShell 和子进程统一使用 UTF-8，避免仅在 Windows 上出现的失败"
+   ]
+  },
+  {
+   "text": "200",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "约 2,200 字符，"
+   ]
+  },
+  {
+   "text": "2秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "在 2 秒内双击 Ctrl+C 可强制退出"
+   ]
+  },
+  {
+   "text": "3.12",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "你也可以主动说\"清理你的记忆\"或\"替换旧的 Python 3.9 备注——我们现在用 3.12 了\""
+   ]
+  },
+  {
+   "text": "30天",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "可查看过去 30 天的用量模式概览"
+   ]
+  },
+  {
+   "text": "42",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "，看第 42 行，然后……\""
+   ]
+  },
+  {
+   "text": "4o",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "对于复杂推理和架构决策，使用前沿模型（Claude Sonnet/Opus、GPT-4o）"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你发现自己在反复输入相同的指令（\"用 tab 而非空格\"、\"我们用 pytest\"、\"API 地址是"
+   ]
+  },
+  {
+   "text": "PowerShell",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "这样可以让 PowerShell 和子进程统一使用 UTF-8，避免仅在 Windows 上出现的失败"
+   ]
+  },
+  {
+   "text": "Python3.9",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "你也可以主动说\"清理你的记忆\"或\"替换旧的 Python 3.9 备注——我们现在用 3.12 了\""
+   ]
+  },
+  {
+   "text": "UTF-8",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "这样可以让 PowerShell 和子进程统一使用 UTF-8，避免仅在 Windows 上出现的失败"
+   ]
+  },
+  {
+   "text": "Unicode",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "）无法表示所有 Unicode 字符，在测试或脚本中写入文件时可能导致"
+   ]
+  },
+  {
+   "text": "deny",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "deny（拒绝）"
+   ]
+  },
+  {
+   "text": "once",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "once（仅此一次）"
+   ]
+  },
+  {
+   "text": "第 47",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "第 47 行的 TypeError——"
+   ]
+  }
+ ],
+ "relations": []
+}

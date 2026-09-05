@@ -1,0 +1,320 @@
+{
+ "source_file": "getting-started/installation.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 336,
+ "num_entities": 28,
+ "num_relations": 6,
+ "processing_time_sec": 1.168,
+ "entities": [
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 8,
+   "content": [
+    "Windows（原生，PowerShell）",
+    "原生 Windows 无需 WSL 即可运行 Hermes——CLI、gateway、TUI 和工具均可原生运行",
+    "在 32 位 Windows 上安装程序会回退到 MinGit，后者缺少 bash，终端工具和 agent 浏览器功能将被禁用）",
+    "（在 32 位 Windows 上会回退到 MinGit，因为 PortableGit 仅提供 64 位和 ARM64 资产",
+    "便携式 Git 方案绕过了 winget、Windows 安装程序注册表以及任何现有系统 Git",
+    "Windows（原生）指南"
+   ]
+  },
+  {
+   "text": "Python",
+   "type": "PRODUCT",
+   "count": 4,
+   "content": [
+    "、Python 3.11、Node.js 22、",
+    "Python 3.11",
+    "手动安装 Python、Node.js、ripgrep 或 ffmpeg",
+    "，说明你在用系统 Python 调用仓库源码中的"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "如果你偏好 WSL2，上方的 Linux 安装程序可在其中运行",
+    "）与其他系统级开发工具在 Linux 上的安装位置一致",
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "text": "32",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "（在 32 位 Windows 上会回退到 MinGit，因为 PortableGit 仅提供 64 位和 ARM64 资产",
+    "依赖 bash 的 Hermes 功能在 32 位主机上无法使用"
+   ]
+  },
+  {
+   "text": "Git",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "自动安装 Git，但当系统 Git 安装处于部分损坏状态时，winget 会严重失败（而这恰恰是用户最需要安装程序正常工作的时候）"
+   ]
+  },
+  {
+   "text": "Termux",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "Hermes 现在也提供 Termux 感知的安装路径：",
+    "安装程序会自动检测 Termux 并切换到经过测试的 Android 流程："
+   ]
+  },
+  {
+   "text": "22",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "、Python 3.11、Node.js 22、"
+   ]
+  },
+  {
+   "text": "3.11",
+   "type": "MONEY",
+   "count": 1,
+   "content": [
+    "Python 3.11"
+   ]
+  },
+  {
+   "text": "300+",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "一个订阅涵盖 300+ 个模型以及"
+   ]
+  },
+  {
+   "text": "64",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "（在 32 位 Windows 上会回退到 MinGit，因为 PortableGit 仅提供 64 位和 ARM64 资产"
+   ]
+  },
+  {
+   "text": "Android",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "安装程序会自动检测 Termux 并切换到经过测试的 Android 流程："
+   ]
+  },
+  {
+   "text": "Androidwheel",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "以用于 Android wheel 构建"
+   ]
+  },
+  {
+   "text": "Docker",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "检出、Docker 镜像标记或 Nix store 路径）"
+   ]
+  },
+  {
+   "text": "GUI",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "也提供一个轻量 GUI 安装程序——下载 Hermes Desktop，运行"
+   ]
+  },
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "该命令一次性完成登录、设置 Nous 为提供商并开启 Tool Gateway"
+   ]
+  },
+  {
+   "text": "Git",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "如果 Hermes 的 Git 安装本身出现问题，执行"
+   ]
+  },
+  {
+   "text": "Nix",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "text": "NixOS",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "text": "Nixflake",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "text": "POSIXPTY",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "（使用 POSIX PTY（伪终端），原生 Windows 无等效实现）"
+   ]
+  },
+  {
+   "text": "WSL2",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你偏好 WSL2，上方的 Linux 安装程序可在其中运行"
+   ]
+  },
+  {
+   "text": "WhatsApp",
+   "type": "FAC",
+   "count": 1,
+   "content": [
+    "（用于浏览器自动化和 WhatsApp 桥接）"
+   ]
+  },
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "macOS",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "text": "一次",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "适用于共享机器部署场景，一次系统安装可服务所有用户"
+   ]
+  },
+  {
+   "text": "两分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "使用一行安装命令，两分钟内即可启动并运行 Hermes Agent"
+   ]
+  },
+  {
+   "text": "轻量",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "也提供一个轻量 GUI 安装程序——下载 Hermes Desktop，运行"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "3.11",
+   "source_type": "MONEY",
+   "target": "Python",
+   "target_type": "PRODUCT",
+   "label": "nsubj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "Python 3.11"
+   ]
+  },
+  {
+   "source": "32",
+   "source_type": "CARDINAL",
+   "target": "Windows",
+   "target_type": "PRODUCT",
+   "label": "nummod+clf",
+   "via": 3,
+   "count": 1,
+   "content": [
+    "（在 32 位 Windows 上会回退到 MinGit，因为 PortableGit 仅提供 64 位和 ARM64 资产"
+   ]
+  },
+  {
+   "source": "Linux",
+   "source_type": "PRODUCT",
+   "target": "NixOS",
+   "target_type": "PRODUCT",
+   "label": "conj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "source": "Linux",
+   "source_type": "PRODUCT",
+   "target": "macOS",
+   "target_type": "PRODUCT",
+   "label": "conj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "如果你使用 Nix（在 NixOS、macOS 或 Linux 上），有专门的配置路径，包含 Nix flake、声明式 NixOS 模块和可选容器模式"
+   ]
+  },
+  {
+   "source": "Python",
+   "source_type": "PRODUCT",
+   "target": "22",
+   "target_type": "ORDINAL",
+   "label": "dep+nummod",
+   "via": 2,
+   "count": 1,
+   "content": [
+    "、Python 3.11、Node.js 22、"
+   ]
+  },
+  {
+   "source": "轻量",
+   "source_type": "PRODUCT",
+   "target": "GUI",
+   "target_type": "PRODUCT",
+   "label": "nn+nn",
+   "via": 7,
+   "count": 1,
+   "content": [
+    "也提供一个轻量 GUI 安装程序——下载 Hermes Desktop，运行"
+   ]
+  }
+ ]
+}

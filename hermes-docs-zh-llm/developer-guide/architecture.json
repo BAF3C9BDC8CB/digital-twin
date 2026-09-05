@@ -1,0 +1,293 @@
+{
+  "source_file": "developer-guide/architecture.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 2,
+  "num_entities": 28,
+  "num_relations": 14,
+  "processing_time_sec": 362.69,
+  "entities": [
+    {
+      "name": "AIAgent",
+      "type": "Service",
+      "aliases": [
+        "Hermes Agent"
+      ],
+      "summary": "核心对话循环，处理provider、prompt和工具。"
+    },
+    {
+      "name": "CLI",
+      "type": "Service",
+      "aliases": [
+        "HermesCLI"
+      ],
+      "summary": "交互式终端用户界面。"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "消息平台网关，处理消息分发。"
+    },
+    {
+      "name": "API Server",
+      "type": "Service",
+      "aliases": [],
+      "summary": "提供API接口服务。"
+    },
+    {
+      "name": "Prompt Builder",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "组装系统prompt的组件。"
+    },
+    {
+      "name": "Provider Resolution",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "将provider映射到api_mode和凭据。"
+    },
+    {
+      "name": "Tool Dispatch",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "分发和执行工具的机制。"
+    },
+    {
+      "name": "Session Storage",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "SQLite数据库带FTS5全文检索。"
+    },
+    {
+      "name": "SQLite",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "轻量级数据库系统。"
+    },
+    {
+      "name": "FTS5",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "SQLite全文检索模块。"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "编程语言，用于实现。"
+    },
+    {
+      "name": "Terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "终端工具，支持多种后端。"
+    },
+    {
+      "name": "Browser",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "浏览器自动化工具。"
+    },
+    {
+      "name": "Web",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Web搜索和提取工具。"
+    },
+    {
+      "name": "MCP",
+      "type": "Tool",
+      "aliases": [
+        "MCP Tool"
+      ],
+      "summary": "MCP客户端，用于集成。"
+    },
+    {
+      "name": "Cron",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Agent 任务调度系统。"
+    },
+    {
+      "name": "ACP",
+      "type": "Service",
+      "aliases": [],
+      "summary": "集成到 IDE 的代理系统。"
+    },
+    {
+      "name": "插件系统",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "管理插件注册和配置的系统。"
+    },
+    {
+      "name": "记忆提供者",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "提供记忆功能的插件类型。"
+    },
+    {
+      "name": "上下文引擎",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "处理上下文的插件类型。"
+    },
+    {
+      "name": "VS Code",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "集成 Hermes 的开发环境。"
+    },
+    {
+      "name": "Zed",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "集成 Hermes 的开发环境。"
+    },
+    {
+      "name": "JetBrains",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "集成 Hermes 的开发环境。"
+    },
+    {
+      "name": "tools/registry.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "工具注册文件，被所有工具导入。"
+    },
+    {
+      "name": "run_agent.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "运行 agent 的脚本。"
+    },
+    {
+      "name": "cli.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "命令行接口脚本。"
+    },
+    {
+      "name": "Prompt 稳定性",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "系统 prompt 不变的设计原则。"
+    },
+    {
+      "name": "可观测执行",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "工具调用可见的设计原则。"
+    }
+  ],
+  "relations": [
+    {
+      "head": "AIAgent",
+      "tail": "Prompt Builder",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "AIAgent contains Prompt Builder (prompt_builder.py)"
+    },
+    {
+      "head": "AIAgent",
+      "tail": "Provider Resolution",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "AIAgent contains Provider Resolution (runtime_provider.py)"
+    },
+    {
+      "head": "AIAgent",
+      "tail": "Tool Dispatch",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "AIAgent contains Tool Dispatch (model_tools.py)"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Session Storage",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Gateway contains Session Storage (session.py)"
+    },
+    {
+      "head": "Session Storage",
+      "tail": "SQLite",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Session Storage uses SQLite + FTS5"
+    },
+    {
+      "head": "CLI",
+      "tail": "AIAgent",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "CLI calls AIAgent.run_conversation() from data flow"
+    },
+    {
+      "head": "插件系统",
+      "tail": "记忆提供者",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "存在两种专用插件类型：记忆提供者（plugins/memory/）"
+    },
+    {
+      "head": "插件系统",
+      "tail": "上下文引擎",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "存在两种专用插件类型：上下文引擎（plugins/context_engine/）"
+    },
+    {
+      "head": "tools/registry.py",
+      "tail": "tools/*.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "tools/registry.py  （无依赖——被所有工具文件导入）"
+    },
+    {
+      "head": "tools/*.py",
+      "tail": "tools/registry.py",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "每个文件在导入时调用 registry.register()"
+    },
+    {
+      "head": "model_tools.py",
+      "tail": "tools/registry.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "model_tools.py  （导入 tools/registry 并触发工具发现）"
+    },
+    {
+      "head": "ACP",
+      "tail": "VS Code",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 stdio/JSON-RPC 将 Hermes 作为编辑器原生 agent 暴露给"
+    },
+    {
+      "head": "ACP",
+      "tail": "Zed",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 stdio/JSON-RPC 将 Hermes 作为编辑器原生 agent 暴露给"
+    },
+    {
+      "head": "ACP",
+      "tail": "JetBrains",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "通过 stdio/JSON-RPC 将 Hermes 作为编辑器原生 agent 暴露给"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 4300,
+    "completion_tokens": 8752,
+    "total_tokens": 13052,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 4268
+  }
+}

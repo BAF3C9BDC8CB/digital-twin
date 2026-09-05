@@ -1,0 +1,1179 @@
+{
+  "source_file": "user-guide/configuration.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 10,
+  "num_entities": 97,
+  "num_relations": 66,
+  "processing_time_sec": 1222.96,
+  "entities": [
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [
+        "hermes",
+        "AI system",
+        "Hermes Agent System"
+      ],
+      "summary": "Hermes AI agent and gateway configuration tool."
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [
+        "~/.hermes/config.yaml",
+        "configuration file"
+      ],
+      "summary": "Main configuration file for settings."
+    },
+    {
+      "name": "\\.env",
+      "type": "File",
+      "aliases": [
+        "~/.hermes/.env"
+      ],
+      "summary": "File for storing API keys and secrets."
+    },
+    {
+      "name": "auth.json",
+      "type": "File",
+      "aliases": [
+        "~/.hermes/auth.json"
+      ],
+      "summary": "File for OAuth provider credentials."
+    },
+    {
+      "name": "skill_manage",
+      "type": "Tool",
+      "aliases": [
+        "skill_manage tool"
+      ],
+      "summary": "Tool for managing agent skills."
+    },
+    {
+      "name": "hermes config",
+      "type": "Tool",
+      "aliases": [
+        "hermes config command"
+      ],
+      "summary": "Command for configuring Hermes settings."
+    },
+    {
+      "name": "Docker",
+      "type": "Technology",
+      "aliases": [
+        "docker"
+      ],
+      "summary": "Containerization technology used in backend."
+    },
+    {
+      "name": "SSH",
+      "type": "Technology",
+      "aliases": [
+        "ssh"
+      ],
+      "summary": "Secure shell protocol for remote access."
+    },
+    {
+      "name": "Modal",
+      "type": "Technology",
+      "aliases": [
+        "modal"
+      ],
+      "summary": "Cloud sandbox platform."
+    },
+    {
+      "name": "Daytona",
+      "type": "Technology",
+      "aliases": [
+        "daytona"
+      ],
+      "summary": "Cloud development environment."
+    },
+    {
+      "name": "Vercel",
+      "type": "Technology",
+      "aliases": [
+        "vercel"
+      ],
+      "summary": "Platform for cloud execution."
+    },
+    {
+      "name": "Singularity",
+      "type": "Technology",
+      "aliases": [
+        "singularity"
+      ],
+      "summary": "Container technology for HPC clusters."
+    },
+    {
+      "name": "SOUL.md",
+      "type": "File",
+      "aliases": [
+        "~/.hermes/SOUL.md",
+        "主要身份文件"
+      ],
+      "summary": "File for main agent identity."
+    },
+    {
+      "name": "memories/",
+      "type": "Module",
+      "aliases": [
+        "~/.hermes/memories/"
+      ],
+      "summary": "Directory for persistent memories."
+    },
+    {
+      "name": "cron/",
+      "type": "Module",
+      "aliases": [
+        "~/.hermes/cron/"
+      ],
+      "summary": "Directory for scheduled tasks."
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [
+        "终端工具"
+      ],
+      "summary": "用于连接和运行命令的工具。"
+    },
+    {
+      "name": "hermes",
+      "type": "Service",
+      "aliases": [
+        "Hermes CLI"
+      ],
+      "summary": "命令行接口，用于管理终端会话。"
+    },
+    {
+      "name": "ssh",
+      "type": "Tool",
+      "aliases": [
+        "Secure Shell"
+      ],
+      "summary": "SSH协议，用于安全连接。"
+    },
+    {
+      "name": "docker",
+      "type": "Tool",
+      "aliases": [
+        "Docker Engine"
+      ],
+      "summary": "容器化平台。"
+    },
+    {
+      "name": "modal",
+      "type": "Service",
+      "aliases": [
+        "Modal Cloud"
+      ],
+      "summary": "云沙箱服务。"
+    },
+    {
+      "name": "daytona",
+      "type": "Service",
+      "aliases": [
+        "Daytona Cloud"
+      ],
+      "summary": "托管工作区服务。"
+    },
+    {
+      "name": "vercel_sandbox",
+      "type": "Service",
+      "aliases": [
+        "Vercel Sandbox"
+      ],
+      "summary": "Vercel云microVM服务。"
+    },
+    {
+      "name": "singularity",
+      "type": "Tool",
+      "aliases": [
+        "Singularity Container"
+      ],
+      "summary": "容器运行时技术。"
+    },
+    {
+      "name": "skills",
+      "type": "Module",
+      "aliases": [],
+      "summary": "Skill management module"
+    },
+    {
+      "name": "persistent_shell",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Shell persistence feature"
+    },
+    {
+      "name": "file_read_max_chars",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "File read size limit"
+    },
+    {
+      "name": "tool_output",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Tool output truncation settings"
+    },
+    {
+      "name": "guard_agent_created",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Skill creation guard"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [
+        "gateway",
+        "消息网关"
+      ],
+      "summary": "管理代理和会话的网关服务"
+    },
+    {
+      "name": "Agent",
+      "type": "Service",
+      "aliases": [
+        "agent",
+        "子agent",
+        "父agent"
+      ],
+      "summary": "处理对话和工具调用的智能代理"
+    },
+    {
+      "name": "Compression",
+      "type": "Concept",
+      "aliases": [
+        "compressor"
+      ],
+      "summary": "对话压缩机制，减少上下文大小"
+    },
+    {
+      "name": "Provider",
+      "type": "Concept",
+      "aliases": [
+        "compression.provider"
+      ],
+      "summary": "模型提供者，如auto或openrouter"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [
+        "command line interface",
+        "命令行界面"
+      ],
+      "summary": "用户命令行工具"
+    },
+    {
+      "name": "Model",
+      "type": "Concept",
+      "aliases": [
+        "summary model"
+      ],
+      "summary": "AI模型，用于压缩和生成"
+    },
+    {
+      "name": "Session",
+      "type": "Concept",
+      "aliases": [
+        "session"
+      ],
+      "summary": "对话会话，包含消息和状态"
+    },
+    {
+      "name": "API",
+      "type": "Technology",
+      "aliases": [
+        "api"
+      ],
+      "summary": "应用程序接口，用于模型调用"
+    },
+    {
+      "name": "Claude",
+      "type": "Service",
+      "aliases": [
+        "AI model"
+      ],
+      "summary": "AI model supported by Hermes with caching."
+    },
+    {
+      "name": "OpenRouter",
+      "type": "Service",
+      "aliases": [
+        "provider"
+      ],
+      "summary": "AI model routing service."
+    },
+    {
+      "name": "Nous Portal",
+      "type": "Service",
+      "aliases": [
+        "platform"
+      ],
+      "summary": "Platform for Claude integration."
+    },
+    {
+      "name": "xAI Grok",
+      "type": "Service",
+      "aliases": [
+        "model"
+      ],
+      "summary": "AI model by xAI with OAuth."
+    },
+    {
+      "name": "MiniMax",
+      "type": "Service",
+      "aliases": [
+        "provider"
+      ],
+      "summary": "Provider with OAuth support."
+    },
+    {
+      "name": "Gemini",
+      "type": "Service",
+      "aliases": [
+        "model"
+      ],
+      "summary": "AI model by Google."
+    },
+    {
+      "name": "Qwen Cloud",
+      "type": "Service",
+      "aliases": [
+        "platform"
+      ],
+      "summary": "Alibaba cloud AI model."
+    },
+    {
+      "name": "vision",
+      "type": "Module",
+      "aliases": [
+        "task"
+      ],
+      "summary": "Module for image analysis tasks."
+    },
+    {
+      "name": "compression",
+      "type": "Module",
+      "aliases": [
+        "task"
+      ],
+      "summary": "Module for context compression."
+    },
+    {
+      "name": "approval",
+      "type": "Module",
+      "aliases": [
+        "task"
+      ],
+      "summary": "Module for command approvals."
+    },
+    {
+      "name": "skills_hub",
+      "type": "Module",
+      "aliases": [
+        "task"
+      ],
+      "summary": "Module for skill matching."
+    },
+    {
+      "name": "mcp",
+      "type": "Module",
+      "aliases": [
+        "tool"
+      ],
+      "summary": "Tool for MCP scheduling."
+    },
+    {
+      "name": "hermes model",
+      "type": "Tool",
+      "aliases": [
+        "command"
+      ],
+      "summary": "Command-line tool for model configuration."
+    },
+    {
+      "name": "GPT-4o",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "OpenAI多模态模型，支持视觉和聊天"
+    },
+    {
+      "name": "Codex",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "AI代码模型，支持视觉和聊天"
+    },
+    {
+      "name": "reasoning_effort",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "控制模型推理深度的参数"
+    },
+    {
+      "name": "tool_use_enforcement",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "强制模型使用工具的机制"
+    },
+    {
+      "name": "Pareto Code Router",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "OpenRouter的路由算法，基于偏好和性能"
+    },
+    {
+      "name": "Vision",
+      "type": "Module",
+      "aliases": [
+        "vision module"
+      ],
+      "summary": "处理图像和视觉任务的模块"
+    },
+    {
+      "name": "TTS",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "文本到语音服务，配置在tts部分"
+    },
+    {
+      "name": "text_to_speech",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "文本到语音工具，用于生成口语回复。"
+    },
+    {
+      "name": "tts",
+      "type": "Module",
+      "aliases": [],
+      "summary": "文本到语音模块，包含各种提供商设置。"
+    },
+    {
+      "name": "display",
+      "type": "Module",
+      "aliases": [],
+      "summary": "显示模块，控制用户界面和消息显示。"
+    },
+    {
+      "name": "file_mutation_verifier",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "文件变更验证器，检查工具调用中的文件修改。"
+    },
+    {
+      "name": "language",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "语言设置，用于UI显示。"
+    },
+    {
+      "name": "runtime_footer",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "运行时页脚，显示元数据。"
+    },
+    {
+      "name": "interim_assistant_messages",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "临时助手消息，发送更新消息。"
+    },
+    {
+      "name": "verbose",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令，用于切换详细模式。"
+    },
+    {
+      "name": "footer",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令，用于切换页脚显示。"
+    },
+    {
+      "name": "edge",
+      "type": "Service",
+      "aliases": [],
+      "summary": "TTS提供商，使用边缘语音。"
+    },
+    {
+      "name": "elevenlabs",
+      "type": "Service",
+      "aliases": [],
+      "summary": "TTS提供商，使用ElevenLabs API。"
+    },
+    {
+      "name": "openai",
+      "type": "Service",
+      "aliases": [],
+      "summary": "TTS提供商，使用OpenAI API。"
+    },
+    {
+      "name": "telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，用于网关集成。"
+    },
+    {
+      "name": "discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，用于网关集成。"
+    },
+    {
+      "name": "slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，用于网关集成。"
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "支持流式传输和消息编辑的平台"
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，不支持流式传输"
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，不支持流式传输"
+    },
+    {
+      "name": "WhatsApp",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "支持PII删除的通信平台"
+    },
+    {
+      "name": "Signal",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，不支持流式传输"
+    },
+    {
+      "name": "Home Assistant",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "集成智能家居和聊天平台"
+    },
+    {
+      "name": "stt",
+      "type": "Module",
+      "aliases": [],
+      "summary": "语音转文字模块，支持多种provider"
+    },
+    {
+      "name": "voice",
+      "type": "Module",
+      "aliases": [],
+      "summary": "语音模式模块，处理录音和TTS"
+    },
+    {
+      "name": "faster-whisper",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "本地运行的Whisper兼容工具"
+    },
+    {
+      "name": "Firecrawl",
+      "type": "Service",
+      "aliases": [],
+      "summary": "默认提取后端服务"
+    },
+    {
+      "name": "SearXNG",
+      "type": "Service",
+      "aliases": [],
+      "summary": "免费元搜索引擎"
+    },
+    {
+      "name": "Parallel",
+      "type": "Service",
+      "aliases": [],
+      "summary": "搜索模式服务"
+    },
+    {
+      "name": "Tavily",
+      "type": "Service",
+      "aliases": [],
+      "summary": "提取后端服务"
+    },
+    {
+      "name": "Exa",
+      "type": "Service",
+      "aliases": [],
+      "summary": "提取后端服务"
+    },
+    {
+      "name": "Browser",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "浏览器自动化工具"
+    },
+    {
+      "name": "Tirith",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "安全扫描工具"
+    },
+    {
+      "name": "Approvals",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "智能审批机制"
+    },
+    {
+      "name": "Checkpoints",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "文件操作检查点"
+    },
+    {
+      "name": "AGENTS.md",
+      "type": "File",
+      "aliases": [
+        "项目指令文件"
+      ],
+      "summary": "项目特定指令和编码规范的Markdown文件"
+    },
+    {
+      "name": "Delegation",
+      "type": "Concept",
+      "aliases": [
+        "委托机制"
+      ],
+      "summary": "代理路由和配置的管理方式"
+    },
+    {
+      "name": "Base_url",
+      "type": "Concept",
+      "aliases": [
+        "端点URL"
+      ],
+      "summary": "API端点配置参数"
+    },
+    {
+      "name": "API_key",
+      "type": "Concept",
+      "aliases": [
+        "密钥"
+      ],
+      "summary": "API认证密钥"
+    },
+    {
+      "name": "Max_concurrent_children",
+      "type": "Concept",
+      "aliases": [
+        "并发子代理数"
+      ],
+      "summary": "限制并行子代理数量的参数"
+    },
+    {
+      "name": "Max_spawn_depth",
+      "type": "Concept",
+      "aliases": [
+        "树深度"
+      ],
+      "summary": "控制代理树深度的参数"
+    },
+    {
+      "name": "Orchestrator",
+      "type": "Concept",
+      "aliases": [
+        "编排器"
+      ],
+      "summary": "管理代理树的组件"
+    },
+    {
+      "name": "Clarify",
+      "type": "Concept",
+      "aliases": [
+        "澄清"
+      ],
+      "summary": "用户澄清配置"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes config set 命令使用 config.yaml"
+    },
+    {
+      "head": "~/.hermes/",
+      "tail": "config.yaml",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "所有设置均存储在 ~/.hermes/ 目录中"
+    },
+    {
+      "head": "Docker",
+      "tail": "Hermes",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "要求：已安装并运行 Docker Desktop 或 Docker Engine"
+    },
+    {
+      "head": "skill_manage",
+      "tail": "skills/",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "通过 skill_manage 工具管理技能"
+    },
+    {
+      "head": "hermes config",
+      "tail": ".env",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes config set 命令将 API 密钥保存到 .env"
+    },
+    {
+      "head": "~/.hermes/",
+      "tail": "skills/",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "skills/ # Agent 创建的技能"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "Docker",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "docker_image 在 config.yaml 中设置"
+    },
+    {
+      "head": "Hermes",
+      "tail": "skill_manage",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "提到 skill_manage 工具"
+    },
+    {
+      "head": "hermes",
+      "tail": "terminal",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "配置和使用 terminal 后端。"
+    },
+    {
+      "head": "hermes",
+      "tail": "ssh",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "需要 SSH 环境变量。"
+    },
+    {
+      "head": "hermes",
+      "tail": "docker",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "支持 Docker 后端和卷挂载。"
+    },
+    {
+      "head": "modal",
+      "tail": "hermes",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "需要 MODAL_TOKEN_ID 环境变量。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "config.yaml",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "在 config.yaml 中启用各种设置"
+    },
+    {
+      "head": "terminal",
+      "tail": "persistent_shell",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "持久 shell 保持终端命令状态"
+    },
+    {
+      "head": "skills",
+      "tail": "skill_manage",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "agent 使用 skill_manage 管理技能"
+    },
+    {
+      "head": "Hermes",
+      "tail": "skills",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 管理 AI 技能"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "file_read_max_chars",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "file_read_max_chars 在 config.yaml 中设置"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "tool_output",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "tool_output 设置输出限制"
+    },
+    {
+      "head": "SSH",
+      "tail": "persistent_shell",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "持久 shell 对 SSH 默认启用"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Agent",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "在运行中的 gateway 上编辑 agent 配置。"
+    },
+    {
+      "head": "Compression",
+      "tail": "Provider",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "compression.provider 配置指定provider。"
+    },
+    {
+      "head": "Agent",
+      "tail": "Compression",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "agent 侧有 compress_context 和预提交压缩。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Session",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 运行卡死监视器和注入消息。"
+    },
+    {
+      "head": "Compression",
+      "tail": "Model",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "压缩器将对话中间部分发送给摘要模型。"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "Compression",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "config.yaml 中配置compression.*。"
+    },
+    {
+      "head": "Provider",
+      "tail": "API",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "使用OPENAI_API_KEY认证provider。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "vision",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 使用'辅助'模型处理图像分析。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Claude",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 支持 Claude 模型通过 OpenRouter 或 Nous Portal。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "config.yaml",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "更改持久化到 config.yaml 中的 auxiliary.<task>.*。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "fallback_chain",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "Hermes 使用 fallback_chain 处理 provider 失败。"
+    },
+    {
+      "head": "OpenRouter",
+      "tail": "pareto-code",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "model: openrouter/pareto-code for compression task。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "prompt cache",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 自动开启跨会话 prompt 缓存。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "OpenRouter",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中提到OpenRouter provider作为Hermes的一部分"
+    },
+    {
+      "head": "OpenRouter",
+      "tail": "OPENROUTER_API_KEY",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "配置中需要OPENROUTER_API_KEY来使用OpenRouter"
+    },
+    {
+      "head": "Vision",
+      "tail": "GPT-4o",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Vision模型使用GPT-4o进行图像分析"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Codex",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中提到Codex作为Vision provider选项"
+    },
+    {
+      "head": "tool_use_enforcement",
+      "tail": "Hermes",
+      "type": "CONFIGURES",
+      "confidence": 0.9,
+      "evidence": "agent配置中设置tool_use_enforcement参数"
+    },
+    {
+      "head": "Pareto Code Router",
+      "tail": "OpenRouter",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "Pareto Code Router是OpenRouter的一部分，用于路由偏好"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "Hermes",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "config.yaml用于配置Hermes的各种设置"
+    },
+    {
+      "head": "tts",
+      "tail": "edge",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "edge: voice: \"en-US-AriaNeural\""
+    },
+    {
+      "head": "tts",
+      "tail": "elevenlabs",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "elevenlabs: voice_id: \"pNInz6obpgDQGcFmaJgB\""
+    },
+    {
+      "head": "tts",
+      "tail": "openai",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "openai: model: \"gpt-4o-mini-tts\""
+    },
+    {
+      "head": "text_to_speech",
+      "tail": "tts",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "这控制 text_to_speech 工具和语音模式中的口语回复"
+    },
+    {
+      "head": "display",
+      "tail": "file_mutation_verifier",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: file_mutation_verifier: true"
+    },
+    {
+      "head": "display",
+      "tail": "language",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: language: zh"
+    },
+    {
+      "head": "display",
+      "tail": "runtime_footer",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: runtime_footer: enabled: true"
+    },
+    {
+      "head": "display",
+      "tail": "interim_assistant_messages",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: interim_assistant_messages: true"
+    },
+    {
+      "head": "display",
+      "tail": "telegram",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: platforms: telegram: tool_progress: 'verbose'"
+    },
+    {
+      "head": "display",
+      "tail": "discord",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: platforms: discord: tool_progress: 'verbose'"
+    },
+    {
+      "head": "display",
+      "tail": "slack",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "display: platforms: slack: tool_progress: 'off'"
+    },
+    {
+      "head": "file_mutation_verifier",
+      "tail": "write_file",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "每当本轮中 write_file/patch 调用失败"
+    },
+    {
+      "head": "Gateway",
+      "tail": "stt",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Gateway uses stt for speech-to-text and PII handling. (from stt configuration)"
+    },
+    {
+      "head": "Gateway",
+      "tail": "voice",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Gateway uses voice for CLI voice mode. (from voice section)"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Gateway supports Telegram streaming and PII deletion. (from streaming and PII sections)"
+    },
+    {
+      "head": "stt",
+      "tail": "faster-whisper",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "stt local provider uses faster-whisper. (from stt local configuration)"
+    },
+    {
+      "head": "CLI",
+      "tail": "Gateway",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CLI interacts with gateway for commands and configurations. (from CLI usage)"
+    },
+    {
+      "head": "Firecrawl",
+      "tail": "API_KEY",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Firecrawl 默认后端需要 API_KEY 设置"
+    },
+    {
+      "head": "SearXNG",
+      "tail": "SEARXNG_URL",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "SearXNG 需要 SEARXNG_URL 指向实例"
+    },
+    {
+      "head": "Parallel",
+      "tail": "PARALLEL_API_KEY",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Parallel 使用 PARALLEL_API_KEY 控制行为"
+    },
+    {
+      "head": "Browser",
+      "tail": "dialog_policy",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Browser 使用 dialog_policy 管理对话框"
+    },
+    {
+      "head": "Hermes",
+      "tail": "SOUL.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 使用 SOUL.md 定义代理身份。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "AGENTS.md",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 加载 AGENTS.md 项目特定指令。"
+    },
+    {
+      "head": "Agent",
+      "tail": "provider",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "子 agent 路由到不同的 provider。"
+    },
+    {
+      "head": "Delegation",
+      "tail": "provider",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "设置 delegation.provider 将子 agent 路由到不同的 provider。"
+    },
+    {
+      "head": "Delegation",
+      "tail": "base_url",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "设置 delegation.base_url 直接发送到 OpenAI 兼容端点。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Orchestrator",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 控制代理树深度和并发。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 28487,
+    "completion_tokens": 31179,
+    "total_tokens": 59666,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 288,
+    "prompt_cache_miss_tokens": 28199
+  }
+}

@@ -1,0 +1,385 @@
+{
+ "source_file": "user-guide/features/browser.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 904,
+ "num_entities": 44,
+ "num_relations": 1,
+ "processing_time_sec": 2.862,
+ "entities": [
+  {
+   "text": "Linux",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "检测范围包括 Brave、Brave Origin/Nightly、Google Chrome、Chromium 和 Microsoft Edge，以及常见 Linux 安装路径和二进制名称（如",
+    "Linux — Brave",
+    "Linux — Google Chrome"
+   ]
+  },
+  {
+   "text": "URL",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "如需禁用（所有 URL 均走已配置的云端提供商，与之前行为一致）：",
+    "禁用自动路由后，私有 URL 将被拒绝并返回",
+    "列出当前页面上所有图片及其 URL 和 alt 文本"
+   ]
+  },
+  {
+   "text": "15",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "超过 15,000 字符的快照将按行边界自动截断（与",
+    "— 大型页面在 15,000 字符处被截断（与"
+   ]
+  },
+  {
+   "text": "Chrome",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "若 Hermes 在 WSL2 内运行，但您想控制的 Chrome 窗口在 Windows 宿主机上，",
+    "即使 Windows Chrome 可调试，最简洁的集成方式通常是让 Windows 侧的浏览器 MCP 服务器连接 Chrome，再让 Hermes 与该 MCP 服务器通信"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "ORG",
+   "count": 2,
+   "content": [
+    "后已完全重启 Hermes，并验证您的 Camofox 服务器版本是否支持基于用户的持久化 profile",
+    "若浏览器尚未以远程调试模式运行，Hermes 将尝试自动启动支持的 Chromium 系浏览器并使用"
+   ]
+  },
+  {
+   "text": "VNC",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "启用 VNC 后，浏览器以有头模式运行，可在浏览器中通过",
+    "当 Camofox 以有头模式运行（带可见浏览器窗口）时，其健康检查响应中会暴露 VNC 端口"
+   ]
+  },
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "若 Hermes 在 WSL2 内运行，但您想控制的 Chrome 窗口在 Windows 宿主机上，",
+    "即使 Windows Chrome 可调试，最简洁的集成方式通常是让 Windows 侧的浏览器 MCP 服务器连接 Chrome，再让 Hermes 与该 MCP 服务器通信"
+   ]
+  },
+  {
+   "text": "000",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "— 大型页面在 15,000 字符处被截断（与"
+   ]
+  },
+  {
+   "text": "10ms",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "Browserbase 的 CDP 代理会在约 10ms 内在服务端自动关闭真实的原生对话框，因此无法使用"
+   ]
+  },
+  {
+   "text": "1800000",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "Examples: 600000 (10min), 1800000 (30min)"
+   ]
+  },
+  {
+   "text": "24小时",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "，24 小时后自动清理"
+   ]
+  },
+  {
+   "text": "2分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "非活跃会话在超时后自动清理（默认：2 分钟）"
+   ]
+  },
+  {
+   "text": "30",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "上限为 30 帧、OOPIF 深度 2，以控制广告密集页面的负载大小"
+   ]
+  },
+  {
+   "text": "300秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "（默认 300 秒）后安全自动关闭，防止有问题的 Agent 永久阻塞"
+   ]
+  },
+  {
+   "text": "30秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "后台线程每 30 秒检查一次过期会话"
+   ]
+  },
+  {
+   "text": "5901",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "localhost:5901"
+   ]
+  },
+  {
+   "text": "5秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "（5 秒超时）"
+   ]
+  },
+  {
+   "text": "72小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "超过 72 小时的录制文件自动清理"
+   ]
+  },
+  {
+   "text": "9222",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "，因此端口 9222 永远不会开启"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "通过 Browserbase API 释放会话（"
+   ]
+  },
+  {
+   "text": "Advancedstealth",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Advanced stealth with custom Chromium — requires Scale Plan (default: \"false\")"
+   ]
+  },
+  {
+   "text": "Camofox",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "当 Camofox 以有头模式运行（带可见浏览器窗口）时，其健康检查响应中会暴露 VNC 端口"
+   ]
+  },
+  {
+   "text": "Chrome",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "现代 Chrome 实时调试会话通常暴露仅宿主机本地可访问的端点，WSL 无法像访问经典"
+   ]
+  },
+  {
+   "text": "Cookie",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "默认情况下，每个 Camofox 会话使用随机身份 — Cookie 和登录状态不会在 Agent 重启后保留"
+   ]
+  },
+  {
+   "text": "DevTools",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "原始 Chrome DevTools Protocol 直通 — 用于其他工具未覆盖的浏览器操作的逃生舱口"
+   ]
+  },
+  {
+   "text": "Firefox",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "实现本地反检测浏览（基于 Firefox 的指纹伪装）"
+   ]
+  },
+  {
+   "text": "Firefox",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "是一个自托管的 Node.js 服务器，封装了 Camoufox（一个带有 C++ 指纹伪装的 Firefox 分支）"
+   ]
+  },
+  {
+   "text": "Google",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "在浏览器任务中打开 Google（或任意登录网站）并手动登录"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "若 Hermes 在 WSL2 内运行，但您想控制的 Chrome 窗口在 Windows 宿主机上，"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "要求 Hermes 本身能访问可用的 CDP 端点"
+   ]
+  },
+  {
+   "text": "VNC",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "VNC 实时查看"
+   ]
+  },
+  {
+   "text": "WSL2",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "若 Hermes 在 WSL2 内运行，但您想控制的 Chrome 窗口在 Windows 宿主机上，"
+   ]
+  },
+  {
+   "text": "WindowsChrome",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "即使 Windows Chrome 可调试，最简洁的集成方式通常是让 Windows 侧的浏览器 MCP 服务器连接 Chrome，再让 Hermes 与该 MCP 服务器通信"
+   ]
+  },
+  {
+   "text": "accessibilitytree",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "（accessibility tree，基于文本的快照）表示，非常适合 LLM Agent 使用"
+   ]
+  },
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "noVNC",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "（noVNC）实时查看"
+   ]
+  },
+  {
+   "text": "pendingdialogs",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "pendingdialogs: [{\"id\": \"d-1\", \"type\": \"alert\", \"message\": \"...\"}]"
+   ]
+  },
+  {
+   "text": "profile数据",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "实际浏览器 profile 数据存储在 Camofox 服务器端，以该"
+   ]
+  },
+  {
+   "text": "solving",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Residential proxies for better CAPTCHA solving (default: \"true\")"
+   ]
+  },
+  {
+   "text": "true",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "为 true 时，Hermes 在首次使用时调用"
+   ]
+  },
+  {
+   "text": "云端浏览器",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "要使用 Browserbase 托管的云端浏览器，请添加："
+   ]
+  },
+  {
+   "text": "无LLM",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "无 LLM 摘要）"
+   ]
+  },
+  {
+   "text": "第 5",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "如果第 5 步退出了登录，说明 Camofox 服务器未遵守稳定的"
+   ]
+  },
+  {
+   "text": "隔离profile",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "当另一个应用驱动可见的 Camofox 浏览器（桌面助手、自定义集成、另一个 Agent）时，可配置 Hermes 在同一身份下运行，而非启动独立的隔离 profile"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "000",
+   "source_type": "CARDINAL",
+   "target": "15",
+   "target_type": "CARDINAL",
+   "label": "nummod",
+   "via": null,
+   "count": 1,
+   "content": [
+    "— 大型页面在 15,000 字符处被截断（与"
+   ]
+  }
+ ]
+}

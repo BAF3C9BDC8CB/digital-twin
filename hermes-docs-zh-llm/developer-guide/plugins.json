@@ -1,0 +1,649 @@
+{
+  "source_file": "developer-guide/plugins.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 6,
+  "num_entities": 57,
+  "num_relations": 40,
+  "processing_time_sec": 814.17,
+  "entities": [
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [],
+      "summary": "AI平台插件系统"
+    },
+    {
+      "name": "Plugin",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Hermes插件系统组件"
+    },
+    {
+      "name": "calculate",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "计算数学表达式的工具"
+    },
+    {
+      "name": "unit_convert",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "单位转换工具"
+    },
+    {
+      "name": "post_tool_call",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "工具调用后的钩子"
+    },
+    {
+      "name": "plugin.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "插件配置文件"
+    },
+    {
+      "name": "schemas.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "工具模式定义文件"
+    },
+    {
+      "name": "tools.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "工具处理器代码文件"
+    },
+    {
+      "name": "HOOK.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "钩子配置文件"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "Hermes配置文件"
+    },
+    {
+      "name": "MCP",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "多工具协议接口"
+    },
+    {
+      "name": "Shell",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令行工具"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "编程语言"
+    },
+    {
+      "name": "JSON",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "数据交换格式"
+    },
+    {
+      "name": "math",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Python数学模块"
+    },
+    {
+      "name": "schemas",
+      "type": "Module",
+      "aliases": [],
+      "summary": "定义工具参数模式的模块。"
+    },
+    {
+      "name": "tools",
+      "type": "Module",
+      "aliases": [],
+      "summary": "包含工具实现代码的模块。"
+    },
+    {
+      "name": "__init__.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "插件入口点，注册工具和钩子。"
+    },
+    {
+      "name": "tools/",
+      "type": "Module",
+      "aliases": [],
+      "summary": "插件工具模块"
+    },
+    {
+      "name": "skills/",
+      "type": "Module",
+      "aliases": [],
+      "summary": "技能目录"
+    },
+    {
+      "name": "register_skill",
+      "type": "Tool",
+      "aliases": [
+        "ctx.register_skill"
+      ],
+      "summary": "注册技能函数"
+    },
+    {
+      "name": "skill_view",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "加载技能视图函数"
+    },
+    {
+      "name": "register_tool",
+      "type": "Tool",
+      "aliases": [
+        "ctx.register_tool"
+      ],
+      "summary": "注册工具函数"
+    },
+    {
+      "name": "lazy_deps.ensure",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "懒加载依赖确保函数"
+    },
+    {
+      "name": "pathlib",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Python库用于路径操作"
+    },
+    {
+      "name": "yaml",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "数据序列化格式"
+    },
+    {
+      "name": "插件技能",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "可捆绑的技能文件"
+    },
+    {
+      "name": "环境变量",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "配置插件依赖"
+    },
+    {
+      "name": "Memory plugin",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Recalls context from vector store."
+    },
+    {
+      "name": "Guardrails plugin",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Enforces content policies."
+    },
+    {
+      "name": "Analytics plugin",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Tracks turn metadata without injecting context."
+    },
+    {
+      "name": "httpx",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "HTTP client library for Python."
+    },
+    {
+      "name": "argparse",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Library for command-line option parsing."
+    },
+    {
+      "name": "cli.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "File for registering CLI commands in plugins."
+    },
+    {
+      "name": "pre_llm_call hook",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Hook called before each LLM turn."
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for gateway integration."
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for gateway integration."
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for gateway integration."
+    },
+    {
+      "name": "Hermes agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Core agent system for plugin management."
+    },
+    {
+      "name": "acme-provider",
+      "type": "Service",
+      "aliases": [
+        "acme-inference"
+      ],
+      "summary": "Acme 推理 API 的模型提供者"
+    },
+    {
+      "name": "myplatform",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "MyPlatform 网关适配器"
+    },
+    {
+      "name": "my-memory",
+      "type": "Service",
+      "aliases": [],
+      "summary": "跨会话知识记忆提供者"
+    },
+    {
+      "name": "my-engine",
+      "type": "Service",
+      "aliases": [],
+      "summary": "自定义上下文引擎"
+    },
+    {
+      "name": "my-imggen",
+      "type": "Service",
+      "aliases": [],
+      "summary": "图像生成提供者"
+    },
+    {
+      "name": "MCP server",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "MCP 服务器，注册外部工具"
+    },
+    {
+      "name": "ProviderProfile",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "模型提供者配置概念"
+    },
+    {
+      "name": "MemoryProvider",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "记忆提供者接口"
+    },
+    {
+      "name": "ContextEngine",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "上下文引擎接口"
+    },
+    {
+      "name": "ImageGenProvider",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "图像生成提供者接口"
+    },
+    {
+      "name": "Hermes gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "管理插件的网关系统"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Service for gateway event handling"
+    },
+    {
+      "name": "Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Core service for task management"
+    },
+    {
+      "name": "Hook",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Event-triggered action mechanism"
+    },
+    {
+      "name": "handler.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "Python script handling hook events"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Command-line tool for execution"
+    },
+    {
+      "name": "patch",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Tool for applying code changes"
+    },
+    {
+      "name": "write_file",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Utility for writing files"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Plugin",
+      "tail": "plugin.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中创建 plugin.yaml 文件。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "schemas.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中创建 schemas.py 定义工具模式。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "tools.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中创建 tools.py 处理工具调用。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "HOOK.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中提到 HOOK.yaml 用于事件钩子。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "文档中声明 config.yaml 配置。"
+    },
+    {
+      "head": "calculate",
+      "tail": "math",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "tools.py 使用 math 模块进行计算。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "Python",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "代码示例使用 Python。"
+    },
+    {
+      "head": "Plugin",
+      "tail": "JSON",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "schema 和数据使用 JSON 格式。"
+    },
+    {
+      "head": "calculate",
+      "tail": "eval",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "tools.py 中 calculate 函数调用 eval。"
+    },
+    {
+      "head": "unit_convert",
+      "tail": "_convert_temp",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "代码中unit_convert调用_convert_temp函数。"
+    },
+    {
+      "head": "register",
+      "tail": "ctx.register_tool",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "register函数调用ctx.register_tool。"
+    },
+    {
+      "head": "schemas",
+      "tail": "CALCULATE",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "ctx.register_tool(schema=schemas.CALCULATE)。"
+    },
+    {
+      "head": "tools",
+      "tail": "calculate",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "handler=tools.calculate在register中使用。"
+    },
+    {
+      "head": "tools",
+      "tail": "unit_convert",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "unit_convert函数在tools模块中定义。"
+    },
+    {
+      "head": "unit_convert",
+      "tail": "json.dumps",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "unit_convert使用json.dumps返回JSON字符串。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "plugins",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "~/.hermes/plugins/"
+    },
+    {
+      "head": "tools.py",
+      "tail": "pathlib",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "from pathlib import Path"
+    },
+    {
+      "head": "register_skill",
+      "tail": "ctx",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "ctx.register_skill("
+    },
+    {
+      "head": "plugin.yaml",
+      "tail": "WEATHER_API_KEY",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "requires_env: WEATHER_API_KEY"
+    },
+    {
+      "head": "lazy_deps.ensure",
+      "tail": "my_backend_sdk",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "import my_backend_sdk after ensure"
+    },
+    {
+      "head": "hooks",
+      "tail": "pre_llm_call",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "register_hook('pre_llm_call', ...)"
+    },
+    {
+      "head": "context注入",
+      "tail": "pre_llm_call",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "pre_llm_call hook for context injection"
+    },
+    {
+      "head": "Memory plugin",
+      "tail": "httpx",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "import httpx for HTTP requests."
+    },
+    {
+      "head": "Memory plugin",
+      "tail": "pre_llm_call hook",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "recall_context function called during pre_llm_call."
+    },
+    {
+      "head": "Guardrails plugin",
+      "tail": "POLICY string",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Injects policy text into every turn."
+    },
+    {
+      "head": "Analytics plugin",
+      "tail": "logging module",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Uses logging to track turn metadata."
+    },
+    {
+      "head": "Hermes agent",
+      "tail": "plugins",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Plugins are registered in Hermes agent."
+    },
+    {
+      "head": "pre_llm_call hook",
+      "tail": "multiple plugins",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Handles output from multiple plugins."
+    },
+    {
+      "head": "acme-provider",
+      "tail": "__init__.py",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "plugins/model-providers/acme/__init__.py"
+    },
+    {
+      "head": "acme-provider",
+      "tail": "register_provider",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "from providers import register_provider"
+    },
+    {
+      "head": "myplatform",
+      "tail": "BasePlatformAdapter",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "from gateway.platforms.base import BasePlatformAdapter"
+    },
+    {
+      "head": "MemoryProvider",
+      "tail": "MemoryProvider",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "class MyMemoryProvider(MemoryProvider):"
+    },
+    {
+      "head": "ContextEngine",
+      "tail": "ContextEngine",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "class MyContextEngine(ContextEngine):"
+    },
+    {
+      "head": "ImageGenProvider",
+      "tail": "ImageGenProvider",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "class MyImageGenProvider(ImageGenProvider):"
+    },
+    {
+      "head": "Hermes gateway",
+      "tail": "plugins",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "users plugins override built-in plugins"
+    },
+    {
+      "head": "MCP server",
+      "tail": "Hermes gateway",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Hermes connects to each server"
+    },
+    {
+      "head": "Hook",
+      "tail": "config.yaml",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Shell 钩子在 config.yaml 中使用。"
+    },
+    {
+      "head": "handler.py",
+      "tail": "Python",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Python code in handler functions。"
+    },
+    {
+      "head": "Agent",
+      "tail": "Hook",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "钩子处理 agent 事件。"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Hook",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "网关事件钩子。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 14793,
+    "completion_tokens": 20165,
+    "total_tokens": 34958,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 96,
+    "prompt_cache_miss_tokens": 14697
+  }
+}

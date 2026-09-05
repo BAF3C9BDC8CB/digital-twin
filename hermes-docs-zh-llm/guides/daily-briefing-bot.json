@@ -1,0 +1,157 @@
+{
+  "source_file": "guides/daily-briefing-bot.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 10,
+  "num_relations": 8,
+  "processing_time_sec": 153.2,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [
+        "Hermes"
+      ],
+      "summary": "AI service for daily briefing generation"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [
+        "Gateway Service"
+      ],
+      "summary": "Service handling cron executions"
+    },
+    {
+      "name": "cron",
+      "type": "Tool",
+      "aliases": [
+        "Cron Scheduler"
+      ],
+      "summary": "Scheduler for automated tasks"
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [
+        "Telegram Bot"
+      ],
+      "summary": "Messaging platform for notifications"
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [
+        "Discord Bot"
+      ],
+      "summary": "Messaging platform for notifications"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [
+        "Command Line Interface"
+      ],
+      "summary": "Interface for Hermes commands"
+    },
+    {
+      "name": "Prompt",
+      "type": "Concept",
+      "aliases": [
+        "Prompt Template"
+      ],
+      "summary": "Instructions for agent behavior"
+    },
+    {
+      "name": "Web search",
+      "type": "Concept",
+      "aliases": [
+        "Web Crawling"
+      ],
+      "summary": "Technique for online information retrieval"
+    },
+    {
+      "name": "Memory",
+      "type": "Concept",
+      "aliases": [
+        "Memory Storage"
+      ],
+      "summary": "Persistent context across sessions"
+    },
+    {
+      "name": "Firecrawl API",
+      "type": "Tool",
+      "aliases": [
+        "Firecrawl"
+      ],
+      "summary": "API for web data extraction"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "Web search",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent uses web search to pull latest news."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Prompt",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent uses your prompt to guide the briefing."
+    },
+    {
+      "head": "cron",
+      "tail": "Gateway",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Gateway handles cron executions."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Sends briefings to Telegram."
+    },
+    {
+      "head": "CLI",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CLI commands interact with Hermes Agent."
+    },
+    {
+      "head": "Web search",
+      "tail": "Firecrawl API",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Firecrawl API enables web search."
+    },
+    {
+      "head": "Prompt",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Agent uses prompt for task execution."
+    },
+    {
+      "head": "Memory",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Memory adds personal context to briefings."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 2732,
+    "completion_tokens": 3925,
+    "total_tokens": 6657,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 2700
+  }
+}

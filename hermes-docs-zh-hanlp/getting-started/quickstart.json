@@ -1,0 +1,221 @@
+{
+ "source_file": "getting-started/quickstart.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 472,
+ "num_entities": 26,
+ "num_relations": 0,
+ "processing_time_sec": 1.239,
+ "entities": [
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "在 macOS 或 Windows 上使用 Hermes Desktop 安装器（推荐）",
+    "Windows 用户"
+   ]
+  },
+  {
+   "text": "skills",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "hermes skills"
+   ]
+  },
+  {
+   "text": "中国区",
+   "type": "GPE",
+   "count": 2,
+   "content": [
+    "中国区 Moonshot endpoint",
+    "中国区 MiniMax endpoint"
+   ]
+  },
+  {
+   "text": "20",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "通过统一路由器使用 20+ 开源模型（Qwen、DeepSeek、Kimi 等）"
+   ]
+  },
+  {
+   "text": "300+",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "一个订阅涵盖 300+ 个模型，以及"
+   ]
+  },
+  {
+   "text": "64K",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "如果你运行本地模型，请将其上下文大小设置为至少 64K（例如 llama.cpp 使用"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "通过原生 Converse API 使用 Claude、Nova、Llama、DeepSeek"
+   ]
+  },
+  {
+   "text": "API",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "直接访问 DeepSeek API"
+   ]
+  },
+  {
+   "text": "AWSBedrock",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "AWS Bedrock"
+   ]
+  },
+  {
+   "text": "Android",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "，其中包含经过测试的手动安装步骤、支持的扩展功能以及当前 Android 特有的限制"
+   ]
+  },
+  {
+   "text": "ArceeAI",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Arcee AI"
+   ]
+  },
+  {
+   "text": "Cloud",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Alibaba Cloud"
+   ]
+  },
+  {
+   "text": "Code",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Kilo Code"
+   ]
+  },
+  {
+   "text": "GMICloud",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "GMI Cloud"
+   ]
+  },
+  {
+   "text": "Gateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Gateway 启动但无法收到消息"
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "GPE",
+   "count": 1,
+   "content": [
+    "如果 Hermes 无法完成一次正常对话，暂时不要添加更多功能"
+   ]
+  },
+  {
+   "text": "Kimi / MoonshotChina",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Kimi / Moonshot China"
+   ]
+  },
+  {
+   "text": "NVIDIANIM",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "NVIDIA NIM"
+   ]
+  },
+  {
+   "text": "OpenCodeGo",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "OpenCode Go"
+   ]
+  },
+  {
+   "text": "base",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "base URL、模型名称有误，或实际上不兼容 OpenAI"
+   ]
+  },
+  {
+   "text": "faster-whisper",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "包含 faster-whisper，用于免费的本地语音转文字"
+   ]
+  },
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "model",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "model anthropic/claude-opus-4.6"
+   ]
+  },
+  {
+   "text": "uvpip",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "uv pip"
+   ]
+  },
+  {
+   "text": "斜杠",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "斜杠命令"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "运行第一次对话"
+   ]
+  }
+ ],
+ "relations": []
+}

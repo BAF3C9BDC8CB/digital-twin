@@ -1,0 +1,285 @@
+{
+ "source_file": "user-guide/cli.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 596,
+ "num_entities": 29,
+ "num_relations": 3,
+ "processing_time_sec": 1.78,
+ "entities": [
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 9,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "Windows",
+   "type": "PRODUCT",
+   "count": 3,
+   "content": [
+    "Windows Terminal Preview 1.25+",
+    "macOS Terminal.app、Windows Terminal 稳定版",
+    "Windows 不支持此功能"
+   ]
+  },
+  {
+   "text": "52",
+   "type": "CARDINAL",
+   "count": 2,
+   "content": [
+    "状态栏会根据终端宽度自适应——≥ 76 列时显示完整布局，52–75 列时显示紧凑布局，低于 52 列时显示最简布局（模型 + 时长，以及 YOLO 徽章（如已激活））"
+   ]
+  },
+  {
+   "text": "Kitty",
+   "type": "ORG",
+   "count": 2,
+   "content": [
+    "在设置中启用 Kitty 协议后支持"
+   ]
+  },
+  {
+   "text": "WindowsTerminal",
+   "type": "PRODUCT",
+   "count": 2,
+   "content": [
+    "在 Windows Terminal 中，",
+    "特别是在 Windows Terminal 中，"
+   ]
+  },
+  {
+   "text": "斜杠",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "斜杠命令",
+    "斜杠命令参考"
+   ]
+  },
+  {
+   "text": "第一",
+   "type": "ORDINAL",
+   "count": 2,
+   "content": [
+    "Hermes 会在第一轮对话前将每个指定的 skill 加载到会话 prompt 中",
+    "第一次在 Hermes 工作时按下 Enter，Hermes 会打印一行提示，说明"
+   ]
+  },
+  {
+   "text": "123",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "\"Fix issue #123\""
+   ]
+  },
+  {
+   "text": "1秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "正在进行的终端命令会立即被终止（SIGTERM，1 秒后 SIGKILL）"
+   ]
+  },
+  {
+   "text": "20",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "压缩触发时，中间轮次会被摘要，同时始终保留前 3 轮和后 20 轮"
+   ]
+  },
+  {
+   "text": "26",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "当前模型（超过 26 个字符时截断）"
+   ]
+  },
+  {
+   "text": "2秒",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "中断 agent（2 秒内双击强制退出）"
+   ]
+  },
+  {
+   "text": "2秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "——中断当前操作（2 秒内双击强制退出）"
+   ]
+  },
+  {
+   "text": "50",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "50–80%"
+   ]
+  },
+  {
+   "text": "50",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "默认在上下文限制的 50% 时压缩"
+   ]
+  },
+  {
+   "text": "6%",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "⚕ claude-sonnet-4-20250514 │ 12.4K/200K │ [██████░░░░] 6% │ $0.06 │ 15m"
+   ]
+  },
+  {
+   "text": "75",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "状态栏会根据终端宽度自适应——≥ 76 列时显示完整布局，52–75 列时显示紧凑布局，低于 52 列时显示最简布局（模型 + 时长，以及 YOLO 徽章（如已激活））"
+   ]
+  },
+  {
+   "text": "76",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "状态栏会根据终端宽度自适应——≥ 76 列时显示完整布局，52–75 列时显示紧凑布局，低于 52 列时显示最简布局（模型 + 时长，以及 YOLO 徽章（如已激活））"
+   ]
+  },
+  {
+   "text": "80",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "50–80%"
+   ]
+  },
+  {
+   "text": "80",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "80–95%"
+   ]
+  },
+  {
+   "text": "80",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "将工具预览截断为 80 个字符（0 = 无限制）"
+   ]
+  },
+  {
+   "text": "95",
+   "type": "PERCENT",
+   "count": 1,
+   "content": [
+    "80–95%"
+   ]
+  },
+  {
+   "text": "Enter",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "第一次在 Hermes 工作时按下 Enter，Hermes 会打印一行提示，说明"
+   ]
+  },
+  {
+   "text": "Kitty",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "Kitty 键盘协议"
+   ]
+  },
+  {
+   "text": "Using",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Using Hermes"
+   ]
+  },
+  {
+   "text": "claude",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"anthropic/claude-sonnet-4\""
+   ]
+  },
+  {
+   "text": "kawaii",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "启用 kawaii 风格的动态反馈"
+   ]
+  },
+  {
+   "text": "skillsbrowse",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/skills browse"
+   ]
+  },
+  {
+   "text": "steer",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/busy steer"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "50",
+   "source_type": "CARDINAL",
+   "target": "80",
+   "target_type": "PERCENT",
+   "label": "nummod+nummod",
+   "via": 3,
+   "count": 1,
+   "content": [
+    "50–80%"
+   ]
+  },
+  {
+   "source": "75",
+   "source_type": "CARDINAL",
+   "target": "52",
+   "target_type": "CARDINAL",
+   "label": "nummod",
+   "via": null,
+   "count": 1,
+   "content": [
+    "状态栏会根据终端宽度自适应——≥ 76 列时显示完整布局，52–75 列时显示紧凑布局，低于 52 列时显示最简布局（模型 + 时长，以及 YOLO 徽章（如已激活））"
+   ]
+  },
+  {
+   "source": "80",
+   "source_type": "DATE",
+   "target": "95",
+   "target_type": "PERCENT",
+   "label": "dep+nummod",
+   "via": 3,
+   "count": 1,
+   "content": [
+    "80–95%"
+   ]
+  }
+ ]
+}

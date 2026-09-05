@@ -1,0 +1,772 @@
+{
+  "model": "tencent/Hunyuan-MT-7B",
+  "success_rate": 100.0,
+  "results": [
+    {
+      "success": true,
+      "data": {
+        "entities": [
+          {
+            "name": "CLI",
+            "type": "Tool",
+            "aliases": [
+              "Terminal"
+            ],
+            "summary": "交互式终端 UI"
+          },
+          {
+            "name": "AIAgent",
+            "type": "Service",
+            "aliases": [
+              "Agent"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Model Tools",
+            "type": "Module",
+            "summary": "工具发现、schema收集、分发",
+            "aliases": []
+          },
+          {
+            "name": "Tool Registry",
+            "type": "Module",
+            "summary": "工具管理库",
+            "aliases": []
+          },
+          {
+            "name": "SQLite",
+            "type": "Technology",
+            "aliases": [
+              "Database"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "FTS5",
+            "type": "Technology",
+            "aliases": [
+              "Database"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Python",
+            "type": "Technology",
+            "aliases": [
+              "Programming Language"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Prompt Builder",
+            "type": "Concept",
+            "summary": "系统提示生成器",
+            "aliases": []
+          },
+          {
+            "name": "Provider Resolution",
+            "type": "Concept",
+            "summary": "提供者解析",
+            "aliases": []
+          },
+          {
+            "name": "Session Storage",
+            "type": "Module",
+            "summary": "会话存储",
+            "aliases": []
+          },
+          {
+            "name": "Terminal",
+            "type": "Tool",
+            "aliases": [
+              "Browser"
+            ],
+            "summary": "图形化终端"
+          },
+          {
+            "name": "Web",
+            "type": "Platform",
+            "summary": "网页界面",
+            "aliases": []
+          },
+          {
+            "name": "MCP",
+            "type": "Module",
+            "summary": "动态管理组件",
+            "aliases": []
+          }
+        ],
+        "relations": [
+          {
+            "head": "Hermes Agent",
+            "tail": "Model Tools",
+            "type": "USES",
+            "confidence": 0.9,
+            "evidence": "Model Tools is used by Hermes Agent for tool discovery and schema collection"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Tool Registry",
+            "type": "USES",
+            "confidence": 0.8,
+            "evidence": "The Tool Registry manages toolsets and platforms"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "SQLite",
+            "type": "DEPENDS_ON",
+            "confidence": 0.9,
+            "evidence": "Hermes Agent relies on SQLite for session storage"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "FTS5",
+            "type": "DEPENDS_ON",
+            "confidence": 0.8,
+            "evidence": "Hermes Agent uses FTS5 as a database"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Python",
+            "type": "USES",
+            "confidence": 0.9,
+            "evidence": "Hermes Agent is built with Python"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Prompt Builder",
+            "type": "CALLS",
+            "confidence": 0.8,
+            "evidence": "The Prompt Builder is called by Hermes Agent to generate prompts"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Provider Resolution",
+            "type": "CALLS",
+            "confidence": 0.8,
+            "evidence": "The Provider Resolution is used by Hermes Agent for interacting with providers"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Session Storage",
+            "type": "MANAGES",
+            "confidence": 0.8,
+            "evidence": "Hermes Agent manages session data in Session Storage"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Terminal",
+            "type": "USES",
+            "confidence": 0.8,
+            "evidence": "The Terminal is used by Hermes Agent for user interaction"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "Web",
+            "type": "USES",
+            "confidence": 0.8,
+            "evidence": "The Web interface is used by Hermes Agent for external access"
+          },
+          {
+            "head": "Hermes Agent",
+            "tail": "MCP",
+            "type": "MANAGES",
+            "confidence": 0.8,
+            "evidence": "MCP manages dynamic components of Hermes Agent"
+          }
+        ]
+      },
+      "tokens": {
+        "prompt_tokens": 1688,
+        "completion_tokens": 865,
+        "total_tokens": 2553
+      },
+      "filtered": {
+        "entities": 0,
+        "relations": 0
+      },
+      "raw_content": "{\n  \"entities\": [\n    {\"name\": \"Hermes Agent\", \"type\": \"Service\", \"aliases\": [\"AIAgent\", \"Agent\"],\n    \"name\": \"CLI\", \"type\": \"Tool\", \"aliases\": \"Terminal\", \"summary\": \"交互式终端 UI\"},\n    {\"name\": \"AIAgent\", \"type\": \"Service\", \"aliases\": \"Agent\"},\n    {\"name\": \"Model Tools\", \"type\": \"Module\", \"summary\": \"工具发现、schema收集、分发\"},\n    {\"name\": \"Tool Registry\", \"type\": \"Module\", \"summary\": \"工具管理库\"},\n    {\"name\": \"SQLite\", \"type\": \"Technology\", \"aliases\": \"Database\"},\n    {\"name\": \"FTS5\", \"type\": \"Technolog"
+    },
+    {
+      "success": true,
+      "data": {
+        "entities": [
+          {
+            "name": "CLI",
+            "type": "Tool",
+            "aliases": [
+              "Terminal UI"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "AIAgent",
+            "type": "Service",
+            "aliases": [
+              "AI Agent"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Batch Runner",
+            "type": "Tool",
+            "aliases": [
+              "Batch Processing Tool"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "API Server",
+            "type": "Service",
+            "aliases": [
+              "API Service"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "SQLite",
+            "type": "Technology",
+            "aliases": [
+              "Database Technology"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "FTS5",
+            "type": "Technology",
+            "aliases": [
+              "File Storage Technology"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Python",
+            "type": "Technology",
+            "aliases": [
+              "Programming Language"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Prompt Builder",
+            "type": "Concept",
+            "aliases": [
+              "Prompt Generation Tool"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Provider Resolution",
+            "type": "Concept",
+            "aliases": [
+              "Provider Interaction Tool"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Session Storage",
+            "type": "Service",
+            "aliases": [
+              "Session Management Service"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Compression",
+            "type": "Concept",
+            "aliases": [
+              "Data Compression Tool"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Tool Registry",
+            "type": "Service",
+            "aliases": [
+              "Tool Management Service"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Terminal",
+            "type": "Tool",
+            "aliases": [
+              "Interactive Terminal"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Browser",
+            "type": "Tool",
+            "aliases": [
+              "Web-Based Interface"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "MCP",
+            "type": "Service",
+            "aliases": [
+              "Management and Configuration Platform"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "File",
+            "type": "File",
+            "aliases": [
+              "Data File"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "run_agent.py",
+            "type": "File",
+            "aliases": [
+              "AIAgent Main File"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "cli.py",
+            "type": "File",
+            "aliases": [
+              "HermesCLI Main File"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "model_tools.py",
+            "type": "Module",
+            "aliases": [
+              "Tool Management Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "toolsets.py",
+            "type": "Module",
+            "aliases": [
+              "Tool Grouping Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "hermes_state.py",
+            "type": "File",
+            "aliases": [
+              "Session State Database"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "hermesconstants.py",
+            "type": "File",
+            "aliases": [
+              "Configuration File"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "batch_runner.py",
+            "type": "Module",
+            "aliases": [
+              "Batch Processing Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "agent/",
+            "type": "Module",
+            "aliases": [
+              "Agent Internal Modules"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "prompt_builder.py",
+            "type": "Module",
+            "aliases": [
+              "Prompt Generation Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "context_engine.py",
+            "type": "Module",
+            "aliases": [
+              "Context Management Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "context_compressor.py",
+            "type": "Module",
+            "aliases": [
+              "Compression Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "prompt_caching.py",
+            "type": "Module",
+            "aliases": [
+              "Prompt Caching Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "anthropic_adapter.py",
+            "type": "Module",
+            "aliases": [
+              "Anthropic Integration Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "compression",
+            "type": "Module",
+            "aliases": [
+              "Compression Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "chat_compl.",
+            "type": "Module",
+            "aliases": [
+              "Chat Completion Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "codex_resp.",
+            "type": "Module",
+            "aliases": [
+              "Code Response Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "anthropic",
+            "type": "Module",
+            "aliases": [
+              "Anthropic Integration Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "3 API Modes",
+            "type": "Concept",
+            "aliases": [
+              "API Modes"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "toolregistry.py",
+            "type": "Module",
+            "aliases": [
+              "Tool Management Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "session_storage",
+            "type": "Module",
+            "aliases": [
+              "Session Management Module"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "hermes_state.py",
+            "type": "File",
+            "aliases": [
+              "Session State Database"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "File, Vision, etc.",
+            "type": "File",
+            "aliases": [
+              "Additional Files"
+            ],
+            "summary": ""
+          }
+        ],
+        "relations": []
+      },
+      "tokens": {
+        "prompt_tokens": 1688,
+        "completion_tokens": 1764,
+        "total_tokens": 3452
+      },
+      "filtered": {
+        "entities": 0,
+        "relations": 19
+      },
+      "raw_content": "{\n  \"entities\": [\n    {\"name\": \"Hermes Agent\", \"type\": \"Service\", \"aliases\": [\"Agent\", \"Core Service\"],\n    \"name\": \"CLI\", \"type\": \"Tool\", \"aliases\": \"Terminal UI\"},\n    {\"name\": \"AIAgent\", \"type\": \"Service\", \"aliases\": \"AI Agent\"},\n    {\"name\": \"Batch Runner\", \"type\": \"Tool\", \"aliases\": \"Batch Processing Tool\"},\n    {\"name\": \"API Server\", \"type\": \"Service\", \"aliases\": \"API Service\"},\n    {\"name\": \"SQLite\", \"type\": \"Technology\", \"aliases\": \"Database Technology\"},\n    {\"name\": \"FTS5\", \"type\": \"Te"
+    },
+    {
+      "success": true,
+      "data": {
+        "entities": [
+          {
+            "name": "CLI",
+            "type": "Tool",
+            "aliases": [
+              "Terminal"
+            ],
+            "summary": "交互式终端 UI"
+          },
+          {
+            "name": "AIAgent",
+            "type": "Service",
+            "aliases": [
+              "Agent"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "Model Tools",
+            "type": "Module",
+            "summary": "工具发现、schema收集、分发",
+            "aliases": []
+          },
+          {
+            "name": "Tool Registry",
+            "type": "Module",
+            "summary": "工具分组与平台预设",
+            "aliases": []
+          },
+          {
+            "name": "SQLite",
+            "type": "Technology",
+            "summary": "用于会话/状态数据库",
+            "aliases": []
+          },
+          {
+            "name": "FTS5",
+            "type": "Technology",
+            "summary": "用于会话/状态数据库",
+            "aliases": []
+          },
+          {
+            "name": "Python",
+            "type": "Technology",
+            "summary": "核心编程语言",
+            "aliases": []
+          },
+          {
+            "name": "Prompt Builder",
+            "type": "Concept",
+            "summary": "系统 prompt 组装",
+            "aliases": []
+          },
+          {
+            "name": "Provider Resolution",
+            "type": "Concept",
+            "summary": "提供者消息处理",
+            "aliases": []
+          },
+          {
+            "name": "Compression",
+            "type": "Module",
+            "summary": "有损摘要压缩",
+            "aliases": []
+          },
+          {
+            "name": "Chat Compl",
+            "type": "Module",
+            "summary": "Anthropic prompt 缓存",
+            "aliases": []
+          },
+          {
+            "name": "Tool Backends",
+            "type": "Module",
+            "summary": "终端后端",
+            "aliases": []
+          },
+          {
+            "name": "Terminal",
+            "type": "Tool",
+            "aliases": [
+              "Browser"
+            ],
+            "summary": "图形化终端"
+          },
+          {
+            "name": "Web",
+            "type": "Platform",
+            "summary": "图形化界面",
+            "aliases": []
+          },
+          {
+            "name": "MCP",
+            "type": "Module",
+            "summary": "动态管理",
+            "aliases": []
+          },
+          {
+            "name": "File",
+            "type": "File",
+            "aliases": [
+              "run_agent.py"
+            ],
+            "summary": "核心对话循环文件"
+          },
+          {
+            "name": "Batch Runner",
+            "type": "Module",
+            "summary": "批量轨迹生成",
+            "aliases": []
+          },
+          {
+            "name": "Session Storage",
+            "type": "Module",
+            "summary": "会话存储",
+            "aliases": []
+          },
+          {
+            "name": "hermes_state.py",
+            "type": "File",
+            "summary": "会话/状态数据库",
+            "aliases": []
+          },
+          {
+            "name": "agent/",
+            "type": "Module",
+            "aliases": [
+              "Agent Internal Modules"
+            ],
+            "summary": ""
+          },
+          {
+            "name": "prompt_builder.py",
+            "type": "Module",
+            "summary": "系统 prompt 组装",
+            "aliases": []
+          },
+          {
+            "name": "context_engine.py",
+            "type": "Module",
+            "summary": "ContextEngine ABC",
+            "aliases": []
+          },
+          {
+            "name": "context_compressor.py",
+            "type": "Module",
+            "summary": "默认摘要压缩",
+            "aliases": []
+          },
+          {
+            "name": "anthropic_adapter.py",
+            "type": "Module",
+            "summary": "Anthropic Messages API 格式转换",
+            "aliases": []
+          },
+          {
+            "name": "display.py",
+            "type": "Module",
+            "summary": "工具预览格式化",
+            "aliases": []
+          },
+          {
+            "name": "memory_manager.py",
+            "type": "Module",
+            "summary": "记忆管理器编排",
+            "aliases": []
+          },
+          {
+            "name": "memory_provider.py",
+            "type": "Module",
+            "summary": "记忆提供者 ABC",
+            "aliases": []
+          },
+          {
+            "name": "trajectory.py",
+            "type": "Module",
+            "summary": "轨迹保存辅助函数",
+            "aliases": []
+          },
+          {
+            "name": "config.py",
+            "type": "File",
+            "aliases": [
+              "DEFAULT_CONFIG"
+            ],
+            "summary": "默认配置文件"
+          },
+          {
+            "name": "commands.py",
+            "type": "File",
+            "aliases": [
+              "COMMAND_REGISTRY"
+            ],
+            "summary": "斜杠命令中央定义"
+          },
+          {
+            "name": "auth.py",
+            "type": "File",
+            "aliases": [
+              "PROVIDER_REGISTRY"
+            ],
+            "summary": "凭据解析"
+          },
+          {
+            "name": "runtime_provider.py",
+            "type": "Module",
+            "summary": "Provider API模式",
+            "aliases": []
+          },
+          {
+            "name": "models.py",
+            "type": "Module",
+            "summary": "模型目录",
+            "aliases": []
+          },
+          {
+            "name": "model_switch.py",
+            "type": "Module",
+            "summary": "/model命令逻辑",
+            "aliases": []
+          },
+          {
+            "name": "skin_engine.py",
+            "type": "Module",
+            "summary": "CLI主题引擎",
+            "aliases": []
+          },
+          {
+            "name": "skills_config.py",
+            "type": "Module",
+            "summary": "hermes skills——按平台启用/禁用",
+            "aliases": []
+          },
+          {
+            "name": "hermesconstants.py",
+            "type": "File",
+            "aliases": [
+              "HERMES_HOME"
+            ],
+            "summary": "感知配置文件"
+          }
+        ],
+        "relations": []
+      },
+      "tokens": {
+        "prompt_tokens": 1688,
+        "completion_tokens": 2683,
+        "total_tokens": 4371
+      },
+      "filtered": {
+        "entities": 0,
+        "relations": 37
+      },
+      "raw_content": "{\n  \"entities\": [\n    {\"name\": \"Hermes Agent\", \"type\": \"Service\", \"aliases\": [\"AIAgent\", \"Agent\"],\n    \"name\": \"CLI\", \"type\": \"Tool\", \"aliases\": \"Terminal\", \"summary\": \"交互式终端 UI\"},\n    {\"name\": \"AIAgent\", \"type\": \"Service\", \"aliases\": \"Agent\"},\n    {\"name\": \"Model Tools\", \"type\": \"Module\", \"summary\": \"工具发现、schema收集、分发\"},\n    {\"name\": \"Tool Registry\", \"type\": \"Module\", \"summary\": \"工具分组与平台预设\"},\n    {\"name\": \"SQLite\", \"type\": \"Technology\", \"summary\": \"用于会话/状态数据库\"},\n    {\"name\": \"FTS5\", \"type\": \"Tec"
+    }
+  ]
+}

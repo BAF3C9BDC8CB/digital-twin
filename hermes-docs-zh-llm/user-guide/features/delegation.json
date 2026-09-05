@@ -1,0 +1,239 @@
+{
+  "source_file": "user-guide/features/delegation.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 3,
+  "num_entities": 21,
+  "num_relations": 12,
+  "processing_time_sec": 329.25,
+  "entities": [
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [],
+      "summary": "智能体委派系统核心服务"
+    },
+    {
+      "name": "delegate_task",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "子智能体委派工具"
+    },
+    {
+      "name": "/review",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "评审子智能体工具"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "Hermes 配置文件"
+    },
+    {
+      "name": "state.db",
+      "type": "File",
+      "aliases": [],
+      "summary": "Hermes 状态数据库"
+    },
+    {
+      "name": "ThreadPoolExecutor",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Python 并发执行器"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "编程语言，支持子智能体执行"
+    },
+    {
+      "name": "子智能体委派",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "将任务委派给子智能体的功能"
+    },
+    {
+      "name": "clarify",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "子智能体与用户交互的工具"
+    },
+    {
+      "name": "memory",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "管理持久内存的工具"
+    },
+    {
+      "name": "code_execution",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "执行代码的工具"
+    },
+    {
+      "name": "send_message",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "发送消息的工具"
+    },
+    {
+      "name": "execute_code",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "执行 Python 代码的工具"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "运行 shell 命令的工具"
+    },
+    {
+      "name": "subagent",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "子智能体，继承父智能体的功能"
+    },
+    {
+      "name": "orchestrator",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "编排者子智能体，可以进一步委托"
+    },
+    {
+      "name": "API",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "用于通信的技术"
+    },
+    {
+      "name": "api_mode",
+      "type": "Concept",
+      "aliases": [
+        "Anthropic mode"
+      ],
+      "summary": "配置参数，用于指定API模式。"
+    },
+    {
+      "name": "base_url",
+      "type": "Concept",
+      "aliases": [
+        "URL"
+      ],
+      "summary": "配置参数，用于指定基础URL。"
+    },
+    {
+      "name": "Anthropic",
+      "type": "Technology",
+      "aliases": [
+        "AI platform"
+      ],
+      "summary": "Anthropic兼容的AI技术栈。"
+    },
+    {
+      "name": "智能体",
+      "type": "Concept",
+      "aliases": [
+        "Agent"
+      ],
+      "summary": "处理任务和委派的智能实体。"
+    }
+  ],
+  "relations": [
+    {
+      "head": "delegate_task",
+      "tail": "Hermes",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "Hermes 会立即返回句柄，使对话可以继续"
+    },
+    {
+      "head": "Hermes",
+      "tail": "子智能体委派",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 会返回句柄...并在任务完成后将结果作为新消息发送回来"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "Hermes",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "通过 config.yaml 为子智能体配置不同的模型"
+    },
+    {
+      "head": "Python",
+      "tail": "ThreadPoolExecutor",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "使用 ThreadPoolExecutor，以配置的并发限制作为最大工作线程数"
+    },
+    {
+      "head": "delegate_task",
+      "tail": "子智能体委派",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "工具会生成具有隔离上下文、继承工具访问权限和独立终端会话的子 AIAgent 实例"
+    },
+    {
+      "head": "/review",
+      "tail": "Hermes",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "派生一个独立的、拥有完整工具权限的后台评审子智能体"
+    },
+    {
+      "head": "subagent",
+      "tail": "delegate_task",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "子智能体继承父智能体已启用的工具集"
+    },
+    {
+      "head": "Hermes",
+      "tail": "subagent",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 会立即返回句柄，并在子智能体或批处理完成后将结果重新发送到对话中"
+    },
+    {
+      "head": "delegate_task",
+      "tail": "code_execution",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "code_execution — 子智能体应逐步推理"
+    },
+    {
+      "head": "terminal",
+      "tail": "shell command",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "terminal(background=True, notify_on_complete=True)"
+    },
+    {
+      "head": "api_mode",
+      "tail": "base_url",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "base_url 指向 Anthropic 兼容端点时，api_mode 被自动检测。"
+    },
+    {
+      "head": "智能体",
+      "tail": "api_mode",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "智能体会根据任务复杂度自动处理委派，使用api_mode。"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 6317,
+    "completion_tokens": 8090,
+    "total_tokens": 14407,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 64,
+    "prompt_cache_miss_tokens": 6253
+  }
+}

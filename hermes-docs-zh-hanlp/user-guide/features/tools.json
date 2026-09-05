@@ -1,0 +1,76 @@
+{
+ "source_file": "user-guide/features/tools.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 377,
+ "num_entities": 8,
+ "num_relations": 0,
+ "processing_time_sec": 0.986,
+ "entities": [
+  {
+   "text": "hermeschat",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "hermes chat"
+   ]
+  },
+  {
+   "text": "VercelSandbox",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "Vercel Sandbox",
+    "Vercel Sandbox 不支持自定义磁盘大小，设置后将导致诊断/后端创建失败"
+   ]
+  },
+  {
+   "text": "256",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "PID 限制（256 个进程）"
+   ]
+  },
+  {
+   "text": "Docker",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "这意味着 Docker 后端的行为类似持久化沙箱虚拟机，而非每次命令都使用全新容器"
+   ]
+  },
+  {
+   "text": "Linuxcapabilities",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "丢弃所有 Linux capabilities"
+   ]
+  },
+  {
+   "text": "pytest",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "\"pytest -v tests/\""
+   ]
+  },
+  {
+   "text": "uvpip",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "uv pip"
+   ]
+  },
+  {
+   "text": "云微虚拟机",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Vercel Sandbox 云微虚拟机"
+   ]
+  }
+ ],
+ "relations": []
+}

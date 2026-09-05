@@ -10,8 +10,8 @@ providers:
     model_embed: BAAI/bge-m3
     model_reranker: BAAI/bge-reranker-v2-m3
     # model_llm: deepseek-ai/DeepSeek-V3.2
-    # model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
-    model_llm: tencent/Hunyuan-MT-7B
+    model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+    # model_llm: tencent/Hunyuan-MT-7B
     max_tokens: 512
   xinference:
     url: http://localhost:9997/v1

@@ -1,0 +1,250 @@
+{
+  "source_file": "user-guide/features/voice-mode.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 2,
+  "num_entities": 23,
+  "num_relations": 13,
+  "processing_time_sec": 250.46,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "语音交互代理，支持CLI和消息平台。"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令行界面，用于语音模式。"
+    },
+    {
+      "name": "TUI",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "文本用户界面，支持语音模式。"
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "支持语音频道和消息的平台。"
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "支持语音回复的消息平台。"
+    },
+    {
+      "name": "LLM Provider",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "大型语言模型服务提供商。"
+    },
+    {
+      "name": "Tool Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "提供LLM和TTS的网关服务。"
+    },
+    {
+      "name": "Whisper",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "语音转录技术，使用faster-whisper。"
+    },
+    {
+      "name": "Opus",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "音频编解码器，用于Discord语音。"
+    },
+    {
+      "name": "PortAudio",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "音频输入输出库，用于麦克风。"
+    },
+    {
+      "name": "ffmpeg",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "音频格式转换工具。"
+    },
+    {
+      "name": "VAD",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "语音活动检测算法。"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "配置文件，管理语音模式设置。"
+    },
+    {
+      "name": "\\.env",
+      "type": "File",
+      "aliases": [],
+      "summary": "环境变量文件，存放API密钥。"
+    },
+    {
+      "name": "Bot",
+      "type": "Service",
+      "aliases": [],
+      "summary": "语音模式核心服务"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Hermes语音模式入口点"
+    },
+    {
+      "name": "opus",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "音频编解码器"
+    },
+    {
+      "name": "faster-whisper",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "本地STT工具"
+    },
+    {
+      "name": "STT",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "语音转文字系统"
+    },
+    {
+      "name": "TTS",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "文字转语音系统"
+    },
+    {
+      "name": "ElevenLabs",
+      "type": "Service",
+      "aliases": [],
+      "summary": "高级TTS提供商"
+    },
+    {
+      "name": "Groq",
+      "type": "Service",
+      "aliases": [],
+      "summary": "STT提供商"
+    },
+    {
+      "name": "OpenAI",
+      "type": "Service",
+      "aliases": [],
+      "summary": "AI服务提供商"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "CLI",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "语音模式在经典CLI和TUI中均可使用。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "TUI",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "语音模式在经典CLI和TUI中均可使用。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "LLM Provider",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "已配置LLM提供商。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "PortAudio",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "系统依赖中PortAudio用于麦克风输入。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "ffmpeg",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "ffmpeg用于音频格式转换。"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Whisper",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "音频通过Whisper转录后发送给Agent。"
+    },
+    {
+      "head": "Bot",
+      "tail": "Gateway",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes gateway 命令启动Bot"
+    },
+    {
+      "head": "Gateway",
+      "tail": "STT",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Bot 使用 STT 进行转录"
+    },
+    {
+      "head": "Gateway",
+      "tail": "TTS",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Bot 使用 TTS 进行语音回复"
+    },
+    {
+      "head": "STT",
+      "tail": "Whisper",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "本地STT使用Whisper模型"
+    },
+    {
+      "head": "Bot",
+      "tail": "PortAudio",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "故障排查提到安装PortAudio"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "voice",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "config.yaml 包含 voice 配置"
+    },
+    {
+      "head": "\\.env",
+      "tail": "DISCORD_BOT_TOKEN",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "\\.env 文件包含 DISCORD_BOT_TOKEN"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 5830,
+    "completion_tokens": 5202,
+    "total_tokens": 11032,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 5798
+  }
+}

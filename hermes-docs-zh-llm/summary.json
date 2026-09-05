@@ -1,0 +1,285 @@
+{
+  "src_dir": "/data/myProject/digital-twin-v2/hermes-docs-zh",
+  "out_dir": "/data/myProject/digital-twin-v2/hermes-docs-zh-llm",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "files": [
+    {
+      "file": "README.md",
+      "entities": 10,
+      "relations": 6,
+      "time_sec": 181.41,
+      "chunks": 1
+    },
+    {
+      "file": "developer-guide/adding-tools.md",
+      "entities": 14,
+      "relations": 9,
+      "time_sec": 142.89,
+      "chunks": 1
+    },
+    {
+      "file": "developer-guide/architecture.md",
+      "entities": 28,
+      "relations": 14,
+      "time_sec": 362.69,
+      "chunks": 2
+    },
+    {
+      "file": "developer-guide/contributing.md",
+      "entities": 15,
+      "relations": 8,
+      "time_sec": 163.5,
+      "chunks": 1
+    },
+    {
+      "file": "developer-guide/creating-skills.md",
+      "entities": 21,
+      "relations": 10,
+      "time_sec": 173.48,
+      "chunks": 2
+    },
+    {
+      "file": "developer-guide/plugins.md",
+      "entities": 57,
+      "relations": 40,
+      "time_sec": 814.17,
+      "chunks": 6
+    },
+    {
+      "file": "getting-started/installation.md",
+      "entities": 15,
+      "relations": 8,
+      "time_sec": 164.74,
+      "chunks": 1
+    },
+    {
+      "file": "getting-started/learning-path.md",
+      "entities": 10,
+      "relations": 9,
+      "time_sec": 175.6,
+      "chunks": 1
+    },
+    {
+      "file": "getting-started/nix-setup.md",
+      "entities": 45,
+      "relations": 35,
+      "time_sec": 595.3,
+      "chunks": 5
+    },
+    {
+      "file": "getting-started/platform-support.md",
+      "entities": 13,
+      "relations": 7,
+      "time_sec": 129.29,
+      "chunks": 1
+    },
+    {
+      "file": "getting-started/quickstart.md",
+      "entities": 15,
+      "relations": 8,
+      "time_sec": 83.06,
+      "chunks": 1
+    },
+    {
+      "file": "getting-started/termux.md",
+      "entities": 10,
+      "relations": 6,
+      "time_sec": 142.74,
+      "chunks": 1
+    },
+    {
+      "file": "getting-started/updating.md",
+      "entities": 13,
+      "relations": 6,
+      "time_sec": 147.35,
+      "chunks": 1
+    },
+    {
+      "file": "guides/daily-briefing-bot.md",
+      "entities": 10,
+      "relations": 8,
+      "time_sec": 153.2,
+      "chunks": 1
+    },
+    {
+      "file": "guides/python-library.md",
+      "entities": 13,
+      "relations": 8,
+      "time_sec": 105.68,
+      "chunks": 1
+    },
+    {
+      "file": "guides/team-telegram-assistant.md",
+      "entities": 15,
+      "relations": 8,
+      "time_sec": 130.49,
+      "chunks": 1
+    },
+    {
+      "file": "guides/tips.md",
+      "entities": 14,
+      "relations": 9,
+      "time_sec": 149.75,
+      "chunks": 1
+    },
+    {
+      "file": "guides/use-voice-mode-with-hermes.md",
+      "entities": 10,
+      "relations": 6,
+      "time_sec": 131.87,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/cli.md",
+      "entities": 22,
+      "relations": 16,
+      "time_sec": 317.45,
+      "chunks": 2
+    },
+    {
+      "file": "user-guide/configuration.md",
+      "entities": 97,
+      "relations": 66,
+      "time_sec": 1222.96,
+      "chunks": 10
+    },
+    {
+      "file": "user-guide/features/batch-processing.md",
+      "entities": 10,
+      "relations": 6,
+      "time_sec": 159.52,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/browser.md",
+      "entities": 29,
+      "relations": 16,
+      "time_sec": 237.33,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/features/code-execution.md",
+      "entities": 15,
+      "relations": 7,
+      "time_sec": 113.47,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/context-files.md",
+      "entities": 13,
+      "relations": 7,
+      "time_sec": 151.82,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/cron.md",
+      "entities": 30,
+      "relations": 22,
+      "time_sec": 479.3,
+      "chunks": 4
+    },
+    {
+      "file": "user-guide/features/delegation.md",
+      "entities": 21,
+      "relations": 12,
+      "time_sec": 329.25,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/features/hooks.md",
+      "entities": 55,
+      "relations": 37,
+      "time_sec": 1081.78,
+      "chunks": 6
+    },
+    {
+      "file": "user-guide/features/mcp.md",
+      "entities": 23,
+      "relations": 13,
+      "time_sec": 139.17,
+      "chunks": 2
+    },
+    {
+      "file": "user-guide/features/memory.md",
+      "entities": 8,
+      "relations": 5,
+      "time_sec": 127.15,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/plugins.md",
+      "entities": 26,
+      "relations": 15,
+      "time_sec": 319.53,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/features/provider-routing.md",
+      "entities": 10,
+      "relations": 8,
+      "time_sec": 127.2,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/skills.md",
+      "entities": 30,
+      "relations": 19,
+      "time_sec": 290.85,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/features/tools.md",
+      "entities": 14,
+      "relations": 6,
+      "time_sec": 108.14,
+      "chunks": 1
+    },
+    {
+      "file": "user-guide/features/voice-mode.md",
+      "entities": 23,
+      "relations": 13,
+      "time_sec": 250.46,
+      "chunks": 2
+    },
+    {
+      "file": "user-guide/messaging.md",
+      "entities": 27,
+      "relations": 18,
+      "time_sec": 472.21,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/messaging/discord.md",
+      "entities": 49,
+      "relations": 40,
+      "time_sec": 654.83,
+      "chunks": 5
+    },
+    {
+      "file": "user-guide/messaging/telegram.md",
+      "entities": 45,
+      "relations": 36,
+      "time_sec": 611.9,
+      "chunks": 6
+    },
+    {
+      "file": "user-guide/security.md",
+      "entities": 34,
+      "relations": 19,
+      "time_sec": 295.0,
+      "chunks": 3
+    },
+    {
+      "file": "user-guide/sessions.md",
+      "entities": 27,
+      "relations": 26,
+      "time_sec": 441.76,
+      "chunks": 4
+    }
+  ],
+  "totals": {
+    "files": 39,
+    "entities": 936,
+    "relations": 612
+  }
+}

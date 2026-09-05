@@ -1,0 +1,378 @@
+{
+  "source_file": "user-guide/features/skills.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 3,
+  "num_entities": 30,
+  "num_relations": 19,
+  "processing_time_sec": 290.85,
+  "entities": [
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [
+        "hermes"
+      ],
+      "summary": "AI agent framework for skill management."
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [
+        "Command Line Interface",
+        "command line interface"
+      ],
+      "summary": "Command-line interface for Hermes operations."
+    },
+    {
+      "name": "agent",
+      "type": "Module",
+      "aliases": [
+        "agents"
+      ],
+      "summary": "Core module handling skill execution."
+    },
+    {
+      "name": "tools",
+      "type": "Module",
+      "aliases": [
+        "toolsets"
+      ],
+      "summary": "Module for managing Hermes toolsets."
+    },
+    {
+      "name": "gateway",
+      "type": "Module",
+      "aliases": [
+        "gateway module"
+      ],
+      "summary": "Module for handling communication and media."
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [
+        "terminal tool"
+      ],
+      "summary": "Tool for command-line execution in skills."
+    },
+    {
+      "name": "browser",
+      "type": "Tool",
+      "aliases": [
+        "browser tool"
+      ],
+      "summary": "Tool for web-based interactions."
+    },
+    {
+      "name": "SKILL.md",
+      "type": "File",
+      "aliases": [
+        "skill file",
+        "skill markdown"
+      ],
+      "summary": "Markdown file defining skill metadata and procedures."
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [
+        "config file"
+      ],
+      "summary": "YAML file for skill configuration settings."
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [
+        "tg"
+      ],
+      "summary": "Messaging platform for skill output."
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [
+        "discord"
+      ],
+      "summary": "Messaging platform integration for skills."
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [
+        "slack"
+      ],
+      "summary": "Collaboration platform for skill communication."
+    },
+    {
+      "name": "WhatsApp",
+      "type": "Platform",
+      "aliases": [
+        "whatsapp"
+      ],
+      "summary": "Messaging platform supporting voice messages."
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [
+        "python tech"
+      ],
+      "summary": "Programming language used in skill development."
+    },
+    {
+      "name": "Progressive Disclosure",
+      "type": "Concept",
+      "aliases": [
+        "gradual disclosure"
+      ],
+      "summary": "Token-saving loading strategy for skills."
+    },
+    {
+      "name": "Gateway",
+      "type": "Platform",
+      "aliases": [
+        "gateway"
+      ],
+      "summary": "如Telegram、Discord、Slack的聊天平台"
+    },
+    {
+      "name": "Skill",
+      "type": "Concept",
+      "aliases": [
+        "skills"
+      ],
+      "summary": "技能或功能模块"
+    },
+    {
+      "name": "Bundle",
+      "type": "Concept",
+      "aliases": [
+        "bundles"
+      ],
+      "summary": "技能捆绑包"
+    },
+    {
+      "name": "YAML",
+      "type": "File",
+      "aliases": [
+        "yaml"
+      ],
+      "summary": "配置文件格式"
+    },
+    {
+      "name": "skill_manage",
+      "type": "Tool",
+      "aliases": [
+        "skill management"
+      ],
+      "summary": "管理技能的工具"
+    },
+    {
+      "name": "Skills Hub",
+      "type": "Concept",
+      "aliases": [
+        "hub"
+      ],
+      "summary": "技能中心和发现来源"
+    },
+    {
+      "name": "/skills",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "斜杠命令工具"
+    },
+    {
+      "name": "metadata.hermes.tags",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "技能元数据标签概念"
+    },
+    {
+      "name": "GITHUB_TOKEN",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "GitHub令牌概念"
+    },
+    {
+      "name": "\\.env",
+      "type": "File",
+      "aliases": [],
+      "summary": "环境变量文件"
+    },
+    {
+      "name": "taps.json",
+      "type": "File",
+      "aliases": [],
+      "summary": "tap配置文件"
+    },
+    {
+      "name": "GitHub",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "代码托管平台"
+    },
+    {
+      "name": "Trust Level",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "技能信任级别概念"
+    },
+    {
+      "name": "Force",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "强制选项概念"
+    },
+    {
+      "name": "Security Scanning",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "安全扫描概念"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes",
+      "tail": "skills",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "agent can modify or delete any skill."
+    },
+    {
+      "head": "Skills",
+      "tail": "SKILL.md",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "SKILL.md is the main instructions file for skills."
+    },
+    {
+      "head": "CLI",
+      "tail": "skills",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "CLI uses slash commands to load skills."
+    },
+    {
+      "head": "Skills",
+      "tail": "terminal",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Skills require terminal for certain operations."
+    },
+    {
+      "head": "Skills",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Skills use config.yaml for configuration settings."
+    },
+    {
+      "head": "gateway",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "gateway handles media transmission to Telegram."
+    },
+    {
+      "head": "Skills",
+      "tail": "Progressive Disclosure",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "Skills use progressive disclosure to save tokens."
+    },
+    {
+      "head": "Skills",
+      "tail": "Python",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Tags include python in skill metadata."
+    },
+    {
+      "head": "CLI",
+      "tail": "Hermes",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes bundles list command"
+    },
+    {
+      "head": "Bundle",
+      "tail": "Skill",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "skills: - github-code-review in YAML"
+    },
+    {
+      "head": "skill_manage",
+      "tail": "Skill",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "agent can create, update and delete skills"
+    },
+    {
+      "head": "Skills Hub",
+      "tail": "CLI",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes skills browse command"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Skills Hub",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Hermes skills install and Skills hub operations mentioned."
+    },
+    {
+      "head": "CLI",
+      "tail": "/skills",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CLI uses /skills commands for skill management."
+    },
+    {
+      "head": "SKILL.md",
+      "tail": "metadata.hermes.tags",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "SKILL.md contains metadata.hermes.tags as per document."
+    },
+    {
+      "head": "Skills Hub",
+      "tail": "GitHub",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Skills Hub uses GitHub API with rate limits."
+    },
+    {
+      "head": "Hermes",
+      "tail": "Trust Level",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes manages trust levels for skills."
+    },
+    {
+      "head": "CLI",
+      "tail": "hermes skills",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "CLI calls hermes skills commands like install, update."
+    },
+    {
+      "head": "Tap",
+      "tail": "Skill Repository",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Tap manages repositories for skill discovery."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 9419,
+    "completion_tokens": 6924,
+    "total_tokens": 16343,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 64,
+    "prompt_cache_miss_tokens": 9355
+  }
+}

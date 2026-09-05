@@ -1,0 +1,319 @@
+{
+  "source_file": "user-guide/messaging.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 3,
+  "num_entities": 27,
+  "num_relations": 18,
+  "processing_time_sec": 472.21,
+  "entities": [
+    {
+      "name": "HermesGateway",
+      "type": "Service",
+      "aliases": [
+        "hermes gateway"
+      ],
+      "summary": "消息网关服务，管理平台和会话"
+    },
+    {
+      "name": "AIAgent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "人工智能代理，处理消息"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "Hermes 配置文件，管理平台设置"
+    },
+    {
+      "name": "gateway.json",
+      "type": "File",
+      "aliases": [],
+      "summary": "网关配置文件，覆盖平台设置"
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，支持语音和图片"
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "消息平台，支持语音和表情反应"
+    },
+    {
+      "name": "VoiceMode",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "语音功能，包括 TTS 和语音转录"
+    },
+    {
+      "name": "SessionPersistence",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "会话持久化，直到重置"
+    },
+    {
+      "name": "Pairing",
+      "type": "Concept",
+      "aliases": [
+        "私信配对"
+      ],
+      "summary": "安全机制，用户配对机制"
+    },
+    {
+      "name": "hermes gateway setup",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "交互式配置工具，设置消息平台"
+    },
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [
+        "Hermes Gateway"
+      ],
+      "summary": "Multi-platform AI messaging gateway"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Core service for background tasks and adapters"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [
+        "Command-line interface"
+      ],
+      "summary": "Interface for managing Hermes gateway"
+    },
+    {
+      "name": "busy_ack_enabled",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Configuration to control busy acknowledgment messages"
+    },
+    {
+      "name": "tool_progress",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Setting for displaying tool activity"
+    },
+    {
+      "name": "background_process_notifications",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Configuration for background process updates"
+    },
+    {
+      "name": "/bg",
+      "type": "Tool",
+      "aliases": [
+        "Background task command"
+      ],
+      "summary": "Command to initiate background tasks"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Tool for running long processes"
+    },
+    {
+      "name": "systemd",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Linux init system for service management"
+    },
+    {
+      "name": "launchd",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "macOS service management system"
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Platform with Hermes adapter"
+    },
+    {
+      "name": "API Server",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Tool for programmatic access without interaction"
+    },
+    {
+      "name": "Agent",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "消息处理代理组件"
+    },
+    {
+      "name": "gateway-config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "配置文件，定义平台特定设置"
+    },
+    {
+      "name": "typing_indicator",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "控制输入状态显示的标志"
+    },
+    {
+      "name": "cleanup_progress",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "控制进度消息自动删除的标志"
+    },
+    {
+      "name": "restart_interrupted",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "会话中断状态"
+    }
+  ],
+  "relations": [
+    {
+      "head": "HermesGateway",
+      "tail": "Telegram",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "消息网关连接所有已配置的平台。"
+    },
+    {
+      "head": "HermesGateway",
+      "tail": "AIAgent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "每个平台适配器分发给 AIAgent 处理。"
+    },
+    {
+      "head": "HermesGateway",
+      "tail": "VoiceMode",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "完整的语音功能集请参阅 Voice Mode。"
+    },
+    {
+      "head": "HermesGateway",
+      "tail": "SessionPersistence",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "会话在消息之间持续保留，直到重置。"
+    },
+    {
+      "head": "HermesGateway",
+      "tail": "Pairing",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "默认情况下，网关拒绝所有不在白名单中或未通过私信配对的用户。"
+    },
+    {
+      "head": "hermes gateway setup",
+      "tail": "config.yaml",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "交互式配置所有消息平台，涉及 config.yaml。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Background Task",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "每个 /bg prompt 会生成一个独立的 agent 实例"
+    },
+    {
+      "head": "CLI",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "在 ~/.hermes/config.yaml 中控制显示多少工具活动信息"
+    },
+    {
+      "head": "Gateway",
+      "tail": "terminal",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "使用 terminal(background=true) 启动长时间运行的进程"
+    },
+    {
+      "head": "Background Task",
+      "tail": "independent sessions",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "在独立的后台会话中运行 prompt，让 agent 独立处理"
+    },
+    {
+      "head": "Circuit Breaker",
+      "tail": "adapter failures",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "反复出现的可重试失败会导致熔断器触发"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Telegram",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Telegram 平台有自己的工具集：hermes-telegram"
+    },
+    {
+      "head": "Hermes",
+      "tail": "API Server",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "API Server 完整工具（去除 clarify、send_message、text_to_speech）"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Agent",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "agent 正在处理消息时，网关会在支持的平台上显示实时的输入状态"
+    },
+    {
+      "head": "Gateway",
+      "tail": "gateway-config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "由 gateway-config.yaml 中每个平台的 typing_indicator 标志控制"
+    },
+    {
+      "head": "Gateway",
+      "tail": "typing_indicator",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "这由 gateway-config.yaml 中每个平台的 typing_indicator 标志控制"
+    },
+    {
+      "head": "Gateway",
+      "tail": "cleanup_progress",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "通过 display.platforms.<platform>.cleanup_progress 按平台启用"
+    },
+    {
+      "head": "Gateway",
+      "tail": "restart_interrupted",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "当网关在工具调用或生成进行中时关闭，受影响的会话被标记为 restart_interrupted"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 7162,
+    "completion_tokens": 10896,
+    "total_tokens": 18058,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 64,
+    "prompt_cache_miss_tokens": 7098
+  }
+}

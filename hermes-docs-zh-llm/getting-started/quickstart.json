@@ -1,0 +1,197 @@
+{
+  "source_file": "getting-started/quickstart.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 15,
+  "num_relations": 8,
+  "processing_time_sec": 83.06,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [
+        "Hermes"
+      ],
+      "summary": "AI agent for managing models and conversations."
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [
+        "Command Line Interface"
+      ],
+      "summary": "Interface for interacting with Hermes Agent."
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [
+        "Message Gateway"
+      ],
+      "summary": "Handles integration with platforms like Telegram."
+    },
+    {
+      "name": "Provider",
+      "type": "Concept",
+      "aliases": [
+        "AI Provider"
+      ],
+      "summary": "Source of AI models and services."
+    },
+    {
+      "name": "Model",
+      "type": "Concept",
+      "aliases": [
+        "AI Model"
+      ],
+      "summary": "Specific AI language model used."
+    },
+    {
+      "name": "Tools",
+      "type": "Module",
+      "aliases": [
+        "Tool Module"
+      ],
+      "summary": "Configures tools for Hermes Agent."
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [
+        "Telegram Bot"
+      ],
+      "summary": "Messaging platform for Hermes Gateway."
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [
+        "Discord Bot"
+      ],
+      "summary": "Messaging platform for Hermes Gateway."
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [
+        "Slack Bot"
+      ],
+      "summary": "Messaging platform for Hermes Gateway."
+    },
+    {
+      "name": "OpenAI",
+      "type": "Service",
+      "aliases": [
+        "OpenAI Codex"
+      ],
+      "summary": "Provider for AI models."
+    },
+    {
+      "name": "Anthropic",
+      "type": "Service",
+      "aliases": [
+        "Claude Model"
+      ],
+      "summary": "Provider for Claude AI models."
+    },
+    {
+      "name": "OpenRouter",
+      "type": "Tool",
+      "aliases": [
+        "Multi-provider Router"
+      ],
+      "summary": "Tool for routing across multiple AI providers."
+    },
+    {
+      "name": "Kimi",
+      "type": "Tool",
+      "aliases": [
+        "Kimi AI"
+      ],
+      "summary": "Provider for programming and dialogue models."
+    },
+    {
+      "name": "Hermes setup",
+      "type": "Tool",
+      "aliases": [
+        "Setup Command"
+      ],
+      "summary": "Command for configuring Hermes Agent."
+    },
+    {
+      "name": "Termux",
+      "type": "Module",
+      "aliases": [
+        "Android Terminal"
+      ],
+      "summary": "Android app for terminal access."
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "CLI",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Use hermes command to interact with Agent."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Gateway",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Gateway is part of Hermes Agent setup."
+    },
+    {
+      "head": "CLI",
+      "tail": "Provider",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "hermes model command depends on Provider selection."
+    },
+    {
+      "head": "CLI",
+      "tail": "Model",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "hermes model selects and uses specific models."
+    },
+    {
+      "head": "Gateway",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Gateway integrates with Telegram platform."
+    },
+    {
+      "head": "Tools",
+      "tail": "Terminal",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Tools module uses terminal for commands."
+    },
+    {
+      "head": "hermes model",
+      "tail": "OAuth",
+      "type": "CALLS",
+      "confidence": 0.9,
+      "evidence": "hermes model uses OAuth for authentication."
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "64K token",
+      "type": "REQUIRES",
+      "confidence": 0.9,
+      "evidence": "Agent requires models with at least 64K token context."
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 3731,
+    "completion_tokens": 2127,
+    "total_tokens": 5858,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 3731
+  }
+}

@@ -1,0 +1,137 @@
+{
+  "source_file": "user-guide/features/provider-routing.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 1,
+  "num_entities": 10,
+  "num_relations": 8,
+  "processing_time_sec": 127.2,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "AI agent supporting provider routing"
+    },
+    {
+      "name": "OpenRouter",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Service for routing AI requests to multiple providers"
+    },
+    {
+      "name": "Provider routing",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Mechanism to control which AI providers handle requests"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [],
+      "summary": "Configuration file for Hermes Agent"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Command-line interface for Hermes Agent"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Gateway component for Hermes Agent"
+    },
+    {
+      "name": "AIAgent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "AI agent component"
+    },
+    {
+      "name": "Anthropic",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "AI provider for routing requests"
+    },
+    {
+      "name": "Google",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "AI provider for routing requests"
+    },
+    {
+      "name": "AWS Bedrock",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "AI provider for routing requests"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "OpenRouter",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent supports OpenRouter for provider routing"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Provider routing",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Hermes Agent supports provider routing configuration"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "Provider routing",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "config.yaml contains provider_routing section"
+    },
+    {
+      "head": "CLI",
+      "tail": "Hermes Agent",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CLI mode uses Hermes Agent configuration"
+    },
+    {
+      "head": "Gateway",
+      "tail": "Provider routing",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Gateway mode loads provider_routing configuration"
+    },
+    {
+      "head": "Provider routing",
+      "tail": "Anthropic",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Provider routing can use Anthropic as a provider"
+    },
+    {
+      "head": "Provider routing",
+      "tail": "Google",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Provider routing can use Google as a provider"
+    },
+    {
+      "head": "Provider routing",
+      "tail": "AWS Bedrock",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Provider routing can use AWS Bedrock as a provider"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 1539,
+    "completion_tokens": 3069,
+    "total_tokens": 4608,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 32,
+    "prompt_cache_miss_tokens": 1507
+  }
+}

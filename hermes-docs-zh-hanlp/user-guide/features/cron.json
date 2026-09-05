@@ -1,0 +1,570 @@
+{
+ "source_file": "user-guide/features/cron.md",
+ "model": "close_tok_pos_ner_srl_dep_sdp_con_electra_base_20210111_124519",
+ "num_sentences": 1150,
+ "num_entities": 62,
+ "num_relations": 3,
+ "processing_time_sec": 3.601,
+ "entities": [
+  {
+   "text": "cron",
+   "type": "PERSON",
+   "count": 9,
+   "content": [
+    "工具暴露 cron 管理能力，采用动作式操作，而非分散的 schedule/list/remove 工具",
+    "在指定 profile 中运行 cron 任务",
+    "默认情况下，cron 任务继承创建它的 gateway/CLI 所属的 Hermes profile",
+    "将 cron 指向专用的论坛话题：",
+    "对 cron 消息的回复现在会进入已有的话题会话，你可以直接在其中操作",
+    "可继续任务（回复 cron 投递）"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "PERSON",
+   "count": 7,
+   "content": [
+    "定时任务（Cron）",
+    "Cron 当前能做什么",
+    "Cron 任务可以：",
+    "纯脚本 Cron 任务指南",
+    "Cron 任务在隔离的会话中运行，不保留之前运行的记忆",
+    "Cron 任务继承你配置的回退 provider 和凭证池轮换"
+   ]
+  },
+  {
+   "text": "Cron",
+   "type": "ORG",
+   "count": 7,
+   "content": [
+    "Cron 运行的会话不能递归创建更多 cron 任务",
+    "Cron 任务默认与任何代码仓库脱离运行——不加载",
+    "Cron 任务现在拥有比创建/删除更完整的生命周期",
+    "Cron 任务可用的工具集",
+    "Cron 在全新的 agent 会话中运行每个任务，不附加任何聊天平台",
+    "Cron 任务可以通过在"
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "ORG",
+   "count": 7,
+   "content": [
+    "Cron 运行的会话不能递归创建更多 cron 任务",
+    "设为 true 使 cron 投递可继续",
+    "决定私信 cron 投递是否可继续的是另一个",
+    "此模式下继续功能不可用（对 cron 或任何平铺投递皆然）",
+    "如果 cron 运行调用了",
+    "的 cron 平台配置生效"
+   ]
+  },
+  {
+   "text": "edit",
+   "type": "PERSON",
+   "count": 5,
+   "content": [
+    "/cron edit"
+   ]
+  },
+  {
+   "text": "1h",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "\"every 1h\""
+   ]
+  },
+  {
+   "text": "2h",
+   "type": "PERSON",
+   "count": 4,
+   "content": [
+    "\"every 2h\"",
+    "every 2h"
+   ]
+  },
+  {
+   "text": "hermesgateway",
+   "type": "PERSON",
+   "count": 3,
+   "content": [
+    "hermes gateway"
+   ]
+  },
+  {
+   "text": "03:00",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "\"every 1d at 03:00\""
+   ]
+  },
+  {
+   "text": "120秒",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "参数附加）的默认超时为 120 秒",
+    "解析顺序为：环境变量 → config.yaml → 默认 120 秒"
+   ]
+  },
+  {
+   "text": "30分钟",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "30m     → 30 分钟后运行一次",
+    "every 30m    → 每 30 分钟"
+   ]
+  },
+  {
+   "text": "4h",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "\"every 4h\""
+   ]
+  },
+  {
+   "text": "at09:00",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "\"every 1d at 09:00\""
+   ]
+  },
+  {
+   "text": "cronprompt",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "当你希望定时 agent 继承可复用的工作流，而不必将完整的 skill 文本塞入 cron prompt 本身时，这非常有用",
+    "在 cron prompt 中为同一目标包含"
+   ]
+  },
+  {
+   "text": "telegram",
+   "type": "PERSON",
+   "count": 2,
+   "content": [
+    "\"telegram:123456\"",
+    "\"telegram,discord\""
+   ]
+  },
+  {
+   "text": "上午9:00",
+   "type": "TIME",
+   "count": 2,
+   "content": [
+    "0 9          → 每天上午 9:00",
+    "0 9   1-5     → 工作日上午 9:00"
+   ]
+  },
+  {
+   "text": "+ body",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Read /.hermes/data/briefs/ranked.md. Write 3 tweet drafts (hook + body + hashtags). Deliver to telegram:7976161601.\""
+   ]
+  },
+  {
+   "text": "09",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "0 9          → 每天上午 9:00"
+   ]
+  },
+  {
+   "text": "123456",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "\"telegram:123456\""
+   ]
+  },
+  {
+   "text": "17585",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "\"telegram:-100123:17585\""
+   ]
+  },
+  {
+   "text": "1–5分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "适用于高频轮询（每 1–5 分钟），只在状态实际发生变化时才需要唤醒 LLM——否则你会为一遍遍的零内容 agent 轮次付费"
+   ]
+  },
+  {
+   "text": "1天",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "1d      → 1 天后运行一次"
+   ]
+  },
+  {
+   "text": "2026 年3 月15 日上午9:00",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "2026-03-15T09:00:00    → 2026 年 3 月 15 日上午 9:00 一次性运行"
+   ]
+  },
+  {
+   "text": "2小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "2h      → 2 小时后运行一次"
+   ]
+  },
+  {
+   "text": "3081",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "30 8 1        → 每月 1 日上午 8:30"
+   ]
+  },
+  {
+   "text": "30m",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "schedule=\"every 30m\","
+   ]
+  },
+  {
+   "text": "5分钟",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "5 分钟"
+   ]
+  },
+  {
+   "text": "60秒",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "Gateway 每 60 秒 tick 一次调度器，在隔离的 agent 会话中运行到期的任务"
+   ]
+  },
+  {
+   "text": "6h",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"every 6h\""
+   ]
+  },
+  {
+   "text": "Hermes",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Hermes 自身的"
+   ]
+  },
+  {
+   "text": "ISO",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "ISO 时间戳"
+   ]
+  },
+  {
+   "text": "Linux",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "Linux：服务器开机启动的系统服务"
+   ]
+  },
+  {
+   "text": "SSH",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "包含不可见 Unicode 技巧、SSH 后门尝试或明显的密钥外泄载荷的 prompt 会被拦截"
+   ]
+  },
+  {
+   "text": "Skillcombo",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"Skill combo\""
+   ]
+  },
+  {
+   "text": "Telegram",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Telegram 主频道"
+   ]
+  },
+  {
+   "text": "Telegramcron",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "Telegram cron 话题（"
+   ]
+  },
+  {
+   "text": "Unicode",
+   "type": "PRODUCT",
+   "count": 1,
+   "content": [
+    "包含不可见 Unicode 技巧、SSH 后门尝试或明显的密钥外泄载荷的 prompt 会被拦截"
+   ]
+  },
+  {
+   "text": "WhatsApp",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "WhatsApp 主账号"
+   ]
+  },
+  {
+   "text": "chatid:",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "deliver=\"telegram:chatid:threadid\""
+   ]
+  },
+  {
+   "text": "cron",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "让你将一个 cron 任务发送到所有已配置的消息频道，无需逐一列举名称"
+   ]
+  },
+  {
+   "text": "cronedit",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "cron edit"
+   ]
+  },
+  {
+   "text": "cronjob",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "（cronjob 工具）可将任务重定向到不同的 profile——调度器会解析该 profile 的"
+   ]
+  },
+  {
+   "text": "cronpause",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/cron pause"
+   ]
+  },
+  {
+   "text": "cronremove",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/cron remove"
+   ]
+  },
+  {
+   "text": "discord",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"discord:#engineering\""
+   ]
+  },
+  {
+   "text": "origin",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "\"origin,all\""
+   ]
+  },
+  {
+   "text": "profile",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "将任务固定到 night-ops profile，无论在哪里调度"
+   ]
+  },
+  {
+   "text": "run",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "/cron run"
+   ]
+  },
+  {
+   "text": "sunday9am",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "schedule=\"every sunday 9am\","
+   ]
+  },
+  {
+   "text": "telegram:",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "deliver=\"telegram:chatid:threadid\""
+   ]
+  },
+  {
+   "text": "true",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "设为 true 使 cron 投递可继续"
+   ]
+  },
+  {
+   "text": "一个",
+   "type": "CARDINAL",
+   "count": 1,
+   "content": [
+    "一个任务聚合多个其他任务结果的扇入模式"
+   ]
+  },
+  {
+   "text": "十六",
+   "type": "DATE",
+   "count": 1,
+   "content": [
+    "但不记得十六进制 ID 时很方便"
+   ]
+  },
+  {
+   "text": "工具",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "（cronjob 工具）可将任务重定向到不同的 profile——调度器会解析该 profile 的"
+   ]
+  },
+  {
+   "text": "每2小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "every 2h     → 每 2 小时"
+   ]
+  },
+  {
+   "text": "每6小时",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "0 /6        → 每 6 小时"
+   ]
+  },
+  {
+   "text": "每周日午夜",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "0 0   0       → 每周日午夜"
+   ]
+  },
+  {
+   "text": "每月1日上午8:30",
+   "type": "TIME",
+   "count": 1,
+   "content": [
+    "30 8 1        → 每月 1 日上午 8:30"
+   ]
+  },
+  {
+   "text": "第二",
+   "type": "ORDINAL",
+   "count": 1,
+   "content": [
+    "会话，它是共享的：频道里的其他闲聊——以及第二个可继续的"
+   ]
+  },
+  {
+   "text": "腾讯",
+   "type": "ORG",
+   "count": 1,
+   "content": [
+    "QQ Bot（腾讯 QQ）"
+   ]
+  },
+  {
+   "text": "静默tick",
+   "type": "PERSON",
+   "count": 1,
+   "content": [
+    "→ 静默 tick（与 LLM 任务使用相同的门控）"
+   ]
+  },
+  {
+   "text": "飞书",
+   "type": "WORK_OF_ART",
+   "count": 1,
+   "content": [
+    "飞书/Lark"
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "source": "123456",
+   "source_type": "CARDINAL",
+   "target": "telegram",
+   "target_type": "PERSON",
+   "label": "nsubj",
+   "via": null,
+   "count": 1,
+   "content": [
+    "\"telegram:123456\""
+   ]
+  },
+  {
+   "source": "telegram:",
+   "source_type": "PERSON",
+   "target": "chatid:",
+   "target_type": "PERSON",
+   "label": "nsubj+nsubj",
+   "via": 7,
+   "count": 1,
+   "content": [
+    "deliver=\"telegram:chatid:threadid\""
+   ]
+  },
+  {
+   "source": "工具",
+   "source_type": "PERSON",
+   "target": "cronjob",
+   "target_type": "ORG",
+   "label": "nn",
+   "via": null,
+   "count": 1,
+   "content": [
+    "（cronjob 工具）可将任务重定向到不同的 profile——调度器会解析该 profile 的"
+   ]
+  }
+ ]
+}

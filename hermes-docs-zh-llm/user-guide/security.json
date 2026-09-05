@@ -1,0 +1,386 @@
+{
+  "source_file": "user-guide/security.md",
+  "model": "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "chunks": 3,
+  "num_entities": 34,
+  "num_relations": 19,
+  "processing_time_sec": 295.0,
+  "entities": [
+    {
+      "name": "Hermes Agent",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Security service with defense layers"
+    },
+    {
+      "name": "CLI",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "Command-line interface for interaction"
+    },
+    {
+      "name": "Gateway",
+      "type": "Service",
+      "aliases": [],
+      "summary": "Service for session management"
+    },
+    {
+      "name": "Docker",
+      "type": "Technology",
+      "aliases": [
+        "Docker Engine"
+      ],
+      "summary": "Container technology for isolation"
+    },
+    {
+      "name": "Singularity",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Container technology for isolation"
+    },
+    {
+      "name": "Modal",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "Container technology for isolation"
+    },
+    {
+      "name": "MCP",
+      "type": "Tool",
+      "aliases": [
+        "Model Context Protocol"
+      ],
+      "summary": "Tool for credential filtering"
+    },
+    {
+      "name": "config.yaml",
+      "type": "File",
+      "aliases": [
+        "Configuration File"
+      ],
+      "summary": "Configuration file for approvals"
+    },
+    {
+      "name": ".env",
+      "type": "File",
+      "aliases": [],
+      "summary": "Environment file for user lists"
+    },
+    {
+      "name": "Telegram",
+      "type": "Platform",
+      "aliases": [
+        "Telegram Bot"
+      ],
+      "summary": "Messaging platform for authorization"
+    },
+    {
+      "name": "Discord",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for authorization"
+    },
+    {
+      "name": "Slack",
+      "type": "Platform",
+      "aliases": [],
+      "summary": "Messaging platform for authorization"
+    },
+    {
+      "name": "YOLO mode",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Mode bypassing command approvals"
+    },
+    {
+      "name": "User authorization",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "System for controlling user access"
+    },
+    {
+      "name": "Dangerous commands",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "Commands requiring user approval"
+    },
+    {
+      "name": "Hermes",
+      "type": "Service",
+      "aliases": [
+        "Hermes Agent"
+      ],
+      "summary": "安全管理系统，处理用户配对和隔离。"
+    },
+    {
+      "name": "docker.py",
+      "type": "File",
+      "aliases": [
+        "Docker Environment Script"
+      ],
+      "summary": "定义Docker容器安全标志的Python脚本。"
+    },
+    {
+      "name": "pairing",
+      "type": "Concept",
+      "aliases": [
+        "Pairing System"
+      ],
+      "summary": "用户配对管理机制，存储待处理和已批准的请求。"
+    },
+    {
+      "name": "terminal",
+      "type": "Tool",
+      "aliases": [
+        "Terminal Backend"
+      ],
+      "summary": "命令行接口，支持本地和远程执行。"
+    },
+    {
+      "name": "environment variable",
+      "type": "Concept",
+      "aliases": [
+        "Env Var"
+      ],
+      "summary": "系统变量，用于传递凭据和配置。"
+    },
+    {
+      "name": "SSRF",
+      "type": "Concept",
+      "aliases": [
+        "Server-Side Request Forgery"
+      ],
+      "summary": "安全防护机制，防止URL注入攻击。"
+    },
+    {
+      "name": "API key",
+      "type": "Concept",
+      "aliases": [
+        "API Key"
+      ],
+      "summary": "认证令牌，用于服务访问。"
+    },
+    {
+      "name": "Browser",
+      "type": "Tool",
+      "aliases": [
+        "Web Browser Tool"
+      ],
+      "summary": "工具，用于网页导航和内容提取。"
+    },
+    {
+      "name": "Web_search",
+      "type": "Tool",
+      "aliases": [
+        "Web Search Tool"
+      ],
+      "summary": "工具，用于搜索和提取网页内容。"
+    },
+    {
+      "name": "Sandbox",
+      "type": "Concept",
+      "aliases": [
+        "Isolation Environment"
+      ],
+      "summary": "隔离环境，提供安全的代码执行。"
+    },
+    {
+      "name": "Tirith",
+      "type": "Tool",
+      "aliases": [],
+      "summary": "命令扫描工具，检测潜在威胁"
+    },
+    {
+      "name": "\\.env",
+      "type": "File",
+      "aliases": [],
+      "summary": "环境变量文件，存储敏感信息"
+    },
+    {
+      "name": "AGENTS.md",
+      "type": "File",
+      "aliases": [],
+      "summary": "系统提示文件，用于安全扫描"
+    },
+    {
+      "name": "tools\\/lazy_deps.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "懒加载依赖管理实现文件"
+    },
+    {
+      "name": "hermes_cli\\/security_advisories.py",
+      "type": "File",
+      "aliases": [],
+      "summary": "供应链安全公告扫描实现文件"
+    },
+    {
+      "name": "Python",
+      "type": "Technology",
+      "aliases": [],
+      "summary": "编程语言，用于 Hermes 实现"
+    },
+    {
+      "name": "Prompt injection",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "注入攻击概念，用于安全扫描"
+    },
+    {
+      "name": "Security scanning",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "安全扫描概念，包括内容级命令检测"
+    },
+    {
+      "name": "Lazy loading",
+      "type": "Concept",
+      "aliases": [],
+      "summary": "懒加载概念，管理依赖安装"
+    }
+  ],
+  "relations": [
+    {
+      "head": "Hermes Agent",
+      "tail": "CLI",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "CLI used for approvals and YOLO mode"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Gateway",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Gateway manages sessions in platforms"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "Docker",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "Container isolation depends on Docker"
+    },
+    {
+      "head": "Hermes Agent",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Configuration from config.yaml sets approval modes"
+    },
+    {
+      "head": "User authorization",
+      "tail": "Telegram",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Platform allowlists control access"
+    },
+    {
+      "head": "YOLO mode",
+      "tail": "Dangerous commands",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "YOLO mode bypasses approvals for dangerous commands"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Docker",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "使用 docker 终端后端时，Hermes 对每个容器应用严格的安全加固。"
+    },
+    {
+      "head": "Docker",
+      "tail": "docker.py",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "每个容器均使用以下标志运行（定义于 tools/environments/docker.py）："
+    },
+    {
+      "head": "config.yaml",
+      "tail": "resource limits",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "容器资源可在 ~/.hermes/config.yaml 中配置："
+    },
+    {
+      "head": "pairing",
+      "tail": "JSON files",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "配对数据存储于 ~/.hermes/pairing/，按平台分为独立的 JSON 文件："
+    },
+    {
+      "head": "Hermes",
+      "tail": "environment variable",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "Hermes 基础设施密钥不应添加到 env_passthrough——它们有专用机制。"
+    },
+    {
+      "head": "MCP",
+      "tail": "environment filtering",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "MCP（Model Context Protocol）服务器子进程接收经过过滤的环境，以防止意外泄露凭据。"
+    },
+    {
+      "head": "terminal",
+      "tail": "env_passthrough",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "在 config.yaml 中手动列出凭据文件：terminal.env_passthrough。"
+    },
+    {
+      "head": "Hermes",
+      "tail": "Tirith",
+      "type": "CONTAINS",
+      "confidence": 0.9,
+      "evidence": "Hermes 集成了 tirith 用于安全扫描"
+    },
+    {
+      "head": "Gateway",
+      "tail": "config.yaml",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "在 config.yaml 中设置 terminal.backend: docker"
+    },
+    {
+      "head": "Tirith",
+      "tail": "SHA-256",
+      "type": "DEPENDS_ON",
+      "confidence": 0.9,
+      "evidence": "进行 SHA-256 校验和验证"
+    },
+    {
+      "head": "Lazy loading",
+      "tail": "dependency management",
+      "type": "IMPLEMENTS",
+      "confidence": 0.9,
+      "evidence": "解决的权衡问题：脆弱性"
+    },
+    {
+      "head": "config.yaml",
+      "tail": "security settings",
+      "type": "MANAGES",
+      "confidence": 0.9,
+      "evidence": "security: tirith_enabled: true"
+    },
+    {
+      "head": "Hermes",
+      "tail": "security_advisories.py",
+      "type": "USES",
+      "confidence": 0.9,
+      "evidence": "Hermes 内置了一个公告扫描器...实现位于 hermes_cli/security_advisories.py"
+    }
+  ],
+  "usage_tokens": {
+    "prompt_tokens": 8915,
+    "completion_tokens": 7507,
+    "total_tokens": 16422,
+    "completion_tokens_details": 0,
+    "prompt_tokens_details": 0,
+    "prompt_cache_hit_tokens": 96,
+    "prompt_cache_miss_tokens": 8819
+  }
+}
