@@ -1139,6 +1139,8 @@ fn analyze_query_intent(query: &str) -> QueryIntent {
     if q.contains("配置")
         || q.contains("config")
         || q.contains("yaml")
+        || q.contains(".yml")
+        || q.contains(".yaml")
         || q.contains("nacos")
         || q.contains("数据源")
         || q.contains("datasource")
@@ -1198,7 +1200,11 @@ fn build_route(
             QueryIntent::CodeSearch => (None, Some("Method".to_string()), None),
             QueryIntent::KnowledgeQuery => (None, None, Some(1)),
             QueryIntent::DocumentSearch => (Some("document".to_string()), None, None),
-            QueryIntent::ConfigSearch => (Some("config".to_string()), None, None),
+            // ConfigSearch 是"软"提示，不强制 file_type=config：含 "config" 关键字的查询
+            // 往往是"处理配置的代码"（如 resolve_roots / ConfigPath），硬缩窄到 config 文件
+            // 会把这些相关代码命中全部屏蔽，导致语义检索退化。配置文件本身会由向量检索
+            // 依据语义自然浮现，无需在此硬性过滤。
+            QueryIntent::ConfigSearch => (None, None, None),
             QueryIntent::HybridSearch => (None, None, None),
         }
     };
@@ -1323,7 +1329,14 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
-/// 高置信精确命中判定：查询的**每个**词元都出现在命中标题/签名/实体类型/文件路径中。
+/// 高置信精确命中判定：查询**每个**词元都命中（强相关），或命中与查询共享足够多的词元
+/// 且向量分不低（次强相关）。
+///
+/// 覆盖两类场景：
+/// 1. 全词命中：查询所有词元都出现在命中标题/签名/实体类型/文件路径中。
+/// 2. 部分但实质命中：≥2 个词元命中且向量 score ≥ 0.55 —— 这类通常是"同一功能但命名不同"
+///    的代码（如 query="config root alias mapping" 命中 resolve_roots_*[root/alias]），
+///    语义上是正确答案，交给 LLM 反而可能被误杀（LLM 对部分重叠倾向判不相关）。
 ///
 /// `query` 原文同时作为兜底（词元为空时退化为原文子串匹配）。
 fn hit_exact_matches(
@@ -1341,11 +1354,18 @@ fn hit_exact_matches(
     .to_lowercase();
 
     if !hay.is_empty() {
-        // 词元全部命中 → 强相关
+        // 1. 词元全部命中 → 强相关（无需看分）
         if !query_tokens.is_empty() && query_tokens.iter().all(|t| hay.contains(t)) {
             return true;
         }
-        // 空词元（纯 CJK 长串且切分不可用）→ 退化为原文子串匹配
+        // 2. 部分命中且向量分不低：≥2 个非空词元命中 + score>=0.55 → 次强相关
+        if !query_tokens.is_empty() {
+            let hit_count = query_tokens.iter().filter(|t| hay.contains(*t)).count();
+            if hit_count >= 2 && h.score as f32 >= 0.55 {
+                return true;
+            }
+        }
+        // 3. 空词元（纯 CJK 长串且切分不可用）→ 退化为原文子串匹配
         if query_tokens.is_empty()
             && !query.trim().is_empty()
             && hay.contains(&query.to_lowercase())
@@ -1715,6 +1735,125 @@ mod tests {
             analyze_query_intent("查找某个文档"),
             QueryIntent::DocumentSearch
         );
+    }
+
+    #[test]
+    fn config_intent_does_not_force_file_type_filter() {
+        // 回归：含 "config" 关键字的查询（如"parse config roots into aliases"）判为
+        // ConfigSearch，但 ConfigSearch 是"软"提示——不得再强制 file_type=config，
+        // 否则会屏蔽掉真正相关的代码命中（resolve_roots 是 .rs 方法而非 config 文件）。
+        // 修复前 ConfigSearch => (Some("config"), None, None)，导致该查询在 code 世界 0 命中。
+        use crate::interfaces::cli::router::{build_route, QueryIntent};
+        let q = "parse config roots into aliases";
+        let intent = analyze_query_intent(q);
+        assert_eq!(intent, QueryIntent::ConfigSearch);
+        // world=code 显式时，ConfigSearch 不应产生 file_type=config 的硬过滤
+        let route = build_route(&intent, "code", false, 0.6, None, None);
+        assert_eq!(
+            route.file_type, None,
+            "ConfigSearch 不得强制 file_type=config"
+        );
+        assert_eq!(route.world, "code");
+    }
+
+    #[test]
+    fn pure_keyword_config_still_detected_as_config_intent() {
+        // 纯配置关键词仍应保留 ConfigSearch 意图（不影响意图识别，只去掉硬过滤）
+        assert_eq!(
+            analyze_query_intent("nacos 配置中心怎么连接"),
+            QueryIntent::ConfigSearch
+        );
+        assert_eq!(
+            analyze_query_intent("datasource"),
+            QueryIntent::ConfigSearch
+        );
+        assert_eq!(
+            analyze_query_intent("application.yml"),
+            QueryIntent::ConfigSearch
+        );
+    }
+
+    #[test]
+    fn hit_exact_matches_keeps_partial_token_overlap() {
+        // 回归：查询 "config root alias mapping"，命中 resolve_roots_* 的标题含 root/alias
+        // 但非全部词元 —— 这种"同功能不同命名"的部分重叠命中应被视为高置信保留，
+        // 不交给 LLM（LLM 对部分重叠倾向误判不相关，导致默认 filter 下 0 命中）。
+        use crate::application::context::search_mcp::SearchHit;
+        let tokens =
+            crate::interfaces::cli::router::normalize_query_tokens("config root alias mapping");
+        let hit = SearchHit {
+            id: "1".into(),
+            title: "resolve_roots_single_mapping_alias_to_path".into(),
+            snippet: String::new(),
+            content: None,
+            source_world: "code".into(),
+            entity_type: "Method".into(),
+            file_type: None,
+            file_type_label: None,
+            score: 0.591,
+            source_ref: None,
+            metadata: None,
+            file_path: Some("src/runtime.rs".into()),
+            project: Some("digital-twin-v2".into()),
+            start_line: None,
+            end_line: None,
+            signature: Some("fn resolve_roots_single_mapping_alias_to_path() -> ".into()),
+            llm_analysis: None,
+            calls: Vec::new(),
+            element_id: None,
+            score_breakdown: None,
+            hop: None,
+            via_same_as: None,
+            relations: None,
+            evidence: None,
+            rerank_degraded: None,
+        };
+        // 该命中含 root/alias/mapping 共3个词元 >= 2 且 score 0.59>=0.55 → 应判定高置信
+        assert!(crate::interfaces::cli::router::hit_exact_matches(
+            &tokens,
+            "config root alias mapping",
+            &hit
+        ));
+    }
+
+    #[test]
+    fn hit_exact_matches_requires_min_score_for_partial() {
+        // 部分重叠但向量分过低(如 0.02 噪音) → 不应算高置信，交给 LLM 判定
+        use crate::application::context::search_mcp::SearchHit;
+        let tokens = crate::interfaces::cli::router::normalize_query_tokens("foo bar baz");
+        let hit = SearchHit {
+            id: "1".into(),
+            title: "some_unrelated_thing".into(),
+            snippet: String::new(),
+            content: None,
+            source_world: "code".into(),
+            entity_type: "Method".into(),
+            file_type: None,
+            file_type_label: None,
+            score: 0.02,
+            source_ref: None,
+            metadata: None,
+            file_path: None,
+            project: Some("p".into()),
+            start_line: None,
+            end_line: None,
+            signature: None,
+            llm_analysis: None,
+            calls: Vec::new(),
+            element_id: None,
+            score_breakdown: None,
+            hop: None,
+            via_same_as: None,
+            relations: None,
+            evidence: None,
+            rerank_degraded: None,
+        };
+        // 标题不含 foo/bar/baz → 不应命中
+        assert!(!crate::interfaces::cli::router::hit_exact_matches(
+            &tokens,
+            "foo bar baz",
+            &hit
+        ));
     }
 
     #[test]
