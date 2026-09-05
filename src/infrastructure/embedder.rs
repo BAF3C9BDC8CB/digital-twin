@@ -1,8 +1,12 @@
 //! Embedding 服务实现——文本到向量的转换。
 //!
 //! 提供用于测试/故障切换的 [`NoopEmbedService`]，以及一个工厂
-//! 函数 [`create_embed_router`]，它根据配置（SiliconFlow + XInference）
-//! 构建 provider 路由器。
+//! 函数 [`create_embed_router`]，它根据配置构建 provider 路由器。
+//!
+//! # 架构（2026-09-05 起）
+//!
+//! 唯一 provider 实现为 SiliconFlow（OpenAI 兼容超集：chat/embeddings 为
+//! OpenAI 标准协议，rerank 为 SiliconFlow 私有扩展端点）。
 
 use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmService, RerankService};
@@ -56,7 +60,7 @@ impl EmbedService for NoopEmbedService {
 
 /// 用于创建 [`EmbedProviderRouter`] 的 provider 配置。
 ///
-/// 每个 provider 都是可选的——只需配置所需的那一个。
+/// provider 可选——只需配置所需的那一个。
 pub struct ProviderConfig {
     /// SiliconFlow 客户端配置。
     pub siliconflow_url: String,
@@ -65,12 +69,6 @@ pub struct ProviderConfig {
     pub siliconflow_model_reranker: String,
     pub siliconflow_model_llm: String,
     pub siliconflow_max_concurrent: usize,
-    /// XInference 客户端配置。
-    pub xinference_url: String,
-    pub xinference_api_key: String,
-    pub xinference_model_embed: String,
-    pub xinference_model_reranker: String,
-    pub xinference_model_llm: String,
     /// 路由配置。
     pub embed_provider: String,
     pub rerank_provider: String,
@@ -87,11 +85,6 @@ impl ProviderConfig {
             siliconflow_model_reranker: "BAAI/bge-reranker-v2-m3".into(),
             siliconflow_model_llm: "Qwen3-14B".into(),
             siliconflow_max_concurrent: 20,
-            xinference_url: String::new(),
-            xinference_api_key: String::new(),
-            xinference_model_embed: String::new(),
-            xinference_model_reranker: String::new(),
-            xinference_model_llm: String::new(),
             embed_provider: "siliconflow".into(),
             rerank_provider: "siliconflow".into(),
             llm_provider: "siliconflow".into(),
@@ -120,33 +113,18 @@ fn build_provider_router(
         None
     };
 
-    let xinference = if !cfg.xinference_url.is_empty() {
-        Some(Arc::new(
-            crate::infrastructure::xinference::XInferenceClient::new(
-                cfg.xinference_url,
-                cfg.xinference_api_key,
-                cfg.xinference_model_embed,
-                cfg.xinference_model_reranker,
-                cfg.xinference_model_llm,
-            ),
-        ))
-    } else {
-        None
-    };
-
     let router_config = ProviderRouterConfig {
         embed_provider: cfg.embed_provider,
         rerank_provider: cfg.rerank_provider,
         llm_provider: cfg.llm_provider,
     };
 
-    EmbedProviderRouter::new(siliconflow, xinference, router_config)
+    EmbedProviderRouter::new(siliconflow, router_config)
 }
 
 /// 根据 provider 配置构建 [`EmbedProviderRouter`]。
 ///
-/// 按配置创建 `SiliconFlowClient` 与 `XInferenceClient`，
-/// 然后用指定的路由规则将它们包装进路由器。
+/// 按配置创建 `SiliconFlowClient`，然后用指定的路由规则包装进路由器。
 pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
     Arc::new(build_provider_router(cfg))
 }

@@ -1,13 +1,10 @@
-//! 项目定位：git root + config.yaml 项目最长前缀匹配。
+//! 代码根定位：git root + config.yaml 注册 root 最长前缀匹配。
 
 use std::path::{Path, PathBuf};
 
-/// config.yaml 项目列表中最长前缀匹配；path 必须先 canonicalize（调用方负责）。
-pub fn match_project<'a>(
-    path: &Path,
-    projects: &'a [(String, PathBuf)],
-) -> Option<(&'a str, &'a Path)> {
-    projects
+/// config.yaml 注册 root 列表中最长前缀匹配；path 必须先 canonicalize（调用方负责）。
+pub fn match_root<'a>(path: &Path, roots: &'a [(String, PathBuf)]) -> Option<(&'a str, &'a Path)> {
+    roots
         .iter()
         .filter(|(_, root)| path.starts_with(root))
         .max_by_key(|(_, root)| root.as_os_str().len())
@@ -33,11 +30,11 @@ pub fn find_git_root(path: &Path) -> Option<PathBuf> {
 /// （同一目录在不同 base 下重复注册时只保留一条）。
 pub fn collect_base_children<'a>(
     input: &Path,
-    projects: &'a [(String, PathBuf)],
+    roots: &'a [(String, PathBuf)],
 ) -> Vec<(&'a str, &'a Path)> {
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<(&str, &Path)> = Vec::new();
-    for (name, root) in projects {
+    for (name, root) in roots {
         let Some(parent) = root.parent() else {
             continue;
         };
@@ -77,7 +74,7 @@ mod tests {
     fn longest_prefix_wins_for_nested_project() {
         let p = Path::new("/data/aflm/warehouse/warehouse-api/src/main");
         let binding = projects();
-        let (name, root) = match_project(p, &binding).unwrap();
+        let (name, root) = match_root(p, &binding).unwrap();
         assert_eq!(name, "warehouse-api");
         assert_eq!(root, Path::new("/data/aflm/warehouse/warehouse-api"));
     }
@@ -86,7 +83,7 @@ mod tests {
     fn falls_back_to_parent_project() {
         let p = Path::new("/data/aflm/warehouse/shared-lib");
         let binding = projects();
-        let (name, _) = match_project(p, &binding).unwrap();
+        let (name, _) = match_root(p, &binding).unwrap();
         assert_eq!(name, "warehouse");
     }
 
@@ -94,14 +91,14 @@ mod tests {
     fn unregistered_returns_none() {
         let p = Path::new("/home/luis/other");
         let binding = projects();
-        assert!(match_project(p, &binding).is_none());
+        assert!(match_root(p, &binding).is_none());
     }
 
     #[test]
     fn exact_root_matches() {
         let p = Path::new("/data/myProject/digital-twin-v2");
         let binding = projects();
-        assert_eq!(match_project(p, &binding).unwrap().0, "dt");
+        assert_eq!(match_root(p, &binding).unwrap().0, "dt");
     }
 
     #[test]

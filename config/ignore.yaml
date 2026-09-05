@@ -1,0 +1,255 @@
+# ===========================================================================
+# 扫描忽略规则（独立于 config.yaml）
+#
+# 由代码在 ~/.config/digital-twin/ignore.yaml 下读取；仓库内此文件为模板，
+# 安装时复制到 home。config.yaml 不再内联这些列表（旧式内联 scanner 段仍兼容）。
+#
+# 加载逻辑（src/runtime.rs scan_config_from）：
+#   1. 内置默认（ScanConfig::default：node_modules/.git/target 等基础集）
+#   2. config.yaml 内联 scanner 段（若存在，历史兼容）
+#   3. 本文件 ignore: 列表（与上两者取并集）
+#
+# ── 统一忽略模型（2026-09）───────────────────────────────────────────────
+# ignore: 一个列表同时描述「目录」与「文件」，条目四类形态：
+#   纯名          node_modules / Cargo.lock        → 相对路径任意层同名目录/文件
+#   相对路径前缀  target/debug / .github/workflows → 仅从代码根开始的路径
+#   扩展名通配    *.class / *.min.js / *.generated.* → 任意深度该扩展名文件
+#   任意通配      .env* / **/test-*.yaml / src/**/gen* → glob（见下）
+#
+# glob 语法：* 匹配单个路径段内任意字符（不跨 /）；? 匹配单个字符；
+#   ** 作为独立段出现时跨路径段匹配（零或多段）。
+# 目录与文件不加区分——命中即忽略（子树整体跳过）。
+# ===========================================================================
+
+ignore:
+# ---- 构建/依赖产物目录 ----
+- node_modules
+- target
+- build
+- dist
+- out
+- .next
+- .nuxt
+- .output
+- .turbo
+- .umi
+- vendor
+- libs
+- classes
+- generated-sources
+- generated-test-sources
+- coverage
+- .nyc_output
+- test-results
+- charts
+- charts-dev
+- charts-test
+- unpackage
+- miniprogram
+
+# ---- 工具/IDE/SCM 目录 ----
+- .git
+- .github
+- .idea
+- .vscode
+- .cursor
+- .fleet
+- .hbuilderx
+- .mvn
+- .weave
+- .cache
+- .tmp
+- .venv
+- .settings
+- .svn
+- .hg
+
+# ---- AI 辅助工具目录（含整库副本/规则/会话，非项目源码）----
+- .claude
+- .superpowers
+- .deepseek
+- .commandcode
+- .rules
+- .well-known
+
+# ---- Python/Node 缓存目录（编译/运行自动生成）----
+- __pycache__
+- .pytest_cache
+- .mypy_cache
+- .ruff_cache
+- .tox
+- .nox
+- .eggs
+- .eslintcache
+- .stylelintcache
+- .parcel-cache
+- .sass-cache
+- .dart_tool
+- .ipynb_checkpoints
+
+# ---- 运行/缓存目录（框架约定）----
+- bootstrap/cache
+- storage/framework
+- resources/views
+- public/storage
+- public/uploads
+- runtime
+- cache
+- logs
+- tmp
+- temp
+- assets
+- img
+- static
+- uploads
+
+# ---- 常用构建/语言产物目录 ----
+- bpmnjs
+- UEditor
+- ueditor
+- default
+
+# ---- 第三方打包/插件产物目录（非本项目源码）----
+- swagger-ui-dist-package
+- build-artifacts
+- optional-plugins
+- optional-reporter-plugins
+- activations
+- bootstrap-plugins
+- pay-offen-components-cache
+
+# ---- 生成/压缩文件（glob）----
+# 注：*.css.map / *.js.map / *.mjs.map / *.d.ts.map 已被下方 *.map 覆盖，无需单列
+- "*.min.js"
+- "*.bundle.js"
+- "*.generated.*"
+- "*.tsbuildinfo"
+
+# ---- 二进制/媒体/归档扩展名（glob，任意深度）----
+- "*.7z"
+- "*.ai"
+- "*.avi"
+- "*.bin"
+- "*.bmp"
+- "*.bz2"
+- "*.class"
+- "*.dat"
+- "*.db"
+- "*.db-journal"
+- "*.dex"
+- "*.dll"
+- "*.doc"
+- "*.docx"
+- "*.dylib"
+- "*.ear"
+- "*.eot"
+- "*.exe"
+- "*.exp"
+- "*.flv"
+- "*.gif"
+- "*.gz"
+- "*.ico"
+- "*.ilk"
+- "*.iml"
+- "*.jar"
+- "*.jpeg"
+- "*.jpg"
+- "*.lib"
+- "*.lock"
+- "*.log"
+- "*.map"
+- "*.mkv"
+- "*.mov"
+- "*.mp3"
+- "*.mp4"
+- "*.o"
+- "*.obj"
+- "*.otf"
+- "*.pak"
+- "*.pdb"
+- "*.pdf"
+- "*.phar"
+- "*.php~"
+- "*.png"
+- "*.ppt"
+- "*.pptx"
+- "*.psd"
+- "*.pyc"
+- "*.pyo"
+- "*.rar"
+- "*.rlib"
+- "*.rmeta"
+- "*.so"
+- "*.sql"
+- "*.sqlite"
+- "*.sqlite3"
+- "*.svg"
+- "*.tar"
+- "*.test"
+- "*.ttf"
+- "*.wal"
+- "*.war"
+- "*.wav"
+- "*.webm"
+- "*.webp"
+- "*.woff"
+- "*.woff2"
+- "*.xls"
+- "*.xlsx"
+- "*.zip"
+
+# ---- 配置文件/锁文件/CI 文件（精确名，任意深度）----
+- .DS_Store
+- .babelrc
+- .circleci/config.yml
+- .cursorrules
+- .dockerignore
+- .editorconfig
+- .env
+- .env.example
+- .env.local
+- .eslintrc
+- .gitattributes
+- .gitignore
+- .gitkeep
+- .gitlab-ci.yml
+- .gitmodules
+- .npmrc
+- .prettierignore
+- .prettierrc
+- .stylelintrc
+- .travis.yml
+- .yarnrc
+- CHANGELOG.md
+- CMakeLists.txt
+- CODEOWNERS
+- COPYING
+- Dockerfile
+- Jenkinsfile
+- Jenkinsfile.java17
+- LICENSE
+- LICENSE.md
+- Makefile
+- NOTICE
+- VERSION
+- app-version.txt
+- azure-pipelines.yml
+- banner.txt
+- bitbucket-pipelines.yml
+- bun.lockb
+- docker-compose.dev.yml
+- docker-compose.override.yml
+- docker-compose.yaml
+- docker-compose.yml
+- go.sum
+- gradle.properties
+- npm-shrinkwrap.json
+- package-lock.json
+- pnpm-lock.yaml
+- robots.txt
+- settings.gradle
+- version.txt
+- web.config
+
+# 最大文件大小（字节；默认 524288 = 500KB）
+# max_file_size: 524288

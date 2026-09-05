@@ -1,8 +1,6 @@
 //! KG Router 核心服务实现。
 
-use crate::application::pipeline::config::{
-    KgRouterConfig, ObservabilityConfig, ResultFilterConfig,
-};
+use crate::application::pipeline::config::KgRouterConfig;
 use crate::domain::error::DtError;
 use crate::domain::traits::{GraphRepository, LlmService};
 use serde::{Deserialize, Serialize};
@@ -96,14 +94,6 @@ impl KgRouter {
         system_prompt: &str,
         user_prompt: &str,
     ) -> Result<String, DtError> {
-        if !self.config.enabled {
-            // 未启用路由，直接使用默认参数调用
-            return self
-                .llm_service
-                .chat(system_prompt, user_prompt, 0.1, 4096)
-                .await;
-        }
-
         let start = Instant::now();
 
         // 1. 从知识图谱查询路由规则
@@ -399,8 +389,6 @@ impl KgRouter {
             MERGE (r:RouteRule {task_type: 'CodeExtraction'})
             SET r.primary_provider = 'siliconflow',
                 r.primary_model = 'tencent/Hunyuan-MT-7B',
-                r.fallback_provider = 'xinference',
-                r.fallback_model = 'qwen3.5',
                 r.temperature = 0.1,
                 r.max_tokens = 2000
         "#,
@@ -413,10 +401,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'DocSummarization'})
-            SET r.primary_provider = 'xinference',
-                r.primary_model = 'qwen3.5',
-                r.fallback_provider = 'siliconflow',
-                r.fallback_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'siliconflow',
+                r.primary_model = 'tencent/Hunyuan-MT-7B',
                 r.temperature = 0.3,
                 r.max_tokens = 1000
         "#,
@@ -429,10 +415,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'KnowledgeQuery'})
-            SET r.primary_provider = 'xinference',
-                r.primary_model = 'qwen3.5',
-                r.fallback_provider = 'siliconflow',
-                r.fallback_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'siliconflow',
+                r.primary_model = 'tencent/Hunyuan-MT-7B',
                 r.temperature = 0.2,
                 r.max_tokens = 512
         "#,
@@ -447,8 +431,6 @@ impl KgRouter {
             MERGE (r:RouteRule {task_type: 'ResultFiltering'})
             SET r.primary_provider = 'siliconflow',
                 r.primary_model = 'tencent/Hunyuan-MT-7B',
-                r.fallback_provider = 'xinference',
-                r.fallback_model = 'qwen3.5',
                 r.temperature = 0.0,
                 r.max_tokens = 200
         "#,

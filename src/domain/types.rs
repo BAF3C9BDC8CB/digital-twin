@@ -284,15 +284,26 @@ pub struct FileSnapshot {
     pub updated_at: String,
 }
 
-/// 扫描器配置。
+/// 扫描器配置（统一忽略模型）。
+///
+/// 文件与目录的忽略规则合并为一个入口 [`Self::is_ignored`]（见 scanner.rs），
+/// 内部按条目形态分两类存放：
+/// - `ignore_names`：不含通配符的精确条目——纯名（`node_modules`、
+///   `Cargo.lock`）匹配相对路径任意层同名目录/文件；含 `/` 的条目
+///   （`target/debug`、`.github/workflows`）按相对路径前缀匹配。
+/// - `ignore_globs`：含通配符（`*` / `?` / `**`）的 glob 条目——
+///   `*.class` 命中任意深度 `.class` 文件；`**/test-*.yaml` 命中整条
+///   相对路径；`/` 两侧均可出现通配。
+///
+/// 三种旧写法（ignore_dirs / ignore_files / ignore_ext）已归一化为上述
+/// 模型：目录名/文件名 → `ignore_names`；扩展名（`.class`）→ `*.class`。
 #[derive(Debug, Clone)]
 pub struct ScanConfig {
-    /// 需要忽略的目录（单段目录名或相对路径前缀，例如 "node_modules"、"target/debug"）。
-    pub ignore_dirs: HashSet<String>,
-    /// 需要忽略的文件名（精确匹配，例如 "Cargo.lock"、"composer.lock"）。
-    pub ignore_files: HashSet<String>,
-    /// 需要忽略的扩展名（带点前缀，例如 ".class"）。
-    pub ignore_ext: HashSet<String>,
+    /// 精确忽略名（无通配）：纯名匹配任意层同名组件；含 `/` 条目按相对路径前缀匹配。
+    pub ignore_names: HashSet<String>,
+    /// 通配忽略条目（含 `*` / `?`）：不含 `/` 的条目匹配任意层单个组件
+    /// （如 `*.class`、`.env*`）；含 `/` 的条目匹配整条相对路径（如 `target/*/out`）。
+    pub ignore_globs: Vec<String>,
     /// 最大文件大小（字节）。
     pub max_file_size: u64,
     /// 文档文件扩展名（不带点前缀，例如 "md"、"txt"）。
@@ -301,54 +312,87 @@ pub struct ScanConfig {
     pub max_doc_file_size: u64,
 }
 
+impl ScanConfig {
+    /// 加入一条统一忽略规则。
+    ///
+    /// 自动分类：含通配符 → glob 桶；否则 → 精确名桶。
+    pub fn add_ignore(&mut self, entry: &str) {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return;
+        }
+        if entry.contains('*') || entry.contains('?') || entry.contains('[') {
+            if !self.ignore_globs.iter().any(|g| g == entry) {
+                self.ignore_globs.push(entry.to_string());
+            }
+        } else if !entry.contains('/') {
+            self.ignore_names.insert(entry.to_string());
+        } else {
+            // 含 `/` 的精确路径条目——保留原始形态（前缀匹配）。
+            self.ignore_names.insert(entry.to_string());
+        }
+    }
+
+    /// 单条相对路径（相对扫描根，正斜杠）是否命中任一忽略规则。
+    pub fn is_ignored(&self, rel: &str) -> bool {
+        crate::infrastructure::scanner::is_ignored(rel, self)
+    }
+}
+
 impl Default for ScanConfig {
     fn default() -> Self {
-        Self {
-            ignore_dirs: [
-                "node_modules",
-                ".git",
-                "target",
-                "build",
-                "__pycache__",
-                ".venv",
-                "dist",
-                ".next",
-                "vendor",
-                ".idea",
-                ".vscode",
-                "coverage",
-                ".nyc_output",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
-            ignore_files: [
-                "composer.lock",
-                "Gemfile.lock",
-                "Cargo.lock",
-                "poetry.lock",
-                "Pipfile.lock",
-                "mix.lock",
-                "yarn-error.log",
-                "npm-debug.log",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
-            ignore_ext: [
-                ".class", ".jar", ".war", ".so", ".dll", ".exe", ".bin", ".png", ".jpg", ".jpeg",
-                ".gif", ".svg", ".ico", ".zip", ".tar", ".gz", ".bz2", ".pdf", ".lock",
-            ]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        // 内置默认集：目录/文件名 → names；扩展名 → glob（*.ext）。
+        let mut cfg = ScanConfig {
+            ignore_names: HashSet::new(),
+            ignore_globs: Vec::new(),
             max_file_size: 524_288, // 500 KB
             document_extensions: ["md", "txt", "pdf", "yaml", "yml", "properties"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
             max_doc_file_size: 5_242_880, // 5 MB
+        };
+        for d in [
+            "node_modules",
+            ".git",
+            "target",
+            "build",
+            "__pycache__",
+            ".venv",
+            "dist",
+            ".next",
+            "vendor",
+            ".idea",
+            ".vscode",
+            "coverage",
+            ".nyc_output",
+        ] {
+            cfg.ignore_names.insert(d.to_string());
         }
+        for f in [
+            "composer.lock",
+            "Gemfile.lock",
+            "Cargo.lock",
+            "poetry.lock",
+            "Pipfile.lock",
+            "mix.lock",
+            "yarn-error.log",
+            "npm-debug.log",
+        ] {
+            cfg.ignore_names.insert(f.to_string());
+        }
+        for ext in [
+            ".class", ".jar", ".war", ".so", ".dll", ".exe", ".bin", ".png", ".jpg", ".jpeg",
+            ".gif", ".svg", ".ico", ".zip", ".tar", ".gz", ".bz2", ".pdf", ".lock",
+        ] {
+            // "*.class" 等——glob：命中任意深度该扩展名文件
+            cfg.ignore_globs.push(format!("*{ext}"));
+        }
+        // 生成/压缩产物文件（原 scanner.rs collect_files 硬编码规则）
+        cfg.ignore_globs.push("*.min.js".into());
+        cfg.ignore_globs.push("*.bundle.js".into());
+        cfg.ignore_globs.push("*.generated.*".into());
+        cfg
     }
 }
 
@@ -435,9 +479,40 @@ mod tests {
     #[test]
     fn scan_config_default_ignores_dirs() {
         let cfg = ScanConfig::default();
-        assert!(cfg.ignore_dirs.contains("node_modules"));
-        assert!(cfg.ignore_dirs.contains(".git"));
-        assert!(!cfg.ignore_dirs.contains("src"));
+        // 统一忽略模型：默认精确名覆盖 node_modules/.git，通配覆盖 *.class 等
+        assert!(cfg.is_ignored("node_modules"));
+        assert!(cfg.is_ignored(".git"));
+        assert!(cfg.is_ignored("a/b/node_modules/c/x.rs")); // 任意层命中
+        assert!(cfg.is_ignored("target/debug/foo.rs")); // target 命中（前缀+组件）
+        assert!(cfg.is_ignored("lib/foo.class")); // 扩展名 glob
+        assert!(!cfg.is_ignored("src"));
+        assert!(!cfg.is_ignored("src/main.rs"));
+    }
+
+    #[test]
+    fn scan_config_glob_matching() {
+        let mut cfg = ScanConfig::default();
+        cfg.add_ignore("*.log");
+        cfg.add_ignore(".env*");
+        cfg.add_ignore("**/test-*.yaml");
+        cfg.add_ignore("target/*/out");
+        // 无 / 通配：任意层命中
+        assert!(cfg.is_ignored("a/b/x.log"));
+        assert!(cfg.is_ignored("nested/.env.local"));
+        assert!(!cfg.is_ignored("a/b/x.log.txt"));
+        // 有 / 通配：整条路径 glob
+        assert!(cfg.is_ignored("x/test-config.yaml"));
+        assert!(cfg.is_ignored("a/b/test-abc.yaml"));
+        assert!(!cfg.is_ignored("a/test-abc.yml"));
+        assert!(cfg.is_ignored("build/release/out")); // 默认集 build 命中整段前缀
+                                                      // 独立模式：确认 `*` 至少匹配一段（不与默认集冲突）
+        cfg.add_ignore("zones/*/out");
+        assert!(cfg.is_ignored("zones/na/out"));
+        assert!(!cfg.is_ignored("zones/out")); // * 至少一段
+                                               // ? 单字符
+        cfg.add_ignore("file?.tmp");
+        assert!(cfg.is_ignored("file1.tmp"));
+        assert!(!cfg.is_ignored("file12.tmp"));
     }
 
     #[test]

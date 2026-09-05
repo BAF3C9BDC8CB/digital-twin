@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 const SOURCE_EXTS: &[&str] = &["java", "py", "ts", "tsx", "js", "jsx", "go", "rs", "php"];
 
 /// 扫描 dir 的一级子目录，返回含源码的候选项目（按 path 排序）。
-/// 排除：ScanConfig::default().ignore_dirs 目录名 + ignored_dirs_file 中列出的绝对路径。
+/// 排除：ScanConfig 默认忽略规则命中的目录名 + ignored_dirs_file 中列出的绝对路径。
 pub fn scan_candidates(dir: &Path, ignored_dirs_file: &Path) -> Vec<Candidate> {
     let extra_ignored = read_ignored_file(ignored_dirs_file);
-    let default_ignored = crate::domain::types::ScanConfig::default().ignore_dirs;
+    let default_cfg = crate::domain::types::ScanConfig::default();
 
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -21,7 +21,7 @@ pub fn scan_candidates(dir: &Path, ignored_dirs_file: &Path) -> Vec<Candidate> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if default_ignored.contains(&name) || name.starts_with('.') {
+        if default_cfg.is_ignored(&name) || name.starts_with('.') {
             continue;
         }
         if extra_ignored.iter().any(|p| p == &path) {
@@ -53,7 +53,7 @@ fn read_ignored_file(path: &Path) -> Vec<PathBuf> {
 }
 
 fn has_source_within(dir: &Path, depth: u8) -> bool {
-    let default_ignored = crate::domain::types::ScanConfig::default().ignore_dirs;
+    let default_cfg = crate::domain::types::ScanConfig::default();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
@@ -63,7 +63,7 @@ fn has_source_within(dir: &Path, depth: u8) -> bool {
         if path.is_dir() {
             // depth 只限制目录下钻层数；本层文件始终检查
             if depth > 0
-                && !default_ignored.contains(&name)
+                && !default_cfg.is_ignored(&name)
                 && !name.starts_with('.')
                 && has_source_within(&path, depth - 1)
             {

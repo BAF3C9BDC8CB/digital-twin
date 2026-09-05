@@ -69,30 +69,77 @@ pub async fn handle_router_search(
         .unwrap_or_default();
 
     if early_exit.enabled && !should_search(query) {
-        if explain {
-            println!("=== 路由决策 ===");
-            println!("查询: {}", query);
-            println!("L0 拦截: 无需检索（纯闲聊/寒暄/算术，未命中实体或意图特征）");
-            println!();
-        }
-        if json_output {
-            println!(
-                "{}",
-                crate::interfaces::cli::search_render::render_json(
-                    &crate::application::context::search_mcp::CrossWorldResult {
-                        query: query.to_string(),
-                        world: "none".to_string(),
-                        hits: Vec::new(),
-                        total: 0,
-                        per_world_counts: Default::default(),
-                        degraded: Vec::new(),
-                    }
-                )
+        // ---- LLM 门控二次确认（不对称策略）----
+        // 规则 L0 判定"不该搜"时，若开启 llm_gate，则问 LLM 确认：
+        // LLM 说该搜 → 放行（规则误杀兜底）；LLM 说不该搜 → 拦截返回空。
+        // 规则放行时直接过，不调 LLM（省延迟）。
+        let gate_cfg = cfg
+            .kg_router
+            .as_ref()
+            .map(|r| r.llm_gate.clone())
+            .unwrap_or_default();
+        let mut llm_approves = false;
+        if gate_cfg.enabled {
+            let llm = crate::infrastructure::embedder::create_llm_router(
+                crate::interfaces::cli::build::provider_config_from_pipeline(),
             );
-        } else {
-            println!("无需检索：该查询未命中项目/服务/类名等实体或检索意图特征。");
+            match judge_search_with_llm(
+                llm.as_ref(),
+                query,
+                gate_cfg.max_tokens,
+                gate_cfg.temperature,
+            )
+            .await
+            {
+                Ok(true) => {
+                    llm_approves = true;
+                    if explain {
+                        println!("=== 路由决策 ===");
+                        println!("查询: {}", query);
+                        println!("L0 规则拦截，但 LLM 门控判定值得检索 → 放行");
+                        println!();
+                    }
+                }
+                Ok(false) => {
+                    if explain {
+                        println!("=== 路由决策 ===");
+                        println!("查询: {}", query);
+                        println!("L0 规则拦截 + LLM 门控确认无需检索 → 直接返回");
+                        println!();
+                    }
+                }
+                Err(e) => {
+                    // LLM 判断失败：保守拦截（与纯规则 L0 行为一致），记日志
+                    tracing::warn!("LLM 门控判断失败({e})，按规则拦截处理: {query}");
+                }
+            }
         }
-        return Ok(());
+        if !llm_approves {
+            if explain && !gate_cfg.enabled {
+                println!("=== 路由决策 ===");
+                println!("查询: {}", query);
+                println!("L0 拦截: 无需检索（纯闲聊/寒暄/算术，未命中实体或意图特征）");
+                println!();
+            }
+            if json_output {
+                println!(
+                    "{}",
+                    crate::interfaces::cli::search_render::render_json(
+                        &crate::application::context::search_mcp::CrossWorldResult {
+                            query: query.to_string(),
+                            world: "none".to_string(),
+                            hits: Vec::new(),
+                            total: 0,
+                            per_world_counts: Default::default(),
+                            degraded: Vec::new(),
+                        }
+                    )
+                );
+            } else {
+                println!("无需检索：该查询未命中项目/服务/类名等实体或检索意图特征。");
+            }
+            return Ok(());
+        }
     }
 
     // ---- 第一层：hint 意图识别 ----
@@ -300,26 +347,59 @@ fn has_search_anchor(query: &str) -> bool {
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .filter(|t| !t.is_empty())
         .collect();
-    if ascii_tokens.iter().any(|t| {
-        t.len() >= 2
-            && (t.chars().any(|c| c.is_ascii_uppercase()) || t.contains('_'))
-    }) {
+    if ascii_tokens
+        .iter()
+        .any(|t| t.len() >= 2 && (t.chars().any(|c| c.is_ascii_uppercase()) || t.contains('_')))
+    {
         return true;
     }
     // 2. 内容词：jieba 去虚词后，任一非通用词即视为锚点。
     //    通用词表 = 内置默认 + 外部 `config/anchorless-words.txt`（并集，只增不减）。
-    let kws =
-        crate::application::knowledge::extract::retrieve::keywords_of(query, 20);
+    let kws = crate::application::knowledge::extract::retrieve::keywords_of(query, 20);
     kws.iter()
         .any(|kw| !anchorless_vocab_external().contains(&kw.to_lowercase()))
 }
 
 /// 视为强检索锚点的文件后缀（命中即放行）。
 const FILE_SUFFIX_ANCHORS: &[&str] = &[
-    ".rs", ".py", ".php", ".java", ".js", ".ts", ".tsx", ".jsx", ".go", ".c", ".cpp",
-    ".h", ".hpp", ".cs", ".kt", ".swift", ".rb", ".scala", ".md", ".yaml", ".yml",
-    ".json", ".xml", ".toml", ".ini", ".conf", ".sql", ".sh", ".bash", ".css", ".html",
-    ".vue", ".svelte", ".txt", ".log", ".properties", ".gradle", ".lock",
+    ".rs",
+    ".py",
+    ".php",
+    ".java",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".kt",
+    ".swift",
+    ".rb",
+    ".scala",
+    ".md",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".xml",
+    ".toml",
+    ".ini",
+    ".conf",
+    ".sql",
+    ".sh",
+    ".bash",
+    ".css",
+    ".html",
+    ".vue",
+    ".svelte",
+    ".txt",
+    ".log",
+    ".properties",
+    ".gradle",
+    ".lock",
 ];
 
 /// 通用任务/指代词表——单独出现不代表可检索的具体对象（无检索锚点）。
@@ -330,41 +410,262 @@ const FILE_SUFFIX_ANCHORS: &[&str] = &[
 /// 否则会误拦"支付超时怎么配置 / 接口怎么了 / 服务怎么了"等有效查询。
 const GENERIC_ANCHORLESS_WORDS: &[&str] = &[
     // 任务动词（无宾语时无具体对象可查）
-    "实现", "帮助", "帮忙", "设计", "开发", "编写", "编写一", "写", "写一", "写一个",
-    "改造", "重构", "修复", "解决", "处理", "排查", "检查", "测试", "调试", "优化",
-    "改善", "提升", "改进", "分析", "介绍", "说明", "总结", "梳理", "描述", "解释",
-    "建议", "推荐", "评估", "规划", "思考", "想想", "看看", "了解", "学习", "研究",
-    "使用", "运用", "操作", "创建", "新增", "添加", "删除", "修改", "完成", "搞定",
-    "考虑", "讨论", "聊聊", "看看", "查看", "介绍下",
+    "实现",
+    "帮助",
+    "帮忙",
+    "设计",
+    "开发",
+    "编写",
+    "编写一",
+    "写",
+    "写一",
+    "写一个",
+    "改造",
+    "重构",
+    "修复",
+    "解决",
+    "处理",
+    "排查",
+    "检查",
+    "测试",
+    "调试",
+    "优化",
+    "改善",
+    "提升",
+    "改进",
+    "分析",
+    "介绍",
+    "说明",
+    "总结",
+    "梳理",
+    "描述",
+    "解释",
+    "建议",
+    "推荐",
+    "评估",
+    "规划",
+    "思考",
+    "想想",
+    "看看",
+    "了解",
+    "学习",
+    "研究",
+    "使用",
+    "运用",
+    "操作",
+    "创建",
+    "新增",
+    "添加",
+    "删除",
+    "修改",
+    "完成",
+    "搞定",
+    "考虑",
+    "讨论",
+    "聊聊",
+    "看看",
+    "查看",
+    "介绍下",
     // 诊断/根因类（"帮我检查确定的原因"这类缺宾语，无具体可检索对象）
-    "确定", "确认", "判断", "查明", "定位", "找出", "找到", "发现", "原因", "根因",
-    "来源", "根本", "本质", "关键", "问题", "问题点", "异常", "故障", "错误", "报错",
-    "当前", "现在", "之前", "刚才", "此时", "此刻", "整体", "全部", "整个", "本次",
-    "这次", "上次", "近期", "最近",
+    "确定",
+    "确认",
+    "判断",
+    "查明",
+    "定位",
+    "找出",
+    "找到",
+    "发现",
+    "原因",
+    "根因",
+    "来源",
+    "根本",
+    "本质",
+    "关键",
+    "问题",
+    "问题点",
+    "异常",
+    "故障",
+    "错误",
+    "报错",
+    "当前",
+    "现在",
+    "之前",
+    "刚才",
+    "此时",
+    "此刻",
+    "整体",
+    "全部",
+    "整个",
+    "本次",
+    "这次",
+    "上次",
+    "近期",
+    "最近",
     // 动词+一下 的 jieba 粘连词（"检查一下/看下/分析一下"整词出现）
-    "检查一下", "看一下", "看下", "分析一下", "排查一下", "确定一下", "确认一下",
-    "介绍一下", "讲解一下", "说一下", "讲一下", "试一下", "测一下", "研究一下",
-    "了解一下", "评估一下", "想想看",
+    "检查一下",
+    "看一下",
+    "看下",
+    "分析一下",
+    "排查一下",
+    "确定一下",
+    "确认一下",
+    "介绍一下",
+    "讲解一下",
+    "说一下",
+    "讲一下",
+    "试一下",
+    "测一下",
+    "研究一下",
+    "了解一下",
+    "评估一下",
+    "想想看",
     // 抽象/泛指名词（无具体指向；服务/接口/配置等真实技术词绝不入表）
-    "文件", "代码", "内容", "功能", "模块", "项目", "程序", "应用", "方案", "思路",
-    "想法", "需求", "任务", "工作", "情况", "事情", "东西", "业务", "产品", "页面",
-    "组件", "工具", "数据", "流程", "逻辑", "场景", "能力", "特性", "属性", "结构",
-    "架构", "层面", "部分", "方面", "框架", "平台", "文档", "手册", "类型", "类别",
-    "区别", "原理", "概述", "流程", "步骤", "操作", "用法", "用途",
+    "文件",
+    "代码",
+    "内容",
+    "功能",
+    "模块",
+    "项目",
+    "程序",
+    "应用",
+    "方案",
+    "思路",
+    "想法",
+    "需求",
+    "任务",
+    "工作",
+    "情况",
+    "事情",
+    "东西",
+    "业务",
+    "产品",
+    "页面",
+    "组件",
+    "工具",
+    "数据",
+    "流程",
+    "逻辑",
+    "场景",
+    "能力",
+    "特性",
+    "属性",
+    "结构",
+    "架构",
+    "层面",
+    "部分",
+    "方面",
+    "框架",
+    "平台",
+    "文档",
+    "手册",
+    "类型",
+    "类别",
+    "区别",
+    "原理",
+    "概述",
+    "流程",
+    "步骤",
+    "操作",
+    "用法",
+    "用途",
     // 指代/量词/疑问（jieba 去虚词后可能残留）
-    "一些", "某些", "某个", "某种", "一个", "那个", "这个", "哪些", "什么", "怎么",
-    "怎样", "如何", "为啥", "为什么", "要", "会", "能", "可以", "应该", "想要",
-    "需要", "就是", "还有", "然后", "之后", "的话", "的话", "吗", "呢",
+    "一些",
+    "某些",
+    "某个",
+    "某种",
+    "一个",
+    "那个",
+    "这个",
+    "哪些",
+    "什么",
+    "怎么",
+    "怎样",
+    "如何",
+    "为啥",
+    "为什么",
+    "要",
+    "会",
+    "能",
+    "可以",
+    "应该",
+    "想要",
+    "需要",
+    "就是",
+    "还有",
+    "然后",
+    "之后",
+    "的话",
+    "的话",
+    "吗",
+    "呢",
     // jieba 误切碎片（常见于"介绍+一下/有+哪些/怎么+办"等粘连，非真实业务词）
-    "下有", "一下", "有哪", "有哪些", "有一", "干嘛", "怎么办", "来", "去", "搞",
-    "弄", "做", "整", "弄一", "搞一", "整一", "聊", "谈", "讲", "说", "看", "找",
+    "下有",
+    "一下",
+    "有哪",
+    "有哪些",
+    "有一",
+    "干嘛",
+    "怎么办",
+    "来",
+    "去",
+    "搞",
+    "弄",
+    "做",
+    "整",
+    "弄一",
+    "搞一",
+    "整一",
+    "聊",
+    "谈",
+    "讲",
+    "说",
+    "看",
+    "找",
     // 英文通用（任务动词/泛指）
-    "implement", "implementation", "help", "advice", "suggestion", "suggest",
-    "analyze", "analyse", "analysis", "explain", "introduce", "optimize", "improve",
-    "design", "develop", "create", "write", "make", "build", "fix", "solve", "check",
-    "test", "review", "how", "what", "why", "do", "some", "about", "thing", "stuff",
-    "feature", "module", "project", "function", "method", "code", "file", "idea",
-    "plan", "problem", "issue", "way",
+    "implement",
+    "implementation",
+    "help",
+    "advice",
+    "suggestion",
+    "suggest",
+    "analyze",
+    "analyse",
+    "analysis",
+    "explain",
+    "introduce",
+    "optimize",
+    "improve",
+    "design",
+    "develop",
+    "create",
+    "write",
+    "make",
+    "build",
+    "fix",
+    "solve",
+    "check",
+    "test",
+    "review",
+    "how",
+    "what",
+    "why",
+    "do",
+    "some",
+    "about",
+    "thing",
+    "stuff",
+    "feature",
+    "module",
+    "project",
+    "function",
+    "method",
+    "code",
+    "file",
+    "idea",
+    "plan",
+    "problem",
+    "issue",
+    "way",
 ];
 
 /// 闲聊词表（内容级，非短语级）。
@@ -723,7 +1024,11 @@ fn load_casual_words() -> Option<Vec<String>> {
 ///
 /// 返回空 Vec 表示未找到可用文件；调用方应回退到内置默认词表。
 fn load_anchorless_words() -> Option<Vec<String>> {
-    load_external_wordlist("DT_ANCHORLESS_WORDS_FILE", "anchorless-words.txt", "无锚点词表")
+    load_external_wordlist(
+        "DT_ANCHORLESS_WORDS_FILE",
+        "anchorless-words.txt",
+        "无锚点词表",
+    )
 }
 
 /// 通用外部词表加载器：按 环境变量 → CWD config → ~/.config/digital-twin → exe config
@@ -1048,16 +1353,16 @@ async fn judge_relevance(
     let system_prompt = r#"你是搜索结果相关性评估专家。根据用户查询和单条搜索结果，判断它是否真正相关。
 
 判定规则：
-1. 查询若只含通用意图词（如"帮我实现"、"给我建议"、"介绍一下"、"分析一下"），不含任何具体对象（代码符号、文件名、配置项、业务名、报错等），则任何命中都是多余检索 → 判"不相关"。
-2. 代码类命中（Method/Class）：查询只要涉及该文件/方法/类所在的项目、路径、文件、业务领域，或方法名与查询关键词一致，即判"相关"。
-3. 文档/知识类命中：摘要/原文与查询对象（含业务概念、配置项、技术术语）相关即判"相关"；仅字符串表面相同但语义无关时判"不相关"。
-4. 拿不准时倾向"相关"（宁可多留，不要误删有效结果）。
+1. 查询若只含通用意图词（如"帮我实现"、"给我建议"、"介绍一下"、"分析一下"），不含任何具体对象（代码符号、文件名、配置项、业务名、报错等），则任何命中都是多余检索 → 判 relevant=false。
+2. 代码类命中（Method/Class）：查询只要涉及该文件/方法/类所在的项目、路径、文件、业务领域，或方法名与查询关键词一致，即判 relevant=true；仅撞上方法名（如 help / execute / recommend 等通用动词名）但业务无关 → relevant=false。
+3. 文档/知识类命中：摘要/原文与查询对象（含业务概念、配置项、技术术语）相关即判 relevant=true；仅字符串表面相同但语义无关时判 relevant=false。
+4. 拿不准时倾向 relevant=true（宁可多留，不要误删有效结果）。
 
-输出格式（只输出一行，不要解释）：
-相关 或 不相关"#;
+只输出 JSON，不要任何解释，格式：
+{"relevant": true或false, "reason": "15字以内理由"}"#;
 
     let user_prompt = format!(
-        "查询：{}\n\n单条搜索结果：\n{}\n\n结论：",
+        "用户查询：{}\n\n单条搜索结果：\n{}\n\n请判断。",
         query,
         format_hit_context(h)
     );
@@ -1071,35 +1376,131 @@ async fn judge_relevance(
         }
     };
 
-    // 解析判定：将响应规范化，仅当明确输出“不相关”时才移除。
-    // 响应可能带前后空格/标点/追问，这里取首个判定词。
-    let norm = resp.trim();
+    // 解析判定：优先 JSON（{"relevant": bool}），失败时降级旧文本格式解析。
+    if let Some(b) = parse_relevance_json(&resp) {
+        return Ok(b);
+    }
 
-    // 1. 明确以“不相关”开头 → 不相关，移除。
-    //    必须先于子串检查：字符串“不相关”本身包含子串“相关”，若先查 contains("相关")
-    //    会把“不相关”误判成“模型展开解释”而保守保留，导致 LLM 过滤失效。
+    // 降级：文本格式解析（兼容旧模型/输出不稳定场景）。
+    parse_relevance_text(&resp)
+}
+
+/// 从 LLM 相关性判断输出中解析 JSON `{"relevant": bool}`。
+/// 返回 None 表示无法解析（调用方降级文本解析）。容忍 ```json 围栏与前后杂讯。
+fn parse_relevance_json(resp: &str) -> Option<bool> {
+    let trimmed = resp.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(trimmed)
+        .trim_end_matches("```")
+        .trim();
+    let start = body.find('{')?;
+    let end_rel = body.rfind('}')?;
+    if end_rel <= start {
+        return None;
+    }
+    let obj: serde_json::Value = serde_json::from_str(&body[start..=end_rel]).ok()?;
+    obj.get("relevant").and_then(|v| v.as_bool())
+}
+
+/// 旧文本格式降级解析：响应中出现"不相关"则 false，否则视为相关（保守保留）。
+fn parse_relevance_text(resp: &str) -> Result<bool, DtError> {
+    let norm = resp.trim();
+    // 1. 明确以"不相关"开头 → 不相关，移除。
     if norm.starts_with("不相关") {
         return Ok(false);
     }
-
-    // 2. 同时出现两个词（模型展开解释/带条件），保守保留——避免误删真实相关结果。
+    // 2. 同时出现两个词（模型展开解释/带条件），保守保留。
     if norm.contains("相关") && norm.contains("不相关") {
         return Ok(true);
     }
-
-    // 3. 其余位置明确出现“不相关”（如“该结果不相关”）→ 移除。
+    // 3. 其余位置明确出现"不相关" → 移除。
     if norm.contains("不相关") {
         return Ok(false);
     }
-
-    // 4. 包含“相关”→ 保留
+    // 4. 包含"相关"→ 保留
     Ok(norm.contains("相关"))
+}
+
+/// LLM 门控：判断查询是否值得发起检索。
+///
+/// 输出严格 JSON `{"search": true/false, "reason": "..."}`。
+/// 作为规则 L0 拦截后的二次确认（不对称策略）使用：规则说该搜就直接搜，
+/// 规则说不该搜才调本函数问 LLM——LLM 说该搜则放行，防规则误杀。
+///
+/// 返回：
+/// - `Ok(true)` — LLM 判定值得搜索（放行）；
+/// - `Ok(false)` — LLM 判定无需搜索（拦截）；
+/// - `Err` — LLM 调用/解析失败（调用方决定降级策略）。
+async fn judge_search_with_llm(
+    llm: &dyn LlmService,
+    query: &str,
+    max_tokens: u32,
+    temperature: f32,
+) -> Result<bool, DtError> {
+    let system_prompt = r#"你是代码库检索助手的前置闸门。用户发来一句话, 你要判断: 这句话是否值得触发一次代码/文档/知识库检索?
+
+判定规则:
+1. search=true (值得检索): 查询包含任何具体可检索对象 —— 代码符号(类名/方法名/变量名)、文件名或路径、配置项、业务概念(支付/订单/服务/接口/幂等)、技术术语、报错信息、或明确指向"某个东西在哪/怎么用/为什么/是什么"的检索意图。
+2. search=false (不值得检索): 纯寒暄/问候/道谢/闲聊(你好/谢谢/在吗/天气不错)、纯任务指令且无检索对象(帮我实现/给我建议/介绍一下有哪些模块——除非提到了具体模块名)、纯算术、与代码库无关的话题。
+3. 拿不准时倾向 search=true(宁可多搜一次, 不要漏掉真实需求)。
+
+只输出 JSON, 不要任何解释, 格式:
+{"search": true或false, "reason": "10字以内理由"}"#;
+
+    let user_prompt = format!("用户说: {}\n\n请判断。", query);
+
+    let resp = match llm
+        .chat(system_prompt, &user_prompt, temperature, max_tokens)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("LLM 门控调用失败({e})");
+            return Err(e.into());
+        }
+    };
+
+    // 解析 JSON：容忍 ```json 围栏与前后杂讯。
+    match parse_gate_json(&resp) {
+        Some(b) => Ok(b),
+        None => {
+            tracing::warn!("LLM 门控输出无法解析或缺 search 字段: {resp}");
+            Err(DtError::General(format!(
+                "LLM 门控输出无法解析: {}",
+                resp.chars().take(120).collect::<String>()
+            )))
+        }
+    }
+}
+
+/// 从 LLM 门控输出中解析 JSON `{"search": bool}`。
+/// 返回 None 表示无法解析（调用方按失败处理）。容忍 ```json 围栏与前后杂讯。
+fn parse_gate_json(resp: &str) -> Option<bool> {
+    let trimmed = resp.trim();
+    let body = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|s| s.trim())
+        .unwrap_or(trimmed)
+        .trim_end_matches("```")
+        .trim();
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let obj: serde_json::Value = serde_json::from_str(&body[start..=end]).ok()?;
+    obj.get("search").and_then(|v| v.as_bool())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_query_intent, merge_casual_vocab, parse_casual_words, should_search, QueryIntent,
+        analyze_query_intent, merge_casual_vocab, parse_casual_words, parse_gate_json,
+        parse_relevance_json, parse_relevance_text, should_search, QueryIntent,
     };
 
     #[test]
@@ -1245,5 +1646,60 @@ mod tests {
         assert!(should_search("订单怎么了"));
         assert!(should_search("支付超时怎么配置"));
         assert!(should_search("接口怎么了"));
+    }
+
+    #[test]
+    fn parse_gate_json_accepts_clean_and_fenced() {
+        // 门控 JSON 解析：干净输出 / ```json 围栏 / 前后杂讯都能解析
+        assert_eq!(
+            parse_gate_json(r#"{"search": true, "reason": "类名"}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_gate_json(r#"{"search": false, "reason": "寒暄"}"#),
+            Some(false)
+        );
+        assert_eq!(
+            parse_gate_json("```json\n{\"search\": true, \"reason\": \"x\"}\n```"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_gate_json("好的，判断如下：{\"search\": false, \"reason\": \"闲聊\"} 完毕"),
+            Some(false)
+        );
+        // 无法解析 → None
+        assert_eq!(parse_gate_json("相关"), None);
+        assert_eq!(parse_gate_json(""), None);
+        assert_eq!(parse_gate_json("{\"wrong_field\": true}"), None);
+    }
+
+    #[test]
+    fn parse_relevance_json_preferred_over_text() {
+        // JSON 判定优先
+        assert_eq!(
+            parse_relevance_json(r#"{"relevant": true, "reason": "业务相关"}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_relevance_json("```json\n{\"relevant\": false}\n```"),
+            Some(false)
+        );
+        // 无 JSON 时文本降级
+        assert_eq!(parse_relevance_text("相关").unwrap(), true);
+        assert_eq!(parse_relevance_text("不相关").unwrap(), false);
+        // 明确以"不相关"开头 → false（必须先于子串检查，否则"不相关"含"相关"被保守保留）
+        assert_eq!(parse_relevance_text("不相关，与查询无关").unwrap(), false);
+        // 非开头位置的"不相关"：子串"相关"同现 → 保守保留 true（既有降级行为）
+        assert_eq!(parse_relevance_text("该结果不相关").unwrap(), true);
+        // 同时含相关/不相关 → 保守保留 true
+        assert_eq!(parse_relevance_text("可能相关也可能不相关").unwrap(), true);
+        // JSON 失败场景回退文本
+        assert_eq!(parse_relevance_json("不相关"), None);
+        let fallback = if let Some(_) = parse_relevance_json("不相关") {
+            true
+        } else {
+            parse_relevance_text("不相关").unwrap()
+        };
+        assert_eq!(fallback, false);
     }
 }

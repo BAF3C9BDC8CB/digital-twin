@@ -125,7 +125,7 @@ pub struct WatcherStatus {
 /// # 生命周期
 ///
 /// ```ignore
-/// let watcher = FileWatcher::new(projects, pid_file);
+/// let watcher = FileWatcher::new(roots, pid_file);
 /// let mut rx = watcher.start()?;              // 派生 OS 线程
 /// while let Some(event) = rx.recv().await {
 ///     // 将事件分发到更新流水线
@@ -133,9 +133,9 @@ pub struct WatcherStatus {
 /// // 丢弃 rx → 监听线程退出并移除 PID 文件。
 /// ```
 pub struct FileWatcher {
-    /// (project_name, project_root) 对。
-    projects: Vec<(String, PathBuf)>,
-    /// `projects` 中实际存在于磁盘上的根目录子集。
+    /// (root_alias, root_path) 对。
+    roots: Vec<(String, PathBuf)>,
+    /// `roots` 中实际存在于磁盘上的根目录子集。
     watched_dirs: Vec<PathBuf>,
     /// PID 文件路径。
     pid_file: PathBuf,
@@ -152,19 +152,19 @@ impl FileWatcher {
     // 构造函数
     // ------------------------------------------------------------------
 
-    /// 创建监控给定项目目录的新监听器。
+    /// 创建监控给定 root 目录的新监听器。
     ///
-    /// `projects` 是 `(name, root_path)` 元组列表。不存在的目录会被
+    /// `roots` 是 `(alias, root_path)` 元组列表。不存在的目录会被
     /// 静默跳过；状态中的 `watched_dirs` 只统计可解析的路径。
-    pub fn new(projects: Vec<(String, PathBuf)>, pid_file: PathBuf) -> Self {
-        let watched_dirs: Vec<PathBuf> = projects
+    pub fn new(roots: Vec<(String, PathBuf)>, pid_file: PathBuf) -> Self {
+        let watched_dirs: Vec<PathBuf> = roots
             .iter()
             .map(|(_, root)| root.clone())
             .filter(|p| p.exists() && p.is_dir())
             .collect();
 
         Self {
-            projects,
+            roots,
             watched_dirs,
             pid_file,
             debounce_ms: 100,
@@ -231,7 +231,7 @@ impl FileWatcher {
         let (tx, rx) = mpsc::unbounded_channel();
 
         // ---- 为线程克隆 Arc ----
-        let projects = self.projects.clone();
+        let roots = self.roots.clone();
         let watched_dirs = self.watched_dirs.clone();
         let debounce_ms = self.debounce_ms;
         let running = Arc::clone(&self.running);
@@ -242,7 +242,7 @@ impl FileWatcher {
             .name("dt-watch".into())
             .spawn(move || {
                 run_watcher_loop(
-                    &projects,
+                    &roots,
                     &watched_dirs,
                     tx,
                     debounce_ms,
@@ -320,7 +320,7 @@ impl FileWatcher {
 /// 在专用 OS 线程中运行。创建 `notify` 监听器，订阅所有项目根目录，
 /// 并将防抖后的源码事件送入 `tx`。
 fn run_watcher_loop(
-    projects: &[(String, PathBuf)],
+    roots: &[(String, PathBuf)],
     watched_dirs: &[PathBuf],
     tx: mpsc::UnboundedSender<FileChangeEvent>,
     debounce_ms: u64,
@@ -404,7 +404,7 @@ fn run_watcher_loop(
             last_event.insert(path.clone(), now);
 
             // 解析项目
-            let (project_name, project_root) = match resolve_project(path, projects) {
+            let (project_name, project_root) = match resolve_root(path, roots) {
                 Some(p) => p,
                 None => continue,
             };
@@ -453,8 +453,8 @@ fn classify_event_kind(kind: &EventKind) -> Option<FileChangeKind> {
 }
 
 /// 通过最长前缀匹配找到拥有 `file_path` 的项目。
-fn resolve_project(file_path: &Path, projects: &[(String, PathBuf)]) -> Option<(String, PathBuf)> {
-    projects
+fn resolve_root(file_path: &Path, roots: &[(String, PathBuf)]) -> Option<(String, PathBuf)> {
+    roots
         .iter()
         .filter(|(_, root)| file_path.starts_with(root))
         .max_by_key(|(_, root)| root.as_os_str().len())
@@ -569,37 +569,36 @@ mod tests {
 
     #[test]
     fn resolve_project_by_prefix() {
-        let projects = vec![
+        let roots = vec![
             ("a".into(), PathBuf::from("/data/projects/a")),
             ("b".into(), PathBuf::from("/data/projects/b")),
         ];
 
         assert_eq!(
-            resolve_project(Path::new("/data/projects/a/src/main.rs"), &projects).map(|(n, _)| n),
+            resolve_root(Path::new("/data/projects/a/src/main.rs"), &roots).map(|(n, _)| n),
             Some("a".into())
         );
         assert_eq!(
-            resolve_project(Path::new("/data/projects/b/pkg/main.go"), &projects).map(|(n, _)| n),
+            resolve_root(Path::new("/data/projects/b/pkg/main.go"), &roots).map(|(n, _)| n),
             Some("b".into())
         );
     }
 
     #[test]
     fn resolve_project_longest_prefix_wins() {
-        let projects = vec![
+        let roots = vec![
             ("outer".into(), PathBuf::from("/data")),
             ("inner".into(), PathBuf::from("/data/projects/x")),
         ];
 
-        let (name, _) =
-            resolve_project(Path::new("/data/projects/x/src/main.rs"), &projects).unwrap();
+        let (name, _) = resolve_root(Path::new("/data/projects/x/src/main.rs"), &roots).unwrap();
         assert_eq!(name, "inner", "最长前缀应匹配 inner");
     }
 
     #[test]
     fn resolve_project_returns_none_for_unmatched() {
-        let projects = vec![("a".into(), PathBuf::from("/data/projects/a"))];
-        assert!(resolve_project(Path::new("/other/main.rs"), &projects).is_none());
+        let roots = vec![("a".into(), PathBuf::from("/data/projects/a"))];
+        assert!(resolve_root(Path::new("/other/main.rs"), &roots).is_none());
     }
 
     // ------------------------------------------------------------------
@@ -608,9 +607,9 @@ mod tests {
 
     #[test]
     fn watcher_new_with_missing_dirs() {
-        let projects = vec![("test".into(), PathBuf::from("/tmp/dt-watcher-nonexistent"))];
+        let roots = vec![("test".into(), PathBuf::from("/tmp/dt-watcher-nonexistent"))];
         let pid_file = PathBuf::from("/tmp/dt-watch-test-nonexistent.pid");
-        let watcher = FileWatcher::new(projects, pid_file);
+        let watcher = FileWatcher::new(roots, pid_file);
 
         let status = watcher.status();
         assert!(!status.running);
@@ -623,9 +622,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
 
-        let projects = vec![("test".into(), root)];
+        let roots = vec![("test".into(), root)];
         let pid_file = dir.path().join("dt-watch.pid");
-        let watcher = FileWatcher::new(projects, pid_file);
+        let watcher = FileWatcher::new(roots, pid_file);
 
         let status = watcher.status();
         assert!(!status.running);
@@ -636,9 +635,9 @@ mod tests {
     #[test]
     fn watcher_status_no_pid_file() {
         let dir = tempfile::tempdir().unwrap();
-        let projects = vec![("test".into(), dir.path().to_path_buf())];
+        let roots = vec![("test".into(), dir.path().to_path_buf())];
         let pid_file = dir.path().join("dt-watch-nonexistent.pid");
-        let watcher = FileWatcher::new(projects, pid_file);
+        let watcher = FileWatcher::new(roots, pid_file);
 
         let status = watcher.status();
         assert!(!status.running);

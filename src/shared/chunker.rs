@@ -78,10 +78,16 @@ pub struct ChunkConfig {
 impl Default for ChunkConfig {
     fn default() -> Self {
         Self {
-            chunk_size: 256,
-            overlap: 0,
+            // 2026-09-05: 256 token → 2048 token。
+            // 8B 模型上下文 32K+，256 token 块（≈768 字符）只用了不到 1% 能力，
+            // 且文档实体抽取看不到足够上下文（跨块实体靠 canonical_name 约定硬撑）。
+            // 2048 token ≈ 6K 字符，接近方案 §1.3"超 8K 字符切块"设计；
+            // 方法级/类级代码分析不走 chunk（整个方法源码直喂），不受此影响。
+            chunk_size: 2048,
+            // 段落边界重叠 64 token（≈192 字符），保证跨块语义连贯。
+            overlap: 64,
             boundary: Boundary::Paragraph,
-            min_chunk_size: 128,
+            min_chunk_size: 256,
         }
     }
 }
@@ -1653,10 +1659,10 @@ mod tests {
     #[test]
     fn chunk_config_default_values() {
         let config = ChunkConfig::default();
-        assert_eq!(config.chunk_size, 256);
-        assert_eq!(config.overlap, 0);
+        assert_eq!(config.chunk_size, 2048);
+        assert_eq!(config.overlap, 64);
         assert_eq!(config.boundary, Boundary::Paragraph);
-        assert_eq!(config.min_chunk_size, 128);
+        assert_eq!(config.min_chunk_size, 256);
     }
 
     #[test]

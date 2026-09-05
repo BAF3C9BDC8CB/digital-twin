@@ -3,7 +3,7 @@
 //! 原为 `main.rs` 的私有函数; 抽取为库模块后, CLI 与 `dt-mcp`
 //! 共用同一套连接逻辑, 避免两处维护。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::hooks::HookEngine;
@@ -19,8 +19,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct DaemonConfig {
+    /// 被索引/感知的代码根清单（root = 根别名 + 磁盘路径）。
     #[serde(default)]
-    pub projects: Vec<ProjectGroup>,
+    pub roots: Vec<serde_yaml::Value>,
     #[serde(default)]
     pub services: ServiceConfig,
     #[serde(default)]
@@ -29,15 +30,25 @@ pub struct DaemonConfig {
     pub scanner: ScannerFileConfig,
 }
 
-/// config.yaml 的 `scanner` 段 —— 构建扫描器的忽略规则。
+/// config.yaml 的 `scanner` 段 / 独立 ignore.yaml —— 扫描忽略规则。
+///
+/// 推荐写法是统一 `ignore` 列表（文件与目录通吃，条目可为精确名、
+/// 相对路径或含 `*` / `?` / `**` 的 glob）；`ignore_dirs` / `ignore_files` /
+/// `ignore_ext` 三段式写法保留以兼容旧配置，读取后均归一化进 `ScanConfig`。
 #[derive(Debug, Deserialize, Default)]
 pub struct ScannerFileConfig {
+    /// 统一忽略列表（新式）：精确名 / 相对路径 / glob 通配均可。
+    #[serde(default)]
+    pub ignore: Vec<String>,
+    /// （旧式）忽略的目录：单段目录名或相对路径前缀。
     #[serde(default)]
     pub ignore_dirs: Vec<String>,
-    #[serde(default)]
-    pub ignore_ext: Vec<String>,
+    /// （旧式）忽略的文件名（精确匹配）。
     #[serde(default)]
     pub ignore_files: Vec<String>,
+    /// （旧式）忽略的扩展名（可带 `.` 前缀）。
+    #[serde(default)]
+    pub ignore_ext: Vec<String>,
     #[serde(default)]
     pub max_file_size: Option<u64>,
 }
@@ -48,8 +59,6 @@ pub struct ServiceConfig {
     pub graph: GraphDbConfig,
     #[serde(default)]
     pub qdrant: QdrantServiceConfig,
-    #[serde(default)]
-    pub jenkins: JenkinsEndpointConfig,
     #[serde(default)]
     pub sqlite: SqliteConfig,
 }
@@ -77,17 +86,6 @@ pub struct QdrantServiceConfig {
     pub url: Option<String>,
 }
 
-/// 来自 config.yaml `services.jenkins` 的 Jenkins 连接信息。
-#[derive(Debug, Deserialize, Default)]
-pub struct JenkinsEndpointConfig {
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub user: Option<String>,
-    #[serde(default)]
-    pub token: Option<String>,
-}
-
 /// 来自 config.yaml `services.sqlite` 的 SQLite 快照存储配置。
 #[derive(Debug, Deserialize)]
 pub struct SqliteConfig {
@@ -106,13 +104,6 @@ impl Default for SqliteConfig {
 
 fn default_sqlite_path() -> String {
     "/var/lib/digital-twin/snapshots.db".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProjectGroup {
-    pub base: String,
-    #[serde(default)]
-    pub items: Vec<serde_yaml::Value>,
 }
 
 // ---- 配置加载与解析 ----------------------------------------------
@@ -147,62 +138,156 @@ pub fn load_config() -> Option<DaemonConfig> {
     }
 }
 
-/// 将 config.yaml 的 `scanner` 段转换为 `ScanConfig`。
+/// 将 config.yaml 的 `scanner` 段（若存在）与独立忽略文件
+/// `~/.config/digital-twin/ignore.yaml`（若存在）合并为 `ScanConfig`。
 ///
 /// 用户配置的列表与内置默认值**合并**（而非覆盖），确保常见噪音目录
 /// 始终被忽略；`max_file_size` 未配置时用默认 500KB。
 pub fn scan_config_from(cfg: &DaemonConfig) -> ScanConfig {
     let mut sc = ScanConfig::default();
-    for d in &cfg.scanner.ignore_dirs {
-        if !d.is_empty() {
-            sc.ignore_dirs.insert(d.clone());
-        }
-    }
-    for f in &cfg.scanner.ignore_files {
-        if !f.is_empty() {
-            sc.ignore_files.insert(f.clone());
-        }
-    }
-    for e in &cfg.scanner.ignore_ext {
-        let e = e.trim();
-        if !e.is_empty() {
-            sc.ignore_ext.insert(if e.starts_with('.') {
-                e.to_string()
-            } else {
-                format!(".{e}")
-            });
-        }
-    }
-    if let Some(m) = cfg.scanner.max_file_size {
-        if m > 0 {
-            sc.max_file_size = m;
+
+    // 1. config.yaml 内联 scanner 段（旧式；已不推荐，保留兼容）
+    merge_scanner(&mut sc, &cfg.scanner);
+
+    // 2. 独立忽略文件 ~/.config/digital-twin/ignore.yaml（新式）
+    if let Some(path) = dirs_like_home_config(".config/digital-twin/ignore.yaml") {
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_yaml::from_str::<ScannerFileConfig>(&content) {
+                    Ok(file_cfg) => {
+                        tracing::debug!("已加载忽略规则: {}", path.display());
+                        merge_scanner(&mut sc, &file_cfg);
+                    }
+                    Err(e) => tracing::warn!("解析忽略规则失败 {}: {e}", path.display()),
+                },
+                Err(e) => tracing::warn!("读取忽略规则失败 {}: {e}", path.display()),
+            }
         }
     }
     sc
 }
 
-/// 将项目组扁平化为 `(name, full_path)` 对。
-pub fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    for group in &cfg.projects {
-        let base = PathBuf::from(&group.base);
-        for item in &group.items {
-            match item {
-                serde_yaml::Value::String(name) => {
-                    out.push((name.clone(), base.join(name)));
-                }
-                serde_yaml::Value::Mapping(m) => {
-                    for (k, v) in m {
-                        let name = k.as_str().unwrap_or("").to_string();
-                        let rel = v.as_str().unwrap_or(&name).to_string();
-                        out.push((name, base.join(rel)));
-                    }
-                }
-                _ => {}
+/// 将一个 scanner 规则块并入 `ScanConfig`（列表取并集；max_file_size 取首个非零值）。
+///
+/// 归一化规则（新 `ignore` 条目直接进统一模型；旧三段式翻译）：
+/// - `ignore`：条目原样加入（含通配 → glob 桶；纯名/路径 → 精确名桶）
+/// - `ignore_dirs` / `ignore_files`：加入精确名桶
+/// - `ignore_ext`：`.class` → `*.class` 通配条目
+fn merge_scanner(sc: &mut ScanConfig, scanner: &ScannerFileConfig) {
+    for entry in &scanner.ignore {
+        sc.add_ignore(entry);
+    }
+    for d in &scanner.ignore_dirs {
+        if !d.is_empty() {
+            sc.add_ignore(d);
+        }
+    }
+    for f in &scanner.ignore_files {
+        if !f.is_empty() {
+            sc.add_ignore(f);
+        }
+    }
+    for e in &scanner.ignore_ext {
+        let e = e.trim();
+        if !e.is_empty() {
+            // 归一化为 glob：`jpg` / `.jpg` → `*.jpg`
+            let dot = if e.starts_with('.') {
+                e.to_string()
+            } else {
+                format!(".{e}")
+            };
+            if !sc.ignore_globs.iter().any(|g| *g == format!("*{dot}")) {
+                sc.ignore_globs.push(format!("*{dot}"));
             }
         }
     }
+    if let Some(m) = scanner.max_file_size {
+        if m > 0 && sc.max_file_size == ScanConfig::default().max_file_size {
+            sc.max_file_size = m;
+        }
+    }
+}
+
+/// 将 config.yaml 的 `roots` 段扁平化为 `(别名, 绝对路径)` 对。
+///
+/// 支持的写法（同一列表可混用）：
+/// - 纯字符串：`- /data/myProject/digital-twin-v2`（别名 = 目录最后一段）
+/// - 单根映射：`- label-center: /data/aflmProjects/aflm/uvp-label-center`
+/// - 分组映射（共享 base 前缀，条目为相对路径；单条目可省略相对路径）：
+///   ```yaml
+///   - base: /data/aflmProjects/aflm
+///     items: [archive-api, "copartner-h5: copartner/copartner-h5"]
+///   ```
+pub fn resolve_roots(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for item in &cfg.roots {
+        match item {
+            serde_yaml::Value::String(s) => {
+                let s = s.trim();
+                if s.is_empty() {
+                    continue;
+                }
+                let path = PathBuf::from(s);
+                let alias = default_alias(&path);
+                out.push((alias, path));
+            }
+            serde_yaml::Value::Mapping(m) => {
+                // 分组形态：base + items
+                if let (Some(base), Some(items)) = (
+                    m.get(serde_yaml::Value::String("base".into())),
+                    m.get(serde_yaml::Value::String("items".into())),
+                ) {
+                    let base = base.as_str().unwrap_or("");
+                    let base_path = PathBuf::from(base);
+                    if let Some(items) = items.as_sequence() {
+                        for it in items {
+                            match it {
+                                serde_yaml::Value::String(s) => {
+                                    let s = s.trim();
+                                    if s.is_empty() {
+                                        continue;
+                                    }
+                                    // "别名: 相对路径" 或纯相对路径
+                                    if let Some((alias, rel)) = s.split_once(':') {
+                                        let alias = alias.trim();
+                                        let rel = rel.trim();
+                                        out.push((alias.to_string(), base_path.join(rel)));
+                                    } else {
+                                        let alias = default_alias(&base_path.join(s));
+                                        out.push((alias, base_path.join(s)));
+                                    }
+                                }
+                                serde_yaml::Value::Mapping(it_m) => {
+                                    for (k, v) in it_m {
+                                        let alias = k.as_str().unwrap_or("").to_string();
+                                        let rel = v.as_str().unwrap_or(&alias).to_string();
+                                        out.push((alias, base_path.join(rel)));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    continue;
+                }
+                // 单根映射：别名 → 绝对/相对路径
+                for (k, v) in m {
+                    let alias = k.as_str().unwrap_or("").to_string();
+                    let rel = v.as_str().unwrap_or(&alias).to_string();
+                    out.push((alias, PathBuf::from(rel)));
+                }
+            }
+            _ => {}
+        }
+    }
     out
+}
+
+/// 根别名默认取路径最后一段目录名。
+fn default_alias(path: &Path) -> String {
+    path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// 从 config.yaml `services.graph` 解析 Memgraph Bolt URI。
@@ -310,15 +395,16 @@ pub async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
 /// 连接 Embed 路由(从 pipeline.yaml providers 构建)。
 pub async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     let pipeline_cfg = PipelineConfig::load().ok()?;
-    let pcfg = pipeline_cfg.providers?;
+    let pcfg = match pipeline_cfg.providers.as_ref() {
+        Some(p) => p,
+        None => return None,
+    };
 
     let sf = pcfg.siliconflow.as_ref();
-    let xi = pcfg.xinference.as_ref();
 
     let sf_url = sf.map(|s| s.url.as_str()).unwrap_or("");
-    let xi_url = xi.map(|s| s.url.as_str()).unwrap_or("");
-    if sf_url.is_empty() && xi_url.is_empty() {
-        tracing::warn!("pipeline.yaml providers: 所有 provider URL 为空，跳过 embed 服务");
+    if sf_url.is_empty() {
+        tracing::warn!("pipeline.yaml providers: siliconflow URL 为空，跳过 embed 服务");
         return None;
     }
 
@@ -335,18 +421,13 @@ pub async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
                 }
             })
             .unwrap_or_else(api_key_fallback),
-        siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        siliconflow_model_embed: pipeline_cfg.embed_model(),
+        siliconflow_model_reranker: pipeline_cfg.rerank_model(),
+        siliconflow_model_llm: pipeline_cfg.llm_model(),
         siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
-        xinference_url: xi_url.to_string(),
-        xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
-        xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        xinference_model_reranker: xi.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        xinference_model_llm: xi.map(|s| s.model_llm.clone()).unwrap_or_default(),
-        embed_provider: pcfg.embed_provider.clone(),
-        rerank_provider: pcfg.rerank_provider.clone(),
-        llm_provider: pcfg.llm_provider.clone(),
+        embed_provider: "siliconflow".into(),
+        rerank_provider: "siliconflow".into(),
+        llm_provider: "siliconflow".into(),
     };
     Some(crate::infrastructure::embedder::create_embed_router(cfg))
 }
@@ -404,7 +485,8 @@ pub struct DtRuntime {
     pub queue: Option<Arc<VectorQueue>>,
     pub sync_acc: Option<Arc<SyncAccumulator>>,
     pub kg_bridge: Option<Arc<KgBridge>>,
-    pub projects: Vec<(String, PathBuf)>,
+    /// 解析后的代码根清单：(别名, 绝对路径)。
+    pub roots: Vec<(String, PathBuf)>,
     pub batch_config: Option<BatchConfig>,
     pub scan_config: Option<ScanConfig>,
 }
@@ -423,7 +505,7 @@ impl DtRuntime {
         let sync_acc = build_sync_acc(graph.clone(), vector.clone(), queue.clone()).await;
 
         let cfg = load_config();
-        let projects = cfg.as_ref().map(resolve_project_paths).unwrap_or_default();
+        let roots = cfg.as_ref().map(resolve_roots).unwrap_or_default();
         let batch_config = cfg.as_ref().map(|c| c.batch.clone());
         let scan_config = cfg.as_ref().map(scan_config_from);
 
@@ -436,9 +518,212 @@ impl DtRuntime {
             queue,
             sync_acc,
             kg_bridge,
-            projects,
+            roots,
             batch_config,
             scan_config,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_roots_flat_string_uses_dir_name_as_alias() {
+        let cfg: DaemonConfig = serde_yaml::from_str(
+            r#"
+roots:
+- /data/myProject/digital-twin-v2
+"#,
+        )
+        .unwrap();
+        let roots = resolve_roots(&cfg);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].0, "digital-twin-v2");
+        assert_eq!(roots[0].1, PathBuf::from("/data/myProject/digital-twin-v2"));
+    }
+
+    #[test]
+    fn resolve_roots_single_mapping_alias_to_path() {
+        let cfg: DaemonConfig = serde_yaml::from_str(
+            r#"
+roots:
+- label-center: /data/aflmProjects/aflm/uvp-label-center
+"#,
+        )
+        .unwrap();
+        let roots = resolve_roots(&cfg);
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].0, "label-center");
+        assert_eq!(
+            roots[0].1,
+            PathBuf::from("/data/aflmProjects/aflm/uvp-label-center")
+        );
+    }
+
+    #[test]
+    fn resolve_roots_group_base_items() {
+        let cfg: DaemonConfig = serde_yaml::from_str(
+            r#"
+roots:
+- base: /data/aflmProjects/aflm
+  items:
+  - archive-api
+  - copartner-h5: copartner/copartner-h5
+"#,
+        )
+        .unwrap();
+        let roots = resolve_roots(&cfg);
+        assert_eq!(roots.len(), 2);
+        // 纯相对路径：别名 = 路径最后一段
+        assert_eq!(roots[0].0, "archive-api");
+        assert_eq!(
+            roots[0].1,
+            PathBuf::from("/data/aflmProjects/aflm/archive-api")
+        );
+        // 显式别名
+        assert_eq!(roots[1].0, "copartner-h5");
+        assert_eq!(
+            roots[1].1,
+            PathBuf::from("/data/aflmProjects/aflm/copartner/copartner-h5")
+        );
+    }
+
+    #[test]
+    fn resolve_roots_mixed_forms() {
+        let cfg: DaemonConfig = serde_yaml::from_str(
+            r#"
+roots:
+- /data/doc/软件
+- boss: /data/aflmProjects/aflm/boss/boss
+- base: /data/myProject
+  items:
+  - digital-twin-v2
+  - jcli: jenkins-cli-rs
+"#,
+        )
+        .unwrap();
+        let roots = resolve_roots(&cfg);
+        assert_eq!(roots.len(), 4);
+        assert_eq!(roots[0].0, "软件");
+        assert_eq!(roots[1].0, "boss");
+        assert_eq!(roots[2].0, "digital-twin-v2");
+        assert_eq!(roots[2].1, PathBuf::from("/data/myProject/digital-twin-v2"));
+        assert_eq!(roots[3].0, "jcli");
+        assert_eq!(roots[3].1, PathBuf::from("/data/myProject/jenkins-cli-rs"));
+    }
+
+    #[test]
+    fn scanner_merge_takes_union() {
+        let sc = ScanConfig::default();
+        let base_names = sc.ignore_names.len();
+        let base_globs = sc.ignore_globs.len();
+
+        let inline = ScannerFileConfig {
+            ignore: vec![],
+            ignore_dirs: vec!["node_modules".into(), "custom_dir".into()],
+            ignore_ext: vec![".custom".into()],
+            ignore_files: vec!["custom.lock".into()],
+            max_file_size: Some(1024),
+        };
+        let mut merged = ScanConfig::default();
+        merge_scanner(&mut merged, &inline);
+
+        // 并集：内置默认仍在，新增条目已加入
+        assert_eq!(merged.ignore_names.len(), base_names + 2); // custom_dir + custom.lock（node_modules 重复）
+        assert_eq!(merged.ignore_globs.len(), base_globs + 1); // *.custom
+        assert!(merged.is_ignored("custom_dir"));
+        assert!(merged.is_ignored("custom.lock"));
+        assert!(merged.is_ignored("a/x.custom"));
+        assert_eq!(merged.max_file_size, 1024);
+    }
+
+    #[test]
+    fn scanner_merge_keeps_default_size_when_absent() {
+        let mut merged = ScanConfig::default();
+        let no_size = ScannerFileConfig {
+            ignore: vec![],
+            ignore_dirs: vec!["x".into()],
+            ignore_ext: vec![],
+            ignore_files: vec![],
+            max_file_size: None,
+        };
+        merge_scanner(&mut merged, &no_size);
+        assert_eq!(merged.max_file_size, ScanConfig::default().max_file_size);
+    }
+
+    #[test]
+    fn scanner_ext_normalizes_dot_prefix() {
+        let mut merged = ScanConfig::default();
+        let raw = ScannerFileConfig {
+            ignore: vec![],
+            ignore_dirs: vec![],
+            ignore_ext: vec!["jpg".into(), ".png".into()],
+            ignore_files: vec![],
+            max_file_size: None,
+        };
+        merge_scanner(&mut merged, &raw);
+        assert!(merged.is_ignored("x/y.jpg"));
+        assert!(merged.is_ignored("x/y.png"));
+    }
+
+    #[test]
+    fn scanner_merge_unified_ignore_list() {
+        let mut merged = ScanConfig::default();
+        let unified = ScannerFileConfig {
+            ignore: vec![
+                "*.class".into(),
+                ".env*".into(),
+                "custom/dir".into(),
+                "build-*/".into(),
+            ],
+            ignore_dirs: vec![],
+            ignore_ext: vec![],
+            ignore_files: vec![],
+            max_file_size: None,
+        };
+        merge_scanner(&mut merged, &unified);
+        assert!(merged.is_ignored("deep/x.class"));
+        assert!(merged.is_ignored(".env.production"));
+        assert!(merged.is_ignored("custom/dir/file.rs"));
+        assert!(!merged.is_ignored("custom/other"));
+        // glob 条目进入 globs 桶
+        assert!(merged.ignore_globs.iter().any(|g| g == ".env*"));
+    }
+
+    #[test]
+    fn parse_ignore_yaml_shape() {
+        // ignore.yaml 与 config.yaml 内联 scanner 段共用同一 schema；
+        // 新式统一 `ignore` 列表优先。
+        let yaml = r#"
+ignore:
+- node_modules
+- "*.class"
+- "**/generated/*.java"
+ignore_dirs: [.cache]
+max_file_size: 1048576
+"#;
+        let cfg: ScannerFileConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.ignore.len(), 3);
+        assert_eq!(cfg.ignore_dirs, vec![".cache"]);
+        assert_eq!(cfg.max_file_size, Some(1048576));
+    }
+
+    #[test]
+    fn scanner_merge_glob_and_legacy_together() {
+        let mut merged = ScanConfig::default();
+        let cfg = ScannerFileConfig {
+            ignore: vec!["*.tmp".into(), "vendor".into()],
+            ignore_dirs: vec!["legacy_dir".into()],
+            ignore_ext: vec![".bak".into()],
+            ignore_files: vec![],
+            max_file_size: None,
+        };
+        merge_scanner(&mut merged, &cfg);
+        assert!(merged.is_ignored("a.tmp"));
+        assert!(merged.is_ignored("vendor")); // ignore 纯名
+        assert!(merged.is_ignored("x/legacy_dir")); // 旧 ignore_dirs
+        assert!(merged.is_ignored("x/backup.bak")); // 旧 ignore_ext → *.bak
     }
 }

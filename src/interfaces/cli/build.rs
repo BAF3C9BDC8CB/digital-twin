@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use crate::application::pipeline::config::PipelineConfig;
 use crate::application::pipeline::engine::ProcessorEngine;
-use crate::application::pipeline::infer_client::{
-    ChatClient, OpenAICompatibleChatClient, SiliconFlowChatClient, XInferenceChatClient,
-};
+use crate::application::pipeline::infer_client::{ChatClient, SiliconFlowChatClient};
 use crate::application::pipeline::processors::{
     ChunkProcessor, LlmClientProcessor, StoreProcessor, TreeSitterProcessor,
 };
@@ -20,10 +18,9 @@ use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::domain::traits::{EmbedService, GraphRepository, SnapshotRepository, VectorRepository};
 use crate::domain::types::{BatchConfig, ScanConfig};
 use crate::infrastructure::parser::ParserRegistry;
-use crate::infrastructure::scanner::dir_is_ignored;
 use sha2::{Digest, Sha256};
 
-/// 处理 `dt build`——将项目索引到知识图谱。
+/// 处理 `dt build`——将代码根索引到知识图谱。
 ///
 /// 所有后端连接（Memgraph、Qdrant、embed、SQLite）必须由调用方
 /// 建立，并以 `Option<Arc<...>>` 传入。
@@ -41,8 +38,8 @@ pub async fn handle_build(
     batch_config: BatchConfig,
     scan_config: crate::domain::types::ScanConfig,
 ) -> anyhow::Result<()> {
-    // 确定项目名
-    let project_name = name.unwrap_or_else(|| {
+    // 确定根别名（root alias：无显式 name 时取路径最后一段目录名）
+    let root_alias = name.unwrap_or_else(|| {
         path.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string())
@@ -58,22 +55,23 @@ pub async fn handle_build(
     if let Some(f) = &file {
         tracing::info!(
             "构建: project={}, path={}, file={} (全量构建; 单文件提示未使用)",
-            project_name,
+            root_alias,
             path.display(),
             f.display(),
         );
     } else {
-        tracing::info!("构建: project={}, path={}", project_name, path.display(),);
+        tracing::info!("构建: project={}, path={}", root_alias, path.display(),);
     }
 
     // 加载流水线配置以获取 embed 设置
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
     let skip_embed = !pipeline_config.processors.embed;
 
-    // 通过 BuildCommand 执行构建
+    // 通过 BuildCommand 执行构建（字段 project_name = 存储协议层叫法，
+    // 此处传入的 root_alias 即其语义：代码根别名）。
     let cmd = crate::application::build::builder::BuildCommand {
         project_path: path.clone(),
-        project_name: project_name.clone(),
+        project_name: root_alias.clone(),
         full,
         verbose: true,
         skip_embed,
@@ -97,8 +95,7 @@ pub async fn handle_build(
         .map(|s| Arc::clone(s) as Arc<dyn SnapshotRepository>);
 
     // 使用统一路由，确保普通构建与增强 pipeline 使用同一 provider。
-    // 并发统一从当前 llm_provider 的 max_concurrent 读取；
-    // 单次回复上限从同 provider 的 max_tokens 读取。
+    // 并发读 siliconflow 的 max_concurrent；单次回复上限读 llm.max_tokens。
     let (llm_client, llm_model, llm_max_tokens) = build_llm_client(&pipeline_config);
 
     let deps = crate::application::build::builder::BuildDependencies {
@@ -112,8 +109,8 @@ pub async fn handle_build(
         batch_config: Some(batch_config),
         skip_embed,
         scan_config: scan_config.clone(),
-        // Phase 2 方法级并发 = 当前 llm_provider 的 max_concurrent（单参数模型）
-        llm_concurrency: pipeline_config.llm_provider_max_concurrent(),
+        // Phase 2 方法级并发 = siliconflow max_concurrent（单参数模型）
+        llm_concurrency: pipeline_config.inference_max_concurrent(),
         llm_max_tokens,
     };
 
@@ -123,7 +120,7 @@ pub async fn handle_build(
     if pipeline {
         if let Err(e) = run_pipeline_analysis(
             &path,
-            &project_name,
+            &root_alias,
             pipeline_graph,
             pipeline_vector,
             pipeline_embed,
@@ -141,9 +138,9 @@ pub async fn handle_build(
 
 /// 递归收集目录中所有含文本的文件。
 ///
-/// 遵循 `ScanConfig` 的 `ignore_dirs` / `ignore_files` / `ignore_ext` 规则，
-/// 并跳过隐藏文件/目录（以 `.` 开头的名称）、二进制文件以及常见的
-/// 非文本扩展名。最多返回 `MAX_PIPELINE_FILES` 个条目，以避免压垮流水线引擎。
+/// 遵循 `ScanConfig` 统一忽略规则（ignore_names / ignore_globs，覆盖
+/// 目录、文件名、扩展名与 glob 通配），并跳过隐藏目录以及常见的
+/// 二进制扩展名。最多返回 `MAX_PIPELINE_FILES` 个条目，以避免压垮流水线引擎。
 fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf, String)> {
     use walkdir::WalkDir;
 
@@ -166,7 +163,7 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
                     .unwrap_or(e.path())
                     .to_string_lossy()
                     .to_string();
-                return !dir_is_ignored(&rel, name, &scan_config.ignore_dirs);
+                return !scan_config.is_ignored(&rel);
             }
             true
         });
@@ -179,27 +176,15 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
         if !entry.file_type().is_file() {
             continue;
         }
-        // 按文件名精确过滤（ignore_files）。
-        if let Some(name) = entry.file_name().to_str() {
-            if scan_config.ignore_files.contains(name) {
-                continue;
-            }
-        }
-        // 跳过常见的二进制/非文本扩展名（合并 ScanConfig.ignore_ext 与内置列表）。
-        let mut skip_ext = vec![
-            "png", "jpg", "jpeg", "gif", "svg", "ico", "woff2", "ttf", "eot", "pdf", "zip", "jar",
-            "class", "o", "so", "dylib", "dll", "exe", "bin", "db", "sqlite",
-        ];
-        for dot_ext in &scan_config.ignore_ext {
-            let e = dot_ext.trim_start_matches('.');
-            if !e.is_empty() {
-                skip_ext.push(e);
-            }
-        }
-        if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            if skip_ext.contains(&ext) {
-                continue;
-            }
+        // 统一忽略规则（文件名精确 / 扩展名 / 通配）。
+        let rel = entry
+            .path()
+            .strip_prefix(root)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .to_string();
+        if scan_config.is_ignored(&rel) {
+            continue;
         }
         // 按大小过滤（与 scanner.rs collect_files 的 max_file_size 对齐；
         // 缺失此过滤时超大打包文件（如 webpack bundle）会整体进入 LLM 流水线，
@@ -228,7 +213,7 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
 }
 
 /// 为搜索创建 embed 客户端，从 `config/pipeline.yaml` 读取配置。
-/// 使用 provider 路由同时支持 SiliconFlow 与 XInference。
+/// 使用 provider 路由（当前唯一 provider：SiliconFlow）。
 pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
     use crate::infrastructure::embedder::ProviderConfig;
 
@@ -240,7 +225,7 @@ pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder
         }
     };
 
-    let pcfg = match pipeline_cfg.providers {
+    let pcfg = match pipeline_cfg.providers.as_ref() {
         Some(p) => p,
         None => {
             tracing::warn!("pipeline.yaml 中无 providers 配置，使用默认配置");
@@ -249,7 +234,6 @@ pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder
     };
 
     let sf = pcfg.siliconflow.as_ref();
-    let xi = pcfg.xinference.as_ref();
 
     let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
 
@@ -267,18 +251,13 @@ pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder
                 }
             })
             .unwrap_or_else(api_key_fallback),
-        siliconflow_model_embed: sf.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        siliconflow_model_reranker: sf.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        siliconflow_model_llm: sf.map(|s| s.model_llm.clone()).unwrap_or_default(),
+        siliconflow_model_embed: pipeline_cfg.embed_model(),
+        siliconflow_model_reranker: pipeline_cfg.rerank_model(),
+        siliconflow_model_llm: pipeline_cfg.llm_model(),
         siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
-        xinference_url: xi.map(|s| s.url.as_str()).unwrap_or("").to_string(),
-        xinference_api_key: xi.map(|s| s.api_key.clone()).unwrap_or_default(),
-        xinference_model_embed: xi.map(|s| s.model_embed.clone()).unwrap_or_default(),
-        xinference_model_reranker: xi.map(|s| s.model_reranker.clone()).unwrap_or_default(),
-        xinference_model_llm: xi.map(|s| s.model_llm.clone()).unwrap_or_default(),
-        embed_provider: pcfg.embed_provider.clone(),
-        rerank_provider: pcfg.rerank_provider.clone(),
-        llm_provider: pcfg.llm_provider.clone(),
+        embed_provider: "siliconflow".into(),
+        rerank_provider: "siliconflow".into(),
+        llm_provider: "siliconflow".into(),
     }
 }
 
@@ -290,175 +269,77 @@ pub(crate) fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::Re
     crate::infrastructure::embedder::create_rerank_router(provider_config_from_pipeline())
 }
 
-/// 从 `config/pipeline.yaml` 读取 SiliconFlow LLM 模型名。
-fn load_siliconflow_llm_model() -> Option<String> {
-    if let Ok(cfg) = PipelineConfig::load() {
-        if let Some(providers) = cfg.providers {
-            if let Some(sf) = providers.siliconflow {
-                if !sf.model_llm.is_empty() {
-                    return Some(sf.model_llm);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// 从 `config/pipeline.yaml` 读取 SiliconFlow API key，
-/// 未配置时回退到 `SILICONFLOW_API_KEY` 环境变量。
-fn load_siliconflow_api_key() -> String {
-    // 优先尝试环境变量
-    if let Ok(key) = std::env::var("SILICONFLOW_API_KEY") {
-        if !key.is_empty() {
-            return key;
-        }
-    }
-    // 再尝试 pipeline.yaml
-    if let Ok(cfg) = PipelineConfig::load() {
-        if let Some(providers) = cfg.providers {
-            if let Some(sf) = providers.siliconflow {
-                if !sf.api_key.is_empty() {
-                    return sf.api_key;
-                }
-            }
-        }
-    }
-    String::new()
-}
-
-/// 根据 pipeline.yaml 的 `llm_provider` 构建 LLM 对话客户端。
+/// 构建 LLM 对话客户端（唯一 provider：SiliconFlow 云 API，OpenAI 兼容协议）。
 ///
-/// - `openai_compatible` / `glmcoding`（旧名别名）→ 通用 OpenAI 兼容客户端
-/// - `xinference` → 本地 XInference 客户端
-/// - 其他（`siliconflow` 等）→ SiliconFlow 云 API 客户端
+/// 模型名读顶层 `llm.model`（空则回退 `SILICONFLOW_LLM_MODEL` 环境变量）；
+/// 并发读 `providers.siliconflow.max_concurrent`；单次回复上限读 `llm.max_tokens`。
 ///
 /// 返回 `(客户端, 模型名, max_tokens)`。两个调用方（普通文件管线与 Nacos/Jenkins
-/// 远程源管线）共用同一路由逻辑，保证 provider 配置一处生效。
-/// 并发上限统一从当前 `llm_provider` 的 `max_concurrent` 读取；
-/// 单次回复上限从同 provider 的 `max_tokens` 读取（默认 512，可按模型调整）。
+/// 远程源管线）共用同一路由逻辑，保证模型配置一处生效。
 fn build_llm_client(pipeline_config: &PipelineConfig) -> (Arc<dyn ChatClient>, String, u32) {
-    let llm_provider = pipeline_config
+    // API key：环境变量优先，其次 pipeline.yaml providers.siliconflow.api_key。
+    let api_key = std::env::var("SILICONFLOW_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            pipeline_config
+                .providers
+                .as_ref()
+                .and_then(|p| p.siliconflow.as_ref())
+                .map(|s| s.api_key.clone())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_default();
+    // 模型名：pipeline.yaml `llm.model` → `SILICONFLOW_LLM_MODEL` env（llm_model()
+    // 内部已回退）→ 内置默认。
+    let model = pipeline_config.llm_model();
+    let model = if model.is_empty() {
+        "Qwen3-14B".to_string()
+    } else {
+        model
+    };
+
+    // R4：使用 SiliconFlow provider 的 URL——而非本地的
+    // 推理服务器地址。为空时回退到客户端的默认值。
+    let sf_url = pipeline_config
         .providers
         .as_ref()
-        .map(|p| p.llm_provider.clone())
-        .unwrap_or_else(|| "siliconflow".to_string());
-
-    match llm_provider.as_str() {
-        "openai_compatible" | "glmcoding" => {
-            let cfg = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.openai_compatible.as_ref());
-            let base_url = cfg
-                .map(|c| c.url.clone())
-                .unwrap_or_else(|| "https://glmcoding.cn".into());
-            let api_key = cfg.map(|c| c.api_key.clone()).unwrap_or_default();
-            let model = cfg
-                .map(|c| c.model_llm.clone())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "deepseek-v4-flash".into());
-            let concurrency = cfg.map(|c| c.max_concurrent).unwrap_or(32);
-            let max_tokens = cfg.map(|c| c.max_tokens).unwrap_or(512);
-            tracing::info!(
-                "使用 OpenAI-Compatible LLM: {} @ {} (max_tokens={})",
-                model,
-                base_url,
-                max_tokens
-            );
-            let client = Arc::new(OpenAICompatibleChatClient::new(
-                base_url,
-                api_key,
-                concurrency,
-            ));
-            (client as Arc<dyn ChatClient>, model, max_tokens)
-        }
-        "xinference" => {
-            let xi_cfg = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.xinference.as_ref());
-
-            let base_url = xi_cfg
-                .map(|c| c.url.as_str())
-                .unwrap_or("http://localhost:9997/v1")
-                .to_string();
-            let api_key = xi_cfg.map(|c| c.api_key.clone()).unwrap_or_default();
-            let model = xi_cfg
-                .map(|c| c.model_llm.as_str())
-                .filter(|s| !s.is_empty())
-                .unwrap_or("qwen3.5")
-                .to_string();
-
-            tracing::info!("使用 XInference LLM: {} @ {}", model, base_url);
-            let xi_max_concurrent = xi_cfg.map(|c| c.max_concurrent).unwrap_or(16);
-            let max_tokens = xi_cfg.map(|c| c.max_tokens).unwrap_or(512);
-            let client = Arc::new(XInferenceChatClient::new(
-                base_url.to_string(),
-                api_key,
-                xi_max_concurrent,
-            ));
-            (client as Arc<dyn ChatClient>, model.to_string(), max_tokens)
-        }
-        _ => {
-            let api_key = load_siliconflow_api_key();
-            let model = load_siliconflow_llm_model()
-                .or_else(|| std::env::var("SILICONFLOW_LLM_MODEL").ok())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "Qwen3-14B".to_string());
-
-            // R4：使用 SiliconFlow provider 的 URL——而非本地的
-            // 推理服务器地址。为空时回退到客户端的默认值。
-            let sf_url = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|s| s.url.clone())
-                .unwrap_or_default();
-            tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
-            let sf_max_concurrent = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|s| s.max_concurrent)
-                .unwrap_or(20);
-            let sf_max_tokens = pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|s| s.max_tokens)
-                .unwrap_or(512);
-            let client = Arc::new(SiliconFlowChatClient::new(
-                sf_url,
-                api_key,
-                sf_max_concurrent,
-            ));
-            (client as Arc<dyn ChatClient>, model, sf_max_tokens)
-        }
-    }
+        .and_then(|p| p.siliconflow.as_ref())
+        .map(|s| s.url.clone())
+        .unwrap_or_default();
+    tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
+    let sf_max_concurrent = pipeline_config.inference_max_concurrent();
+    let sf_max_tokens = pipeline_config
+        .llm
+        .as_ref()
+        .map(|c| c.max_tokens)
+        .unwrap_or(512);
+    let client = Arc::new(SiliconFlowChatClient::new(
+        sf_url,
+        api_key,
+        sf_max_concurrent,
+    ));
+    (client as Arc<dyn ChatClient>, model, sf_max_tokens)
 }
 
-/// 构建完成后对项目运行流水线分析。
+/// 构建完成后对代码根运行流水线分析。
 ///
 /// 这是纯粹的附加步骤——任何错误仅记录为警告，
 /// **不会**导致整个构建失败。
 async fn run_pipeline_analysis(
     project_path: &Path,
-    project_name: &str,
+    root_alias: &str,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     embed: Option<Arc<dyn EmbedService>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
     scan_config: &crate::domain::types::ScanConfig,
 ) -> anyhow::Result<()> {
-    // ── 1. Load pipeline config — skip if disabled ────────────────
+    // ── 1. Load pipeline config ───────────────────────────────────
     let pipeline_config = PipelineConfig::load().map_err(|e| anyhow::anyhow!("{e}"))?;
-    if !pipeline_config.enabled {
-        tracing::info!("流水线已禁用 (config/pipeline.yaml enabled=false)");
-        return Ok(());
-    }
-    tracing::info!("正在为 {project_name} 启动流水线分析...");
+    tracing::info!("正在为 {root_alias} 启动流水线分析...");
 
-    // ── 2. 根据 llm_provider 配置连接推理服务器 ────────────────
+    // ── 2. 连接推理服务器（siliconflow）────
     let (infer_client, infer_model, _infer_max_tokens): (Arc<dyn ChatClient>, String, u32) =
         build_llm_client(&pipeline_config);
 
@@ -496,11 +377,7 @@ async fn run_pipeline_analysis(
                 registry.register(Box::new(LlmClientProcessor::new(
                     infer_client.clone(),
                     infer_model.clone(),
-                    pipeline_config
-                        .providers
-                        .as_ref()
-                        .map(|p| p.llm_provider.clone())
-                        .unwrap_or_else(|| "siliconflow".to_string()),
+                    "siliconflow".to_string(),
                     Arc::new(prompts),
                     llm_config,
                 )));
@@ -523,7 +400,7 @@ async fn run_pipeline_analysis(
 
     // ── 4. 运行流水线 ───────────────────────────────────────────
     let registry = Arc::new(registry);
-    let engine = ProcessorEngine::new(registry, pipeline_config.llm_provider_max_concurrent());
+    let engine = ProcessorEngine::new(registry, pipeline_config.inference_max_concurrent());
 
     let all_files = collect_project_files(project_path, scan_config);
     let total_count = all_files.len();
@@ -575,7 +452,7 @@ async fn run_pipeline_analysis(
 
                 for step in &active_steps {
                     match snap
-                        .is_step_done(project_name, &rel_path, step, &file_hash)
+                        .is_step_done(root_alias, &rel_path, step, &file_hash)
                         .await
                     {
                         Ok(true) => {
@@ -611,7 +488,7 @@ async fn run_pipeline_analysis(
                     skipped += 1;
                 } else {
                     // 映射中只记录非空的跳过集合。键是
-                    // 项目相对路径——引擎接收的是相对
+                    // 相对代码根的路径——引擎接收的是相对
                     // 路径（见下方的 engine_input）。
                     if !steps_to_skip.is_empty() {
                         skip.insert(PathBuf::from(&rel_path), steps_to_skip.clone());
@@ -642,7 +519,7 @@ async fn run_pipeline_analysis(
     if skipped_count > 0 {
         let partial_count = files_to_process.len();
         tracing::info!(
-            "{project_name} 增量跳过 {skipped_count} 个完全未变更文件, \
+            "{root_alias} 增量跳过 {skipped_count} 个完全未变更文件, \
              {partial_count} 个文件有步骤待执行",
         );
     }
@@ -650,7 +527,7 @@ async fn run_pipeline_analysis(
     tracing::info!("流水线正在分析 {} 个文件...", files_to_process.len());
 
     if files_to_process.is_empty() {
-        tracing::info!("{project_name} 流水线分析完成: 所有文件均为最新 (已跳过 {total_count} 个)");
+        tracing::info!("{root_alias} 流水线分析完成: 所有文件均为最新 (已跳过 {total_count} 个)");
         return Ok(());
     }
 
@@ -672,7 +549,7 @@ async fn run_pipeline_analysis(
     };
 
     let analyses = engine
-        .analyze_batch(engine_input, project_name.to_string(), engine_skip)
+        .analyze_batch(engine_input, root_alias.to_string(), engine_skip)
         .await;
     let success_count = analyses.iter().filter(|a| a.success).count();
     let error_count = analyses.len() - success_count;
@@ -692,7 +569,7 @@ async fn run_pipeline_analysis(
                         continue; // 之前运行时已标记
                     }
                     if let Err(e) = snap
-                        .mark_step_done(project_name, rel_path, step, file_hash)
+                        .mark_step_done(root_alias, rel_path, step, file_hash)
                         .await
                     {
                         tracing::warn!(
@@ -717,7 +594,7 @@ async fn run_pipeline_analysis(
     }
 
     tracing::info!(
-        "{project_name} 流水线分析完成: \
+        "{root_alias} 流水线分析完成: \
          分析了 {} 个文件, {} 个成功, {} 个有错误 (跳过 {} 个未变更)",
         analyses.len(),
         success_count,
@@ -728,13 +605,13 @@ async fn run_pipeline_analysis(
     Ok(())
 }
 
-/// 处理 `dt build --all`——按顺序构建多个项目。
+/// 处理 `dt build --all`——按顺序构建多个 root（代码根）。
 ///
-/// 遍历 (project_name, project_path) 元组列表，为每个项目调用
-/// `handle_build()`。错误按项目捕获，不会中断整个批次。
+/// 遍历 (root_alias, root_path) 元组列表，为每个 root 调用
+/// `handle_build()`。错误按 root 捕获，不会中断整个批次。
 /// 最后打印汇总。
 pub async fn handle_build_all(
-    projects: Vec<(String, PathBuf)>,
+    roots: Vec<(String, PathBuf)>,
     full: bool,
     pipeline: bool,
     llm_backfill: bool,
@@ -745,15 +622,18 @@ pub async fn handle_build_all(
     batch_config: BatchConfig,
     scan_config: crate::domain::types::ScanConfig,
 ) -> anyhow::Result<()> {
-    let total = projects.len();
+    let total = roots.len();
     let mut succeeded = 0u32;
     let mut failed = 0u32;
 
-    println!("正在构建 {} 个项目...", total);
+    println!("正在构建 {} 个 root...", total);
 
-    for (i, (name, path)) in projects.into_iter().enumerate() {
+    for (i, (name, path)) in roots.into_iter().enumerate() {
         let idx = i + 1; // 从 1 开始的显示序号
-        println!("[{idx}/{total}] 正在构建 {name}，路径 {}", path.display());
+        println!(
+            "[{idx}/{total}] 正在构建 {name}，路径 {path}",
+            path = path.display()
+        );
 
         match handle_build(
             path,
@@ -781,7 +661,7 @@ pub async fn handle_build_all(
             }
         }
 
-        // 项目之间短暂暂停，让日志落盘
+        // root 之间短暂暂停，让日志落盘
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -790,128 +670,19 @@ pub async fn handle_build_all(
     Ok(())
 }
 
-/// 从可能混合的字符串中提取内嵌的 ASCII 单词序列
-
-/// 处理 `dt search`——统一检索渲染壳（U-D3：默认 world=all；--json 输出纯 JSON）。
-pub async fn handle_search(
-    query: String,
-    world: String,
-    limit: usize,
-    json: bool,
-    project: Option<String>,
-    file_type: Option<String>,
-    content_type: Option<String>,
-    show_content: bool,
-    graph: Option<Arc<dyn GraphRepository>>,
-    vector: Option<Arc<dyn VectorRepository>>,
-) -> anyhow::Result<()> {
-    // 分词结果日志:验证中文切词生效(入口日志保留原始 query,jieba 分词结果在此展示)。
-    // 上限 20 与 keyword_recall 消费端一致,保证日志展示的 kw 即实际查询的 kw。
-    let kws = crate::application::knowledge::extract::retrieve::keywords_of(&query, 20);
-    let t0 = std::time::Instant::now();
-    tracing::info!(
-        "搜索: query={query} 分词={kws:?} world={world} limit={limit} json={json} project={project:?} show_content={show_content}"
-    );
-
-    if !json {
-        println!("搜索: query=\"{query}\" 分词={kws:?} world={world} limit={limit}");
-    }
-
-    use crate::application::context::search_mcp::CrossWorldSearchTrait;
-
-    let embed: Option<Arc<dyn EmbedService>> = Some(create_search_embed_client());
-    let rerank = Some(create_search_rerank_client());
-    let cws = crate::application::context::search_mcp::CrossWorldSearch::new(
-        graph, vector, embed, rerank,
-    );
-    let req = crate::application::context::search_mcp::SearchRequest {
-        query: query.clone(),
-        world: Some(world),
-        limit: Some(limit),
-        project,
-        max_hops: None,
-        with_evidence: None,
-        origin: None,
-        doc_id: None,
-        file_type,
-        entity_type_filter: content_type,
-    };
-    let result = cws.search(&req).await?;
-    tracing::info!(
-        "搜索完成: query={:?} world={} total={} per_world={:?} degraded={:?} took_ms={}",
-        result.query,
-        result.world,
-        result.total,
-        result.per_world_counts,
-        result.degraded,
-        t0.elapsed().as_millis(),
-    );
-
-    if json {
-        // U-D4：--json 时 stdout 仅含 JSON（header 行已抑制，日志走 stderr）
-        println!(
-            "{}",
-            crate::interfaces::cli::search_render::render_json(&result)
-        );
-    } else {
-        // 人类可读渲染：把 dt://doc/{项目}/{相对路径} 解析为磁盘全路径。
-        // 仅展示层变换——SearchHit.source_ref / JSON / MCP 数据均不变。
-        let resolver = crate::interfaces::cli::search_render::ProjectPathResolver::new(
-            crate::interfaces::cli::build::project_roots_from_config(),
-        );
-        print!(
-            "{}",
-            crate::interfaces::cli::search_render::render_human(&result, show_content, &resolver)
-        );
-    }
-    Ok(())
-}
-
-/// 从 config.yaml 的 `projects` 段构造"项目别名 → 绝对根路径"表。
+/// 从 config.yaml 的 `roots` 段构造"根别名 → 磁盘绝对路径"表。
 ///
-/// 供 `ProjectPathResolver` 使用，把 `dt://doc/{项目}/{相对路径}` 来源
+/// 供 `ProjectPathResolver` 使用，把 `dt://doc/{根别名}/{相对路径}` 来源
 /// 解析为磁盘全路径（仅 CLI 人类渲染；加载失败返回空表，来源保持原样）。
+///
+/// 复用 [`crate::runtime::resolve_roots`]，与 `dt build` 的解析保持单一实现
+/// （旧版在此手写解析 `projects` 段，2026-09-05 root 化后删除）。
 pub fn project_roots_from_config() -> Vec<(String, String)> {
-    use crate::domain::types::ScanConfig;
-    let _ = ScanConfig::default(); // 确保类型可见性（无实际用途）
-    let mut out: Vec<(String, String)> = Vec::new();
-    let home = crate::shared::home_dir().unwrap_or_default();
-    let path = home.join(".config/digital-twin/config.yaml");
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return out;
+    let Some(cfg) = crate::runtime::load_config() else {
+        return Vec::new();
     };
-    let Ok(cfg) = serde_yaml::from_str::<serde_json::Value>(&content) else {
-        return out;
-    };
-    let Some(projects) = cfg.get("projects").and_then(|v| v.as_array()) else {
-        return out;
-    };
-    for group in projects {
-        let Some(base) = group.get("base").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let Some(items) = group.get("items").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        for item in items {
-            if let Some(s) = item.as_str() {
-                // 项目名即目录名
-                out.push((
-                    s.to_string(),
-                    format!("{}/{}", base.trim_end_matches('/'), s),
-                ));
-            } else if let Some(map) = item.as_object() {
-                // 别名: 目录名
-                for (alias, dir) in map {
-                    if let Some(d) = dir.as_str() {
-                        out.push((
-                            alias.clone(),
-                            format!("{}/{}", base.trim_end_matches('/'), d),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    out
+    crate::runtime::resolve_roots(&cfg)
+        .into_iter()
+        .map(|(alias, path)| (alias, path.display().to_string()))
+        .collect()
 }

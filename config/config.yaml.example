@@ -1,61 +1,103 @@
-# Digital Twin Configuration
-# Copy this to config.yaml and customize
-
-server:
-  hostname: my-server
-
+# Digital Twin Configuration Template
+# 复制本文件到 ~/.config/digital-twin/config.yaml 后按环境修改。
+# 注意: 本文件是模板, 不含真实密钥; 服务密码等请填实际值。
+# 顶层结构: services(后端连接) / roots(代码根清单, 每个 item 为「别名: 路径」) / batch(批参数)。
+# roots 支持分组键(纯注释组名), 组内 item 为 别名: 路径 映射。
 services:
-  # ── Embed providers (can configure multiple, route via services.embed) ──
-  siliconflow:
-    url: https://api.siliconflow.cn/v1
-    api_key: "your-api-key"
-    model_embed: BAAI/bge-m3
-    model_reranker: BAAI/bge-reranker-v2-m3
-    model_llm: Qwen/Qwen3.5-9B
-
-  xinference:
-    url: http://localhost:9997/v1
-    api_key: ""
-    model_embed: BAAI/bge-m3
-    model_reranker: BAAI/bge-reranker-v2-m3
-    model_llm: ""
-
-  openai_compatible:
-    url: https://glmcoding.cn
-    api_key: ""
-    model_llm: deepseek-v4-flash
-
-  # Routing: assign each capability to a provider ("siliconflow" or "xinference")
-  embed:
-    embed_provider: siliconflow    # text embedding
-    rerank_provider: siliconflow   # re-ranking
-    llm_provider: siliconflow      # LLM chat
-
   graph:
-    url: bolt://localhost:7688
+    url: bolt://localhost:7690
     user: memgraph
-    password: ""
+    password: ''
   qdrant:
-    url: http://localhost:6333
-
-security:
-  tls:
-    ca_cert: "/etc/dt/ca.pem"
-    server_cert: "/etc/dt/server.pem"
-    server_key: "/etc/dt/server.key"
-  jwt_secret: "env:DT_JWT_SECRET"
-  allow_plain_passwords: false
-
-snapshot_dir: /var/lib/digital-twin/snapshots
-
-# Optional: batch processing sizes for build pipeline
-# batch:
-#   unwind: 200
-#   embed: 512
-#   upsert: 1000
-#   embed_concurrency: 3
-
-# Optional: register projects
-# projects:
-#   - name: my-project
-#     path: /path/to/project
+    url: http://localhost:6336
+  sqlite:
+    path: /var/lib/digital-twin/snapshots.db  # 增量构建快照库路径(默认;可按环境改)
+roots:
+- base: /data/aflmProjects/aflm
+  items:
+  - archive-api: archive-api
+  - copartner-h5: copartner/copartner-h5
+  - doctor-center: doctor-center
+  - hospital-center: hospital-center
+  - message-center: uv-message-center
+  - api-gateway: uvp-api-gateway
+  - app-center: uvp-app-center
+  - comment-center: uvp-comment-center
+  - im-center: uvp-im-center
+  - knight-center: uvp-knight-center
+  - label-center: uvp-label-center
+  - med-alliance-center: uvp-med-alliance-center
+  - medicals-center: uvp-medicals-center
+  - nurse-center: uvp-nurse-center
+  - oauth-center: uvp-oauth-center
+  - order-center: uvp-order-center
+  - user-center: uvp-user-center
+  - boss-center: boss/uvp-boss-center
+  - boss: boss/boss
+  - copartner-center: copartner/uvp-copartner-center
+  - home-center: home/uvp-home-center
+  - yijianbao-home: home/yijianbao-home
+  - admin-center: admin/uvp-admin-center
+  - admin: admin/uv-admin
+- base: /data/aflmProjects/warehouse
+  items:
+  - caigou: yyc-caigou
+  - yaochang-gongsi: yyc-yaochang-gongsi
+  - goods-center: goods/uvp-goods-center
+  - goods-h5: goods/goods-center-h5
+  - business-center: uvp-business-center
+  - warehouse-center: uvp-warehouse-center
+  - warehouse-api: uvp-warehouse-api
+- base: /data/aflmProjects/others
+  items:
+  - cashier: pay/offenpay-ui/offenpay-ui-cashier
+  - manager: pay/offenpay-ui/offenpay-ui-manager
+  - merchant: pay/offenpay-ui/offenpay-ui-merchant
+  - offen-pay: pay/uvp-offen-pay
+  - third-center: third-center
+  - base-center: uvp-base-center
+  - cache-center: uvp-cache-center
+  - config-center: uvp-config-center
+  - search-center: uvp-search-center
+  - settlement-center: uvp-settlement-center
+  - sms-center: uvp-sms-center
+  - statistics-center: uvp-statistics-center
+- base: /data/aflmProjects/unimportant
+  items:
+  - hospital-biz: uv-net-hospital-biz
+  - charge-center: uvp-charge-center
+  - content-center: uvp-content-center
+  - data-center: uvp-data-center
+  - log-center: uvp-log-center
+  - log-server: uvp-log-server
+  - pay-center: uvp-pay-center
+  - saas-warehouse: uvp-saas-warehouse
+  - yimeng-website: yimeng-website
+- base: /data/aflmProjects
+  items:
+  - charts-prod: charts-prod
+  - charts-test: charts-test
+  - inner-intergration: uvp-inner-intergration
+  - yijianbao: yijianbao
+  - yiyuantong: yiyuantong
+  - shopyijianbao: shopyijianbao_shop
+  - nacosConfig: nacosConfig
+- base: /data/aflmProjects/yijianbao
+  items:
+  - yingchao-web: yingchao_web
+- base: /data/myProject
+  items:
+  - hermes-agent-guide: hermes-agent-guide
+  - digital-twin-v2: digital-twin-v2
+  - svc: svc
+  - kub: kub
+  - jcli: jenkins-cli-rs
+  - neatReader: neatReader
+- base: /data/doc
+  items:
+  - 软件: 软件
+batch:
+  unwind: 500
+  embed: 32
+  upsert: 1000
+  embed_concurrency: 32

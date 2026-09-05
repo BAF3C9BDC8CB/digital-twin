@@ -1,51 +1,91 @@
-enabled: true
-providers:
-  embed_provider: siliconflow
-  rerank_provider: siliconflow
-  llm_provider: siliconflow
-  siliconflow:
-    max_concurrent: 48
-    url: http://124.221.200.116:3000/v1
-    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
-    model_embed: BAAI/bge-m3
-    model_reranker: BAAI/bge-reranker-v2-m3
-    # model_llm: deepseek-ai/DeepSeek-V3.2
-    model_llm: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
-    # model_llm: tencent/Hunyuan-MT-7B
-    max_tokens: 512
-  xinference:
-    url: http://localhost:9997/v1
-    api_key: ''
-    model_embed: bge-m3
-    model_reranker: bge-reranker-v2-m3
-    model_llm: qwen3.5
-    max_tokens: 512
-  openai_compatible:
-    url: http://124.221.200.116:3000/v1
-    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
-    protocol: openai
-    model_llm: ox-alpha
-    max_concurrent: 24
-    max_tokens: 512
+# ===========================================================================
+# digital-twin 流水线配置（config/pipeline.yaml）
+#
+# 结构说明：
+#   providers.siliconflow   —— 唯一推理 provider 的「连接」信息（URL/凭据/并发）
+#   llm / embed / rerank    —— 三种能力的「模型与参数」（按能力归位，不再按
+#                              provider 拆散）
+#
+# 2026-09-05 重构：
+#   - XInference / openai_compatible / glmcoding 已移除，单一 SiliconFlow
+#     （OpenAI 兼容协议，rerank 走其私有扩展端点）
+#   - 移除无实际行为价值的样板开关：顶层 enabled（流水线分析由 CLI
+#     --pipeline + processors.llm 控制）、kg_router.enabled（dt router 调用
+#     即路由，不再二次放行）。保留有真实行为区分的开关：
+#     processors.*（各阶段）、kg_router.early_exit.enabled（闲聊拦截）、
+#     kg_router.result_filter.enabled（LLM 相关性过滤，可被 --filter 覆盖）。
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# 各处理阶段开关
+# ---------------------------------------------------------------------------
 processors:
-  tree_sitter: true
-  llm: true
-  chunk: true
-  extract_text: true
-  ocr: false
-  store: true
-  embed: true
+  tree_sitter: true     # AST 解析（代码实体抽取）
+  llm: true             # LLM 分析（方法/文档语义分析）
+  chunk: true           # 文本分块
+  extract_text: true    # 纯文本 / Markdown 抽取
+  ocr: false            # OCR（默认关，需额外依赖）
+  store: true           # 结果写入图 + 向量库
+  embed: true           # 向量化（Qdrant 已有向量时可关）
+
+# ---------------------------------------------------------------------------
+# SiliconFlow —— 唯一推理 provider
+#   OpenAI 兼容超集：chat/embeddings 为标准协议，rerank 为私有扩展端点；
+#   三种能力共用此连接与并发上限。
+# ---------------------------------------------------------------------------
+providers:
+  siliconflow:
+    url: http://124.221.200.116:3000/v1   # 内网网关（SiliconFlow 兼容）；云 API 为 https://api.siliconflow.cn/v1
+    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # 留空则回退 $SILICONFLOW_API_KEY
+    # HTTP 请求并发上限：embed/rerank/LLM 三种能力共享的网关连接并发。
+    # 与 config.yaml batch.embed_concurrency（应用层 embed 流并发，当前 8）分层：
+    # 实际并发请求数 ≈ min(流数, 本上限)。调大本值需网关侧可承受。
+    max_concurrent: 48
+
+# ---------------------------------------------------------------------------
+# LLM 能力（代码分析 / 文档抽取 / 路由过滤共用）
+#   max_tokens: 单次回复上限。8B 推理模型需要更长输出——512 会截断文档实体
+#   抽取的 JSON（多实体+多关系+摘要），2026-09-05 起对齐到 4096。
+# ---------------------------------------------------------------------------
 llm:
+  model: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
   temperature: 0.1
   max_tokens: 4096
+
+# ---------------------------------------------------------------------------
+# Embed 能力（向量化）
+# ---------------------------------------------------------------------------
+embed:
+  model: BAAI/bge-m3
+
+# ---------------------------------------------------------------------------
+# Rerank 能力（检索结果重排）
+# ---------------------------------------------------------------------------
+rerank:
+  model: BAAI/bge-reranker-v2-m3
+
+# ---------------------------------------------------------------------------
+# KG Router（dt router 三级路由）
+# ---------------------------------------------------------------------------
 kg_router:
-  enabled: true
   early_exit:
     # L0 提前拦截：纯规则判断查询是否值得检索，拦截"你好/谢谢/1+1/天气不错"等闲聊。
     # 命中任一实体/检索意图特征必放行；未命中闲聊词则默认放行（保守策略）。
     enabled: true
+  llm_gate:
+    # LLM 门控（默认关闭）：用 LLM 判断"是否值得搜索"，作为规则 L0 的二次确认。
+    # 不对称策略——规则说该搜 → 直接放行不调 LLM（省延迟）；
+    # 规则说不该搜（闲聊/无锚点）→ 问 LLM：LLM 说该搜则放行（规则误杀兜底），
+    # 说不该搜才拦截。开启后每次被规则拦下的查询多一次 LLM 调用（约 2-7s），
+    # 换来的收益是"换个说法的闲聊"和"看似闲聊实则需要检索"的边界查询更准确。
+    enabled: false
+    # 门控判断的最大 token 数（输出为简短 JSON，几十 token 足够）
+    max_tokens: 120
+    # 温度 0.0 保证确定性输出
+    temperature: 0.0
   result_filter:
     # 结果过滤（第三层）：开启后复用 LLM 逐条判断命中相关性，移除不相关项，
     # 解决 dt router 全量跨世界检索把无关项目/文档噪音注入上下文的问题。
+    # LLM 输出 JSON {"relevant": true/false} 判定（解析失败自动降级旧文本格式）。
     enabled: true
     threshold: 0.6

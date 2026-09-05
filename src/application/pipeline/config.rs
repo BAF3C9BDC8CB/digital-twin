@@ -17,17 +17,21 @@ use std::path::PathBuf;
 /// 默认值，因此该文件完全是可选的。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
-    /// 整个流水线的主启用 / 禁用开关。
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-
     /// 各处理器的功能开关。
     #[serde(default)]
     pub processors: ProcessorsConfig,
 
-    /// LLM 推理参数（temperature、max tokens、…）。
+    /// LLM 推理参数（model、temperature、max_tokens …）。
     #[serde(default)]
     pub llm: Option<LlmConfig>,
+
+    /// Embedding 能力配置（模型选择）。
+    #[serde(default)]
+    pub embed: Option<EmbedConfig>,
+
+    /// Rerank 能力配置（模型选择）。
+    #[serde(default)]
+    pub rerank: Option<RerankConfig>,
 
     /// 跨越多个项目的生态系统级设置。
     #[serde(default)]
@@ -42,10 +46,6 @@ pub struct PipelineConfig {
     /// KG Router 路由与过滤配置。
     #[serde(default)]
     pub kg_router: Option<KgRouterConfig>,
-}
-
-const fn default_enabled() -> bool {
-    true
 }
 
 // ---------------------------------------------------------------------------
@@ -103,9 +103,13 @@ impl Default for ProcessorsConfig {
     }
 }
 
-/// LLM 推理参数。
+/// LLM 推理参数（唯一能力块：代码/文档分析与路由过滤共用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
+    /// LLM 模型名（SiliconFlow 模型 ID，如 `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B`）。
+    #[serde(default)]
+    pub model: String,
+
     /// 采样温度（0.0 = 确定性，1.0 = 创造性）。
     #[serde(default = "default_temperature")]
     pub temperature: f32,
@@ -126,8 +130,41 @@ const fn default_max_tokens() -> u32 {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
+            model: String::new(),
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
+        }
+    }
+}
+
+/// Embedding 能力配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbedConfig {
+    /// Embedding 模型名（如 `BAAI/bge-m3`）。
+    #[serde(default)]
+    pub model: String,
+}
+
+impl Default for EmbedConfig {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+        }
+    }
+}
+
+/// Rerank 能力配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RerankConfig {
+    /// Rerank 模型名（如 `BAAI/bge-reranker-v2-m3`）。
+    #[serde(default)]
+    pub model: String,
+}
+
+impl Default for RerankConfig {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
         }
     }
 }
@@ -161,65 +198,26 @@ impl Default for EcosystemConfig {
 /// 提供方路由与模型配置。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvidersConfig {
-    /// 哪个提供方处理 embedding（"siliconflow" 或 "xinference"）。
-    #[serde(default = "default_embed_provider")]
-    pub embed_provider: String,
-
-    /// 哪个提供方处理 reranking（"siliconflow" 或 "xinference"）。
-    #[serde(default = "default_rerank_provider")]
-    pub rerank_provider: String,
-
-    /// 哪个提供方处理 LLM chat（"siliconflow" 或 "xinference"）。
-    #[serde(default = "default_llm_provider")]
-    pub llm_provider: String,
-
-    /// SiliconFlow 提供方配置。
+    /// SiliconFlow 连接配置（唯一推理 provider）。
     #[serde(default)]
     pub siliconflow: Option<SiliconFlowProviderConfig>,
-
-    /// XInference 提供方配置。
-    #[serde(default)]
-    pub xinference: Option<XInferenceProviderConfig>,
-
-    /// 通用 OpenAI-compatible LLM provider（glmcoding / opencode-go 等任意网关）。
-    /// 旧配置键 `glmcoding` 仍可反序列化（serde alias 兼容）。
-    #[serde(default, alias = "glmcoding")]
-    pub openai_compatible: Option<OpenAICompatibleProviderConfig>,
 }
 
-fn default_embed_provider() -> String {
-    "siliconflow".to_string()
-}
-fn default_rerank_provider() -> String {
-    "siliconflow".to_string()
-}
-fn default_llm_provider() -> String {
-    "siliconflow".to_string()
-}
-
-/// SiliconFlow 提供方配置。
+/// SiliconFlow 连接配置（唯一推理 provider）。
+///
+/// 模型选择与推理参数不在此处——按能力归入顶层 `llm` / `embed` / `rerank` 块；
+/// 此处只描述「连到哪、用什么凭据、多大并发」。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiliconFlowProviderConfig {
+    /// API base URL（OpenAI 兼容端点；缺省为 SiliconFlow 云 API）。
     #[serde(default = "default_sf_url")]
     pub url: String,
+    /// API key。留空时回退到 `SILICONFLOW_API_KEY` 环境变量。
     #[serde(default)]
     pub api_key: String,
-    #[serde(default)]
-    pub model_embed: String,
-    #[serde(default)]
-    pub model_reranker: String,
-    #[serde(default)]
-    pub model_llm: String,
-    /// SiliconFlow 云 API 最大并发请求数。
+    /// SiliconFlow 云 API 最大并发请求数（embed/rerank/LLM 共享）。
     #[serde(default = "default_sf_max_concurrent")]
     pub max_concurrent: usize,
-    /// LLM 单次回复最大 token 数（与模型上下文长度相关，可按模型调整）。
-    #[serde(default = "default_llm_max_tokens")]
-    pub max_tokens: u32,
-}
-
-const fn default_llm_max_tokens() -> u32 {
-    512
 }
 
 fn default_sf_url() -> String {
@@ -235,99 +233,7 @@ impl Default for SiliconFlowProviderConfig {
         Self {
             url: default_sf_url(),
             api_key: String::new(),
-            model_embed: String::new(),
-            model_reranker: String::new(),
-            model_llm: String::new(),
             max_concurrent: default_sf_max_concurrent(),
-            max_tokens: default_llm_max_tokens(),
-        }
-    }
-}
-
-/// XInference 提供方配置。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct XInferenceProviderConfig {
-    #[serde(default = "default_xi_url")]
-    pub url: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub model_embed: String,
-    #[serde(default)]
-    pub model_reranker: String,
-    #[serde(default)]
-    pub model_llm: String,
-    /// 本地推理服务最大并发请求数（默认 16，与历史 inference_server 默认一致）。
-    #[serde(default = "default_xi_max_concurrent")]
-    pub max_concurrent: usize,
-    /// LLM 单次回复最大 token 数（与模型上下文长度相关，可按模型调整）。
-    #[serde(default = "default_llm_max_tokens")]
-    pub max_tokens: u32,
-}
-
-fn default_xi_url() -> String {
-    "http://localhost:9997/v1".into()
-}
-
-const fn default_xi_max_concurrent() -> usize {
-    16
-}
-
-impl Default for XInferenceProviderConfig {
-    fn default() -> Self {
-        Self {
-            url: default_xi_url(),
-            api_key: String::new(),
-            model_embed: String::new(),
-            model_reranker: String::new(),
-            model_llm: String::new(),
-            max_concurrent: default_xi_max_concurrent(),
-            max_tokens: default_llm_max_tokens(),
-        }
-    }
-}
-
-/// 通用 OpenAI-compatible provider configuration（glmcoding / opencode-go 等网关）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenAICompatibleProviderConfig {
-    #[serde(default = "default_openai_compatible_url")]
-    pub url: String,
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default = "default_openai_compatible_model")]
-    pub model_llm: String,
-    #[serde(default = "default_openai_compatible_protocol")]
-    pub protocol: String,
-    #[serde(default = "default_openai_compatible_max_concurrent")]
-    pub max_concurrent: usize,
-    /// LLM 单次回复最大 token 数（与模型上下文长度相关，可按模型调整）。
-    /// deepseek 等推理模型需要预留 reasoning 空间，太小会 content 为空。
-    #[serde(default = "default_llm_max_tokens")]
-    pub max_tokens: u32,
-}
-
-fn default_openai_compatible_url() -> String {
-    "https://glmcoding.cn".into()
-}
-fn default_openai_compatible_model() -> String {
-    "deepseek-v4-flash".into()
-}
-fn default_openai_compatible_protocol() -> String {
-    "openai".into()
-}
-const fn default_openai_compatible_max_concurrent() -> usize {
-    32
-}
-
-impl Default for OpenAICompatibleProviderConfig {
-    fn default() -> Self {
-        Self {
-            url: default_openai_compatible_url(),
-            api_key: String::new(),
-            model_llm: default_openai_compatible_model(),
-            protocol: default_openai_compatible_protocol(),
-            max_concurrent: default_openai_compatible_max_concurrent(),
-            max_tokens: default_llm_max_tokens(),
         }
     }
 }
@@ -335,10 +241,6 @@ impl Default for OpenAICompatibleProviderConfig {
 /// KG Router 配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KgRouterConfig {
-    /// 启用任务感知路由。
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-
     /// 搜索结果智能过滤配置。
     #[serde(default)]
     pub result_filter: ResultFilterConfig,
@@ -348,6 +250,12 @@ pub struct KgRouterConfig {
     #[serde(default)]
     pub early_exit: EarlyExitConfig,
 
+    /// LLM 门控（llm-gate）配置：用 LLM 判断"是否值得搜索"，替代纯规则 L0。
+    /// 规则 L0 拦截后，若开启本项则再用 LLM 二次确认（规则放行的直接过，
+    /// 规则拦截的问 LLM，LLM 说该搜则仍放行）——不对称策略，防漏搜。
+    #[serde(default)]
+    pub llm_gate: LlmGateConfig,
+
     /// 可观测性配置。
     #[serde(default)]
     pub observability: ObservabilityConfig,
@@ -356,10 +264,47 @@ pub struct KgRouterConfig {
 impl Default for KgRouterConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             result_filter: ResultFilterConfig::default(),
             early_exit: EarlyExitConfig::default(),
+            llm_gate: LlmGateConfig::default(),
             observability: ObservabilityConfig::default(),
+        }
+    }
+}
+
+/// LLM 门控配置：搜索发起前用 LLM 判断查询是否值得检索。
+///
+/// 设计（不对称策略）：
+/// - 规则 L0（early_exit）判定「该搜」→ 直接放行，不调 LLM（省延迟）；
+/// - 规则 L0 判定「不该搜」（闲聊/无锚点）→ 调 LLM 二次确认：
+///   LLM 说该搜 → 放行（规则误杀兜底）；LLM 说不该搜 → 拦截返回空。
+/// 这样 LLM 只处理规则拿不准的少数查询，延迟与成本可控，且不会漏搜。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmGateConfig {
+    /// 启用 LLM 门控。默认关闭——只走纯规则 L0（现状）；开启后规则拦截的
+    /// 查询会再问一次 LLM 确认。
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// 门控判断时 LLM 最大 token 数（输出为简短 JSON，几十 token 足够）。
+    #[serde(default = "default_gate_max_tokens")]
+    pub max_tokens: u32,
+
+    /// 门控判断时的温度参数（0.0 确定性推理）。
+    #[serde(default)]
+    pub temperature: f32,
+}
+
+const fn default_gate_max_tokens() -> u32 {
+    120
+}
+
+impl Default for LlmGateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // 默认关：不改变现有纯规则行为
+            max_tokens: default_gate_max_tokens(),
+            temperature: 0.0,
         }
     }
 }
@@ -478,33 +423,58 @@ impl PipelineConfig {
         serde_yaml::from_str(&content).map_err(|e| format!("流水线配置解析错误: {e}"))
     }
 
-    /// 返回当前 `llm_provider` 的全局并发上限，供 ProcessorEngine（文件级
+    /// 返回 SiliconFlow 的全局并发上限，供 ProcessorEngine（文件级
     /// LLM 分析并发）与 LLM 客户端 semaphore 共用。
     ///
-    /// 缺失时按 provider 类型回退，与各 provider 结构体的 serde 默认一致：
-    /// `openai_compatible`=32、`xinference`=16、siliconflow 及其他=20。
-    /// 旧配置键 `glmcoding` 经 serde alias 已并入 `openai_compatible`。
-    pub fn llm_provider_max_concurrent(&self) -> usize {
-        let provider = self
-            .providers
+    /// 缺失时回退到默认值（20）。
+    pub fn inference_max_concurrent(&self) -> usize {
+        self.providers
             .as_ref()
-            .map(|p| p.llm_provider.as_str())
-            .unwrap_or("siliconflow");
-        let providers = self.providers.as_ref();
-        match provider {
-            "openai_compatible" | "glmcoding" => providers
-                .and_then(|p| p.openai_compatible.as_ref())
-                .map(|c| c.max_concurrent)
-                .unwrap_or(32),
-            "xinference" => providers
-                .and_then(|p| p.xinference.as_ref())
-                .map(|c| c.max_concurrent)
-                .unwrap_or(16),
-            _ => providers
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|c| c.max_concurrent)
-                .unwrap_or(20),
-        }
+            .and_then(|p| p.siliconflow.as_ref())
+            .map(|c| c.max_concurrent)
+            .unwrap_or(20)
+    }
+
+    /// 当前生效的 LLM 模型名（`llm.model`），空则回退默认。
+    pub fn llm_model(&self) -> String {
+        self.llm
+            .as_ref()
+            .and_then(|c| {
+                if c.model.is_empty() {
+                    None
+                } else {
+                    Some(c.model.clone())
+                }
+            })
+            .unwrap_or_else(|| crate::infrastructure::siliconflow::llm_model_from_env())
+    }
+
+    /// 当前生效的 embed 模型名（`embed.model`），空则回退默认。
+    pub fn embed_model(&self) -> String {
+        self.embed
+            .as_ref()
+            .and_then(|c| {
+                if c.model.is_empty() {
+                    None
+                } else {
+                    Some(c.model.clone())
+                }
+            })
+            .unwrap_or_else(|| crate::infrastructure::siliconflow::embed_model_from_env())
+    }
+
+    /// 当前生效的 rerank 模型名（`rerank.model`），空则回退默认。
+    pub fn rerank_model(&self) -> String {
+        self.rerank
+            .as_ref()
+            .and_then(|c| {
+                if c.model.is_empty() {
+                    None
+                } else {
+                    Some(c.model.clone())
+                }
+            })
+            .unwrap_or_else(|| crate::infrastructure::siliconflow::reranker_model_from_env())
     }
 }
 
@@ -517,9 +487,10 @@ fn home_pipeline_config() -> Option<PathBuf> {
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             processors: ProcessorsConfig::default(),
             llm: Some(LlmConfig::default()),
+            embed: Some(EmbedConfig::default()),
+            rerank: Some(RerankConfig::default()),
             ecosystem: Some(EcosystemConfig::default()),
             providers: Some(ProvidersConfig::default()),
             kg_router: Some(KgRouterConfig::default()),
@@ -538,9 +509,8 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let cfg = PipelineConfig::default();
-        assert!(cfg.enabled);
         // 无 providers 时按 siliconflow 默认回退（默认 max_concurrent=20）。
-        assert_eq!(cfg.llm_provider_max_concurrent(), 20);
+        assert_eq!(cfg.inference_max_concurrent(), 20);
         assert!(cfg.processors.tree_sitter);
         assert!(!cfg.processors.ocr);
         assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.1);
@@ -550,7 +520,6 @@ mod tests {
     #[test]
     fn deserialize_full_config() {
         let yaml = r#"
-enabled: true
 processors:
   tree_sitter: true
   llm: true
@@ -559,12 +528,16 @@ processors:
   ocr: false
   store: true
 llm:
+  model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
   temperature: 0.5
   max_tokens: 2048
+embed:
+  model: "BAAI/bge-m3"
+rerank:
+  model: "BAAI/bge-reranker-v2-m3"
 providers:
-  llm_provider: openai_compatible
-  openai_compatible:
-    url: "https://opencode.ai/zen/go"
+  siliconflow:
+    url: "https://api.siliconflow.cn/v1"
     max_concurrent: 32
 ecosystem:
   enabled: true
@@ -573,9 +546,13 @@ ecosystem:
     - svc
 "#;
         let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert!(cfg.enabled);
-        assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.5);
-        assert_eq!(cfg.llm_provider_max_concurrent(), 32);
+        let llm = cfg.llm.as_ref().unwrap();
+        assert_eq!(llm.model, "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
+        assert_eq!(llm.temperature, 0.5);
+        assert_eq!(cfg.llm_model(), "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
+        assert_eq!(cfg.embed_model(), "BAAI/bge-m3");
+        assert_eq!(cfg.rerank_model(), "BAAI/bge-reranker-v2-m3");
+        assert_eq!(cfg.inference_max_concurrent(), 32);
 
         let eco = cfg.ecosystem.unwrap();
         assert!(eco.enabled);
@@ -583,57 +560,19 @@ ecosystem:
     }
 
     #[test]
-    fn llm_provider_max_concurrent_reads_current_provider() {
-        // openai_compatible 显式配置
-        let yaml = r#"
-providers:
-  llm_provider: openai_compatible
-  openai_compatible:
-    max_concurrent: 8
-"#;
-        let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.llm_provider_max_concurrent(), 8);
-
-        // xinference 显式配置
-        let yaml = r#"
-providers:
-  llm_provider: xinference
-  xinference:
-    max_concurrent: 4
-"#;
-        let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.llm_provider_max_concurrent(), 4);
-
-        // xinference 缺 max_concurrent 字段 → 默认 16
-        let yaml = r#"
-providers:
-  llm_provider: xinference
-  xinference:
-    url: "http://localhost:9997/v1"
-"#;
-        let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.llm_provider_max_concurrent(), 16);
-
+    fn inference_max_concurrent_reads_current_provider() {
         // siliconflow 显式配置
         let yaml = r#"
 providers:
-  llm_provider: siliconflow
   siliconflow:
     max_concurrent: 10
 "#;
         let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.llm_provider_max_concurrent(), 10);
+        assert_eq!(cfg.inference_max_concurrent(), 10);
 
-        // 旧键 glmcoding（serde alias）兼容：键仍可反序列化进 openai_compatible
-        let yaml = r#"
-providers:
-  llm_provider: glmcoding
-  glmcoding:
-    max_concurrent: 12
-"#;
-        let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.llm_provider_max_concurrent(), 12);
-        assert!(cfg.providers.as_ref().unwrap().openai_compatible.is_some());
+        // 未配置 providers → 回退 20
+        let cfg = PipelineConfig::default();
+        assert_eq!(cfg.inference_max_concurrent(), 20);
     }
 
     #[test]
@@ -643,6 +582,6 @@ providers:
         let cfg = PipelineConfig::load().unwrap_or_default();
         // 配置文件可能存在也可能不存在，但我们总应得到一个有效的
         // 对象且不会 panic。
-        let _ = cfg.enabled;
+        let _ = cfg.processors;
     }
 }

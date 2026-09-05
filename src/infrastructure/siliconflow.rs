@@ -66,6 +66,10 @@ const DEFAULT_RERANKER_MODEL: &str = "BAAI/bge-reranker-v2-m3";
 /// 优先级：
 /// 1. `SILICONFLOW_PROXY` 环境变量
 /// 2. 标准的 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量
+///
+/// 若检测到代理，同时读取 `NO_PROXY`/`no_proxy` 列表并传给 reqwest——
+/// 否则内网 LLM 网关（如 124.221.200.116）也被强制走代理，
+/// 代理改写请求导致上游 400（实测 2026-09-05）。
 fn build_http_client() -> reqwest::Client {
     let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(120));
 
@@ -73,11 +77,28 @@ fn build_http_client() -> reqwest::Client {
 
     if let Some(url) = proxy_url {
         if let Ok(proxy) = reqwest::Proxy::all(&url) {
+            let proxy = apply_no_proxy(proxy);
             builder = builder.proxy(proxy);
         }
     }
 
     builder.build().unwrap_or_default()
+}
+
+/// 将环境变量 `NO_PROXY`/`no_proxy`（逗号分隔）应用到 reqwest 代理。
+fn apply_no_proxy(mut proxy: reqwest::Proxy) -> reqwest::Proxy {
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let hosts: Vec<&str> = no_proxy
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !hosts.is_empty() {
+        proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&no_proxy));
+    }
+    proxy
 }
 
 /// 从环境变量检测代理 URL。

@@ -75,7 +75,7 @@ pub fn clamp_max_hops(h: u32) -> u32 {
     h.clamp(1, 2)
 }
 
-/// rerank 分数归一到 [0,1]（S5-D6 实测修正：xinference/SiliconFlow 的
+/// rerank 分数归一到 [0,1]（S5-D6 实测修正：SiliconFlow 的
 /// `relevance_score` 已是 sigmoid 归一值——强相关对实测 0.9993、无关对 0.0——
 /// 二次 sigmoid 会把分布压向 0.5、架空 0.6 权重。故只做防御性 clamp；
 /// 若未来接入返回裸 logit 的 provider，需重新评估归一方式）。

@@ -8,7 +8,7 @@ use std::sync::Arc;
 pub async fn handle_sense(
     path: Option<PathBuf>,
     json: bool,
-    projects: Vec<(String, PathBuf)>,
+    roots: Vec<(String, PathBuf)>,
     graph: Option<Arc<dyn GraphRepository>>,
     vector: Option<Arc<dyn VectorRepository>>,
     snapshot: Option<Arc<dyn SnapshotRepository>>,
@@ -34,7 +34,7 @@ pub async fn handle_sense(
         snapshot,
         ignored_dirs_file,
     };
-    let report = svc.sense(&input, &projects).await;
+    let report = svc.sense(&input, &roots).await;
     tracing::info!(
         "dt sense: 完成 path={} status={:?} project={} stats={:?} degraded={:?}",
         input.display(),

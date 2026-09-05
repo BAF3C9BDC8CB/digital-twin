@@ -62,9 +62,10 @@ cargo run -- --help
    ```bash
    mkdir -p ~/.config/digital-twin
    cp config/config.yaml.example ~/.config/digital-twin/config.yaml
+   cp config/ignore.yaml ~/.config/digital-twin/ignore.yaml   # 扫描忽略规则（可选，不复制则用内置默认）
    ```
 
-2. 根据环境修改 `~/.config/digital-twin/config.yaml`。
+2. 根据环境修改 `~/.config/digital-twin/config.yaml`（服务地址、代码根清单）与 `~/.config/digital-twin/ignore.yaml`（忽略规则）。
 3. 根据管线需求修改 `config/pipeline.yaml`，并检查其中的 provider、模型和 URL。
 4. 事件 Hook 模板位于 `config/event-hooks.yaml`；运行时从 `~/.config/digital-twin/event-hooks.yaml` 加载，请按部署方式复制并配置。
 
@@ -74,15 +75,21 @@ cargo run -- --help
 cp config/event-hooks.yaml ~/.config/digital-twin/event-hooks.yaml
 ```
 
-如果使用 `dt build` 的无参数模式，还需要在主配置中注册项目：
+如果使用 `dt build` 的无参数模式，还需要在主配置中注册代码根（root = 查询别名 + 磁盘路径）：
 
 ```yaml
-projects:
-  - name: my-project
-    path: /path/to/project
+roots:
+  # 分组写法：base 为公共前缀，items 为相对路径（推荐）
+- base: /path/to
+  items:
+  - my-project
+  # 别名 ≠ 目录名时用「别名: 相对路径」
+  - proj-a: real-dir-name
+  # 单根写法：别名 → 绝对路径
+- other-name: /path/to/other/real-dir
 ```
 
-配置模板中的默认项包括 Memgraph、Qdrant、SiliconFlow、XInference 和 GLM Coding 等 provider。实际使用哪个 provider 由配置决定；不要把 API 密钥提交到仓库，建议使用环境变量或密钥管理系统。
+配置模板中的默认项包括 Memgraph、Qdrant、SiliconFlow 等 provider（统一走 OpenAI 兼容协议，rerank 使用 SiliconFlow 私有扩展端点）。不要把 API 密钥提交到仓库，建议使用环境变量或密钥管理系统。
 
 ## 常用命令
 
@@ -219,7 +226,7 @@ skills/     Hermes 集成的操作技能（digital-twin-ops：SKILL.md + referen
 ## 相关文档
 
 - [`docs/`](docs/)：设计规格和实施计划
-- [`config/config.yaml.example`](config/config.yaml.example)：配置模板
+- [`config/`](config/)：配置模板（`config.yaml` 主配置 + `ignore.yaml` 忽略规则 + `pipeline.yaml` 流水线）
 - [`skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md`](skills/digital-twin-ops/references/agent-workflow/WRITE-EVENTS.md)：事件写入指南
 
 ## 许可证

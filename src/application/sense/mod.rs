@@ -86,13 +86,13 @@ pub struct SenseService {
 
 impl SenseService {
     /// 永不失败：后端缺失走 degraded。input 存在性由调用方（CLI）校验。
-    pub async fn sense(&self, input: &Path, projects: &[(String, PathBuf)]) -> SenseReport {
+    pub async fn sense(&self, input: &Path, roots: &[(String, PathBuf)]) -> SenseReport {
         let mut degraded: Vec<String> = Vec::new();
 
-        let Some((name, root)) = locate::match_project(input, projects) else {
+        let Some((name, root)) = locate::match_root(input, roots) else {
             // 未注册: 反查"当前目录是否为已注册项目的直接父目录(容器/base)",
             // 容器命中时给出已注册子项目清单, 并从未注册候选里剔除它们。
-            let base_children: Vec<ProjectRef> = locate::collect_base_children(input, projects)
+            let base_children: Vec<ProjectRef> = locate::collect_base_children(input, roots)
                 .into_iter()
                 .map(|(n, p)| ProjectRef {
                     name: n.to_string(),

@@ -6,4 +6,3 @@ pub mod qdrant;
 pub mod scanner;
 pub mod siliconflow;
 pub mod sqlite;
-pub mod xinference;

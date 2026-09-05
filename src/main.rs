@@ -90,7 +90,7 @@ enum Commands {
         #[arg(long = "entity-type")]
         entity_type: Option<String>,
 
-        /// 可选的项目名称，用于作用域限定。
+        /// 可选的代码根别名（roots 段注册名），用于作用域限定。
         #[arg(long = "project")]
         project: Option<String>,
     },
@@ -144,24 +144,24 @@ enum Commands {
         #[arg(long = "success")]
         success: Option<bool>,
 
-        /// 所属项目名称。
+        /// 所属代码根别名（roots 段注册名）。
         #[arg(long = "project")]
         project: Option<String>,
     },
 
-    /// 将项目构建（索引）到知识图谱。
+    /// 将代码根构建（索引）到知识图谱。
     ///
-    /// `dt build` — 从 config.yaml 构建所有项目（默认）。
-    /// `dt build --path <path>` — 按根路径构建项目。
-    /// `dt build --name <name>` — 按 config.yaml 中的名称构建项目。
+    /// `dt build` — 从 config.yaml 的 roots 段构建所有代码根（默认）。
+    /// `dt build --path <path>` — 按磁盘路径构建。
+    /// `dt build --name <name>` — 按 roots 段注册的根别名构建。
     /// `dt build --file <file>` — 单文件增量更新。
     /// `dt build --full` — 全量重建（可与 --path/--name/--file 组合）。
     Build {
-        /// 项目根路径。
+        /// 代码根路径（磁盘绝对路径）。
         #[arg(long = "path")]
         path: Option<PathBuf>,
 
-        /// 项目名称（来自 config.yaml）。
+        /// 代码根别名（config.yaml 的 roots 段注册的查询用名）。
         #[arg(long = "name", short = 'n')]
         name: Option<String>,
 
@@ -193,42 +193,6 @@ enum Commands {
         config_chunks: bool,
     },
 
-    /// 跨世界统一搜索。
-    ///
-    /// 用法: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10] [--json]
-    Search {
-        /// 搜索查询字符串（位置参数）。
-        query: String,
-
-        /// 要搜索的世界: all、code、knowledge、doc、config、memory。
-        #[arg(long = "world", default_value = "all")]
-        world: String,
-
-        /// 结果数量上限。
-        #[arg(long = "limit", default_value = "10")]
-        limit: usize,
-
-        /// 向 stdout 输出纯 JSON（用于 MCP / 脚本调用）。
-        #[arg(long = "json")]
-        json: bool,
-
-        /// 限定到某个项目名称。
-        #[arg(long = "project", short = 'p')]
-        project: Option<String>,
-
-        /// 按文件类型过滤：类别名（document/code/config）或具体后缀（md/yaml/java…）。
-        #[arg(long = "file-type")]
-        file_type: Option<String>,
-
-        /// 按内容类型过滤：LLM 语义类型（Config/Service/Standard…）或 AST 类型（Method/Class…）。
-        #[arg(long = "content-type", alias = "type")]
-        content_type: Option<String>,
-
-        /// 展开命中正文原文块（Config/Method/Doc 的 content 原样逐行显示）。
-        #[arg(long = "show-content")]
-        show_content: bool,
-    },
-
     /// 查看 digital-twin 统一日志（纯文本格式，tail/grep 语义）。
     ///
     /// 用法: dt logs [-f] [-k 关键词] [-n 行数]
@@ -249,7 +213,7 @@ enum Commands {
         lines: usize,
     },
 
-    /// 环境感知：定位目录所属项目，输出索引状态与内容简报。
+    /// 环境感知：定位目录所属代码根（root），输出索引状态与内容简报。
     ///
     /// 用法: dt sense [path] [--json]
     Sense {
@@ -278,14 +242,16 @@ enum Commands {
         config_chunks: bool,
     },
 
-    /// 智能路由搜索（统一检索入口）。
+    /// 统一检索入口（融合智能路由）。跨 code/doc/knowledge/config/memory 检索；
+    /// L0 闲聊/无锚点拦截 + 意图路由 + 可选 LLM 过滤，并保留显式过滤精确透传。
     ///
-    /// 用法: dt router <query> [--world all|code|knowledge|doc|config|memory] [--limit 10]
+    /// 用法: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10]
     ///       [--json] [--project P] [--filter BOOL] [--threshold 0.6] [--file-type F]
     ///       [--content-type T] [--show-content] [--explain]
-    /// 统一 dt search 与 dt router：自动意图路由 + L0 闲聊/无锚点拦截 + LLM 过滤，
-    /// 并保留显式 --file-type/--content-type/--show-content 精确过滤。
-    Router {
+    /// 兼容: `dt router` 已并入本命令（alias），仍可调用。
+    /// 统一前身: dt search（裸检索）、dt router（智能路由）、dt search_kg（KG 优先）。
+    #[command(alias = "router")]
+    Search {
         /// 搜索查询字符串。
         query: String,
 
@@ -301,7 +267,7 @@ enum Commands {
         #[arg(long = "json")]
         json: bool,
 
-        /// 限定到某个项目。
+        /// 限定到某个代码根（roots 段注册别名）。
         #[arg(long = "project", short = 'p')]
         project: Option<String>,
 
@@ -330,6 +296,18 @@ enum Commands {
         #[arg(long = "show-content")]
         show_content: bool,
     },
+
+    /// 图(Memgraph) vs 向量(Qdrant) 存量对账（方案 §4.1，只读巡检）。
+    ///
+    /// 输出两侧按 (project, 类型) 的节点数与差异，标出"有图无向量"桶与
+    /// "有向量无图"孤儿 project。修复动作见方案 S2（`dt reconcile --fix`，暂未实现）。
+    ///
+    /// 用法: dt reconcile [--json]
+    Reconcile {
+        /// 输出纯 JSON（供脚本/MCP 消费，含全量桶数据）。
+        #[arg(long = "json")]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -357,8 +335,6 @@ enum BackupAction {
 }
 
 // ---- 配置加载 ----
-
-/// 从 config.yaml 提取项目路径所需的最小 YAML 子集。
 // ---- 连接薄转发: 实现已抽取到 digital_twin::runtime ----
 use digital_twin::application::hooks::HookEngine;
 use digital_twin::application::sync::batch::SyncAccumulator;
@@ -375,8 +351,8 @@ fn scan_config_from(cfg: &DaemonConfig) -> ScanConfig {
     digital_twin::runtime::scan_config_from(cfg)
 }
 
-fn resolve_project_paths(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
-    digital_twin::runtime::resolve_project_paths(cfg)
+fn resolve_roots(cfg: &DaemonConfig) -> Vec<(String, PathBuf)> {
+    digital_twin::runtime::resolve_roots(cfg)
 }
 
 fn dirs_like_home_config(suffix: &str) -> Option<PathBuf> {
@@ -554,8 +530,8 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI 模式: dt router (智能路由搜索, 统一检索入口) ----
-        Some(Commands::Router {
+        // ---- CLI 模式: dt search / dt router(alias) (统一检索入口) ----
+        Some(Commands::Search {
             query,
             world,
             limit,
@@ -735,7 +711,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // 无任何参数 → 从 config.yaml 构建所有项目
+            // 无任何参数 → 从 config.yaml 构建所有代码根
             if path.is_none() && name.is_none() && file.is_none() {
                 let memgraph = connect_memgraph().await;
                 let graph: Option<Arc<dyn GraphRepository>> =
@@ -750,9 +726,9 @@ async fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 };
 
-                let projects = resolve_project_paths(&cfg);
-                if projects.is_empty() {
-                    eprintln!("错误: config.yaml 中未配置任何项目");
+                let roots = resolve_roots(&cfg);
+                if roots.is_empty() {
+                    eprintln!("错误: config.yaml 中未配置任何 root（roots 段为空）");
                     std::process::exit(1);
                 }
 
@@ -760,7 +736,7 @@ async fn main() -> anyhow::Result<()> {
                 let pipeline = !no_pipeline;
                 let scan_config = scan_config_from(&cfg);
                 digital_twin::interfaces::cli::build::handle_build_all(
-                    projects,
+                    roots,
                     full,
                     pipeline,
                     llm_backfill,
@@ -789,27 +765,27 @@ async fn main() -> anyhow::Result<()> {
                 let cfg = load_config();
                 cfg.as_ref()
                     .and_then(|c| {
-                        resolve_project_paths(c)
+                        resolve_roots(c)
                             .into_iter()
-                            .find(|(proj_name, _)| proj_name == n)
-                            .map(|(_, proj_path)| proj_path)
+                            .find(|(alias, _)| alias == n)
+                            .map(|(_, root_path)| root_path)
                     })
                     .unwrap_or_else(|| path.expect("必须提供 --path"))
             } else if let Some(ref f) = file {
-                // --file 单独使用：从 config.yaml 匹配文件所属项目根，
+                // --file 单独使用：从 config.yaml 匹配文件所属 root 根，
                 // 使 `dt build --file <绝对路径>` 无需显式 --path/--name
                 // （MCP dt_build 对文件路径即如此调用；此前会 panic）。
                 let cfg = load_config();
-                let projects = cfg.as_ref().map(resolve_project_paths).unwrap_or_default();
+                let roots = cfg.as_ref().map(resolve_roots).unwrap_or_default();
                 let file_path = PathBuf::from(f);
-                let matched = projects
+                let matched = roots
                     .into_iter()
                     .filter(|(_, p)| file_path.starts_with(p))
                     .max_by_key(|(_, p)| p.components().count());
                 match matched {
-                    Some((proj_name, proj_path)) => {
-                        name = Some(proj_name);
-                        proj_path
+                    Some((alias, root_path)) => {
+                        name = Some(alias);
+                        root_path
                     }
                     None => path.expect("必须提供 --path"),
                 }
@@ -841,45 +817,24 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI 模式: dt search ----
-        Some(Commands::Search {
-            query,
-            world,
-            limit,
-            json,
-            project,
-            file_type,
-            content_type,
-            show_content,
-        }) => {
+        // ---- CLI 模式: dt reconcile (图 vs 向量对账, 只读) ----
+        Some(Commands::Reconcile { json }) => {
             let graph = connect_graph().await;
             let vector = connect_vector().await;
-            digital_twin::interfaces::cli::build::handle_search(
-                query,
-                world,
-                limit,
-                json,
-                project,
-                file_type,
-                content_type,
-                show_content,
-                graph,
-                vector,
-            )
-            .await?;
+            digital_twin::interfaces::cli::reconcile::run_reconcile(graph, vector, json).await?;
             return Ok(());
         }
 
         // ---- CLI 模式: dt sense ----
         Some(Commands::Sense { path, json }) => {
             let cfg = load_config();
-            let projects = cfg.as_ref().map(resolve_project_paths).unwrap_or_default();
+            let roots = cfg.as_ref().map(resolve_roots).unwrap_or_default();
             let graph = connect_graph().await;
             let vector = connect_vector().await;
             let snapshot = connect_snapshot().await;
             let ignored = dirs_like_home_config(".config/digital-twin/ignored_dirs.yaml");
             digital_twin::interfaces::cli::sense::handle_sense(
-                path, json, projects, graph, vector, snapshot, ignored,
+                path, json, roots, graph, vector, snapshot, ignored,
             )
             .await?;
             return Ok(());
@@ -910,6 +865,4 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
     }
-
-    Ok(())
 }

@@ -1,12 +1,14 @@
-//! dt-mcp — digital-twin 的 MCP server(Rust 实现, 11 个 dt_* 工具)
+//! dt-mcp — digital-twin 的 MCP server(Rust 实现, 9 个 dt_* 工具)
 //!
 //! 直接调用 `digital_twin::interfaces::cli` 的 handler 与 `runtime::DtRuntime`,
 //! 不再走 CLI 子进程。工具名与参数 schema 对齐旧 mcp-server.py:
-//!   dt_router / dt_search_kg / dt_search / dt_sense / dt_memorize / dt_event
-//!   / dt_learn / dt_build / dt_kg_sync / dt_health / dt_backup
+//!   dt_search / dt_sense / dt_memorize / dt_event / dt_learn / dt_build
+//!   / dt_kg_sync / dt_health / dt_backup
 //!
-//! dt_router 是统一检索入口(对应 CLI `dt router`), 具备 L0 拦截 + 意图路由
-//! + LLM 过滤; dt_search_kg/dt_search 保留为底层兼容检索(直接 handle_search)。
+//! dt_search 是统一检索入口(对应 CLI `dt search`), 融合原 dt_router 的
+//! L0 拦截 + 意图路由 + LLM 过滤 与原 dt_search_kg 的 KG 优先语义。
+//! 旧工具名 dt_router / dt_search_kg 在 call 层保留为兼容别名(list_tools
+//! 不再暴露), 存量调用自动转发到同一实现。
 //!
 //! 输出适配: CLI handler 直接 `println!` 到 stdout, 而 MCP server 的 stdout
 //! 是 JSON-RPC 协议通道 —— 因此 call_tool 内把 stdout 重定向到临时文件,
@@ -113,14 +115,18 @@ impl DtRouter {
     async fn call(&self, tool_name: &str, arguments: Value) -> Result<String, ToolError> {
         let rt = &self.rt;
         match tool_name {
-            "dt_router" => {
-                // 智能路由搜索（dt router CLI 的 MCP 出口）：
-                // L0 拦截(闲聊/无锚点) + 意图路由 + LLM 过滤，跨 code/doc/knowledge/memory。
+            // 统一检索入口：dt_search（融合 dt_router 智能路由 + dt_search 裸检索 + dt_search_kg KG 优先）。
+            // 旧名 dt_router / dt_search_kg 保留为兼容别名（list_tools 不再暴露，但存量调用不报错）：
+            //   dt_router    → 同 dt_search（world 默认 all，智能路由 + 可选 LLM 过滤）
+            //   dt_search_kg → world 缺省时默认 knowledge（KG 优先语义）
+            "dt_search" | "dt_router" | "dt_search_kg" => {
                 let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let world =
-                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
+                let legacy_kg = tool_name == "dt_search_kg";
+                let default_world = if legacy_kg { "knowledge" } else { "all" };
+                let world = str_arg(&arguments, "world", false)?
+                    .unwrap_or_else(|| default_world.to_string());
                 let project = str_arg(&arguments, "project", false)?;
-                let limit = int_arg(&arguments, "limit")?.unwrap_or(5) as usize;
+                let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
                 let enable_filter = match str_arg(&arguments, "filter", false)? {
                     Some(v) if v == "true" => Some(true),
                     Some(v) if v == "false" => Some(false),
@@ -159,71 +165,9 @@ impl DtRouter {
 
                 Ok(out)
             }
-            "dt_search_kg" => {
-                let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let world =
-                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "knowledge".to_string());
-                let project = str_arg(&arguments, "project", false)?;
-                let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
-                let g = rt.graph.clone();
-                let v = rt.vector.clone();
-                let out = tokio::task::spawn_blocking(move || {
-                    capture_stdout(move || {
-                        tokio::runtime::Runtime::new().unwrap().block_on(
-                            digital_twin::interfaces::cli::build::handle_search(
-                                query,
-                                world.to_string(),
-                                limit,
-                                true,
-                                project,
-                                None,
-                                None,
-                                false,
-                                g,
-                                v,
-                            ),
-                        )
-                    })
-                })
-                .await
-                .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-                Ok(out)
-            }
-            "dt_search" => {
-                let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let world =
-                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
-                let project = str_arg(&arguments, "project", false)?;
-                let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
-                let g = rt.graph.clone();
-                let v = rt.vector.clone();
-                let out = tokio::task::spawn_blocking(move || {
-                    capture_stdout(move || {
-                        tokio::runtime::Runtime::new().unwrap().block_on(
-                            digital_twin::interfaces::cli::build::handle_search(
-                                query,
-                                world.to_string(),
-                                limit,
-                                true,
-                                project,
-                                None,
-                                None,
-                                false,
-                                g,
-                                v,
-                            ),
-                        )
-                    })
-                })
-                .await
-                .map_err(|e| ToolError::ExecutionError(e.to_string()))?;
-
-                Ok(out)
-            }
             "dt_sense" => {
                 let path = str_arg(&arguments, "path", false)?.map(std::path::PathBuf::from);
-                let projects = rt.projects.clone();
+                let roots = rt.roots.clone();
                 let g = rt.graph.clone();
                 let v = rt.vector.clone();
                 let snap = rt.snapshot.clone();
@@ -231,7 +175,7 @@ impl DtRouter {
                     capture_stdout(move || {
                         tokio::runtime::Runtime::new().unwrap().block_on(
                             digital_twin::interfaces::cli::sense::handle_sense(
-                                path, true, projects, g, v, snap, None,
+                                path, true, roots, g, v, snap, None,
                             ),
                         )
                     })
@@ -353,12 +297,12 @@ impl DtRouter {
                 let batch = rt.batch_config.clone();
                 let scan = rt.scan_config.clone();
                 if all {
-                    let projects = rt.projects.clone();
+                    let roots = rt.roots.clone();
                     let out = tokio::task::spawn_blocking(move || {
                         capture_stdout(move || {
                             tokio::runtime::Runtime::new().unwrap().block_on(
                                 digital_twin::interfaces::cli::build::handle_build_all(
-                                    projects,
+                                    roots,
                                     full,
                                     true,
                                     true,
@@ -577,15 +521,15 @@ impl Router for DtRouter {
     fn list_tools(&self) -> Vec<Tool> {
         vec![
             Tool::new(
-                "dt_router".to_string(),
-                "智能路由搜索(统一检索): 自动识别意图路由 world + L0 闲聊/无锚点拦截 + 可选 LLM 过滤, 跨 code/doc/knowledge/config/memory。查代码/文件/文档/记忆/配置统一用它; 命中先读取确认, 0 命中才读源码。参数: query/world(默认all)/project/limit(默认5)/filter(可选 true|false)/file_type/content_type/show_content".to_string(),
+                "dt_search".to_string(),
+                "统一检索入口(融合 dt_router 智能路由 + dt_search 裸检索 + dt_search_kg KG 优先): L0 闲聊/无锚点拦截 + 意图识别路由 + 可选 LLM 过滤, 跨 code/doc/knowledge/config/memory。查代码/文件/文档/记忆/配置统一用它; 命中先读取确认, 0 命中才读源码。参数: query/world(默认all)/project/limit(默认10)/filter(可选 true|false)/threshold/file_type/content_type/show_content。已知精确方法/类名直接作为 query 触发精确匹配; 查知识图谱记忆用 world=knowledge".to_string(),
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "自然语言搜索关键词/定位目标"},
                         "world": {"type": "string", "description": "检索世界: all|code|knowledge|doc|config|memory, 默认 all(跨世界)"},
                         "project": {"type": "string", "description": "限定项目名(查代码/文档必带)"},
-                        "limit": {"type": "integer", "description": "返回数量, 默认 5"},
+                        "limit": {"type": "integer", "description": "返回数量, 默认 10"},
                         "filter": {"type": "string", "description": "LLM 相关性过滤: true 强制开 / false 强制关 / 省略跟随配置"},
                         "threshold": {"type": "string", "description": "过滤阈值 0-1, 默认跟随配置 0.6"},
                         "file_type": {"type": "string", "description": "按文件类型过滤: document/code/config 或后缀 md/yaml/rs…"},
@@ -596,36 +540,8 @@ impl Router for DtRouter {
                 }),
             ),
             Tool::new(
-                "dt_search_kg".to_string(),
-                "搜索知识图谱(GraphRAG 混合检索), 返回 JSON。world: knowledge(默认)/code/doc/config/memory/all; 已知精确方法/类名直接作为 query 触发精确匹配; 推荐带 project 过滤".to_string(),
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "自然语言搜索关键词"},
-                        "world": {"type": "string", "description": "检索世界: all|code|knowledge|doc|config|memory, 默认 knowledge"},
-                        "project": {"type": "string", "description": "限定项目名"},
-                        "limit": {"type": "integer", "description": "返回数量, 默认 10"}
-                    },
-                    "required": ["query"]
-                }),
-            ),
-            Tool::new(
-                "dt_search".to_string(),
-                "统一检索(world 默认 all), 返回 JSON(Method 含 llm_analysis/file_path, Entity 含 summary, Doc 含原文块)".to_string(),
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "搜索关键词"},
-                        "world": {"type": "string", "description": "all|code|knowledge|doc|config|memory, 默认 all"},
-                        "limit": {"type": "integer", "description": "返回数量, 默认 10"},
-                        "project": {"type": "string", "description": "限定项目名"}
-                    },
-                    "required": ["query"]
-                }),
-            ),
-            Tool::new(
                 "dt_sense".to_string(),
-                "环境感知: 定位目录所属项目, 返回项目简报(统计/目录画像/语言/关键实体)".to_string(),
+                "环境感知: 定位目录所属代码根(root), 返回项目简报(统计/目录画像/语言/关键实体)".to_string(),
                 serde_json::json!({
                     "type": "object",
                     "properties": {"path": {"type": "string", "description": "目标目录, 缺省为当前工作目录"}},

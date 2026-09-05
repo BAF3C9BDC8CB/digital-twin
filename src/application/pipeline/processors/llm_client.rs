@@ -46,7 +46,7 @@ const JSON_CORRECTION: &str =
 
 /// 基于 LLM 的分析处理器。
 ///
-/// 使用配置的 [`ChatClient`]（SiliconFlow 或 XInference）调用对话端点。
+/// 使用配置的 [`ChatClient`]（SiliconFlow / OpenAI-Compatible）调用对话端点。
 /// 提示词模板根据哪些前置处理器产生了输出而动态选择。
 pub struct LlmClientProcessor {
     client: Arc<dyn ChatClient>,

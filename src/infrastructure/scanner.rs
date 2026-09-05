@@ -1,7 +1,10 @@
-//! 文件扫描器——按可配置的过滤规则发现项目源文件。
+//! 文件扫描器——按可配置的过滤规则发现代码根源文件。
 //!
-//! 使用 `walkdir` 递归遍历项目目录，应用目录、扩展名与文件大小的
-//! 忽略规则。
+//! 使用 `walkdir` 递归遍历代码根目录，应用**统一忽略规则**（文件与目录
+//! 通吃，支持 glob 通配 `*` / `?` / `**`）与文件大小过滤。
+//!
+//! 统一忽略模型见 [`ScanConfig`]：`ignore_names`（精确名/路径前缀）+
+//! `ignore_globs`（通配条目）。判定入口 [`is_ignored`]。
 
 use crate::domain::types::ScanConfig;
 use sha2::{Digest, Sha256};
@@ -10,31 +13,100 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-/// 判断目录是否应被忽略。
+/// 判断相对路径（相对扫描根，正斜杠，无前导 `/`）是否命中任一忽略规则。
 ///
-/// `ignore_dirs` 支持两种匹配：
-/// - 单段目录名（如 "node_modules"、"target"）—— 匹配任何同名目录；
-/// - 带路径前缀的条目（如 "target/debug"、"node_modules/.cache"）
-///   —— 匹配 `entry_path` 相对扫描根的子路径，或以该前缀开头的深层路径。
-/// 传入 `rel`（entry_path 相对 root 的正斜杠路径）用于前缀匹配。
-pub fn dir_is_ignored(
-    rel: &str,
-    name: &str,
-    ignore_dirs: &std::collections::HashSet<String>,
-) -> bool {
-    if ignore_dirs.contains(name) {
-        return true;
+/// 匹配模型（目录与文件通吃）：
+/// - `ignore_names` 中的纯名：匹配相对路径**任意层**的同名组件
+///   （目录 `node_modules` 或文件 `Cargo.lock` 均可命中其深层出现）。
+/// - `ignore_names` 中含 `/` 的条目：按**相对路径前缀**匹配
+///   （`target/debug` 命中 `target/debug/x.rs`、`a/target/debug/y` 均不命中
+///   ——前缀语义与旧 `ignore_dirs` 路径条目一致：仅从根开始的路径匹配）。
+///   注意：纯名的深层匹配覆盖 `a/node_modules/b`，路径前缀只覆盖顶层。
+/// - `ignore_globs` 中不含 `/` 的条目（`*.class`、`.env*`）：匹配任意层
+///   单个组件（文件名或目录名）。
+/// - `ignore_globs` 中含 `/` 的条目（`**/test-*.yaml`、`target/*/out`）：
+///   对整条相对路径做 glob 匹配（`*` 不跨 `/`，`**` 跨段）。
+pub fn is_ignored(rel: &str, config: &ScanConfig) -> bool {
+    let rel = rel.replace('\\', "/");
+    let rel = rel.trim_matches('/');
+    if rel.is_empty() {
+        return false;
     }
-    // 深层路径前缀匹配：例如 "src/main/java/.../target" 命中 "target"，
-    // "node_modules/.cache/foo" 命中 "node_modules/.cache"。
-    let rel_std = rel.replace('\\', "/");
-    ignore_dirs
-        .iter()
-        .filter(|pat| pat.contains('/')) // 仅对带路径的条目做前缀匹配
-        .any(|pat| {
-            let pat = pat.trim_end_matches('/');
-            !pat.is_empty() && (rel_std == pat || rel_std.starts_with(&format!("{pat}/")))
-        })
+
+    // 1. 精确名条目
+    for pat in &config.ignore_names {
+        if pat.contains('/') {
+            // 相对路径前缀（顶层锚定）
+            if rel == *pat || rel.starts_with(&format!("{pat}/")) {
+                return true;
+            }
+        } else if rel.split('/').any(|seg| seg == pat.as_str()) {
+            // 任意层同名组件（目录或文件）
+            return true;
+        }
+    }
+
+    // 2. glob 条目
+    for pat in &config.ignore_globs {
+        if pat.contains('/') {
+            if glob_match(pat, rel) {
+                return true;
+            }
+        } else if rel.split('/').any(|seg| glob_match(pat, seg)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 段级 glob 匹配（无依赖实现）。
+///
+/// 支持：
+/// - `*`：匹配任意非 `/` 字符序列（含空）
+/// - `?`：匹配单个非 `/` 字符
+/// - `**`：作为**独立路径段**出现时匹配零或多个路径段（跨 `/`）
+///
+/// `pat` 与 `s` 均按 `/` 分段；段内只出现 `*` / `?`。
+pub fn glob_match(pat: &str, s: &str) -> bool {
+    let pats: Vec<&str> = pat.split('/').filter(|p| !p.is_empty()).collect();
+    let segs: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+    if pats.is_empty() {
+        return segs.is_empty();
+    }
+    match_segs(&pats, &segs)
+}
+
+fn match_segs(pats: &[&str], segs: &[&str]) -> bool {
+    match pats.first() {
+        None => segs.is_empty(),
+        Some(&p) => {
+            if p == "**" {
+                // ** 匹配 0..=n 个段
+                (0..=segs.len()).any(|k| match_segs(&pats[1..], &segs[k..]))
+            } else {
+                if segs.is_empty() {
+                    return false;
+                }
+                seg_glob(p, segs[0]) && match_segs(&pats[1..], &segs[1..])
+            }
+        }
+    }
+}
+
+/// 单段内 glob：`*` 任意（含空）、`?` 单字符、其余字面量。
+fn seg_glob(pat: &str, s: &str) -> bool {
+    let pb: Vec<char> = pat.chars().collect();
+    let sb: Vec<char> = s.chars().collect();
+    seg_glob_chars(&pb, &sb)
+}
+
+fn seg_glob_chars(p: &[char], s: &[char]) -> bool {
+    match p.first() {
+        None => s.is_empty(),
+        Some('*') => (0..=s.len()).any(|k| seg_glob_chars(&p[1..], &s[k..])),
+        Some('?') => !s.is_empty() && seg_glob_chars(&p[1..], &s[1..]),
+        Some(&c) => s.first() == Some(&c) && seg_glob_chars(&p[1..], &s[1..]),
+    }
 }
 
 /// 从项目根目录收集所有源文件，遵循扫描配置。
@@ -46,9 +118,8 @@ pub fn collect_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
         .into_iter()
         .filter_entry(|entry| {
             if entry.file_type().is_dir() {
-                let name = entry.file_name().to_string_lossy();
                 let rel = rel_path(root, entry.path());
-                !dir_is_ignored(&rel, name.as_ref(), &config.ignore_dirs)
+                !config.is_ignored(&rel)
             } else {
                 true
             }
@@ -57,27 +128,10 @@ pub fn collect_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let path = e.path();
-            // 按文件名过滤（精确匹配 ignore_files）
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if config.ignore_files.contains(name) {
-                    return false;
-                }
-            }
-            // 按扩展名过滤
-            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                let dot_ext = format!(".{}", ext);
-                if config.ignore_ext.contains(&dot_ext) {
-                    return false;
-                }
-            }
-            // 按文件名过滤（压缩/生成文件）
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.ends_with(".min.js") || name.ends_with(".bundle.js") {
-                    return false;
-                }
-                if name.contains(".generated.") {
-                    return false;
-                }
+            // 统一忽略规则（文件名/扩展名/路径通配——含 ignore_files 语义）
+            let rel = rel_path(root, path);
+            if config.is_ignored(&rel) {
+                return false;
             }
             // 按大小过滤
             match path.metadata() {
@@ -93,16 +147,15 @@ pub fn collect_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
 ///
 /// 使用 `ScanConfig::document_extensions` 匹配文件，
 /// 用 `ScanConfig::max_doc_file_size` 做大小过滤。仍然遵循
-/// `ignore_dirs`。
+/// 统一忽略规则（`is_ignored`）。
 pub fn collect_document_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
     walkdir::WalkDir::new(root)
         .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
             if entry.file_type().is_dir() {
-                let name = entry.file_name().to_string_lossy();
                 let rel = rel_path(root, entry.path());
-                !dir_is_ignored(&rel, name.as_ref(), &config.ignore_dirs)
+                !config.is_ignored(&rel)
             } else {
                 true
             }
@@ -111,13 +164,10 @@ pub fn collect_document_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> 
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let path = e.path();
-            // 按文件名过滤（精确匹配 ignore_files，与 collect_files 一致）。
-            // 否则 .gitlab-ci.yml/banner.txt 等无价值文件会绕过代码收集、
-            // 以文档身份进入 doc_chunks。
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if config.ignore_files.contains(name) {
-                    return false;
-                }
+            // 统一忽略规则（目录/文件名/路径通配——含 ignore_files 语义）
+            let rel = rel_path(root, path);
+            if config.is_ignored(&rel) {
+                return false;
             }
             // 只匹配文档扩展名
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
@@ -260,8 +310,8 @@ mod tests {
         fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
 
         let mut config = ScanConfig::default();
-        config.ignore_dirs.insert("node_modules/.cache".to_string());
-        config.ignore_files.insert("Cargo.lock".to_string());
+        config.add_ignore("node_modules/.cache");
+        config.add_ignore("Cargo.lock");
 
         let files = collect_files(root, &config);
         let names: Vec<String> = files

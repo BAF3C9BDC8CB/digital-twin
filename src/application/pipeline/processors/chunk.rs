@@ -24,9 +24,9 @@ use crate::shared::chunker::{chunk_by_type, merge_nacos_chunks, ChunkConfig, Doc
 ///
 /// # 配置
 ///
-/// 使用 [`ChunkConfig::default()`]，目标为约 512-token 的块，在段落边界
-/// 处约有 64-token 重叠。若需要自定义尺寸，可通过
-/// [`ChunkProcessor::with_config`] 覆盖。
+/// 使用 [`ChunkConfig::default()`]，目标为约 2048-token 的块（8B 模型可充分
+/// 利用的上下文粒度），在段落边界处约有 64-token 重叠。若需要自定义尺寸，
+/// 可通过 [`ChunkProcessor::with_config`] 覆盖。
 pub struct ChunkProcessor {
     config: ChunkConfig,
 }
