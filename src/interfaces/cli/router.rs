@@ -1222,8 +1222,12 @@ fn build_route(
 
 /// 使用 LLM 过滤结果（复用现有 LLM 接入）。
 ///
-/// 逐条让 LLM 判断相关性，低于阈值移除；LLM 判断失败时按向量 score 降级过滤，
-/// 保证路由始终可用。当未启用过滤或注入的 LLM 不可用时，返回原样。
+/// 三层安全策略，保证「高置信命中绝不被误删」且不串行卡死：
+/// 1. 快速通道：score 高（>=0.9）或查询词与命中标题/签名/文件名精确命中 → 直接保留，不调 LLM。
+/// 2. 歧义通道：仅 score 在阈值~0.9 之间的候选才逐条交给 LLM 判断相关性。
+/// 3. 并行 + 超时：LLM 判断并发执行且单条带超时，LLM 失败/超时保守保留该条。
+///
+/// score 低于阈值的直接丢弃（与旧行为一致）。当未启用过滤或注入的 LLM 不可用时，返回原样。
 async fn filter_hits_with_llm(
     query: &str,
     hits: Vec<crate::application::context::search_mcp::SearchHit>,
@@ -1247,11 +1251,43 @@ async fn filter_hits_with_llm(
         }
     }
 
-    let mut filtered = Vec::new();
+    let query_tokens = normalize_query_tokens(query);
+
+    // ---- 分桶：高置信直接保留，其余进歧义桶交给 LLM ----
+    let mut keep: Vec<crate::application::context::search_mcp::SearchHit> = Vec::new();
+    let mut ambiguous: Vec<crate::application::context::search_mcp::SearchHit> = Vec::new();
     for h in hits {
-        let relevance = judge_relevance(llm, query, &h).await?;
-        if relevance {
-            filtered.push(h);
+        let high_conf = h.score as f32 >= 0.9 || hit_exact_matches(&query_tokens, query, &h);
+        if high_conf {
+            tracing::debug!(
+                "LLM 过滤直接保留(高置信): {} (score={:.2})",
+                h.title,
+                h.score
+            );
+            keep.push(h);
+        } else if h.score as f32 >= threshold {
+            ambiguous.push(h);
+        } else if explain {
+            tracing::info!(
+                "LLM 过滤按 score 移除(低于阈值): {} (world={} score={:.2})",
+                h.title,
+                h.source_world,
+                h.score
+            );
+        }
+    }
+
+    // ---- 并行评判歧义桶（单条带超时；失败/超时保守保留）----
+    let judged: Vec<bool> = futures::future::join_all(
+        ambiguous
+            .iter()
+            .map(|h| judge_relevance_guarded(llm, query, h)),
+    )
+    .await;
+
+    for (i, h) in ambiguous.into_iter().enumerate() {
+        if judged[i] {
+            keep.push(h);
         } else if explain {
             tracing::info!(
                 "LLM 过滤移除: {} (world={} score={:.2})",
@@ -1261,7 +1297,87 @@ async fn filter_hits_with_llm(
             );
         }
     }
-    Ok(filtered)
+
+    Ok(keep)
+}
+
+/// 归一化查询为词元：小写、按非字母数字/非 CJK 分隔，取长度>=2 的词。
+fn normalize_query_tokens(query: &str) -> Vec<String> {
+    query
+        .to_lowercase()
+        .split(|c: char| !(c.is_alphanumeric() || is_cjk(c)))
+        .map(|s| s.trim())
+        .filter(|s| s.len() >= 2)
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// 判断字符是否属于 CJK 统一表意文字区（`is_alphanumeric` 已覆盖大部分，此处兜底常用区）。
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x4E00..=0x9FFF
+            | 0x3400..=0x4DBF
+            | 0x20000..=0x2A6DF
+            | 0xF900..=0xFAFF
+    )
+}
+
+/// 高置信精确命中判定：查询的**每个**词元都出现在命中标题/签名/实体类型/文件路径中。
+///
+/// `query` 原文同时作为兜底（词元为空时退化为原文子串匹配）。
+fn hit_exact_matches(
+    query_tokens: &[String],
+    query: &str,
+    h: &crate::application::context::search_mcp::SearchHit,
+) -> bool {
+    let hay = format!(
+        "{} {} {} {}",
+        h.title,
+        h.signature.as_deref().unwrap_or(""),
+        h.entity_type,
+        h.file_path.as_deref().unwrap_or(""),
+    )
+    .to_lowercase();
+
+    if !hay.is_empty() {
+        // 词元全部命中 → 强相关
+        if !query_tokens.is_empty() && query_tokens.iter().all(|t| hay.contains(t)) {
+            return true;
+        }
+        // 空词元（纯 CJK 长串且切分不可用）→ 退化为原文子串匹配
+        if query_tokens.is_empty()
+            && !query.trim().is_empty()
+            && hay.contains(&query.to_lowercase())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// 单条 LLM 相关性判断的守卫：加 20s 超时，失败/超时保守保留（返回 true）。
+async fn judge_relevance_guarded(
+    llm: &dyn LlmService,
+    query: &str,
+    h: &crate::application::context::search_mcp::SearchHit,
+) -> bool {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        judge_relevance(llm, query, h),
+    )
+    .await
+    {
+        Ok(Ok(b)) => b,
+        Ok(Err(e)) => {
+            tracing::warn!("LLM 相关性判断失败({e})，保守保留该条: {}", h.title);
+            true
+        }
+        Err(_) => {
+            tracing::warn!("LLM 相关性判断超时，保守保留该条: {}", h.title);
+            true
+        }
+    }
 }
 
 /// 组装单条搜索命中的展示上下文（供 LLM 相关性判断），按世界类型差异化：
@@ -1356,14 +1472,15 @@ async fn judge_relevance(
 1. 查询若只含通用意图词（如"帮我实现"、"给我建议"、"介绍一下"、"分析一下"），不含任何具体对象（代码符号、文件名、配置项、业务名、报错等），则任何命中都是多余检索 → 判 relevant=false。
 2. 代码类命中（Method/Class）：查询只要涉及该文件/方法/类所在的项目、路径、文件、业务领域，或方法名与查询关键词一致，即判 relevant=true；仅撞上方法名（如 help / execute / recommend 等通用动词名）但业务无关 → relevant=false。
 3. 文档/知识类命中：摘要/原文与查询对象（含业务概念、配置项、技术术语）相关即判 relevant=true；仅字符串表面相同但语义无关时判 relevant=false。
-4. 拿不准时倾向 relevant=true（宁可多留，不要误删有效结果）。
+4. 高置信命中（相关度分数≥0.90，或命中标题/签名与查询关键词完全一致）→ 必判 relevant=true，除非命中明显属于另一个不相关项目。
 
 只输出 JSON，不要任何解释，格式：
 {"relevant": true或false, "reason": "15字以内理由"}"#;
 
     let user_prompt = format!(
-        "用户查询：{}\n\n单条搜索结果：\n{}\n\n请判断。",
+        "用户查询：{}\n\n单条搜索结果（相关度分数 {:.2}）：\n{}\n\n请判断。",
         query,
+        h.score,
         format_hit_context(h)
     );
 

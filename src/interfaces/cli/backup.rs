@@ -77,6 +77,14 @@ pub struct VerifyFileResult {
 /// 宿主机上的默认备份根目录。
 const BACKUP_ROOT: &str = "/var/backups/digital-twin";
 
+/// 从运行时配置推断 Memgraph 的 Bolt URI，供备份/恢复使用。
+///
+/// 优先读 `~/.config/digital-twin/config.yaml` 的 `services.graph.url`；
+/// 读取失败或无配置时回退 `None`（调用方用默认 `localhost:7687`）。
+fn graph_uri_from_config() -> Option<String> {
+    crate::runtime::load_config().map(|c| c.services.graph.url.unwrap_or_default())
+}
+
 /// 创建新备份。
 ///
 /// 1. 在 `BACKUP_ROOT` 下创建带日期的目录。
@@ -87,6 +95,7 @@ pub async fn create_backup() -> Result<BackupReport> {
     let start = Instant::now();
     let date = Utc::now().format("%Y-%m-%d").to_string();
     let backup_dir = PathBuf::from(BACKUP_ROOT).join(&date);
+    let graph_uri = graph_uri_from_config();
 
     tracing::info!("正在为 {date} 创建备份, 保存至 {}", backup_dir.display());
 
@@ -95,7 +104,8 @@ pub async fn create_backup() -> Result<BackupReport> {
 
     // ---- 备份每个组件 ----
     let (memgraph_ok, memgraph_size) =
-        crate::interfaces::cli::backup_memgraph::dump_graph(&backup_dir).await?;
+        crate::interfaces::cli::backup_memgraph::dump_graph(&backup_dir, graph_uri.as_deref())
+            .await?;
     let (qdrant_ok, qdrant_size) =
         crate::interfaces::cli::backup_qdrant::snapshot_collections(&backup_dir).await?;
     let (sqlite_ok, sqlite_size) =
@@ -148,7 +158,9 @@ pub async fn restore_backup(date: &str) -> Result<()> {
     tracing::info!("正在从 {date} 恢复备份");
 
     // ---- 恢复每个组件 ----
-    crate::interfaces::cli::backup_memgraph::restore_graph(&backup_dir).await?;
+    let graph_uri = graph_uri_from_config();
+    crate::interfaces::cli::backup_memgraph::restore_graph(&backup_dir, graph_uri.as_deref())
+        .await?;
     crate::interfaces::cli::backup_qdrant::restore_collections(&backup_dir).await?;
     crate::interfaces::cli::backup_sqlite::restore_database(&backup_dir).await?;
 
