@@ -372,9 +372,32 @@ impl KnowledgeService for DefaultKnowledgeService {
         self.graph.write_query(cypher, params).await?;
 
         if self.has_vectorization() {
+            let v_started = std::time::Instant::now();
             if let Err(e) = self.auto_vectorize_knowledge(knowledge).await {
                 tracing::warn!("auto_vectorize_knowledge 失败：{e}");
             }
+            tracing::info!(
+                task = "memorize",
+                action = "write_knowledge",
+                entity_id = %knowledge.knowledge_id,
+                name = %knowledge.name,
+                domain = %knowledge.domain,
+                project = %knowledge.project,
+                vectorized = self.has_vectorization(),
+                vectorize_ms = v_started.elapsed().as_millis() as u64,
+                "知识节点已写入图并完成向量化"
+            );
+        } else {
+            tracing::info!(
+                task = "memorize",
+                action = "write_knowledge",
+                entity_id = %knowledge.knowledge_id,
+                name = %knowledge.name,
+                domain = %knowledge.domain,
+                project = %knowledge.project,
+                vectorized = false,
+                "知识节点已写入图（无向量化后端）"
+            );
         }
         Ok(())
     }
@@ -439,6 +462,16 @@ impl KnowledgeService for DefaultKnowledgeService {
         if let Err(e) = self.auto_vectorize_experience(experience).await {
             tracing::warn!("经验已写入图，但向量化失败：{}", e);
         }
+        tracing::info!(
+            task = "memorize",
+            action = "write_experience",
+            entity_id = %experience.experience_id,
+            title = %experience.title,
+            domain = %experience.domain,
+            severity = experience.severity.as_str(),
+            vectorized = self.has_vectorization(),
+            "经验节点已写入图"
+        );
 
         Ok(())
     }
@@ -485,6 +518,15 @@ impl KnowledgeService for DefaultKnowledgeService {
                 tracing::warn!("auto_vectorize_concept 失败：{e}");
             }
         }
+        tracing::info!(
+            task = "memorize",
+            action = "write_concept",
+            entity_id = %concept.concept_id,
+            name = %concept.name,
+            domain = %concept.domain,
+            vectorized = self.has_vectorization(),
+            "概念节点已写入图"
+        );
         Ok(())
     }
 
@@ -513,6 +555,13 @@ impl KnowledgeService for DefaultKnowledgeService {
         );
 
         self.graph.write_query(cypher, params).await?;
+        tracing::info!(
+            task = "memorize",
+            action = "write_domain",
+            entity_id = %domain.domain_id,
+            name = %domain.name,
+            "领域节点已写入图"
+        );
         Ok(())
     }
 
@@ -587,6 +636,16 @@ impl KnowledgeService for DefaultKnowledgeService {
                 tracing::warn!("auto_vectorize_playbook 失败：{e}");
             }
         }
+        tracing::info!(
+            task = "memorize",
+            action = "write_playbook",
+            entity_id = %playbook.playbook_id,
+            name = %playbook.name,
+            domain = %playbook.domain,
+            project = %playbook.project,
+            vectorized = self.has_vectorization(),
+            "剧本节点已写入图"
+        );
         Ok(())
     }
 

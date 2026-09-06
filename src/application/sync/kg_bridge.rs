@@ -590,11 +590,36 @@ impl KgBridge {
 
     /// 处理单个批次：向量化 → upsert → 标记已同步。
     pub(crate) async fn process_batch(&self, chunk: &[KgNode]) -> Result<usize, DtError> {
+        let batch_started = std::time::Instant::now();
+        let labels_hist: std::collections::HashMap<&str, usize> = {
+            let mut h: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for n in chunk {
+                if let Some(l) = n
+                    .labels
+                    .iter()
+                    .find(|l| BUSINESS_LABELS.contains(&l.as_str()))
+                {
+                    *h.entry(l.as_str()).or_insert(0) += 1;
+                }
+            }
+            h
+        };
+        tracing::info!(
+            "[kg-sync] 批次开始: {} 个节点, 标签分布 {:?}",
+            chunk.len(),
+            labels_hist
+        );
+
         // (a) 根据节点属性构建搜索文本。
         let texts: Vec<String> = chunk.iter().map(build_search_text).collect();
 
         // (b) 生成向量。
         let vectors = self.embed.embed_batch(&texts).await?;
+        tracing::info!(
+            "[kg-sync] 批次 embed 完成: {} 个向量, 耗时 {}ms",
+            vectors.len(),
+            batch_started.elapsed().as_millis()
+        );
 
         // (c) 构建 Qdrant points。
         let points: Vec<serde_json::Value> = chunk
@@ -604,7 +629,13 @@ impl KgBridge {
             .collect();
 
         // (d) upsert 到 Qdrant。
+        let point_count = points.len();
         self.vector.upsert(KG_COLLECTION, points).await?;
+        tracing::info!(
+            "[kg-sync] 批次 upsert 完成: {} 个点, 耗时 {}ms",
+            point_count,
+            batch_started.elapsed().as_millis()
+        );
 
         // (e) 在 Memgraph 中标记节点为已同步。
         let eids: Vec<&str> = chunk.iter().map(|n| n.element_id.as_str()).collect();

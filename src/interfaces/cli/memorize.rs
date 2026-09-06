@@ -35,6 +35,17 @@ pub async fn handle_memorize(
     tracing::info!(
         "dt CLI: memorize --type {knowledge_type} --entity-id {entity_id} --details {details}",
     );
+    tracing::info!(
+        task = "memorize",
+        action = %action.as_deref().unwrap_or("write"),
+        knowledge_type = %knowledge_type,
+        entity_id = %entity_id,
+        entity_type = ?entity_type,
+        project = ?project,
+        details_chars = details.chars().count(),
+        stage = "memorize_start",
+        "memorize 调用开始"
+    );
 
     let action = action.as_deref().unwrap_or("write").to_lowercase();
 
@@ -311,4 +322,11 @@ async fn auto_sync_kg(knowledge_type: &str, entity_id: &str, acc: Option<Arc<Syn
 
     acc.enqueue(label, key, entity_id);
     acc.flush().await;
+    tracing::info!(
+        task = "memorize",
+        label,
+        entity_id = %entity_id,
+        stage = "sync_enqueued",
+        "知识节点已入队同步到向量库"
+    );
 }

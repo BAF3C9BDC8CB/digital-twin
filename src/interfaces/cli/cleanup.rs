@@ -307,51 +307,6 @@ pub async fn run_health(
         all_healthy = false;
     }
 
-    // --- 索引对账（Memgraph Method 节点数 vs Qdrant code_methods 向量数）---
-    // 团队 B 建议 #5：将索引完整性纳入健康巡检。两者不一致提示
-    // 索引漂移（如增量构建误删节点/向量残留），建议 --full 重建。
-    if let (Some(g), Some(v)) = (graph, vector) {
-        let mg_count = g
-            .read_query(
-                "MATCH (m:Method) RETURN count(m) AS n",
-                std::collections::HashMap::new(),
-            )
-            .await
-            .ok()
-            .and_then(|v| {
-                v.pointer("/0/n")
-                    .and_then(|x| x.as_i64())
-                    .or_else(|| v.pointer("/n").and_then(|x| x.as_i64()))
-            });
-        let qd_count = v
-            .collection_info(crate::shared::collections::CODE_METHODS)
-            .await
-            .ok()
-            .map(|c| c.points_count as i64);
-        match (mg_count, qd_count) {
-            (Some(mg), Some(qd)) => {
-                if mg == qd {
-                    println!("  ✅ 索引对账 : Memgraph {mg} 方法 = Qdrant {qd} 向量");
-                    tracing::debug!("dt health: 索引对账一致 (Memgraph {mg} = Qdrant {qd})");
-                } else {
-                    println!("  ⚠️ 索引对账 : Memgraph {mg} 方法 ≠ Qdrant {qd} 向量（索引漂移，建议 --full 重建）");
-                    tracing::warn!(
-                        "dt health: 索引漂移 Memgraph {mg} ≠ Qdrant {qd},建议 --full 重建"
-                    );
-                    all_healthy = false;
-                }
-            }
-            (mg, qd) => {
-                println!("  ⚠️ 索引对账 : 不可用 (Memgraph={mg:?}, Qdrant={qd:?})");
-                tracing::warn!("dt health: 索引对账不可用 (Memgraph={mg:?}, Qdrant={qd:?})");
-                all_healthy = false;
-            }
-        }
-    } else {
-        println!("  ⚠️ 索引对账 : 跳过（未配置 graph/vector 后端）");
-        tracing::debug!("dt health: 索引对账跳过(未配置 graph/vector 后端)");
-    }
-
     println!();
     if all_healthy {
         println!("所有后端均健康。");

@@ -29,7 +29,7 @@
 | # | 章节 | 覆盖内容 |
 |---|------|---------|
 | 1 | 快速开始 | 健康检查、三个世界（code/doc/memory）、任务路由 |
-| 2 | 代码分析三段序 ⭐⭐⭐ | ① dt_sense → ② dt_search_kg(world=code) → ③ read_file；查询技巧；Pitfalls |
+| 2 | 代码分析三段序 ⭐⭐⭐ | ① dt_sense → ② dt_search(world=code) → ③ read_file；查询技巧；Pitfalls |
 | 3 | 部署与配置管理 | 记忆优先检索、禁止读 .env/输出密钥、配置权限表 |
 | 4 | 记忆管理 | dt_memorize 结构化 details 格式、三种类型、全局记忆语义 |
 | 5 | 健康检查与索引 | dt_health 解读、dt build 全量/增量/单文件 |

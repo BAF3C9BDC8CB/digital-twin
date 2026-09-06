@@ -44,24 +44,8 @@ pub async fn handle_kg_sync(
             };
             (q.embed_service().clone(), v)
         } else {
-            let embed: Arc<dyn EmbedService> = {
-                let cfg = crate::infrastructure::embedder::ProviderConfig {
-                    siliconflow_url: crate::infrastructure::siliconflow::base_url_from_env(),
-                    siliconflow_api_key: crate::infrastructure::siliconflow::api_key_from_env(),
-                    siliconflow_model_embed:
-                        crate::infrastructure::siliconflow::embed_model_from_env(),
-                    siliconflow_model_reranker:
-                        crate::infrastructure::siliconflow::reranker_model_from_env(),
-                    siliconflow_model_llm: crate::infrastructure::siliconflow::llm_model_from_env(),
-                    siliconflow_max_concurrent: 20,
-                    embed_provider: "siliconflow".into(),
-                    rerank_provider: "siliconflow".into(),
-                    llm_provider: "siliconflow".into(),
-                };
-                let svc = crate::infrastructure::embedder::create_embed_router(cfg);
-                tracing::info!("kg-sync 已创建 Embed provider 路由");
-                svc
-            };
+            let embed: Arc<dyn EmbedService> = crate::interfaces::cli::build::create_search_embed_client();
+            tracing::info!("kg-sync 已创建 Embed 端点池路由");
             let qdrant_url =
                 std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6334".to_string());
             let vector: Arc<dyn VectorRepository> =

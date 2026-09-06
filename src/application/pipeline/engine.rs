@@ -15,7 +15,7 @@
 //!   并发由 [`Semaphore`] 限制，以避免压垮 GPU 服务器。
 
 use crate::application::pipeline::context::PipelineContext;
-use crate::application::pipeline::infer_client::SiliconFlowChatClient;
+use crate::application::pipeline::infer_client::ChatClient;
 use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::registry::ProcessorRegistry;
 use crate::application::pipeline::virtual_file::FileSourceKind;
@@ -257,6 +257,15 @@ impl ProcessorEngine {
             .map(|n| n.get())
             .unwrap_or(DEFAULT_CPU_CONCURRENCY);
 
+        tracing::info!(
+            task = "pipeline", run = "live",
+            stage = "cpu_stage_start",
+            project = %project_name,
+            files = files.len(),
+            concurrency,
+            "ProcessorEngine CPU 阶段开始"
+        );
+
         let registry = Arc::clone(&self.registry);
         let project_name = Arc::new(project_name);
 
@@ -413,8 +422,17 @@ impl ProcessorEngine {
         analyses: Vec<FileAnalysis>,
         skip_steps: Option<Arc<HashMap<PathBuf, HashSet<String>>>>,
     ) -> Vec<FileAnalysis> {
+        let gpu_total = analyses.len();
         let registry = Arc::clone(&self.registry);
         let semaphore = Arc::new(Semaphore::new(self.max_concurrent));
+        tracing::info!(
+            task = "pipeline",
+            run = "live",
+            stage = "gpu_stage_start",
+            files = gpu_total,
+            max_concurrent = self.max_concurrent,
+            "ProcessorEngine GPU 阶段开始"
+        );
 
         stream::iter(analyses.into_iter().map(move |mut analysis| {
             let registry = Arc::clone(&registry);
@@ -443,6 +461,17 @@ impl ProcessorEngine {
                     })
                     .map(|p| p.as_ref())
                     .collect();
+                let gpu_names: Vec<&str> = gpu_processors.iter().map(|p| p.name()).collect();
+                if !gpu_names.is_empty() {
+                    tracing::info!(
+                        task = "pipeline",
+                        run = "live",
+                        file = %path.display(),
+                        stage = "file_gpu_start",
+                        processors = ?gpu_names,
+                        "流水线 GPU 阶段处理文件"
+                    );
+                }
 
                 for processor in &gpu_processors {
                     // 若该处理器在此文件的跳过集合中则跳过
@@ -455,6 +484,28 @@ impl ProcessorEngine {
                     }
                     match processor.execute(&analysis.context).await {
                         Ok(output) => {
+                            // 处理器可"部分降级完成"：输出里带 degraded_count > 0
+                            // （如 llm 块级提取部分块失败）。此时输出仍需保留（store
+                            // 会把成功块入库），但该文件不得标记为步骤完成——
+                            // 否则增量会永久跳过失败块，缺失数据不再重试。
+                            let degraded = output
+                                .get("degraded_count")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            if degraded > 0 {
+                                tracing::warn!(
+                                    processor = processor.name(),
+                                    path = %path.display(),
+                                    degraded,
+                                    "处理器部分块降级完成，文件不标记完成以便下次重试"
+                                );
+                                analysis.success = false;
+                                analysis.errors.push(format!(
+                                    "{}: {} 个块降级（LLM 调用失败/解析失败），下次构建将重试",
+                                    processor.name(),
+                                    degraded
+                                ));
+                            }
                             analysis.context.add_output(processor.name(), output);
                         }
                         Err(e) => {
@@ -499,7 +550,7 @@ impl ProcessorEngine {
         &self,
         project_name: String,
         file_analyses: &[FileAnalysis],
-        infer_client: Option<Arc<SiliconFlowChatClient>>,
+        infer_client: Option<Arc<dyn ChatClient>>,
     ) -> ProjectAnalysis {
         let file_count = file_analyses.len();
         let success_count = file_analyses.iter().filter(|a| a.success).count();
@@ -653,7 +704,7 @@ impl ProcessorEngine {
             });
 
             match summarize_via_llm(
-                client,
+                client.as_ref(),
                 "You are a software architect analysing a project. \
                  Based on the data below, provide a concise architecture \
                  summary in 3-5 sentences. Include the project's purpose, \
@@ -716,7 +767,7 @@ impl ProcessorEngine {
         &self,
         ecosystem_name: String,
         project_analyses: &[ProjectAnalysis],
-        infer_client: Option<Arc<SiliconFlowChatClient>>,
+        infer_client: Option<Arc<dyn ChatClient>>,
     ) -> EcosystemAnalysis {
         let projects: Vec<String> = project_analyses
             .iter()
@@ -835,7 +886,7 @@ impl ProcessorEngine {
             });
 
             match summarize_via_llm(
-                client,
+                client.as_ref(),
                 "You are a systems architect analysing a microservice \
                  ecosystem. Based on the topology data below, provide a \
                  concise summary in 3-5 sentences. Highlight cross-project \
@@ -953,15 +1004,15 @@ fn classify_call(call: &str, has_feign: bool, has_rest: bool) -> (String, String
 
 /// 调用 LLM 总结结构化数据。
 ///
-/// 以低温度（0.1）向推理服务器发送 `chat` 请求，并限制为 2048 token。
+/// 以低温度（0.1）向端点池发送 `chat` 请求，并限制为 2048 token。
 /// 返回模型的文本响应或错误字符串。
 async fn summarize_via_llm(
-    client: &SiliconFlowChatClient,
+    client: &dyn ChatClient,
     system_prompt: &str,
     data_json: &str,
 ) -> Result<String, String> {
     let response = client
-        .chat("default", system_prompt, data_json, 0.1, 2048)
+        .chat("", system_prompt, data_json, 0.1, 2048, false, "", "")
         .await?;
     Ok(response.choices[0].message.content.clone())
 }
@@ -1028,6 +1079,35 @@ mod tests {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
             out.set("summary", format!("{} lines of Rust", lines));
+            Ok(out)
+        }
+    }
+
+    /// 模拟 LLM 块级提取"部分降级"的 GPU 处理器（优先级 = 60）：
+    /// 输出携带 `degraded_count`，表示有块调用失败但处理器本身返回 Ok
+    /// （成功块仍可入库）。用于验证降级文件不被标记为完成。
+    struct DegradedGpuProcessor;
+
+    #[async_trait]
+    impl Processor for DegradedGpuProcessor {
+        fn name(&self) -> &str {
+            "degraded_gpu"
+        }
+
+        fn priority(&self) -> i32 {
+            60
+        }
+
+        fn matches(&self, ctx: &PipelineContext) -> bool {
+            ctx.file_path.extension().and_then(|e| e.to_str()) == Some("rs")
+        }
+
+        async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
+            let mut out = ProcessorOutput::new();
+            out.set("language", "Rust");
+            out.set("lines", ctx.file_text.lines().count());
+            out.set("degraded_count", 2u64);
+            out.set("block_count", 4u64);
             Ok(out)
         }
     }
@@ -1302,6 +1382,47 @@ mod tests {
             .and_then(|o| o.get("summary"))
             .and_then(|v| v.as_str());
         assert_eq!(summary, Some("1 lines of Rust"));
+    }
+
+    #[tokio::test]
+    async fn run_gpu_stages_marks_degraded_processor_as_not_success() {
+        let mut registry = ProcessorRegistry::new();
+        registry.register(Box::new(DegradedGpuProcessor));
+
+        let engine = ProcessorEngine::new(Arc::new(registry), 4);
+
+        let mut ctx = PipelineContext::new(
+            PathBuf::from("test.rs"),
+            "content".to_string(),
+            "p".to_string(),
+            FileSourceKind::Fs,
+            None,
+            None,
+        );
+        let mut cpu_out = ProcessorOutput::new();
+        cpu_out.set("chunks", serde_json::json!([]));
+        ctx.add_output("chunk", cpu_out);
+
+        let analyses = vec![FileAnalysis {
+            file_path: PathBuf::from("test.rs"),
+            success: true,
+            errors: vec![],
+            context: ctx,
+        }];
+
+        let results = engine.run_gpu_stages(analyses, None).await;
+        assert_eq!(results.len(), 1);
+
+        let r = &results[0];
+        // 输出仍保留（成功块可入库）……
+        assert!(r.context.get_output("degraded_gpu").is_some());
+        // ……但文件不被标记为完成：success=false，且错误里有降级记录。
+        assert!(!r.success, "降级文件不得标记为完成，errors={:?}", r.errors);
+        assert!(
+            r.errors.iter().any(|e| e.contains("降级")),
+            "errors 应包含降级记录: {:?}",
+            r.errors
+        );
     }
 
     // ------------------------------------------------------------------

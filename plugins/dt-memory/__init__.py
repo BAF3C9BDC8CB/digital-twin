@@ -6,7 +6,7 @@
 - 不再每轮把记忆原文灌进上下文（原 prefetch 每轮 dt search + 最多 8 条原文注入，
   记忆增长时 token 爆炸）。
 - 改为「引导 + 按需检索」：
-  * system_prompt_block 注入检索方式（怎么用 dt_search_kg 查），记忆本体不自动注入。
+  * system_prompt_block 注入检索方式（怎么用 dt_search 查），记忆本体不自动注入。
   * prefetch 仅在用户消息含显式记忆意图词（记住/记一下/记忆/记得/上次/之前说）时
     做一次定向检索（统一全局若干条），其余情况一律返回空 —— 零 token 开销。
 - 记忆统一全局（2026-09-01 用户确认）：不分项目/全局，全部全局统一检索；
@@ -44,7 +44,7 @@ logger = __import__("logging").getLogger(__name__)
 _DT_BIN = os.path.expanduser("~/.local/bin/dt")
 _DEFAULT_PROJECT = "hermes-memory"
 _GLOBAL_PROJECT = "hermes-global"   # 全局记忆专用 project 名（写入目标；检索侧 project=hermes-global 由 Rust 映射为 scope='global' 过滤，或直接不带 project 查）
-_PREFETCH_TIMEOUT = 8.0      # seconds
+_PREFETCH_TIMEOUT = 20.0     # seconds（2026-09-06: L0 改 LLM 门控后 dt search 单次含 gate+检索, 8s 不够, 提到 20s）
 _PREFETCH_LIMIT = 4          # 定向检索每侧条数（项目/全局各 4，最多 8）
 _MIN_SCORE = 0.5             # relevance floor
 _MIN_QUERY_LEN = 8           # skip trivial queries
@@ -177,14 +177,14 @@ class DtMemoryProvider(MemoryProvider):
     def system_prompt_block(self) -> str:
         return (
             "[DT-MEMORY] 长期记忆由数字孪生(dt)提供(world=memory)，按需检索、不自动注入。\n"
-            "需要历史记忆时用 MCP 工具 dt_search_kg 自行检索：\n"
-            "- 记忆统一全局: dt_search_kg(world=memory, limit=5) 不分项目/全局，一次查完\n"
+            "需要历史记忆时用 MCP 工具 dt_search 自行检索：\n"
+            "- 记忆统一全局: dt_search(world=memory, limit=5) 不分项目/全局，一次查完\n"
             "显式写入用 dt_memorize（记忆统一全局，details 内注明文件路径/位置便于定位）。\n"
             "[DT 行为准则] 代码类会话三段序（红线，读码前必做，逐条执行）：\n"
             "  ① 环境感知：dt_sense() 拿项目简报/目录画像/关键实体（进项目目录第一步必做）；\n"
-            "  ② 定位先于读码：dt_search_kg(world=code, project=注册项目名) 定位目标符号/文件区间，命中即事实再读码验证；\n"
+            "  ② 定位先于读码：dt_search(world=code, project=注册项目名) 定位目标符号/文件区间，命中即事实再读码验证；\n"
             "  ③ 才读码：任一 read_file/search_files 目标为代码路径前，① ② 必须已完成，否则先回退补 ①②。\n"
-            "服务/配置/凭据/部署/历史决策 → dt_search_kg(world=memory) 查一次；命中即事实，0 命中才读源码。\n"
+            "服务/配置/凭据/部署/历史决策 → dt_search(world=memory) 查一次；命中即事实，0 命中才读源码。\n"
             "禁止伪造结果/输出密钥；hop≥1 只当线索；用户说\"记忆/记一下\"立即 dt_memorize。\n"
         )
 
@@ -597,7 +597,7 @@ class DtMemoryProvider(MemoryProvider):
 
         优先用 dt sense 的注册项目映射：当 cwd 是注册容器目录（或其子目录）时，
         sense 返回 base_children，取**唯一**的注册子项目名（如 offen-pay），
-        避免落到 git root 目录名（pay）或未知名——注册名才是 dt_search_kg
+        避免落到 git root 目录名（pay）或未知名——注册名才是 dt_search
         project 过滤与 AGENTS.md 决策表约定的项目名。
 
         sense 不可用/超时/多候选时才回退 git root 目录名。

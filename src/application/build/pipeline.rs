@@ -152,6 +152,14 @@ impl PipelineTemplate {
 
         // 步骤 1b：扫描文档文件
         let doc_files = scanner::collect_document_files(root, scan_config);
+        tracing::info!(
+            project = %project,
+            strategy = strategy.name(),
+            files_scanned,
+            doc_files_scanned = doc_files.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "构建阶段: 扫描文件完成"
+        );
 
         // 步骤 2：通过策略选择文件
         // 单文件模式（--file）只处理目标文件，绝不把其余文件判为
@@ -165,6 +173,16 @@ impl PipelineTemplate {
             }
         };
         let files_changed = files_to_process.len();
+
+        tracing::info!(
+            project = %project,
+            strategy = strategy.name(),
+            files_scanned,
+            files_changed,
+            files_deleted = deleted.len(),
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            "构建阶段: 文件变更选择完成"
+        );
 
         // 步骤 3：删除已删除文件的数据
         if let Some(graph) = graph {
@@ -224,11 +242,20 @@ impl PipelineTemplate {
         }
 
         // 步骤 5：解析文件并提取实体
+        let extraction_start = std::time::Instant::now();
         let extraction = self.extract_entities(project, root, &files_to_process)?;
 
         let methods_total = extraction.methods.len();
         let methods_new = methods_total;
         let classes_total = extraction.classes.len();
+        tracing::info!(
+            project = %project,
+            methods = methods_total,
+            classes = classes_total,
+            modules = extraction.modules.len(),
+            elapsed_ms = extraction_start.elapsed().as_millis() as u64,
+            "构建阶段: 实体解析完成"
+        );
 
         // （任务 3）文档文件不再在此分块+嵌入 — 它们流经流水线
         // 引擎的提取链。本模板只处理它们的生命周期
@@ -343,39 +370,6 @@ impl PipelineTemplate {
             tracing::info!("调用图重建完成");
         }
 
-        // 步骤 9：更新 SQLite 快照
-        if let Some(repo) = snapshot_repo.as_deref() {
-            tracing::info!("正在更新 {} 个快照...", extraction.snapshots.len());
-            strategy
-                .update_snapshots(repo, project, &extraction.snapshots)
-                .await?;
-            tracing::info!("快照更新完成");
-        }
-
-        // 步骤 9b（任务 3）：在策略的快照更新之后再保存文档快照
-        // （FullRebuildStrategy 会先清空项目所有行）。
-        // 这些基线让下次增量构建能够检测文档变更与删除（§6.5）。
-        // 只有变更的文档需要新行 — 未变更的文档沿用上次构建的准确基线。
-        if let Some(repo) = snapshot_repo.as_deref() {
-            let doc_snapshots: Vec<FileSnapshot> = changed_docs
-                .iter()
-                .filter_map(|path| {
-                    let (hash, mtime) = scanner::compute_file_hash(path).ok()?;
-                    Some(FileSnapshot {
-                        file_path: scanner::rel_path(root, path),
-                        project: project.to_string(),
-                        file_sha1: hash,
-                        file_mtime: mtime,
-                        method_count: 0,
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    })
-                })
-                .collect();
-            if !doc_snapshots.is_empty() {
-                let _ = repo.save_snapshots(project, &doc_snapshots).await;
-            }
-        }
-
         // ── Phase 2：逐方法 LLM 分析（后台、非阻塞）──
         // LLM 分析作为后台 tokio 任务提交，使构建立即返回。
         // 任务并发处理方法，并用 llm_analysis 字段更新 Qdrant 点。
@@ -447,6 +441,9 @@ impl PipelineTemplate {
                     total,
                     skipped,
                 );
+                if total == 0 {
+                    tracing::info!(project = %project, "Phase 2: 无待分析方法，跳过 LLM 阶段");
+                }
 
                 if total > 0 {
                     // 同步完成 Phase 2，确保进程退出前 LLM 分析已持久化。
@@ -546,7 +543,7 @@ impl PipelineTemplate {
                                             );
                                         }
                                         match cli
-                                            .chat(&model, &sp, &method.source_text, 0.1, llm_max_tokens, false)
+                                            .chat(&model, &sp, &method.source_text, 0.1, llm_max_tokens, false, &method.file_path, &method_name)
                                             .await
                                         {
                                             Ok(response) => {
@@ -724,6 +721,8 @@ impl PipelineTemplate {
 
         // ── Phase 2.5：补偿自愈（构建末尾，开关 --no-llm-backfill 可关）──
         // 扫描本项目"已索引但 llm_status != success"的方法缺口点，重试 LLM 分析。
+        // 2026-09-06（GAP-A）：改为循环处理直至无缺失缺口（每轮 200，最多 20 轮），
+        // 此前单轮 200 即退出，大项目中断遗留的数千缺口无法一次补全。
         // 与 Phase 2 顺序执行（await 完成之后），不叠加瞬时负载；内部错误仅 warn，
         // 绝不让补偿失败导致整个 build 返回 Err。
         if self.llm_backfill {
@@ -746,7 +745,7 @@ impl PipelineTemplate {
                         .await
                     {
                         Ok(processed) => {
-                            tracing::info!("补偿自愈完成: 本轮处理 {processed} 个缺口点");
+                            tracing::info!("补偿自愈完成: 本次共尝试 {processed} 个缺口点（循环至无缺失缺口，见 GAP-A）");
                         }
                         Err(e) => tracing::warn!("补偿自愈失败（非致命）: {e}"),
                     }
@@ -780,6 +779,46 @@ impl PipelineTemplate {
                     }
                     Err(e) => tracing::warn!("Class 描述补偿失败（非致命）: {e}"),
                 }
+            }
+        }
+
+        // 步骤 9：更新 SQLite 快照
+        // 2026-09-06（修复）：快照写入后置到 Phase 2 / 2.5 / 2.6 全部结束之后——
+        // 此前在 Phase 1 后立即写快照，若 Phase 2 LLM 分析被中断（进程被杀/并发构建
+        // 顶替），未完成分析的文件已落快照，增量判定"文件没变"永不重跑，导致大量
+        // 方法永久停留在"有 base 向量、无 llm_analysis/llm 向量"的半成品状态。
+        // 后置后：只要文件还有方法未到终态（success/failed），快照不落库，
+        // 下次增量构建会重新处理该文件并补跑 LLM 分析。快照为 INSERT OR REPLACE
+        // 幂等写入，后置无副作用。
+        if let Some(repo) = snapshot_repo.as_deref() {
+            tracing::info!("正在更新 {} 个快照...", extraction.snapshots.len());
+            strategy
+                .update_snapshots(repo, project, &extraction.snapshots)
+                .await?;
+            tracing::info!("快照更新完成");
+        }
+
+        // 步骤 9b（任务 3）：在策略的快照更新之后再保存文档快照
+        // （FullRebuildStrategy 会先清空项目所有行）。
+        // 这些基线让下次增量构建能够检测文档变更与删除（§6.5）。
+        // 只有变更的文档需要新行 — 未变更的文档沿用上次构建的准确基线。
+        if let Some(repo) = snapshot_repo.as_deref() {
+            let doc_snapshots: Vec<FileSnapshot> = changed_docs
+                .iter()
+                .filter_map(|path| {
+                    let (hash, mtime) = scanner::compute_file_hash(path).ok()?;
+                    Some(FileSnapshot {
+                        file_path: scanner::rel_path(root, path),
+                        project: project.to_string(),
+                        file_sha1: hash,
+                        file_mtime: mtime,
+                        method_count: 0,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    })
+                })
+                .collect();
+            if !doc_snapshots.is_empty() {
+                let _ = repo.save_snapshots(project, &doc_snapshots).await;
             }
         }
 
@@ -1074,8 +1113,10 @@ impl PipelineTemplate {
         }
 
         // 写入 CONTAINS 关系（依赖已写入的方法与类）
+        let mut contains_edges = 0usize;
         for c in &extraction.classes {
             for mid in &c.method_ids {
+                contains_edges += 1;
                 let mut params = HashMap::new();
                 params.insert(
                     "class_id".to_string(),
@@ -1095,6 +1136,15 @@ impl PipelineTemplate {
                     .await;
             }
         }
+
+        tracing::info!(
+            project = %project,
+            methods = extraction.methods.len(),
+            classes = extraction.classes.len(),
+            modules = extraction.modules.len(),
+            contains_edges,
+            "构建阶段: 图谱写入完成（Method/Class/Module + CONTAINS）"
+        );
 
         Ok(())
     }
@@ -1170,45 +1220,57 @@ impl PipelineTemplate {
     ) -> Result<usize, DtError> {
         let collection = crate::shared::collections::CODE_METHODS.to_string();
 
-        // 缺口 = llm_status=failed 或 llm_status 缺失（未处理）。
-        // 基础设施层 json_to_qdrant_filter 不支持 must 内嵌套 should（OR 子句），
-        // 因此拆两次 scroll 再按 id 去重 —— 语义等价于 project AND (failed OR is_empty)。
-        let failed_filter = serde_json::json!({
-            "must": [
-                {"key": "project", "match": {"value": project}},
-                {"key": "llm_status", "match": {"value": "failed"}},
-            ]
-        });
-        let missing_filter = serde_json::json!({
-            "must": [
-                {"key": "project", "match": {"value": project}},
-                {"key": "llm_status", "is_empty": true},
-            ]
-        });
-        let mut gap_points: Vec<serde_json::Value> = Vec::new();
-        for f in [failed_filter, missing_filter] {
+        // GAP-A（2026-09-06 修复）：循环处理直到无"未分析"缺口——此前单轮
+        // LLM_BACKFILL_BATCH=200 处理完即退出，大项目（如 offen-pay 全量中断后
+        // 遗留 2600+ 缺口）需手动反复构建才能补全。现与 Class 描述补偿(GAP-B)
+        // 同款：每轮重扫前 200 个 llm_status 缺失的点（补完的自然消失，天然翻页），
+        // 处理完再扫下一批；最多 20 轮防死循环。llm_status=failed 的点不在本轮
+        // 循环内（留给下次构建，llm_retries 跨构建累积，避免循环内无效重试耗尽 LLM）。
+        let mut total_attempted: usize = 0;
+        let mut rounds: u32 = 0;
+        loop {
+            rounds += 1;
+            if rounds > 20 {
+                tracing::warn!("方法补偿已达 20 轮上限, 停止（仍有缺口留待下次构建）");
+                break;
+            }
+            // 缺口 = llm_status 缺失（从未被 Phase 2/补偿处理过）。
+            // 基础设施层 json_to_qdrant_filter 不支持 must 内嵌套 should（OR 子句），
+            // failed 与 missing 本就分流：failed 留给下次构建，missing 本轮循环清完。
+            let missing_filter = serde_json::json!({
+                "must": [
+                    {"key": "project", "match": {"value": project}},
+                    {"key": "llm_status", "is_empty": true},
+                ]
+            });
+            let mut gap_points: Vec<serde_json::Value> = Vec::new();
             match vector_repo
-                .scroll_points(&collection, Some(f), LLM_BACKFILL_BATCH)
+                .scroll_points(&collection, Some(missing_filter), LLM_BACKFILL_BATCH)
                 .await
             {
                 Ok(points) => gap_points.extend(points),
                 Err(e) => tracing::warn!("补偿自愈 scroll 失败（非致命）: {e}"),
             }
-        }
-        // 按点 id 去重（防御性：failed 与缺失两条件理论不重叠）
-        let mut seen = std::collections::HashSet::new();
-        gap_points.retain(|p| {
-            let id = p.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-            seen.insert(id)
-        });
-        let gaps = gap_points.len().min(LLM_BACKFILL_BATCH);
+            // 按点 id 去重（防御性）
+            let mut seen = std::collections::HashSet::new();
+            gap_points.retain(|p| {
+                let id = p.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
+                seen.insert(id)
+            });
+            let gaps = gap_points.len().min(LLM_BACKFILL_BATCH);
+            if gaps == 0 {
+                tracing::info!("方法补偿: 本项目无缺失缺口（全部已分析或已标记）");
+                break;
+            }
+            total_attempted += gaps;
+            tracing::info!("方法补偿第 {rounds} 轮: {gaps} 个缺口待处理");
 
-        // ── 并发补偿：每个缺口点独立 async 任务，buffer_unordered 限并发。 ──
-        // 与 Phase 2 主循环一致使用 provider max_concurrent（phase2_concurrency），
-        // 避免串行处理（此前每个缺口点一次请求，12.8s/个 × N 缺口 = 极慢）。
-        // 返回 (点 id, 处理结果)：Some(true)=成功补写, Some(false)=失败(已记 retries), None=本轮跳过。
-        let backfill_concurrency = self.phase2_concurrency;
-        let results: Vec<(u64, Option<bool>)> = stream::iter(
+            // ── 并发补偿：每个缺口点独立 async 任务，buffer_unordered 限并发。 ──
+            // 与 Phase 2 主循环一致使用 provider max_concurrent（phase2_concurrency），
+            // 避免串行处理（此前每个缺口点一次请求，12.8s/个 × N 缺口 = 极慢）。
+            // 返回 (点 id, 处理结果)：Some(true)=成功补写, Some(false)=失败(已记 retries), None=本轮跳过。
+            let backfill_concurrency = self.phase2_concurrency;
+            let results: Vec<(u64, Option<bool>)> = stream::iter(
             gap_points.into_iter().take(gaps).map(|point| {
                 let client = client.clone();
                 let snapshot_repo = snapshot_repo.clone();
@@ -1304,7 +1366,7 @@ impl PipelineTemplate {
                             );
                         }
                         match client
-                            .chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false)
+                            .chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false, &file_path, &entity_id)
                             .await
                         {
                             Ok(response) => {
@@ -1447,15 +1509,19 @@ impl PipelineTemplate {
         .collect::<Vec<_>>()
         .await;
 
-        let succeeded = results.iter().filter(|(_, r)| *r == Some(true)).count();
-        let failed = results.iter().filter(|(_, r)| *r == Some(false)).count();
+            let succeeded = results.iter().filter(|(_, r)| *r == Some(true)).count();
+            let failed = results.iter().filter(|(_, r)| *r == Some(false)).count();
+            tracing::info!(
+                "方法补偿第 {rounds} 轮: {} 缺口, {} 成功, {} 失败",
+                gaps,
+                succeeded,
+                failed
+            );
+        }
         tracing::info!(
-            "缺口补偿: {} 缺口, {} 成功, {} 失败",
-            gaps,
-            succeeded,
-            failed
+            "方法补偿结束: 共尝试 {total_attempted} 个缺口点（成功者已写回，failed 留待下次构建）"
         );
-        Ok(gaps)
+        Ok(total_attempted)
     }
 
     /// Class 描述补偿：扫描本项目"无 description 且 llm_status != success"的
@@ -1625,7 +1691,7 @@ impl PipelineTemplate {
                             "Class 描述 LLM 调用失败，延迟 1 秒后重试"
                         );
                     }
-                    match client.chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false).await {
+                    match client.chat(&llm_model, &system_prompt, &source_text, 0.1, llm_max_tokens, false, &file_path, &name).await {
                         Ok(response) => {
                             let content = response
                                 .choices

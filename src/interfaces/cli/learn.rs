@@ -30,6 +30,17 @@ pub async fn handle_learn(
         pattern,
         pitfalls,
     );
+    tracing::info!(
+        task = "learn",
+        task_name = %task,
+        entities = ?entities,
+        pattern = ?pattern,
+        pitfalls_count = pitfalls.len(),
+        decisions_count = decisions.len(),
+        project = ?project,
+        stage = "learn_start",
+        "learn 调用开始"
+    );
 
     // 连接 Memgraph 实现真实持久化（不可用时回退到 noop）。
     // 两个分支都产生 Arc<dyn GraphRepository>，因此 DefaultKnowledgeService 是具体类型。

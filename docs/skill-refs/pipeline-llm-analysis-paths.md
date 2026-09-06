@@ -34,12 +34,17 @@ LlmClientProcessor.matches 覆盖扩展名(llm_client.rs:88-108): java/py/rs/go/
 
 | 参数 | 粒度 | 说明 |
 |------|------|------|
-| `max_concurrent`(`llm_provider_max_concurrent()`) | **文件间**并发 | 引擎 GPU 阶段 buffer_unordered(N) + 客户端 semaphore 全局在飞上限 |
+| `providers.strategy` | 端点选择 | `round_robin`（多端点多 key 并行，默认）= 并发请求轮流分发到不同端点，**同时用满全部 key**；`failover` = 固定顺序主备，同一时刻只用一个 key |
+| `max_concurrent`(`llm_provider_max_concurrent()` = 池内各端点之和) | **文件间**并发 | 引擎 GPU 阶段 buffer_unordered(N) + 客户端 semaphore 全局在飞上限 |
 | `chunk_concurrency` | **单文件内** chunk 并发 | 只影响多 chunk 文档/配置文件 |
 
 ### 4.2 全局在飞请求
 
 `min(文件并发 × 每文件 chunk 并发, 客户端 semaphore)`。例: C=1 → 32; C=4 → min(128,32) = **32(semaphore 兜底, 不压垮上游)**。
+
+多 key 并行后（2026-09-06）：semaphore 上限 = **各端点 max_concurrent 之和**（例如 4 个端点 × 48 = 192），
+round_robin 把请求轮流发到各端点 → 每端点独立 48 在飞，整池最高 192，跨 key 横向扩展。
+（旧版 semaphore 只取池内首端点并发，多 key 并未并行。）
 
 - `chunk_concurrency=1` **不影响 Java 方法级并发**(方法并发吃 max_concurrent), 只拖慢多 chunk 文档/配置文件
 - 并发生效验证(日志): `LLM file_start` 时间戳毫秒级间隔 = 文件间并行; 旧串行配置下完成间隔 ≈ 单请求耗时(11.4s)

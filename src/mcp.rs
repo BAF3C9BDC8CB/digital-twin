@@ -6,9 +6,8 @@
 //!   / dt_kg_sync / dt_health / dt_backup
 //!
 //! dt_search 是统一检索入口(对应 CLI `dt search`), 融合原 dt_router 的
-//! L0 拦截 + 意图路由 + LLM 过滤 与原 dt_search_kg 的 KG 优先语义。
-//! 旧工具名 dt_router / dt_search_kg 在 call 层保留为兼容别名(list_tools
-//! 不再暴露), 存量调用自动转发到同一实现。
+//! LLM 门控 + 意图路由 + LLM 过滤 与原 dt_search_kg 的 KG 优先语义。
+//! 旧工具名 dt_router / dt_search_kg 已随命令统一移除, 仅保留 dt_search。
 //!
 //! 输出适配: CLI handler 直接 `println!` 到 stdout, 而 MCP server 的 stdout
 //! 是 JSON-RPC 协议通道 —— 因此 call_tool 内把 stdout 重定向到临时文件,
@@ -115,16 +114,12 @@ impl DtRouter {
     async fn call(&self, tool_name: &str, arguments: Value) -> Result<String, ToolError> {
         let rt = &self.rt;
         match tool_name {
-            // 统一检索入口：dt_search（融合 dt_router 智能路由 + dt_search 裸检索 + dt_search_kg KG 优先）。
-            // 旧名 dt_router / dt_search_kg 保留为兼容别名（list_tools 不再暴露，但存量调用不报错）：
-            //   dt_router    → 同 dt_search（world 默认 all，智能路由 + 可选 LLM 过滤）
-            //   dt_search_kg → world 缺省时默认 knowledge（KG 优先语义）
-            "dt_search" | "dt_router" | "dt_search_kg" => {
+            // 统一检索入口：dt_search（融合 dt_router 智能路由 + 裸检索 + KG 优先）。
+            // 旧工具名 dt_router / dt_search_kg 已随命令统一移除，仅 dt_search 有效。
+            "dt_search" => {
                 let query = str_arg(&arguments, "query", true)?.unwrap_or_default();
-                let legacy_kg = tool_name == "dt_search_kg";
-                let default_world = if legacy_kg { "knowledge" } else { "all" };
-                let world = str_arg(&arguments, "world", false)?
-                    .unwrap_or_else(|| default_world.to_string());
+                let world =
+                    str_arg(&arguments, "world", false)?.unwrap_or_else(|| "all".to_string());
                 let project = str_arg(&arguments, "project", false)?;
                 let limit = int_arg(&arguments, "limit")?.unwrap_or(10) as usize;
                 let enable_filter = match str_arg(&arguments, "filter", false)? {
@@ -522,7 +517,7 @@ impl Router for DtRouter {
         vec![
             Tool::new(
                 "dt_search".to_string(),
-                "统一检索入口(融合 dt_router 智能路由 + dt_search 裸检索 + dt_search_kg KG 优先): L0 闲聊/无锚点拦截 + 意图识别路由 + 可选 LLM 过滤, 跨 code/doc/knowledge/config/memory。查代码/文件/文档/记忆/配置统一用它; 命中先读取确认, 0 命中才读源码。参数: query/world(默认all)/project/limit(默认10)/filter(可选 true|false)/threshold/file_type/content_type/show_content。已知精确方法/类名直接作为 query 触发精确匹配; 查知识图谱记忆用 world=knowledge".to_string(),
+                "统一检索入口(融合 dt_router 智能路由 + dt_search 裸检索 + dt_search_kg KG 优先): L0 LLM 门控判断是否值得检索(闲聊/寒暄直接判定无需检索) + 意图识别路由 + 可选 LLM 过滤, 跨 code/doc/knowledge/config/memory。查代码/文件/文档/记忆/配置统一用它; 命中先读取确认, 0 命中才读源码。参数: query/world(默认all)/project/limit(默认10)/filter(可选 true|false)/threshold/file_type/content_type/show_content。已知精确方法/类名直接作为 query 触发精确匹配; 查知识图谱记忆用 world=knowledge".to_string(),
                 serde_json::json!({
                     "type": "object",
                     "properties": {

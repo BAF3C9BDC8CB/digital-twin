@@ -235,7 +235,7 @@ def _on_pre_llm_call(
             return None  # fail-open
 
         # 注入内容 = dt sense 输出 + 一行检索引导（append，不改写 sense 内容）。
-        # 引导补回 dt_search_kg 用法（透传后 dt sense 原生输出不含工具指引，
+        # 引导补回 dt_search 用法（透传后 dt sense 原生输出不含工具指引，
         # 曾导致 agent 只翻磁盘不用 KG）。
         brief = sense + _search_guidance(sense)
         if len(brief) > MAX_BRIEF_CHARS:
@@ -251,7 +251,7 @@ def _search_guidance(sense: str) -> str:
     """根据 dt sense 输出生成一行 KG 检索引导。
 
     - 容器(unregistered + 子项目): 引导按子项目名查
-    - indexed: 引导 dt_search_kg(world=code, project=<项目名>)
+    - indexed: 引导 dt_search(world=code, project=<项目名>)
     - 其余: 通用提示先确认项目名
     """
     # 提取项目名（indexed 行: "Project: <name> (...)"）
@@ -262,12 +262,12 @@ def _search_guidance(sense: str) -> str:
     if m_container:
         return (
             "\n[KG] 当前是注册容器——涉及子项目知识/代码/配置用 "
-            "dt_search_kg(project=<子项目名>) 查；不要用目录名当 project（会滤掉全部命中）。"
+            "dt_search(project=<子项目名>) 查；不要用目录名当 project（会滤掉全部命中）。"
         )
     if m_proj:
         return (
             f"\n[KG] 项目已索引——代码/知识/配置问题先 "
-            f"dt_search_kg(project={m_proj.group(1)}, limit=5) 定位，命中直接采用，再读源码验证。"
+            f"dt_search(world=code, project={m_proj.group(1)}, limit=5) 定位，命中直接采用，再读源码验证。"
         )
     if m_unreg:
         return "\n[KG] 未注册项目——KG 无此项目索引，可先 dt build 注册或直接读磁盘。"
@@ -287,7 +287,7 @@ def _minimal_brief(cwd: Path) -> str:
     return (
         f"[DT-SENSE] 未匹配到注册项目（cwd={cwd}）。"
         f"KG 有 {n} 个注册项目——涉及项目知识/代码/配置时，"
-        f"先 dt_sense 或 dt_search_kg 确认项目名再查；"
+        f"先 dt_sense 或 dt_search 确认项目名再查；"
         f"不要用目录名当 project 过滤，会滤掉全部命中。"
     )
 

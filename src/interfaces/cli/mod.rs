@@ -4,7 +4,6 @@ pub mod backup_qdrant;
 pub mod backup_sqlite;
 pub mod backup_verify;
 pub mod cleanup;
-pub mod reconcile;
 
 // V3 架构：抽取的 CLI 命令处理器
 pub mod build;

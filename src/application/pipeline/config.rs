@@ -21,15 +21,15 @@ pub struct PipelineConfig {
     #[serde(default)]
     pub processors: ProcessorsConfig,
 
-    /// LLM 推理参数（model、temperature、max_tokens …）。
+    /// LLM 推理参数（temperature、max_tokens …；模型归入 providers.llm 池）。
     #[serde(default)]
     pub llm: Option<LlmConfig>,
 
-    /// Embedding 能力配置（模型选择）。
+    /// Embedding 能力配置（模型选择；端点归入 providers.embed 池）。
     #[serde(default)]
     pub embed: Option<EmbedConfig>,
 
-    /// Rerank 能力配置（模型选择）。
+    /// Rerank 能力配置（模型选择；端点归入 providers.rerank 池）。
     #[serde(default)]
     pub rerank: Option<RerankConfig>,
 
@@ -37,9 +37,7 @@ pub struct PipelineConfig {
     #[serde(default)]
     pub ecosystem: Option<EcosystemConfig>,
 
-    /// 提供方路由与模型配置。
-    /// 控制哪个提供方处理 embed / rerank / LLM 能力，
-    /// 以及每项能力使用哪个模型。
+    /// 提供方路由与模型配置（端点池，见 [`ProvidersConfig`]）。
     #[serde(default)]
     pub providers: Option<ProvidersConfig>,
 
@@ -159,9 +157,11 @@ const fn default_gate_preview_chars() -> usize {
 }
 
 /// LLM 推理参数（唯一能力块：代码/文档分析与路由过滤共用）。
+/// 模型选择已移入 `providers.llm` 端点池——`model` 字段保留为
+/// 「端点未指定 model 时使用的默认模型名」，可为空。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    /// LLM 模型名（SiliconFlow 模型 ID，如 `deepseek-ai/DeepSeek-R1-0528-Qwen3-8B`）。
+    /// 默认 LLM 模型名（端点级 model 未指定时使用，可为空）。
     #[serde(default)]
     pub model: String,
 
@@ -192,10 +192,10 @@ impl Default for LlmConfig {
     }
 }
 
-/// Embedding 能力配置。
+/// Embedding 能力配置（模型选择）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbedConfig {
-    /// Embedding 模型名（如 `BAAI/bge-m3`）。
+    /// 默认 Embedding 模型名（端点级 model 未指定时使用，可为空）。
     #[serde(default)]
     pub model: String,
 }
@@ -208,10 +208,10 @@ impl Default for EmbedConfig {
     }
 }
 
-/// Rerank 能力配置。
+/// Rerank 能力配置（模型选择）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RerankConfig {
-    /// Rerank 模型名（如 `BAAI/bge-reranker-v2-m3`）。
+    /// 默认 Rerank 模型名（端点级 model 未指定时使用，可为空）。
     #[serde(default)]
     pub model: String,
 }
@@ -250,46 +250,210 @@ impl Default for EcosystemConfig {
     }
 }
 
-/// 提供方路由与模型配置。
+/// 提供方路由与模型配置——按能力划分的端点池。
+///
+/// 2026-09-06 重构（多厂商 × 多模型端点池）：
+/// - 旧 `providers.siliconflow` 单块已移除，不再保留兼容解析。
+/// - `llm` / `embed` / `rerank` 各是一组端点（`ProviderEndpoint`），
+///   每端点独立 url + api_key + 模型；同能力池内允许多模型多厂商，
+///   一个模型/端点失败自动顺延到下一个（failover 语义）。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvidersConfig {
-    /// SiliconFlow 连接配置（唯一推理 provider）。
+    /// 多端点选择策略（`failover` / `round_robin`，缺省 failover）。
     #[serde(default)]
-    pub siliconflow: Option<SiliconFlowProviderConfig>,
+    pub strategy: EndpointStrategy,
+
+    /// 全局默认代理（端点级 `proxy` 可覆盖；缺省 None = 直连）。
+    #[serde(default)]
+    pub proxy: Option<ProxyConfig>,
+
+    /// LLM（chat completions）端点池。
+    #[serde(default)]
+    pub llm: Vec<ProviderEndpoint>,
+
+    /// Embedding 端点池。
+    #[serde(default)]
+    pub embed: Vec<ProviderEndpoint>,
+
+    /// Rerank 端点池（须支持 `/rerank` 私有端点）。
+    #[serde(default)]
+    pub rerank: Vec<ProviderEndpoint>,
 }
 
-/// SiliconFlow 连接配置（唯一推理 provider）。
+/// 端点选择策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointStrategy {
+    /// 顺序主备：按配置顺序逐个尝试，端点失败则切下一个（缺省）。
+    #[default]
+    Failover,
+    /// 轮询均分：请求轮流打到每个端点（不适合带状态的写入场景）。
+    RoundRobin,
+}
+
+/// 单个可用的推理端点（OpenAI 兼容；rerank 为 SiliconFlow 私有扩展）。
 ///
-/// 模型选择与推理参数不在此处——按能力归入顶层 `llm` / `embed` / `rerank` 块；
-/// 此处只描述「连到哪、用什么凭据、多大并发」。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SiliconFlowProviderConfig {
-    /// API base URL（OpenAI 兼容端点；缺省为 SiliconFlow 云 API）。
-    #[serde(default = "default_sf_url")]
+/// 每个端点绑定一条「url + api_key」连接，并带**一个或多个候选模型名**
+/// （`models` 列表；单模型可用 `model` 简写）。同端点内模型按顺序
+/// failover：第一个模型失败（连接/429/5xx/4xx 模型不存在等）自动换下一个；
+/// 端点内模型全部失败才切到池内下一端点。由此实现：
+/// - 多厂商：不同 url 的端点；
+/// - 多模型：同端点（或池内）多个模型候选，一个失败换下一个。
+///
+/// `models` 缺省时回退 `model`，两者皆空时使用顶层
+/// `llm.model` / `embed.model` / `rerank.model`。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderEndpoint {
+    /// 端点名（日志/健康报告用；缺省取 url host）。
+    #[serde(default)]
+    pub name: String,
+
+    /// OpenAI 兼容 API base URL。
     pub url: String,
-    /// API key。留空时回退到 `SILICONFLOW_API_KEY` 环境变量。
+
+    /// API key（与 `api_key_env` 二选一；都空 = 解析期报错）。
     #[serde(default)]
     pub api_key: String,
-    /// SiliconFlow 云 API 最大并发请求数（embed/rerank/LLM 共享）。
-    #[serde(default = "default_sf_max_concurrent")]
-    pub max_concurrent: usize,
+
+    /// API key 环境变量名（优先于 `api_key`；都空 = 解析期报错）。
+    #[serde(default)]
+    pub api_key_env: String,
+
+    /// 单模型简写（与 `models` 二选一；`models` 优先）。
+    #[serde(default)]
+    pub model: String,
+
+    /// 候选模型列表（顺序 = failover 优先级）。同端点内一个失败自动换下一个。
+    #[serde(default)]
+    pub models: Vec<String>,
+
+    /// 该端点的并发上限（可选；缺省 20）。仅对"固定模型"的端点有效。
+    /// 若该端点声明了多候选模型（`models`），它会被扩为多个运行时端点，
+    /// 每个候选模型分得一份独立的并发额度。
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
+
+    /// 该端点权重（仅 round_robin 加权轮询时生效；缺省 1）。
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+
+    /// 端点级出网代理覆盖（可选；缺省继承全局 `providers.proxy`）。
+    #[serde(default)]
+    pub proxy: Option<ProxyConfig>,
 }
 
-fn default_sf_url() -> String {
-    "https://api.siliconflow.cn/v1".into()
+const fn default_weight() -> u32 {
+    1
 }
 
-const fn default_sf_max_concurrent() -> usize {
-    20
+impl ProviderEndpoint {
+    /// 该端点的候选模型（有序）：`models` 非空用之；否则 `model` 非空用之；
+    /// 都空则用传入的默认模型。返回至少含一个元素（调用方兜底默认）。
+    pub fn candidate_models(&self, fallback: &str) -> Vec<String> {
+        if !self.models.is_empty() {
+            self.models
+                .iter()
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect()
+        } else if !self.model.trim().is_empty() {
+            vec![self.model.trim().to_string()]
+        } else if !fallback.trim().is_empty() {
+            vec![fallback.trim().to_string()]
+        } else {
+            vec![]
+        }
+    }
 }
 
-impl Default for SiliconFlowProviderConfig {
+/// 出网代理配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConfig {
+    /// 是否启用代理（`false` / 缺省 = 直连，忽略 `url`）。
+    #[serde(default)]
+    pub enabled: bool,
+    /// 代理地址（如 `http://127.0.0.1:7897`、`socks5://...`）。
+    #[serde(default)]
+    pub url: String,
+}
+
+impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            url: default_sf_url(),
-            api_key: String::new(),
-            max_concurrent: default_sf_max_concurrent(),
+            enabled: false,
+            url: String::new(),
         }
+    }
+}
+
+impl ProvidersConfig {
+    /// 解析期密钥解析 + 校验。展开 `api_key_env`，检查 url 合法性；
+    /// 均无密钥 / url 非法给出明确错误——不再静默回退共用 key。
+    pub fn validate(&self) -> Result<(), String> {
+        for (cap, eps) in [
+            ("llm", &self.llm),
+            ("embed", &self.embed),
+            ("rerank", &self.rerank),
+        ] {
+            for ep in eps {
+                let key = ep.resolved_api_key();
+                if key.is_empty() {
+                    return Err(format!(
+                        "providers.{cap} 端点 '{}' 缺少 API key（api_key / api_key_env 至少其一，且 api_key_env 指向的环境变量存在且非空）",
+                        ep.label()
+                    ));
+                }
+                if ep.url.trim().is_empty() {
+                    return Err(format!(
+                        "providers.{cap} 端点 '{}' 缺少 url",
+                        ep.label()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ProviderEndpoint {
+    /// 显示名：显式 name，否则 url host。
+    pub fn label(&self) -> String {
+        if !self.name.trim().is_empty() {
+            return self.name.trim().to_string();
+        }
+        url_host(&self.url).unwrap_or_else(|| "unnamed".to_string())
+    }
+
+    /// 解析实际 API key：`api_key_env` 优先（展开环境变量），其次 `api_key`。
+    pub fn resolved_api_key(&self) -> String {
+        if !self.api_key_env.trim().is_empty() {
+            std::env::var(self.api_key_env.trim()).unwrap_or_default()
+        } else {
+            self.api_key.clone()
+        }
+    }
+
+    /// 该端点的生效代理：端点级配置 > 全局配置。
+    pub fn effective_proxy<'a>(
+        &'a self,
+        global: &'a Option<ProxyConfig>,
+    ) -> Option<&'a ProxyConfig> {
+        self.proxy.as_ref().or(global.as_ref())
+    }
+}
+
+/// 从 url 提取 host 段（供端点名缺省与错误提示）。
+fn url_host(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    let after_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    let host = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
     }
 }
 
@@ -300,14 +464,8 @@ pub struct KgRouterConfig {
     #[serde(default)]
     pub result_filter: ResultFilterConfig,
 
-    /// L0 提前拦截（early-exit）配置：判断查询是否值得检索，避免闲聊/寒暄
-    /// 也触发搜索。对应文档「三级 Router」的 L0 Gate 层。
-    #[serde(default)]
-    pub early_exit: EarlyExitConfig,
-
-    /// LLM 门控（llm-gate）配置：用 LLM 判断"是否值得搜索"，替代纯规则 L0。
-    /// 规则 L0 拦截后，若开启本项则再用 LLM 二次确认（规则放行的直接过，
-    /// 规则拦截的问 LLM，LLM 说该搜则仍放行）——不对称策略，防漏搜。
+    /// LLM 门控（llm-gate）配置：搜索发起前用 LLM 判断查询是否值得检索，
+    /// 替代已移除的纯规则 L0（闲聊词表/无锚点词表早退）。
     #[serde(default)]
     pub llm_gate: LlmGateConfig,
 
@@ -320,7 +478,6 @@ impl Default for KgRouterConfig {
     fn default() -> Self {
         Self {
             result_filter: ResultFilterConfig::default(),
-            early_exit: EarlyExitConfig::default(),
             llm_gate: LlmGateConfig::default(),
             observability: ObservabilityConfig::default(),
         }
@@ -329,16 +486,15 @@ impl Default for KgRouterConfig {
 
 /// LLM 门控配置：搜索发起前用 LLM 判断查询是否值得检索。
 ///
-/// 设计（不对称策略）：
-/// - 规则 L0（early_exit）判定「该搜」→ 直接放行，不调 LLM（省延迟）；
-/// - 规则 L0 判定「不该搜」（闲聊/无锚点）→ 调 LLM 二次确认：
-///   LLM 说该搜 → 放行（规则误杀兜底）；LLM 说不该搜 → 拦截返回空。
-/// 这样 LLM 只处理规则拿不准的少数查询，延迟与成本可控，且不会漏搜。
+/// 2026-09-06 起替代纯规则 L0（闲聊词表/无锚点词表打地鼠式拦截已整体移除，
+/// 改为统一由 LLM 判断"是否要搜索知识图谱"）：
+/// - 开启后每次搜索先问 LLM：值得检索 → 放行；不值得（寒暄/闲聊/纯任务指令
+///   无检索对象/与代码库无关话题）→ 直接返回「无需检索」；
+/// - 关闭则跳过门控直接检索（等价旧 early_exit.enabled=false 的直通行为）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmGateConfig {
-    /// 启用 LLM 门控。默认关闭——只走纯规则 L0（现状）；开启后规则拦截的
-    /// 查询会再问一次 LLM 确认。
-    #[serde(default)]
+    /// 启用 LLM 门控。默认开启——所有查询先经 LLM 判断是否值得搜索。
+    #[serde(default = "default_gate_enabled")]
     pub enabled: bool,
 
     /// 门控判断时 LLM 最大 token 数（输出为简短 JSON，几十 token 足够）。
@@ -350,6 +506,10 @@ pub struct LlmGateConfig {
     pub temperature: f32,
 }
 
+const fn default_gate_enabled() -> bool {
+    true
+}
+
 const fn default_gate_max_tokens() -> u32 {
     120
 }
@@ -357,29 +517,10 @@ const fn default_gate_max_tokens() -> u32 {
 impl Default for LlmGateConfig {
     fn default() -> Self {
         Self {
-            enabled: false, // 默认关：不改变现有纯规则行为
+            enabled: default_gate_enabled(),
             max_tokens: default_gate_max_tokens(),
             temperature: 0.0,
         }
-    }
-}
-
-/// L0 提前拦截（early-exit）配置。
-///
-/// 在 `dt router` 真正发起检索之前，先用纯规则判断查询是否值得搜索：
-/// 命中项目/服务/类名/配置名等实体特征或检索意图词 → 放行；
-/// 只有寒暄/算术/通用闲聊 → 直接返回「无需检索」，省掉一次 KG 搜索。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EarlyExitConfig {
-    /// 启用 L0 提前拦截。默认开启——仅拦截明显无需检索的查询，
-    /// 命中任一实体/意图特征即放行，不影响 `dt search` 一致性。
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-impl Default for EarlyExitConfig {
-    fn default() -> Self {
-        Self { enabled: true }
     }
 }
 
@@ -445,6 +586,12 @@ impl Default for ObservabilityConfig {
     }
 }
 
+/// 解析 `~/.config/digital-twin/pipeline.yaml` 路径,不引入 `dirs` crate。
+fn home_pipeline_config() -> Option<PathBuf> {
+    let home = crate::shared::home_dir()?;
+    Some(home.join(".config/digital-twin/pipeline.yaml"))
+}
+
 // ---------------------------------------------------------------------------
 // 加载
 // ---------------------------------------------------------------------------
@@ -475,94 +622,59 @@ impl PipelineConfig {
         let content =
             std::fs::read_to_string(&path).map_err(|e| format!("无法读取 {path:?}: {e}"))?;
 
-        serde_yaml::from_str(&content).map_err(|e| format!("流水线配置解析错误: {e}"))
+        let cfg: Self = serde_yaml::from_str(&content)
+            .map_err(|e| format!("流水线配置解析错误: {e}"))?;
+        cfg.providers
+            .as_ref()
+            .map(|p| p.validate())
+            .transpose()?;
+        Ok(cfg)
     }
 
-    /// 返回 SiliconFlow 的全局并发上限，供 ProcessorEngine（文件级
-    /// LLM 分析并发）与 LLM 客户端 semaphore 共用。
-    ///
-    /// 缺失时回退到默认值（20）。
+    /// 全局推理并发上限——取 LLM 池内各端点并发之和（聚合多 key 总带宽），
+    /// 缺失回退默认 20。
+    /// （旧版读 providers.siliconflow.max_concurrent；该单块已移除。
+    /// 多 key 并行：池内多个端点各自持有独立信号量，因此各端点并发
+    /// 相加即整池可同时在飞的请求数上限。）
     pub fn inference_max_concurrent(&self) -> usize {
-        self.providers
-            .as_ref()
-            .and_then(|p| p.siliconflow.as_ref())
-            .map(|c| c.max_concurrent)
-            .unwrap_or(20)
+        let Some(providers) = self.providers.as_ref() else {
+            return 20;
+        };
+        let total: usize = providers
+            .llm
+            .iter()
+            .map(|e| e.max_concurrent.unwrap_or(20))
+            .sum();
+        if total == 0 {
+            20
+        } else {
+            total
+        }
     }
 
     /// 当前生效的 LLM 模型名（`llm.model`），空则回退默认。
     pub fn llm_model(&self) -> String {
-        model_or_env(
-            self.llm.as_ref(),
-            crate::infrastructure::siliconflow::llm_model_from_env,
-        )
+        self.llm
+            .as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_default()
     }
 
     /// 当前生效的 embed 模型名（`embed.model`），空则回退默认。
     pub fn embed_model(&self) -> String {
-        model_or_env(
-            self.embed.as_ref(),
-            crate::infrastructure::siliconflow::embed_model_from_env,
-        )
+        self.embed
+            .as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_default()
     }
 
     /// 当前生效的 rerank 模型名（`rerank.model`），空则回退默认。
     pub fn rerank_model(&self) -> String {
-        model_or_env(
-            self.rerank.as_ref(),
-            crate::infrastructure::siliconflow::reranker_model_from_env,
-        )
+        self.rerank
+            .as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_default()
     }
-}
-
-/// 从配置中提取模型名，空则回退环境变量默认值。
-///
-/// 统一处理 llm/embed/rerank 三种配置的模型名提取逻辑：
-/// 1. 配置存在且 `model` 非空 → 返回配置值
-/// 2. 配置缺失或 `model` 为空 → 调用 `env_fallback()` 获取默认值
-fn model_or_env<C>(config: Option<&C>, env_fallback: fn() -> String) -> String
-where
-    C: HasModel,
-{
-    config
-        .and_then(|c| {
-            let m = c.model();
-            if m.is_empty() {
-                None
-            } else {
-                Some(m.to_string())
-            }
-        })
-        .unwrap_or_else(env_fallback)
-}
-
-/// 提供 `.model()` 访问器的配置类型 trait。
-trait HasModel {
-    fn model(&self) -> &str;
-}
-
-impl HasModel for LlmConfig {
-    fn model(&self) -> &str {
-        &self.model
-    }
-}
-
-impl HasModel for EmbedConfig {
-    fn model(&self) -> &str {
-        &self.model
-    }
-}
-
-impl HasModel for RerankConfig {
-    fn model(&self) -> &str {
-        &self.model
-    }
-}
-
-/// 解析 `~/.config/digital-twin/pipeline.yaml` 路径,不引入 `dirs` crate。
-fn home_pipeline_config() -> Option<PathBuf> {
-    let home = crate::shared::home_dir()?;
-    Some(home.join(".config/digital-twin/pipeline.yaml"))
 }
 
 impl Default for PipelineConfig {
@@ -591,7 +703,7 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let cfg = PipelineConfig::default();
-        // 无 providers 时按 siliconflow 默认回退（默认 max_concurrent=20）。
+        // 无 providers 时按默认回退（默认 max_concurrent=20）。
         assert_eq!(cfg.inference_max_concurrent(), 20);
         assert!(cfg.processors.tree_sitter);
         assert!(!cfg.processors.ocr);
@@ -610,7 +722,6 @@ processors:
   ocr: false
   store: true
 llm:
-  model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
   temperature: 0.5
   max_tokens: 2048
 embed:
@@ -618,9 +729,16 @@ embed:
 rerank:
   model: "BAAI/bge-reranker-v2-m3"
 providers:
-  siliconflow:
-    url: "https://api.siliconflow.cn/v1"
-    max_concurrent: 32
+  llm:
+    - name: sf
+      url: "https://api.siliconflow.cn/v1"
+      api_key_env: "DT_LLM_KEY_SF"
+      model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+      max_concurrent: 32
+  embed:
+    - name: internal
+      url: "http://124.221.200.116:3000/v1"
+      api_key: "sk-placeholder"
 ecosystem:
   enabled: true
   projects:
@@ -628,13 +746,16 @@ ecosystem:
     - svc
 "#;
         let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
-        let llm = cfg.llm.as_ref().unwrap();
-        assert_eq!(llm.model, "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
-        assert_eq!(llm.temperature, 0.5);
-        assert_eq!(cfg.llm_model(), "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B");
+        assert_eq!(cfg.llm.as_ref().unwrap().temperature, 0.5);
         assert_eq!(cfg.embed_model(), "BAAI/bge-m3");
         assert_eq!(cfg.rerank_model(), "BAAI/bge-reranker-v2-m3");
         assert_eq!(cfg.inference_max_concurrent(), 32);
+        let p = cfg.providers.as_ref().unwrap();
+        assert_eq!(p.llm.len(), 1);
+        assert_eq!(p.llm[0].label(), "sf");
+        assert_eq!(p.embed[0].label(), "internal");
+        // strategy 缺省 = failover
+        assert_eq!(p.strategy, EndpointStrategy::Failover);
 
         let eco = cfg.ecosystem.unwrap();
         assert!(eco.enabled);
@@ -642,12 +763,13 @@ ecosystem:
     }
 
     #[test]
-    fn inference_max_concurrent_reads_current_provider() {
-        // siliconflow 显式配置
+    fn inference_max_concurrent_reads_first_llm_endpoint() {
         let yaml = r#"
 providers:
-  siliconflow:
-    max_concurrent: 10
+  llm:
+    - url: "https://api.siliconflow.cn/v1"
+      api_key: "k"
+      max_concurrent: 10
 "#;
         let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.inference_max_concurrent(), 10);
@@ -655,6 +777,84 @@ providers:
         // 未配置 providers → 回退 20
         let cfg = PipelineConfig::default();
         assert_eq!(cfg.inference_max_concurrent(), 20);
+    }
+
+    #[test]
+    fn inference_max_concurrent_sums_all_llm_endpoints() {
+        // 多 key 并行：整池并发上限 = 各端点 max_concurrent 之和
+        let yaml = r#"
+providers:
+  llm:
+    - url: "https://a/v1"
+      api_key: "k1"
+      max_concurrent: 48
+    - url: "https://b/v1"
+      api_key: "k2"
+      max_concurrent: 48
+    - url: "https://c/v1"
+      api_key: "k3"
+      model: "m"
+      # 未声明 → 缺省 20
+"#;
+        let cfg: PipelineConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.inference_max_concurrent(), 48 + 48 + 20);
+        // 无 llm 端点 → 回退 20
+        let yaml2 = r#"
+providers:
+  llm: []
+"#;
+        let cfg2: PipelineConfig = serde_yaml::from_str(yaml2).unwrap();
+        assert_eq!(cfg2.inference_max_concurrent(), 20);
+    }
+
+    #[test]
+    fn api_key_resolution_prefers_env_and_label_falls_back_to_host() {
+        // api_key 直填
+        let ep = ProviderEndpoint {
+            name: String::new(),
+            url: "https://api.siliconflow.cn/v1".into(),
+            api_key: "sk-abc".into(),
+            api_key_env: String::new(),
+            model: String::new(),
+            models: vec![],
+            max_concurrent: None,
+            weight: 1,
+            proxy: None,
+        };
+        assert_eq!(ep.resolved_api_key(), "sk-abc");
+        assert_eq!(ep.label(), "api.siliconflow.cn");
+
+        // api_key_env 优先（设临时变量）
+        std::env::set_var("DT_TEST_ENV_KEY", "sk-env");
+        let ep2 = ProviderEndpoint {
+            api_key: "sk-abc".into(),
+            api_key_env: "DT_TEST_ENV_KEY".into(),
+            ..ep.clone()
+        };
+        assert_eq!(ep2.resolved_api_key(), "sk-env");
+        std::env::remove_var("DT_TEST_ENV_KEY");
+    }
+
+    #[test]
+    fn validate_rejects_missing_key_or_url() {
+        let mut p = ProvidersConfig::default();
+        p.embed.push(ProviderEndpoint {
+            name: "no-key".into(),
+            url: "http://x/v1".into(),
+            ..Default::default()
+        });
+        let err = p.validate().unwrap_err();
+        assert!(err.contains("缺少 API key"), "{err}");
+
+        let mut p = ProvidersConfig::default();
+        p.llm.push(ProviderEndpoint {
+            name: String::new(),
+            url: String::new(),
+            api_key: "k".into(),
+            ..Default::default()
+        });
+        let err = p.validate().unwrap_err();
+        assert!(err.contains("缺少 url"), "{err}");
     }
 
     #[test]

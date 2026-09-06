@@ -80,11 +80,17 @@ const LOG_DIR: &str = "/var/log/digital-twin";
 /// | 变量                     | 默认值                | 说明                               |
 /// |--------------------------|----------------------|------------------------------------|
 /// | `DT_LOG_DIR`             | `/var/log/digital-twin` | 覆盖日志目录                   |
-/// | `RUST_LOG`               | `info`               | 按模块过滤（tracing EnvFilter）    |
+/// | `RUST_LOG`               | `info`               | 按模块过滤（tracing EnvFilter），完全覆盖其他来源    |
 /// | `DT_LOG_LEVEL`           | `info`               | RUST_LOG 未设置时的兜底值          |
 /// | `DT_LOG_STDERR`          | `warn`               | stderr 层级别（debug 恢复详细输出）|
 /// | `DT_LOG_MAX_BYTES`       | `52428800` (50 MiB)  | 单文件大小阈值,超限同日切序号文件  |
 /// | `DT_LOG_RETENTION_FILES` | `30`                 | 目录内日志文件总数上限,超出删最旧  |
+///
+/// # 配置文件级别（config.yaml `logging.level`）
+///
+/// 除环境变量外，`logging.level` 还可在配置文件里自由选择（`debug`/`info`/
+/// `warn`/`error`，或 `digital_twin=debug` 这类 EnvFilter 写法）。配置值在
+/// `RUST_LOG` 与 `DT_LOG_LEVEL` 都未设置时才生效——三者同时存在时环境变量优先。
 pub fn init_logging() -> anyhow::Result<LogGuard> {
     // 解析日志目录，必要时创建；不可写时静默回退 /tmp（不污染终端）
     let log_dir = std::env::var("DT_LOG_DIR")
@@ -119,12 +125,20 @@ pub fn init_logging() -> anyhow::Result<LogGuard> {
     // ── 环境过滤 ──────────────────────────────────────────────────
     // 默认 `info,mcp_server=warn`：MCP 协议库的 tools/list/initialize 收发
     // 从 info 降为 warn（不再整段 json 入文件），业务日志保持 info。
-    // RUST_LOG 优先；其次 DT_LOG_LEVEL 显式值；都未设置时用上述默认。
+    //
+    // 优先级（高 → 低）：
+    //   1. RUST_LOG            按模块过滤（tracing EnvFilter），完全覆盖
+    //   2. DT_LOG_LEVEL        显式环境变量覆盖
+    //   3. config.yaml logging.level   配置文件里自由选择（本次新增）
+    //   4. 内置默认             info,mcp_server=warn
     const DEFAULT_FILTER: &str = "info,mcp_server=warn";
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .or_else(|_| {
             tracing_subscriber::EnvFilter::try_new(
-                std::env::var("DT_LOG_LEVEL").unwrap_or_else(|_| DEFAULT_FILTER.into()),
+                std::env::var("DT_LOG_LEVEL")
+                    .ok()
+                    .or_else(|| crate::runtime::load_config().and_then(|c| c.logging.level.clone()))
+                    .unwrap_or_else(|| DEFAULT_FILTER.into()),
             )
         })
         .unwrap_or_else(|_| DEFAULT_FILTER.into());

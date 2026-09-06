@@ -30,7 +30,7 @@ echo "测试 2: 使用三段序分析 BuildService"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-hermes chat -q "进入项目 /data/myProject/digital-twin-v2，使用代码分析三段序找到 BuildService 类的实现。请严格遵循：① dt_sense() ② dt_search_kg(world=code) ③ read_file()" 2>&1 | tee -a "$TEST_LOG"
+hermes chat -q "进入项目 /data/myProject/digital-twin-v2，使用代码分析三段序找到 BuildService 类的实现。请严格遵循：① dt_sense() ② dt_search(world=code) ③ read_file()" 2>&1 | tee -a "$TEST_LOG"
 
 echo ""
 echo "✓ 测试 2 完成"

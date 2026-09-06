@@ -1,19 +1,18 @@
 # ===========================================================================
 # digital-twin 流水线配置（config/pipeline.yaml）
 #
-# 结构说明：
-#   providers.siliconflow   —— 唯一推理 provider 的「连接」信息（URL/凭据/并发）
-#   llm / embed / rerank    —— 三种能力的「模型与参数」（按能力归位，不再按
-#                              provider 拆散）
+# 2026-09-06 起：多厂商 × 多模型端点池。
+#   providers.{llm,embed,rerank}   —— 各能力一个端点池；一个端点 =
+#      url + api_key + 一个模型。池内失败自动顺延下一端点：
+#      某 key 欠费/被限、某网关挂掉、某模型不可用 → 自动切换，不整批失败。
+#   多 key 并行（2026-09-06 默认开启）：
+#     池内多个端点 = 多个 key 同时工作。每个端点独立并发槽（各自
+#     max_concurrent，互不占用），整池在飞请求 = 各端点之和——
+#     LLM 池 48×N、embed 池同理，跨 key 横向扩展吞吐。
+#   llm / embed / rerank           —— 顶层块放「默认模型 + 推理参数」，
+#      端点级 model 缺省时用顶层默认。
 #
-# 2026-09-05 重构：
-#   - XInference / openai_compatible / glmcoding 已移除，单一 SiliconFlow
-#     （OpenAI 兼容协议，rerank 走其私有扩展端点）
-#   - 移除无实际行为价值的样板开关：顶层 enabled（流水线分析由 CLI
-#     --pipeline + processors.llm 控制）、kg_router.enabled（dt router 调用
-#     即路由，不再二次放行）。保留有真实行为区分的开关：
-#     processors.*（各阶段）、kg_router.early_exit.enabled（闲聊拦截）、
-#     kg_router.result_filter.enabled（LLM 相关性过滤，可被 --filter 覆盖）。
+# 密钥红线：api_key 直填或 api_key_env 引环境变量；解析期校验缺失即报错。
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -31,14 +30,6 @@ processors:
 # ---------------------------------------------------------------------------
 # 文档分级门控（doc-gate）：用 LLM 判定文档价值，决定是否做详细提取
 #   enabled=false（默认）→ 所有文档一律详细提取（实体+关系，现状行为）
-#   enabled=true  → 每篇新文档先一次 LLM 判定，输出 JSON
-#     {"value": "high|medium|low", "reason": "..."}，然后按档位处理：
-#       high   → 详细提取：实体 + 关系 + 摘要（架构/规范/接口契约类）
-#       medium → 只提取实体 + 摘要，抑制关系三元组（README/手册/纪要类）
-#       low    → 跳过 LLM 提取，仅保留块级索引 doc_chunks + Document 节点
-#                （变更记录/流水账/草稿类，不进实体知识图谱）
-#   判定失败/超时 → 按 fallback 降级（默认 high：宁多提取不漏知识）
-#   preview_chars：判定采样的文档前 N 字符（控制每次 gate 调用成本）
 # ---------------------------------------------------------------------------
 doc_gate:
   enabled: false
@@ -46,23 +37,109 @@ doc_gate:
   fallback: high
 
 # ---------------------------------------------------------------------------
-# SiliconFlow —— 唯一推理 provider
-#   OpenAI 兼容超集：chat/embeddings 为标准协议，rerank 为私有扩展端点；
-#   三种能力共用此连接与并发上限。
+# providers —— 按能力划分的端点池
+#   strategy: round_robin（轮询均分，多 key 并行，默认）| failover（顺序主备）
+#     · round_robin —— 并发请求轮流发到不同端点/key，同时利用全部额度
+#       （2026-09-06 起默认；端点 weight 可调流量比例，缺省 1=均分）。
+#       失败端点自动顺延/绕过，单点故障不拖垮整池。
+#     · failover —— 固定顺序主备：同一时刻只用一个端点（一次只能用一个
+#       key），仅当它失败才切下一个。旧语义，保留给不想并行的场景。
+#   proxy:    全局默认代理（端点级 proxy 可覆盖；false = 直连，缺省）
+#
+# 每个端点字段：
+#   name            显示名（日志/健康报告，缺省取 url host）
+#   url             OpenAI 兼容 base URL（必填）
+#   api_key / api_key_env 二选一（都空 → 解析期报错）
+#   model           该端点使用的模型（必填；不同端点不同模型即多模型 failover）
+#   max_concurrent  端点并发上限（可选；缺省 20）。多个端点=多个 key，
+#                   整池总并发是各端点之和（例：4 端点×48 = 192 在飞）。
+#   weight          仅 round_robin 生效：流量比例（缺省 1=均分）
+#   proxy           端点级代理覆盖（可选）
+#
+# 注意：
+#   - embed 池内模型输出维度必须一致（Qdrant collection 维度固定）。
+#   - rerank 走 /rerank 私有端点（SiliconFlow 兼容网关专属）。
+#   - embed batch 不会跨端点拆分：一批必整批落同一端点。
 # ---------------------------------------------------------------------------
 providers:
-  siliconflow:
-    url: http://124.221.200.116:3000/v1   # 内网网关（SiliconFlow 兼容）；云 API 为 https://api.siliconflow.cn/v1
-    api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # 留空则回退 $SILICONFLOW_API_KEY
-    # HTTP 请求并发上限：embed/rerank/LLM 三种能力共享的网关连接并发。
-    # 与 config.yaml batch.embed_concurrency（应用层 embed 流并发，当前 8）分层：
-    # 实际并发请求数 ≈ min(流数, 本上限)。调大本值需网关侧可承受。
-    max_concurrent: 48
+  strategy: round_robin
+  proxy:
+    enabled: false
+    url: http://127.0.0.1:7897
+
+  # ── LLM 池（多厂商 × 多模型）─────────────────────────────────────
+  # 顺序即 failover 优先级：第一个是主，失败自动顺延下一个。
+  llm:
+    - name: sf-deepseek-r1
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # ← 填入 SF 通道真实 key（sk-QX… 开头）
+      model: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+      max_concurrent: 48
+    # ── 阿里/聚合通道（同网关，另一个 key，13 个模型）──
+    - name: ali-qwen3.7-flash
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: qwen3.7-flash
+      max_concurrent: 48
+    - name: ali-qwen3.7-max-2026-06-08
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: qwen3.7-max-2026-06-08
+      max_concurrent: 48
+    - name: ali-qwen3.8-flash
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: qwen3.8-flash
+      max_concurrent: 48
+    - name: ali-deepseek-v4-flash-0731
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: deepseek-v4-flash-0731
+      max_concurrent: 48
+    - name: ali-glm-5.2
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: glm-5.2
+      max_concurrent: 48
+    - name: ali-kimi-k2.7-code
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: kimi-k2.7-code
+      max_concurrent: 48
+    - name: ali-deepseek-v4-pro-0813
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: deepseek-v4-pro-0813
+      max_concurrent: 48
+    - name: ali-qwen3.8-2.4t-a95b
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: qwen3.8-2.4t-a95b
+      max_concurrent: 48
+    - name: ali-qwen3.8-max
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
+      model: qwen3.8-max
+      max_concurrent: 48
+
+  # ── Embed 池（必须同维；默认模型见 embed.model）──────────────────
+  embed:
+    - name: internal-gw
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # ← embed/rerank 用 SF 通道 key（bge-m3 在该通道）
+      max_concurrent: 8
+
+  # ── Rerank 池（必须支持 /rerank 私有端点）────────────────────────
+  rerank:
+    - name: internal-gw
+      url: http://124.221.200.116:3000/v1
+      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
+      max_concurrent: 4
 
 # ---------------------------------------------------------------------------
 # LLM 能力（代码分析 / 文档抽取 / 路由过滤共用）
-#   max_tokens: 单次回复上限。8B 推理模型需要更长输出——512 会截断文档实体
-#   抽取的 JSON（多实体+多关系+摘要），2026-09-05 起对齐到 4096。
+#   model:    默认 LLM 模型（端点级 model 缺省时使用）
+#   max_tokens: 单次回复上限（8B 推理模型需长输出，保持 4096）。
 # ---------------------------------------------------------------------------
 llm:
   model: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
@@ -86,23 +163,11 @@ rerank:
 # ---------------------------------------------------------------------------
 kg_router:
   early_exit:
-    # L0 提前拦截：纯规则判断查询是否值得检索，拦截"你好/谢谢/1+1/天气不错"等闲聊。
-    # 命中任一实体/检索意图特征必放行；未命中闲聊词则默认放行（保守策略）。
     enabled: true
   llm_gate:
-    # LLM 门控（默认关闭）：用 LLM 判断"是否值得搜索"，作为规则 L0 的二次确认。
-    # 不对称策略——规则说该搜 → 直接放行不调 LLM（省延迟）；
-    # 规则说不该搜（闲聊/无锚点）→ 问 LLM：LLM 说该搜则放行（规则误杀兜底），
-    # 说不该搜才拦截。开启后每次被规则拦下的查询多一次 LLM 调用（约 2-7s），
-    # 换来的收益是"换个说法的闲聊"和"看似闲聊实则需要检索"的边界查询更准确。
     enabled: false
-    # 门控判断的最大 token 数（输出为简短 JSON，几十 token 足够）
     max_tokens: 120
-    # 温度 0.0 保证确定性输出
     temperature: 0.0
   result_filter:
-    # 结果过滤（第三层）：开启后复用 LLM 逐条判断命中相关性，移除不相关项，
-    # 解决 dt router 全量跨世界检索把无关项目/文档噪音注入上下文的问题。
-    # LLM 输出 JSON {"relevant": true/false} 判定（解析失败自动降级旧文本格式）。
     enabled: true
     threshold: 0.6

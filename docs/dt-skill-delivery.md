@@ -93,7 +93,7 @@ digital-twin-knowledge-graph (主调度中心)
 ```
 阶段 ① 环境感知: dt_sense()
     ↓ 获取项目统计、目录结构、关键实体
-阶段 ② KG 定位: dt_search_kg(world=code)
+阶段 ② KG 定位: dt_search(world=code)
     ↓ 精准定位符号位置（文件路径、行号）
 阶段 ③ 读码验证: read_file()
     ↓ 确认具体实现
@@ -127,7 +127,7 @@ digital-twin-knowledge-graph (主调度中心)
 
 **标准流程**:
 ```
-Step 1: dt_search_kg(world=memory) 检索配置
+Step 1: dt_search(world=memory) 检索配置
     ↓ 命中 → 直接返回
 Step 2: 未命中 → read_file(config.yaml)
     ↓ 读取公开配置

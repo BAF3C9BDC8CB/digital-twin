@@ -16,12 +16,35 @@ impl CrossWorldSearch {
         // memory 世界向量通道: embed query → kg_nodes 集合 search_with_filter
         // (project/scope 过滤下沉 payload 级), 语义召回自然语言表述。
         // 关键词通道仅作向量不可用时的降级兜底。
+        let vec_started = std::time::Instant::now();
         let vec_hits = self._search_memory_vector(query, limit, project).await;
+        tracing::info!(
+            task = "search",
+            world = "memory",
+            query = %query,
+            hits = vec_hits.len(),
+            elapsed_ms = vec_started.elapsed().as_millis() as u64,
+            channel = "vector",
+            stage = "channel_done",
+            "memory 检索通道完成"
+        );
         if !vec_hits.is_empty() {
             return vec_hits;
         }
         // 向量不可用或 0 命中 → 关键词降级（OR 语义, 按命中词数排序）
-        self._search_memory_keyword(query, limit, project).await
+        let kw_started = std::time::Instant::now();
+        let kw_hits = self._search_memory_keyword(query, limit, project).await;
+        tracing::info!(
+            task = "search",
+            world = "memory",
+            query = %query,
+            hits = kw_hits.len(),
+            elapsed_ms = kw_started.elapsed().as_millis() as u64,
+            channel = "keyword",
+            stage = "channel_done",
+            "memory 检索通道完成（向量 0 命中降级）"
+        );
+        kw_hits
     }
 
     /// 向量通道: kg_nodes 集合语义检索。

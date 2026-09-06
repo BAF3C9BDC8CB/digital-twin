@@ -780,6 +780,18 @@ impl CrossWorldSearch {
         all_hits.truncate(limit);
         // 图增强:向量召回后,对 top 命中查 Memgraph 补 1 跳调用关系(非致命)。
         self.enrich_code_with_graph(&mut all_hits).await;
+        tracing::info!(
+            task = "search",
+            world = "code",
+            query = %query,
+            project = ?project,
+            limit,
+            final_hits = all_hits.len(),
+            exact_matches = exact_count,
+            channel = "code",
+            stage = "channel_done",
+            "code 检索通道完成"
+        );
         Ok(all_hits)
     }
 
@@ -1114,9 +1126,25 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
         let world = request.world.as_deref().unwrap_or("all");
         let limit = request.limit.unwrap_or(20);
         let project = request.project.as_deref();
+        let started = std::time::Instant::now();
+        tracing::info!(
+            task = "search",
+            query = %request.query,
+            world = %world,
+            limit,
+            project = ?project,
+            stage = "search_start",
+            "跨世界检索开始"
+        );
 
         // 乱码/无意义查询直接返回空(避免 embed 幻觉命中)
         if is_gibberish(&request.query) {
+            tracing::info!(
+                task = "search",
+                query = %request.query,
+                stage = "gibberish_shortcut",
+                "查询疑似乱码，直接返回空"
+            );
             return Ok(CrossWorldResult {
                 query: request.query.clone(),
                 world: world.to_string(),
@@ -1134,22 +1162,52 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
             // U-D2/U-D3：all = code+knowledge+doc，跨世界 RRF
             let mut lists: Vec<Vec<SearchHit>> = Vec::new();
 
+            let code_started = std::time::Instant::now();
             let code_hits = self
                 .search_code(&request.query, project, limit)
                 .await
                 .unwrap_or_default();
+            tracing::info!(
+                task = "search",
+                query = %request.query,
+                world = "code",
+                hits = code_hits.len(),
+                elapsed_ms = code_started.elapsed().as_millis() as u64,
+                stage = "channel_done",
+                "检索通道完成"
+            );
             per_world.insert("code".to_string(), code_hits.len());
             lists.push(code_hits);
 
+            let kn_started = std::time::Instant::now();
             let (kn_hits, dgr) = self.search_knowledge(request).await;
+            tracing::info!(
+                task = "search",
+                query = %request.query,
+                world = "knowledge",
+                hits = kn_hits.len(),
+                elapsed_ms = kn_started.elapsed().as_millis() as u64,
+                stage = "channel_done",
+                "检索通道完成"
+            );
             degraded.extend(dgr);
             per_world.insert("knowledge".to_string(), kn_hits.len());
             lists.push(kn_hits);
 
+            let doc_started = std::time::Instant::now();
             let doc_hits = self
                 .search_doc(&request.query, project, request.doc_id.as_deref(), limit)
                 .await
                 .unwrap_or_default();
+            tracing::info!(
+                task = "search",
+                query = %request.query,
+                world = "doc",
+                hits = doc_hits.len(),
+                elapsed_ms = doc_started.elapsed().as_millis() as u64,
+                stage = "channel_done",
+                "检索通道完成"
+            );
             per_world.insert("doc".to_string(), doc_hits.len());
             lists.push(doc_hits);
 
@@ -1179,6 +1237,15 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
                 _ => Vec::new(),
             };
             per_world.insert(world.to_string(), hits.len());
+            tracing::info!(
+                task = "search",
+                query = %request.query,
+                world = %world,
+                hits = hits.len(),
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                stage = "channel_done",
+                "单世界检索通道完成"
+            );
             hits.sort_by(|a, b| {
                 b.score
                     .partial_cmp(&a.score)
@@ -1192,6 +1259,17 @@ impl CrossWorldSearchTrait for CrossWorldSearch {
         // 统一后处理：推断 file_type + 按 file_type/entity_type 过滤（U-5 新能力）。
         let all_hits = postprocess_hits(all_hits, request);
         let total = all_hits.len();
+        tracing::info!(
+            task = "search",
+            query = %request.query,
+            world = %world,
+            total,
+            per_world = ?per_world,
+            degraded = ?degraded,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            stage = "search_done",
+            "跨世界检索完成"
+        );
         Ok(CrossWorldResult {
             query: request.query.clone(),
             world: world.to_string(),

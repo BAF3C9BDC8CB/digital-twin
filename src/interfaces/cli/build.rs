@@ -95,7 +95,7 @@ pub async fn handle_build(
         .map(|s| Arc::clone(s) as Arc<dyn SnapshotRepository>);
 
     // 使用统一路由，确保普通构建与增强 pipeline 使用同一 provider。
-    // 并发读 siliconflow 的 max_concurrent；单次回复上限读 llm.max_tokens。
+    // 并发读 providers.llm 池（各端点之和）；单次回复上限读 llm.max_tokens。
     let (llm_client, llm_model, llm_max_tokens) = build_llm_client(&pipeline_config);
 
     let deps = crate::application::build::builder::BuildDependencies {
@@ -109,7 +109,7 @@ pub async fn handle_build(
         batch_config: Some(batch_config),
         skip_embed,
         scan_config: scan_config.clone(),
-        // Phase 2 方法级并发 = siliconflow max_concurrent（单参数模型）
+        // Phase 2 方法级并发 = LLM 池各端点 max_concurrent 之和（多 key 并行）
         llm_concurrency: pipeline_config.inference_max_concurrent(),
         llm_max_tokens,
     };
@@ -212,114 +212,76 @@ fn collect_project_files(root: &Path, scan_config: &ScanConfig) -> Vec<(PathBuf,
     files
 }
 
-/// 为搜索创建 embed 客户端，从 `config/pipeline.yaml` 读取配置。
-/// 使用 provider 路由（当前唯一 provider：SiliconFlow）。
-pub(crate) fn provider_config_from_pipeline() -> crate::infrastructure::embedder::ProviderConfig {
-    use crate::infrastructure::embedder::ProviderConfig;
-
-    let pipeline_cfg = match PipelineConfig::load() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            tracing::warn!("无法加载 pipeline.yaml ({e})，使用默认配置");
-            return ProviderConfig::default_siliconflow();
-        }
-    };
-
-    let pcfg = match pipeline_cfg.providers.as_ref() {
-        Some(p) => p,
-        None => {
-            tracing::warn!("pipeline.yaml 中无 providers 配置，使用默认配置");
-            return ProviderConfig::default_siliconflow();
-        }
-    };
-
-    let sf = pcfg.siliconflow.as_ref();
-
-    let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
-
-    ProviderConfig {
-        siliconflow_url: sf
-            .map(|s| s.url.as_str())
-            .unwrap_or("https://api.siliconflow.cn/v1")
-            .to_string(),
-        siliconflow_api_key: sf
-            .and_then(|s| {
-                if s.api_key.is_empty() {
-                    None
-                } else {
-                    Some(s.api_key.clone())
-                }
-            })
-            .unwrap_or_else(api_key_fallback),
-        siliconflow_model_embed: pipeline_cfg.embed_model(),
-        siliconflow_model_reranker: pipeline_cfg.rerank_model(),
-        siliconflow_model_llm: pipeline_cfg.llm_model(),
-        siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
-        embed_provider: "siliconflow".into(),
-        rerank_provider: "siliconflow".into(),
-        llm_provider: "siliconflow".into(),
-    }
+/// 为搜索创建 embed/rerank 客户端——由 pipeline.yaml providers 端点池构建。
+///
+/// 2026-09-06 起：embed/rerank 各走 `providers.embed` / `providers.rerank`
+/// 端点池（多厂商 × 多模型，失败自动顺延）；旧 `providers.siliconflow` 单块
+/// 与 `ProviderConfig` 已移除。返回 (embed, rerank, llm) 池化服务。
+pub(crate) fn build_search_services() -> (
+    Arc<dyn EmbedService>,
+    Arc<dyn crate::domain::traits::RerankService>,
+    Arc<dyn crate::domain::traits::LlmService>,
+) {
+    let cfg = PipelineConfig::load().unwrap_or_default();
+    let svcs = crate::infrastructure::embedder::build_pooled_services(&cfg);
+    (
+        svcs.embed.unwrap_or_else(|| {
+            Arc::new(crate::infrastructure::embedder::NoopEmbedService::default())
+        }),
+        svcs.rerank.unwrap_or_else(|| {
+            Arc::new(crate::infrastructure::provider_router::NoopRerankService)
+        }),
+        svcs.llm.unwrap_or_else(|| {
+            Arc::new(crate::infrastructure::embedder::NoopLlmService)
+        }),
+    )
 }
 
 pub(crate) fn create_search_embed_client() -> Arc<dyn EmbedService> {
-    crate::infrastructure::embedder::create_embed_router(provider_config_from_pipeline())
+    build_search_services().0
 }
 
 pub(crate) fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService> {
-    crate::infrastructure::embedder::create_rerank_router(provider_config_from_pipeline())
+    build_search_services().1
 }
 
-/// 构建 LLM 对话客户端（唯一 provider：SiliconFlow 云 API，OpenAI 兼容协议）。
+pub(crate) fn create_search_llm_client() -> Arc<dyn crate::domain::traits::LlmService> {
+    build_search_services().2
+}
+
+/// 构建 LLM 对话客户端——由 `providers.llm` 端点池构建（多端点多 key 并行）。
 ///
-/// 模型名读顶层 `llm.model`（空则回退 `SILICONFLOW_LLM_MODEL` 环境变量）；
-/// 并发读 `providers.siliconflow.max_concurrent`；单次回复上限读 `llm.max_tokens`。
+/// 模型名/并发已收敛进端点池（端点级 model 覆盖 > `llm.model`）；并发取
+/// `inference_max_concurrent()`（池内各端点之和）；单次回复上限读 `llm.max_tokens`。
 ///
-/// 返回 `(客户端, 模型名, max_tokens)`。两个调用方（普通文件管线与 Nacos/Jenkins
-/// 远程源管线）共用同一路由逻辑，保证模型配置一处生效。
+/// 返回 `(客户端, 默认模型名, max_tokens)`。两个调用方（普通文件管线与
+/// Nacos/Jenkins 远程源管线）共用同一路由逻辑，保证模型配置一处生效。
 fn build_llm_client(pipeline_config: &PipelineConfig) -> (Arc<dyn ChatClient>, String, u32) {
-    // API key：环境变量优先，其次 pipeline.yaml providers.siliconflow.api_key。
-    let api_key = std::env::var("SILICONFLOW_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            pipeline_config
-                .providers
-                .as_ref()
-                .and_then(|p| p.siliconflow.as_ref())
-                .map(|s| s.api_key.clone())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_default();
-    // 模型名：pipeline.yaml `llm.model` → `SILICONFLOW_LLM_MODEL` env（llm_model()
-    // 内部已回退）→ 内置默认。
+    // 旧 SILICONFLOW_API_KEY env 优先逻辑已废弃——端点密钥一律按端点配置
+    // （api_key / api_key_env）解析，解析期校验（config::validate）。
     let model = pipeline_config.llm_model();
     let model = if model.is_empty() {
-        "Qwen3-14B".to_string()
+        "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B".to_string()
     } else {
         model
     };
 
-    // R4：使用 SiliconFlow provider 的 URL——而非本地的
-    // 推理服务器地址。为空时回退到客户端的默认值。
-    let sf_url = pipeline_config
-        .providers
-        .as_ref()
-        .and_then(|p| p.siliconflow.as_ref())
-        .map(|s| s.url.clone())
-        .unwrap_or_default();
-    tracing::info!("使用 SiliconFlow LLM: {} @ {}", model, sf_url);
-    let sf_max_concurrent = pipeline_config.inference_max_concurrent();
     let sf_max_tokens = pipeline_config
         .llm
         .as_ref()
         .map(|c| c.max_tokens)
         .unwrap_or(512);
-    let client = Arc::new(SiliconFlowChatClient::new(
-        sf_url,
-        api_key,
-        sf_max_concurrent,
-    ));
-    (client as Arc<dyn ChatClient>, model, sf_max_tokens)
+
+    let client = crate::application::pipeline::infer_client::PooledChatClient::from_pipeline(
+        pipeline_config,
+    );
+    tracing::info!(
+        "使用 LLM 端点池 ({} 端点, model={}, max_tokens={})",
+        client.pool_len(),
+        model,
+        sf_max_tokens
+    );
+    (client.to_arc(), model, sf_max_tokens)
 }
 
 /// 构建完成后对代码根运行流水线分析。
@@ -378,7 +340,6 @@ async fn run_pipeline_analysis(
                 registry.register(Box::new(LlmClientProcessor::with_doc_gate(
                     infer_client.clone(),
                     infer_model.clone(),
-                    "siliconflow".to_string(),
                     Arc::new(prompts),
                     llm_config,
                     doc_gate,

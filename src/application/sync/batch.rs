@@ -129,13 +129,20 @@ async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
     let items: Vec<SyncItem> = buffer.drain(..).collect();
 
     let mut nodes = Vec::with_capacity(items.len());
+    let mut fetched = 0usize;
+    let mut skipped = 0usize;
     for item in &items {
         match bridge
             .fetch_node(&item.label, &item.prop_key, &item.prop_value)
             .await
         {
-            Ok(Some(node)) => nodes.push(node),
-            Ok(None) => {}
+            Ok(Some(node)) => {
+                nodes.push(node);
+                fetched += 1;
+            }
+            Ok(None) => {
+                skipped += 1;
+            }
             Err(e) => {
                 tracing::warn!(
                     "[sync-acc] 获取 {} {}={} 失败: {e}",
@@ -146,6 +153,15 @@ async fn flush(bridge: &Arc<KgBridge>, buffer: &mut Vec<SyncItem>) {
             }
         }
     }
+
+    tracing::info!(
+        task = "sync",
+        items = items.len(),
+        fetched,
+        skipped,
+        stage = "flush_start",
+        "向量同步队列 flush（图获取阶段）"
+    );
 
     if nodes.is_empty() {
         return;

@@ -39,6 +39,7 @@ use crate::application::pipeline::processor::Processor;
 use crate::application::pipeline::prompt::PromptRegistry;
 use crate::application::pipeline::virtual_file::FileSourceKind;
 use crate::domain::error::DtError;
+use tracing::Instrument;
 
 /// JSON 解析失败后重试时附加到用户提示词中的修正提示（§5.5）。
 const JSON_CORRECTION: &str =
@@ -51,7 +52,6 @@ const JSON_CORRECTION: &str =
 pub struct LlmClientProcessor {
     client: Arc<dyn ChatClient>,
     model: String,
-    provider: String,
     prompt_registry: Arc<PromptRegistry>,
     llm_config: LlmConfig,
     /// 文档分级门控（doc-gate）。默认关闭时文档一律详细提取。
@@ -63,18 +63,16 @@ impl LlmClientProcessor {
     pub fn new(
         client: Arc<dyn ChatClient>,
         model: String,
-        provider: String,
         prompt_registry: Arc<PromptRegistry>,
         llm_config: LlmConfig,
     ) -> Self {
-        Self::with_doc_gate(client, model, provider, prompt_registry, llm_config, None)
+        Self::with_doc_gate(client, model, prompt_registry, llm_config, None)
     }
 
     /// 创建 LLM 分析处理器，并携带可选的文档分级门控配置。
     pub fn with_doc_gate(
         client: Arc<dyn ChatClient>,
         model: String,
-        provider: String,
         prompt_registry: Arc<PromptRegistry>,
         llm_config: LlmConfig,
         doc_gate: Option<crate::application::pipeline::config::DocGateConfig>,
@@ -82,7 +80,6 @@ impl LlmClientProcessor {
         Self {
             client,
             model,
-            provider,
             prompt_registry,
             llm_config,
             doc_gate,
@@ -125,6 +122,14 @@ impl Processor for LlmClientProcessor {
     async fn execute(&self, ctx: &PipelineContext) -> Result<ProcessorOutput, DtError> {
         // 1. 根据存在哪些上游输出来选择提示词。
         let prompt_name = select_prompt(ctx);
+        tracing::info!(
+            task = "pipeline", run = "live",
+            file = %ctx.file_path.display(),
+            project = %ctx.project_name,
+            prompt = %prompt_name,
+            stage = "prompt_selected",
+            "LLM 处理器提示词路由"
+        );
 
         // 2. 文档/Nacos 配置走块级提取；其他情况走旧式单次调用。
         if prompt_name == "document_with_nlp" || prompt_name == "nacos_config" {
@@ -216,8 +221,24 @@ impl LlmClientProcessor {
             ctx.file_path.display(),
             preview
         );
+        tracing::info!(
+            task = "pipeline", run = "live",
+            file = %ctx.file_path.display(),
+            project = %ctx.project_name,
+            provider = "llm-pool",
+            model = %self.model,
+            stage = "doc_gate_start",
+            preview_chars = preview.chars().count(),
+            "doc-gate 文档分级调用开始"
+        );
         let resp = self
-            .chat_content(system_prompt, &user_prompt)
+            .chat_content(
+                system_prompt,
+                &user_prompt,
+                &ctx.file_path.to_string_lossy(),
+                "doc_gate",
+            )
+            .instrument(tracing::info_span!("llm_doc_gate", file = %ctx.file_path.display()))
             .await
             .map_err(|e| {
                 tracing::warn!("doc-gate 判定调用失败, 降级: {}", e);
@@ -242,10 +263,37 @@ impl LlmClientProcessor {
             .render(prompt_name, &render_ctx)
             .map_err(|e| DtError::General(format!("提示词渲染错误: {e}")))?;
 
+        // 请求级 span：把 file/chunk 挂到 span 上，SiliconFlow 客户端内部的
+        // request_* 日志自动继承（不再全是 file="unknown"）。
+        let call_span = tracing::info_span!(
+            "llm_single_request",
+            file = %ctx.file_path.display(),
+            project = %ctx.project_name,
+            provider = "llm-pool",
+            model = %self.model,
+            prompt = %prompt_name,
+        );
         let response_text = self
-            .chat_content(&system_prompt, &user_prompt)
+            .chat_content(
+                &system_prompt,
+                &user_prompt,
+                &ctx.file_path.to_string_lossy(),
+                "single",
+            )
+            .instrument(call_span)
             .await
             .map_err(|e| DtError::General(format!("LLM 对话错误: {e}")))?;
+
+        tracing::info!(
+            task = "pipeline", run = "live",
+            file = %ctx.file_path.display(),
+            project = %ctx.project_name,
+            prompt = %prompt_name,
+            stage = "single_call_done",
+            response_chars = response_text.chars().count(),
+            elapsed_ms = 0u128,
+            "LLM 单次调用完成"
+        );
 
         output.set("response", response_text);
         output.set("prompt_name", prompt_name);
@@ -294,7 +342,7 @@ impl LlmClientProcessor {
         let chunks_owned = chunks.clone();
 
         let file_started = Instant::now();
-        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "llm-pool", model = %self.model, elapsed_ms = 0u128, stage = "file_start", chunks = chunks.len(), "LLM file_start");
         // 块级并发模型（2026-08-11）：单文件内所有 chunk 同时发起，
         // 全局在飞请求由客户端 semaphore（provider max_concurrent）统一限流——
         // 不再按文件/文件内独立限流，任何文件只要全局并发未满就继续取块。
@@ -311,12 +359,27 @@ impl LlmClientProcessor {
             let render_ctx = build_block_render_context(ctx, block_text, "（无）", "（无）");
             let rendered = self.prompt_registry.render(prompt_name, &render_ctx);
             let chunk_started = Instant::now();
-            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "llm-pool", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), stage = "chunk_start", "LLM chunk_start");
+            // 请求级 span：把 file/chunk 挂到 span 上，SiliconFlow 客户端内部的
+            // 6 条 request_* 日志自动继承（不再全是 file="unknown"）。
+            let call_span = tracing::info_span!(
+                "llm_chunk_request",
+                file = %ctx.file_path.display(),
+                chunk = block_index,
+                provider = "llm-pool",
+                model = %self.model,
+            );
             let result = match rendered {
-                Ok((system_prompt, user_prompt)) => self.extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32, prompt_name).await,
+                Ok((system_prompt, user_prompt)) => {
+                    let file_label = ctx.file_path.to_string_lossy().to_string();
+                    self
+                    .extract_block(&system_prompt, &user_prompt, &doc_id, block_index as u32, prompt_name, &file_label)
+                    .instrument(call_span)
+                    .await
+                },
                 Err(_e) => (None, degraded_graph(&doc_id, block_index as u32)),
             };
-            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
+            tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = block_index, attempt = 0u32, provider = "llm-pool", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = chunk_started.elapsed().as_millis(), stage = "chunk_done", "LLM chunk_done");
             (block_index, result)
         }})).buffer_unordered(limit).collect::<Vec<_>>().await;
         results.sort_by_key(|(index, _)| *index);
@@ -350,7 +413,7 @@ impl LlmClientProcessor {
         output.set("degraded_count", degraded_count);
         output.set("block_count", chunks.len());
 
-        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = %self.provider, model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_done", degraded = degraded_count > 0, "LLM file_done");
+        tracing::info!(task = "pipeline", run = "live", file = %ctx.file_path.display(), chunk = "all", attempt = 0u32, provider = "llm-pool", model = %self.model, elapsed_ms = file_started.elapsed().as_millis(), total_ms = file_started.elapsed().as_millis(), stage = "file_done", degraded = degraded_count > 0, "LLM file_done");
         Ok(output)
     }
 
@@ -364,6 +427,7 @@ impl LlmClientProcessor {
         doc_id: &str,
         block_index: u32,
         prompt_name: &str,
+        file: &str,
     ) -> (Option<String>, ExtractedGraph) {
         let parse = |raw: &str| -> Result<ExtractedGraph, serde_json::Error> {
             if prompt_name == "nacos_config" {
@@ -372,8 +436,12 @@ impl LlmClientProcessor {
                 parse_block_response(raw, doc_id, block_index)
             }
         };
+        let chunk_label = block_index.to_string();
 
-        let raw = match self.chat_content(system_prompt, user_prompt).await {
+        let raw = match self
+            .chat_content(system_prompt, user_prompt, file, &chunk_label)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("块 {block_index} LLM 调用失败, 降级: {e}");
@@ -386,7 +454,10 @@ impl LlmClientProcessor {
         }
 
         let retry_prompt = format!("{user_prompt}\n\n{JSON_CORRECTION}");
-        let retry_raw = match self.chat_content(system_prompt, &retry_prompt).await {
+        let retry_raw = match self
+            .chat_content(system_prompt, &retry_prompt, file, &chunk_label)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("块 {block_index} 重试调用失败, 降级: {e}");
@@ -403,7 +474,16 @@ impl LlmClientProcessor {
     }
 
     /// 调用对话端点并提取第一个 choice 的内容。
-    async fn chat_content(&self, system_prompt: &str, user_prompt: &str) -> Result<String, String> {
+    ///
+    /// `file`/`chunk` 为请求来源上下文，穿透到 SiliconFlow 客户端日志，
+    /// 使内部 request_* 阶段日志携带真实文件/块信息（不再显示 unknown）。
+    async fn chat_content(
+        &self,
+        system_prompt: &str,
+        user_prompt: &str,
+        file: &str,
+        chunk: &str,
+    ) -> Result<String, String> {
         let resp = self
             .client
             .chat(
@@ -413,6 +493,8 @@ impl LlmClientProcessor {
                 self.llm_config.temperature,
                 self.llm_config.max_tokens,
                 true, // chunk 分析要求 JSON 输出，声明 json_object
+                file,
+                chunk,
             )
             .await?;
         Ok(resp
@@ -536,6 +618,8 @@ mod tests {
             _temperature: f32,
             _max_tokens: u32,
             _json_mode: bool,
+            _file: &str,
+            _chunk: &str,
         ) -> Result<ChatResponse, String> {
             self.calls
                 .lock()
@@ -569,7 +653,6 @@ mod tests {
         LlmClientProcessor::new(
             client,
             "qwen3.5".to_string(),
-            "test".to_string(),
             test_registry(),
             LlmConfig::default(),
         )

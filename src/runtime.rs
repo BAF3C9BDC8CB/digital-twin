@@ -28,6 +28,21 @@ pub struct DaemonConfig {
     pub batch: BatchConfig,
     #[serde(default)]
     pub scanner: ScannerFileConfig,
+    /// 日志配置（`logging.level` 在配置文件中自由选择 debug/info 等）。
+    #[serde(default)]
+    pub logging: LoggingConfig,
+}
+
+/// config.yaml 的 `logging` 段 —— 日志级别控制。
+///
+/// 级别值可为任意 tracing 级别（`debug` / `info` / `warn` / `error`），
+/// 也接受带模块前缀的 EnvFilter 写法（如 `digital_twin=debug`）。
+/// 读取与优先级见 `shared::logging::init::init_logging`。
+#[derive(Debug, Deserialize, Default)]
+pub struct LoggingConfig {
+    /// 日志级别（文件层主过滤器）。缺省时回落 `RUST_LOG` / `DT_LOG_LEVEL` / 内置默认。
+    #[serde(default)]
+    pub level: Option<String>,
 }
 
 /// config.yaml 的 `scanner` 段 / 独立 ignore.yaml —— 扫描忽略规则。
@@ -392,44 +407,20 @@ pub async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     }
 }
 
-/// 连接 Embed 路由(从 pipeline.yaml providers 构建)。
+/// 连接 Embed 路由(从 pipeline.yaml providers 端点池构建)。
+///
+/// 2026-09-06 起：embed 走 `providers.embed` 端点池（多厂商 × 多模型，
+/// 失败自动顺延）；旧 `providers.siliconflow` 单块已移除。
 pub async fn connect_embed() -> Option<Arc<dyn EmbedService>> {
     let pipeline_cfg = PipelineConfig::load().ok()?;
-    let pcfg = match pipeline_cfg.providers.as_ref() {
-        Some(p) => p,
-        None => return None,
-    };
-
-    let sf = pcfg.siliconflow.as_ref();
-
-    let sf_url = sf.map(|s| s.url.as_str()).unwrap_or("");
-    if sf_url.is_empty() {
-        tracing::warn!("pipeline.yaml providers: siliconflow URL 为空，跳过 embed 服务");
+    let pcfg = pipeline_cfg.providers.as_ref()?;
+    if pcfg.embed.is_empty() {
+        tracing::warn!("pipeline.yaml providers.embed 为空，跳过 embed 服务");
         return None;
     }
 
-    let api_key_fallback = || std::env::var("SILICONFLOW_API_KEY").unwrap_or_default();
-
-    let cfg = crate::infrastructure::embedder::ProviderConfig {
-        siliconflow_url: sf_url.to_string(),
-        siliconflow_api_key: sf
-            .and_then(|s| {
-                if s.api_key.is_empty() {
-                    None
-                } else {
-                    Some(s.api_key.clone())
-                }
-            })
-            .unwrap_or_else(api_key_fallback),
-        siliconflow_model_embed: pipeline_cfg.embed_model(),
-        siliconflow_model_reranker: pipeline_cfg.rerank_model(),
-        siliconflow_model_llm: pipeline_cfg.llm_model(),
-        siliconflow_max_concurrent: sf.map(|s| s.max_concurrent).unwrap_or(20),
-        embed_provider: "siliconflow".into(),
-        rerank_provider: "siliconflow".into(),
-        llm_provider: "siliconflow".into(),
-    };
-    Some(crate::infrastructure::embedder::create_embed_router(cfg))
+    let svcs = crate::infrastructure::embedder::build_pooled_services(&pipeline_cfg);
+    svcs.embed
 }
 
 pub async fn build_kg_bridge(

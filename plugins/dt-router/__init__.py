@@ -3,18 +3,19 @@
 三个 lifecycle hook, 覆盖 doc「Hermes 知识图谱工程化」方案里 AI 只在对话
 开始的缺口 —— 把 KG 感知从"对话开头"延伸到"任务中间 + subagent"：
 
-- pre_llm_call  每 turn 开始(工具调用循环前)注入一次 dt router 命中简报。
+- pre_llm_call  每 turn 开始(工具调用循环前)注入一次 dt search 命中简报。
 - pre_tool_call 读类/写类工具前做 KG-first 强制:本 turn 尚未做过 KG 感知,
-                则 block 该工具并引导先 dt_search_kg —— 让"读前必查"
+                则 block 该工具并引导先 dt_search —— 让"读前必查"
                 成为 Runtime 兜底, 而非依赖 LLM 自觉。
-- subagent_start 子代理运行前, 对 child_goal 做一次 dt router 预检索,
+- subagent_start 子代理运行前, 对 child_goal 做一次 dt search 预检索,
                 把命中作为引导注入, 让 subagent 一进来就先查 KG。
 
 设计对齐 dt-sense 插件:
-- 通过 subprocess 调 DT_BIN(dt CLI), 解析 `dt router --json` 输出。
+- 通过 subprocess 调 DT_BIN(dt CLI), 解析 `dt search --json` 输出
+  (统一检索入口, 融合原 dt router 能力)。
 - 失败兜底(fail-open): 任何异常/超时/非零返回 -> 不注入/不阻断, 绝不 crash agent。
-- 不维护第二份闲聊词表: L0 早退由 Rust 侧 already 处理(world=="none"),
-  Python 只做"要不要调 + 怎么压缩"。
+- 不维护第二份闲聊词表: 是否值得检索由 Rust 侧 LLM 门控判断(world=="none"
+  表示判定无需检索), Python 只做"要不要调 + 怎么压缩"。
 
 当前 Linux/macOS 宿主适用; 断言路径与 dt-sense 一致可扩展。
 """
@@ -36,7 +37,10 @@ logger = logging.getLogger(__name__)
 # --- config ----------------------------------------------------------------
 
 DT_BIN = os.environ.get("DT_BIN", "/home/luis/.local/bin/dt")
-HOOK_TIMEOUT_SECS = 8.0
+# 2026-09-06: L0 改为 LLM 门控(knowledge gate)后,dt search 每次先经 LLM 判断
+# 是否值得检索(约 3-8s)再执行检索——单次 hook 需容纳 gate+检索,8s 不够,
+# 提到 20s 防注入失效(fail-open 仍兜底,超时只丢注入不 crash agent)。
+HOOK_TIMEOUT_SECS = float(os.environ.get("DT_HOOK_TIMEOUT_SECS", "20.0"))
 _MAX_INJECT_CHARS = 1600      # 简报硬上限(token 控制, 防膨胀)
 _MAX_HITS = 5                 # 单次注入最多条数
 _MIN_RESULT_CHARS = 40        # 低于此字符不注入(噪音兜底)
@@ -254,11 +258,14 @@ def _resolve_project(message: str, cwd: Optional[Path] = None) -> Optional[str]:
     return _infer_container_subproject(cwd, message or "")
 
 
-# --- dt router invocation ---------------------------------------------------
+# --- dt search invocation --------------------------------------------------
 
 def _run_router(query: str, *, project: Optional[str], limit: int) -> Optional[dict]:
-    """Run `dt router <query> --json [--project P]`. Return parsed JSON or None."""
-    cmd = [DT_BIN, "router", query, "--json", "--limit", str(limit)]
+    """Run `dt search <query> --json [--project P]` (统一检索入口, 前身 dt router).
+
+    返回解析后的 JSON,失败返回 None(fail-open)。
+    """
+    cmd = [DT_BIN, "search", query, "--json", "--limit", str(limit)]
     if project:
         cmd += ["--project", project]
     try:
@@ -269,10 +276,10 @@ def _run_router(query: str, *, project: Optional[str], limit: int) -> Optional[d
             timeout=HOOK_TIMEOUT_SECS,
         )
     except Exception as exc:  # not found / timeout / OSError -> fail-open
-        logger.warning("dt-router: dt router failed: %s", exc)
+        logger.warning("dt-router: dt search failed: %s", exc)
         return None
     if proc.returncode != 0:
-        logger.warning("dt-router: dt router exit=%s: %s", proc.returncode, proc.stderr[:200])
+        logger.warning("dt-router: dt search exit=%s: %s", proc.returncode, proc.stderr[:200])
         return None
     try:
         return json.loads(proc.stdout or "{}")
@@ -406,7 +413,7 @@ def _hit_in_scope(
 def _build_brief(
     data: dict, query: str, *, container_roots: Optional[List[Path]] = None
 ) -> Optional[str]:
-    """把 `dt router --json` 输出压缩成语义压缩语境块。
+    """把 `dt search --json` 输出压缩成语义压缩语境块。
 
     - world=="none"            -> L0 早退(闲聊/算术), 不注入。
     - total==0 / 无 hits       -> 无相关,KG 未命中, 注入一行"KG 无命中"提示即可
@@ -455,13 +462,13 @@ def _build_brief(
         )
 
     lines: List[str] = ["<knowledge_context>"]
-    lines.append("相关知识命中(来自 dt router, world=%s):" % world)
+    lines.append("相关知识命中(来自 dt search, world=%s):" % world)
     total_chars = len(lines[0]) + len(lines[1])
     for h in hits[: _MAX_HITS]:
         score = h.get("score")
-        # 注: 依赖检索返回的 hits 已由 dt router 内部按相关度排好序(Rust 侧负责排序、
+        # 注: 依赖检索返回的 hits 已由 dt search 内部按相关度排好序(Rust 侧负责排序、
         #    `--project` 过滤跨项目噪音)。**不要**在插件里再用原始 score 做阈值——
-        #    实测 dt router 的 code 命中 score 常恒为 0.01~0.02(与噪音相同), 阈值会误杀
+        #    实测 dt search 的 code 命中 score 常恒为 0.01~0.02(与噪音相同), 阈值会误杀
         #    有效代码命中(如 genPayOrderId)。跨项目教程噪音由 Fix1 的 project 限定消除。
         title = h.get("title") or ""
         snip = h.get("snippet") or h.get("llm_analysis") or ""
@@ -514,7 +521,7 @@ def _on_pre_llm_call(
     is_first_turn: bool = False,
     **_: object,
 ) -> Optional[str]:
-    """每 turn 开头: dt router 预检索 -> 注入压缩简报。
+    """每 turn 开头: dt search 预检索 -> 注入压缩简报。
 
     仅对非闲聊(user_message 非空)触发; 命中才注入, 零命中也标记已感知,
     让 pre_tool_call 知道本 turn 已做过 KG-first。
@@ -546,7 +553,7 @@ def _on_pre_llm_call(
 
 _KNOWLEDGE_FIRST_GUIDANCE = (
     "先完成数字孪生 KG 检索再执行本工具: 对与项目/代码/配置/历史记忆相关的操作, "
-    "调用 dt_search_kg(world=code|knowledge|memory, project=<注册项目名>, limit=5) "
+    "调用 dt_search(world=code|knowledge|memory, project=<注册项目名>, limit=5) "
     "或 dt_sense() 定位目标; 命中即事实(先读取确认), 0 命中才读源码或直接执行。"
 )
 
@@ -602,7 +609,7 @@ def _enrich_delegate_args(args: dict) -> Optional[dict]:
     """为 delegate_task 的每个子任务 context 注入 KG 预检索命中。
 
     参数结构(Hermes): tasks = [{"goal","context","role"}], 顶层也有 goal/context。
-    每个子任务以其 goal 查询 dt router, 命中压缩为 brief 后 append 到该任务
+    每个子任务以其 goal 查询 dt search, 命中压缩为 brief 后 append 到该任务
     context(用分隔标记避免重复注入); 无命中/闲聊/失败则返回 None 不改动。
     返回新 args(dict), 或 None(不改动)。fails-open。
     """
@@ -658,7 +665,7 @@ def _on_subagent_start(
     注意: subagent_start 是 observer hook, 返回值被忽略 —— 因此无法直接改写
     child_goal。本项目采用"注入侧车"策略: 把命中结果写到一个子代理可读取的
     临时上下文(经 pre_llm_call per-session cache / memory), 并通过 system
-    引导让子代理第一件事先 dt_search_kg。真正"写进 goal 前"的强制, 只能在
+    引导让子代理第一件事先 dt_search。真正"写进 goal 前"的强制, 只能在
     Hermes 核心的 delegate_tool 内部做(见 notes)。
     """
     try:

@@ -1,18 +1,21 @@
-//! Embedding 服务实现——文本到向量的转换。
+//! Embedding / Rerank / LLM 服务工厂——从 `providers` 端点池构建路由。
 //!
-//! 提供用于测试/故障切换的 [`NoopEmbedService`]，以及一个工厂
-//! 函数 [`create_embed_router`]，它根据配置构建 provider 路由器。
+//! # 架构（2026-09-06 起：多厂商 × 多模型端点池）
 //!
-//! # 架构（2026-09-05 起）
+//! `config/pipeline.yaml → providers.{llm,embed,rerank}` 各是一组端点
+//! （[`ProviderEndpoint`]）。此处按能力把端点构建为 [`EndpointPool`]，
+//! 再包成实现 [`EmbedService`] / [`RerankService`] / [`LlmService`] trait 的
+//! 池化服务——请求失败自动顺延到池内下一个端点（多模型失败换下一个）。
 //!
-//! 唯一 provider 实现为 SiliconFlow（OpenAI 兼容超集：chat/embeddings 为
-//! OpenAI 标准协议，rerank 为 SiliconFlow 私有扩展端点）。
+//! 旧 `providers.siliconflow` 单块与 `SiliconFlowClient` 三合一结构已移除，
+//! 不保留兼容路径。
 
-use crate::domain::error::DtError;
 use crate::domain::traits::{EmbedService, LlmService, RerankService};
 use crate::domain::types::HealthStatus;
-use async_trait::async_trait;
+use crate::infrastructure::siliconflow::{EndpointPool, PooledEmbedService, PooledLlmService, PooledRerankService};
 use std::sync::Arc;
+
+use crate::application::pipeline::config::{PipelineConfig, ProvidersConfig};
 
 // ---------------------------------------------------------------------------
 // NoopEmbedService——测试/离线开发使用的零向量服务
@@ -20,15 +23,13 @@ use std::sync::Arc;
 
 /// 返回零向量的 no-op 向量化服务。
 ///
-/// 在 SiliconFlow API 不可用时使用。
-/// 维度可配置，用于测试环境。
+/// 在无可用 embed 端点时使用；维度可配置，用于测试环境。
 pub struct NoopEmbedService {
     dim: u32,
 }
 
 impl NoopEmbedService {
-    /// 创建返回 `dim` 维零向量的 no-op 服务
-    /// （默认 1024，以兼容 BGE-M3）。
+    /// 创建返回 `dim` 维零向量的 no-op 服务（默认 1024，兼容 BGE-M3）。
     pub fn new(dim: u32) -> Self {
         Self { dim }
     }
@@ -40,104 +41,232 @@ impl Default for NoopEmbedService {
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EmbedService for NoopEmbedService {
-    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, DtError> {
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, crate::domain::error::DtError> {
         Ok(texts
             .iter()
             .map(|_| vec![0.0_f32; self.dim as usize])
             .collect())
     }
 
-    async fn health_check(&self) -> Result<HealthStatus, DtError> {
+    async fn health_check(&self) -> Result<HealthStatus, crate::domain::error::DtError> {
         Ok(HealthStatus::Healthy)
     }
 }
 
 // ---------------------------------------------------------------------------
-// 工厂函数——根据配置构建 EmbedProviderRouter
+// 工厂——从 PipelineConfig 构建三种能力的池化服务
 // ---------------------------------------------------------------------------
 
-/// 用于创建 [`EmbedProviderRouter`] 的 provider 配置。
+/// 一次构建 embed/rerank/llm 三种池化服务（配置加载 + 端点构建收敛于此）。
 ///
-/// provider 可选——只需配置所需的那一个。
-pub struct ProviderConfig {
-    /// SiliconFlow 客户端配置。
-    pub siliconflow_url: String,
-    pub siliconflow_api_key: String,
-    pub siliconflow_model_embed: String,
-    pub siliconflow_model_reranker: String,
-    pub siliconflow_model_llm: String,
-    pub siliconflow_max_concurrent: usize,
-    /// 路由配置。
-    pub embed_provider: String,
-    pub rerank_provider: String,
-    pub llm_provider: String,
+/// 池为空（某能力未配置端点）时对应返回 None——调用方按需降级。
+pub struct PooledServices {
+    pub embed: Option<Arc<dyn EmbedService>>,
+    pub rerank: Option<Arc<dyn RerankService>>,
+    pub llm: Option<Arc<dyn LlmService>>,
 }
 
-impl ProviderConfig {
-    /// 返回默认的仅 SiliconFlow 配置（用于 pipeline.yaml 不可用时的回退）。
-    pub fn default_siliconflow() -> Self {
-        Self {
-            siliconflow_url: "https://api.siliconflow.cn/v1".into(),
-            siliconflow_api_key: std::env::var("SILICONFLOW_API_KEY").unwrap_or_default(),
-            siliconflow_model_embed: "BAAI/bge-m3".into(),
-            siliconflow_model_reranker: "BAAI/bge-reranker-v2-m3".into(),
-            siliconflow_model_llm: "Qwen3-14B".into(),
-            siliconflow_max_concurrent: 20,
-            embed_provider: "siliconflow".into(),
-            rerank_provider: "siliconflow".into(),
-            llm_provider: "siliconflow".into(),
+/// 从已加载的 pipeline 配置构建三池。
+pub fn build_pooled_services(cfg: &PipelineConfig) -> PooledServices {
+    let Some(providers) = cfg.providers.as_ref() else {
+        return PooledServices {
+            embed: None,
+            rerank: None,
+            llm: None,
+        };
+    };
+
+    let strategy = providers.strategy;
+    let global_proxy = providers.proxy.clone();
+    let llm_default = cfg.llm_model();
+    let embed_default = cfg.embed_model();
+    let rerank_default = cfg.rerank_model();
+
+    let embed = if providers.embed.is_empty() {
+        None
+    } else {
+        Some(Arc::new(PooledEmbedService::new(EndpointPool::from_config(
+            &providers.embed,
+            strategy,
+            global_proxy.as_ref(),
+            &embed_default,
+            &embed_default,
+            &rerank_default,
+            &llm_default,
+        ))) as Arc<dyn EmbedService>)
+    };
+
+    let rerank = if providers.rerank.is_empty() {
+        None
+    } else {
+        Some(Arc::new(PooledRerankService::new(EndpointPool::from_config(
+            &providers.rerank,
+            strategy,
+            global_proxy.as_ref(),
+            &rerank_default,
+            &embed_default,
+            &rerank_default,
+            &llm_default,
+        ))) as Arc<dyn RerankService>)
+    };
+
+    let llm = if providers.llm.is_empty() {
+        None
+    } else {
+        Some(Arc::new(PooledLlmService::new(EndpointPool::from_config(
+            &providers.llm,
+            strategy,
+            global_proxy.as_ref(),
+            &llm_default,
+            &embed_default,
+            &rerank_default,
+            &llm_default,
+        ))) as Arc<dyn LlmService>)
+    };
+
+    PooledServices {
+        embed,
+        rerank,
+        llm,
+    }
+}
+
+/// 从已加载配置构建 embed 服务（无端点时回退 Noop，保持调用方健壮）。
+pub fn create_embed_service(cfg: &PipelineConfig) -> Arc<dyn EmbedService> {
+    build_pooled_services(cfg)
+        .embed
+        .unwrap_or_else(|| Arc::new(NoopEmbedService::default()))
+}
+
+/// 便捷工厂（供 build.rs / router.rs / sync.rs 旧调用点收敛）：加载配置 → 取 embed。
+pub fn create_search_embed_client() -> Arc<dyn EmbedService> {
+    match PipelineConfig::load() {
+        Ok(cfg) => create_embed_service(&cfg),
+        Err(e) => {
+            tracing::warn!("无法加载 pipeline.yaml ({e})，回退 Noop embed");
+            Arc::new(NoopEmbedService::default())
         }
     }
 }
 
-/// 用配置好的客户端构建路由器（embed/rerank 构造函数共用）。
-fn build_provider_router(
-    cfg: ProviderConfig,
-) -> crate::infrastructure::provider_router::EmbedProviderRouter {
-    use crate::infrastructure::provider_router::{EmbedProviderRouter, ProviderRouterConfig};
+/// 便捷工厂：加载配置 → 取 rerank。
+pub fn create_search_rerank_client() -> Arc<dyn crate::domain::traits::RerankService> {
+    match PipelineConfig::load() {
+        Ok(cfg) => build_pooled_services(&cfg)
+            .rerank
+            .unwrap_or_else(|| Arc::new(crate::infrastructure::provider_router::NoopRerankService)),
+        Err(e) => {
+            tracing::warn!("无法加载 pipeline.yaml ({e})，回退 Noop rerank");
+            Arc::new(crate::infrastructure::provider_router::NoopRerankService)
+        }
+    }
+}
 
-    let siliconflow = if !cfg.siliconflow_url.is_empty() {
-        Some(Arc::new(
-            crate::infrastructure::siliconflow::SiliconFlowClient::new(
-                cfg.siliconflow_url,
-                cfg.siliconflow_api_key,
-                cfg.siliconflow_model_embed,
-                cfg.siliconflow_model_reranker,
-                cfg.siliconflow_model_llm,
-                cfg.siliconflow_max_concurrent,
-            ),
+/// 便捷工厂：加载配置 → 取 llm（供 router LLM 门控 / 结果过滤）。
+pub fn create_search_llm_client() -> Arc<dyn LlmService> {
+    match PipelineConfig::load() {
+        Ok(cfg) => build_pooled_services(&cfg)
+            .llm
+            .unwrap_or_else(|| Arc::new(NoopLlmService)),
+        Err(e) => {
+            tracing::warn!("无法加载 pipeline.yaml ({e})，回退 Noop llm");
+            Arc::new(NoopLlmService)
+        }
+    }
+}
+
+/// 旧 `ProviderConfig` 工厂的语义替代——直接由 pipeline 配置构建路由器。
+/// 保留此模块级函数以最小化 build.rs / runtime.rs 改动（参数即来源）。
+#[deprecated(note = "请直接用 build_pooled_services / create_* 工厂")]
+pub fn provider_config_from_pipeline() -> ProvidersConfig {
+    PipelineConfig::load()
+        .ok()
+        .and_then(|c| c.providers)
+        .unwrap_or_default()
+}
+
+/// 由 providers 配置 + 模型默认值构建三池（供旧调用点直接使用配置对象时）。
+pub fn build_router_from_providers(
+    providers: &ProvidersConfig,
+    llm_default: &str,
+    embed_default: &str,
+    rerank_default: &str,
+) -> PooledServices {
+    let strategy = providers.strategy;
+    let global_proxy = providers.proxy.clone();
+
+    PooledServices {
+        embed: if providers.embed.is_empty() {
+            None
+        } else {
+            Some(Arc::new(PooledEmbedService::new(EndpointPool::from_config(
+                &providers.embed,
+                strategy,
+                global_proxy.as_ref(),
+                embed_default,
+                embed_default,
+                rerank_default,
+                llm_default,
+            ))) as Arc<dyn EmbedService>)
+        },
+        rerank: if providers.rerank.is_empty() {
+            None
+        } else {
+            Some(Arc::new(PooledRerankService::new(EndpointPool::from_config(
+                &providers.rerank,
+                strategy,
+                global_proxy.as_ref(),
+                rerank_default,
+                embed_default,
+                rerank_default,
+                llm_default,
+            ))) as Arc<dyn RerankService>)
+        },
+        llm: if providers.llm.is_empty() {
+            None
+        } else {
+            Some(Arc::new(PooledLlmService::new(EndpointPool::from_config(
+                &providers.llm,
+                strategy,
+                global_proxy.as_ref(),
+                llm_default,
+                embed_default,
+                rerank_default,
+                llm_default,
+            ))) as Arc<dyn LlmService>)
+        },
+    }
+}
+
+/// 无端点时的 LLM no-op（health 报告不可用，chat 报错）。
+pub struct NoopLlmService;
+
+#[async_trait::async_trait]
+impl LlmService for NoopLlmService {
+    async fn chat(
+        &self,
+        _system_prompt: &str,
+        _user_prompt: &str,
+        _temperature: f32,
+        _max_tokens: u32,
+    ) -> Result<String, crate::domain::error::DtError> {
+        Err(crate::domain::error::DtError::Repository(
+            "未配置任何 LLM 端点".into(),
         ))
-    } else {
-        None
-    };
+    }
 
-    let router_config = ProviderRouterConfig {
-        embed_provider: cfg.embed_provider,
-        rerank_provider: cfg.rerank_provider,
-        llm_provider: cfg.llm_provider,
-    };
+    async fn health_check(&self) -> Result<HealthStatus, crate::domain::error::DtError> {
+        Ok(HealthStatus::Unhealthy("未配置任何 LLM 端点".into()))
+    }
 
-    EmbedProviderRouter::new(siliconflow, router_config)
-}
-
-/// 根据 provider 配置构建 [`EmbedProviderRouter`]。
-///
-/// 按配置创建 `SiliconFlowClient`，然后用指定的路由规则包装进路由器。
-pub fn create_embed_router(cfg: ProviderConfig) -> Arc<dyn EmbedService> {
-    Arc::new(build_provider_router(cfg))
-}
-
-/// 构建一个作为 [`RerankService`] 使用的 [`EmbedProviderRouter`]（S5 首个业务调用点）。
-pub fn create_rerank_router(cfg: ProviderConfig) -> Arc<dyn RerankService> {
-    Arc::new(build_provider_router(cfg))
-}
-
-/// 构建一个作为 [`LlmService`] 使用的 [`EmbedProviderRouter`]——复用现有 LLM 接入，
-/// 供鉴别/过滤等需要自然语言判别的调用使用。与 embed/rerank 共享同一 provider 配置。
-pub fn create_llm_router(cfg: ProviderConfig) -> Arc<dyn LlmService> {
-    Arc::new(build_provider_router(cfg))
+    fn capabilities(&self) -> crate::domain::traits::LlmCapabilities {
+        crate::domain::traits::LlmCapabilities {
+            chat: false,
+            ..Default::default()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,10 +295,11 @@ mod tests {
     }
 
     #[test]
-    fn create_rerank_router_returns_configured_service() {
-        let svc = create_rerank_router(ProviderConfig::default_siliconflow());
-        // 对象安全 + 构造成功即可（路由正确性由 provider_router 既有测试保证）
-        fn _accept(_: Arc<dyn crate::domain::traits::RerankService>) {}
-        _accept(svc);
+    fn empty_providers_builds_none() {
+        let cfg = PipelineConfig::default();
+        let svcs = build_pooled_services(&cfg);
+        assert!(svcs.embed.is_none());
+        assert!(svcs.rerank.is_none());
+        assert!(svcs.llm.is_none());
     }
 }

@@ -116,12 +116,12 @@ class TestSearchGuidance:
 
     def test_container_guidance(self):
         g = m._search_guidance("📍 /x\n  Status: unregistered\n  📁 注册容器(base): 内含 2 个已注册子项目\n    offen-pay → /x/uvp-offen-pay")
-        assert "dt_search_kg(project=<子项目名>)" in g
+        assert "dt_search(project=<子项目名>)" in g
         assert "不要用目录名" in g
 
     def test_indexed_guidance(self):
         g = m._search_guidance("📍 /x\n  Status: indexed\n  Project: digital-twin-v2 (/x)")
-        assert "dt_search_kg(project=digital-twin-v2, limit=5)" in g
+        assert "dt_search(world=code, project=digital-twin-v2, limit=5)" in g
 
     def test_unregistered_guidance(self):
         g = m._search_guidance("📍 /x\n  Status: unregistered")
@@ -139,7 +139,7 @@ class TestSearchGuidance:
         out = m._on_pre_llm_call(session_id="s-guid", user_message="分析构建流程", is_first_turn=True)
         assert out is not None
         assert "Status: indexed" in out          # sense 输出透传
-        assert "dt_search_kg(project=digital-twin-v2" in out  # 引导追加
+        assert "dt_search(world=code, project=digital-twin-v2" in out  # 引导追加
 
 
 class TestMinimalBrief:
@@ -150,7 +150,7 @@ class TestMinimalBrief:
         brief = m._minimal_brief(Path("/home/luis"))
         assert "[DT-SENSE]" in brief
         assert "2 个注册项目" in brief
-        assert "dt_search_kg" in brief
+        assert "dt_search" in brief
         assert len(brief) < 300
 
     def test_hook_injects_minimal_when_no_match(self, monkeypatch):

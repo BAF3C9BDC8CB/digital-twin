@@ -243,14 +243,14 @@ enum Commands {
     },
 
     /// 统一检索入口（融合智能路由）。跨 code/doc/knowledge/config/memory 检索；
-    /// L0 闲聊/无锚点拦截 + 意图路由 + 可选 LLM 过滤，并保留显式过滤精确透传。
+    /// L0 LLM 门控（判断是否值得搜索）+ 意图路由 + 可选 LLM 过滤，并保留显式过滤精确透传。
     ///
     /// 用法: dt search <query> [--world all|code|knowledge|doc|config|memory] [--limit 10]
     ///       [--json] [--project P] [--filter BOOL] [--threshold 0.6] [--file-type F]
     ///       [--content-type T] [--show-content] [--explain]
-    /// 兼容: `dt router` 已并入本命令（alias），仍可调用。
-    /// 统一前身: dt search（裸检索）、dt router（智能路由）、dt search_kg（KG 优先）。
-    #[command(alias = "router")]
+    ///
+    /// 统一说明: 前身 dt router（智能路由）与 dt search_kg（KG 优先）已并入本命令，
+    /// 相关能力由 --filter/--world/--project 等参数承载，不再保留独立命令。
     Search {
         /// 搜索查询字符串。
         query: String,
@@ -295,18 +295,6 @@ enum Commands {
         /// 展开命中正文原文块（Config/Method/Doc 的 content 原样逐行显示）。
         #[arg(long = "show-content")]
         show_content: bool,
-    },
-
-    /// 图(Memgraph) vs 向量(Qdrant) 存量对账（方案 §4.1，只读巡检）。
-    ///
-    /// 输出两侧按 (project, 类型) 的节点数与差异，标出"有图无向量"桶与
-    /// "有向量无图"孤儿 project。修复动作见方案 S2（`dt reconcile --fix`，暂未实现）。
-    ///
-    /// 用法: dt reconcile [--json]
-    Reconcile {
-        /// 输出纯 JSON（供脚本/MCP 消费，含全量桶数据）。
-        #[arg(long = "json")]
-        json: bool,
     },
 }
 
@@ -530,7 +518,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
 
-        // ---- CLI 模式: dt search / dt router(alias) (统一检索入口) ----
+        // ---- CLI 模式: dt search (统一检索入口, 融合原 dt router / dt search_kg) ----
         Some(Commands::Search {
             query,
             world,
@@ -814,14 +802,6 @@ async fn main() -> anyhow::Result<()> {
                 scan_config,
             )
             .await?;
-            return Ok(());
-        }
-
-        // ---- CLI 模式: dt reconcile (图 vs 向量对账, 只读) ----
-        Some(Commands::Reconcile { json }) => {
-            let graph = connect_graph().await;
-            let vector = connect_vector().await;
-            digital_twin::interfaces::cli::reconcile::run_reconcile(graph, vector, json).await?;
             return Ok(());
         }
 

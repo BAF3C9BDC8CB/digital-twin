@@ -1,8 +1,8 @@
 name: dt-router
 version: 1.0.0
 description: >-
-  Digital-twin KG「先检索后执行」中间层：pre_llm_call 每 turn 开头注入 dt router 命中简报；
-  pre_tool_call 在读类/写类工具前做 KG-first 强制（未感知则 block 引导先 dt_search_kg）；
+  Digital-twin KG「先检索后执行」中间层：pre_llm_call 每 turn 开头注入 dt search 命中简报；
+  pre_tool_call 在读类/写类工具前做 KG-first 强制（未感知则 block 引导先 dt_search）；
   subagent_start 在子代理运行前把 child_goal 做一次 KG 预检索并注入 goal。
   详见 docs/superpowers/specs/（KG 工程化文档）。
 author: NousResearch

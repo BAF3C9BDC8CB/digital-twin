@@ -94,13 +94,14 @@ impl KgRouter {
         system_prompt: &str,
         user_prompt: &str,
     ) -> Result<String, DtError> {
-        let start = Instant::now();
+        let started = Instant::now();
 
-        // 1. 从知识图谱查询路由规则
+        // 1. 从知识图谱查询路由规则（含 temperature/max_tokens；provider/model
+        //    仅作记录——实际请求由 llm_service 端点池路由，规则中的模型名不再
+        //    驱动选择，池内端点按配置 failover 自动顺延）。
         let rule = self.fetch_route_rule(task_type).await?;
 
-        // 2. 调用 LLM（注：当前 EmbedProviderRouter 使用配置中的 provider，
-        //    路由规则中的 provider 仅作记录）
+        // 2. 调用 LLM（端点池；池内任一端点解析后的模型名负责实际推理）
         let response = self
             .llm_service
             .chat(
@@ -111,7 +112,7 @@ impl KgRouter {
             )
             .await;
 
-        let latency_ms = start.elapsed().as_millis() as u64;
+        let latency_ms = started.elapsed().as_millis() as u64;
 
         // 3. 记录调用日志
         if self.config.observability.log_calls {
@@ -231,11 +232,11 @@ impl KgRouter {
             .ok_or_else(|| DtError::Repository("查询结果不是数组".into()))?;
 
         if rows.is_empty() {
-            // 未找到规则，使用默认配置
+            // 未找到规则，使用默认配置（模型名仅记录用）
             return Ok(RouteRule {
                 task_type: task_type.as_str().to_string(),
-                primary_provider: "siliconflow".to_string(),
-                primary_model: "tencent/Hunyuan-MT-7B".to_string(),
+                primary_provider: "pool".to_string(),
+                primary_model: "default".to_string(),
                 fallback_provider: None,
                 fallback_model: None,
                 temperature: 0.1,
@@ -247,12 +248,12 @@ impl KgRouter {
         let primary_provider = row
             .get("primary_provider")
             .and_then(|v| v.as_str())
-            .unwrap_or("siliconflow")
+            .unwrap_or("pool")
             .to_string();
         let primary_model = row
             .get("primary_model")
             .and_then(|v| v.as_str())
-            .unwrap_or("tencent/Hunyuan-MT-7B")
+            .unwrap_or("default")
             .to_string();
         let fallback_provider = row
             .get("fallback_provider")
@@ -370,6 +371,8 @@ impl KgRouter {
     }
 
     /// 初始化路由规则到知识图谱。
+    /// 注：primary_model 仅作审计记录；实际推理模型由 `providers.llm` 端点池
+    /// 决定（每端点 model / 顶层 llm.model），规则模型不再驱动选择。
     pub async fn init_rules(&self) -> Result<(), DtError> {
         // 代码抽取：高质量需求
         self.kg_client
@@ -387,8 +390,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'CodeExtraction'})
-            SET r.primary_provider = 'siliconflow',
-                r.primary_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'pool',
+                r.primary_model = 'default',
                 r.temperature = 0.1,
                 r.max_tokens = 2000
         "#,
@@ -401,8 +404,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'DocSummarization'})
-            SET r.primary_provider = 'siliconflow',
-                r.primary_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'pool',
+                r.primary_model = 'default',
                 r.temperature = 0.3,
                 r.max_tokens = 1000
         "#,
@@ -415,8 +418,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'KnowledgeQuery'})
-            SET r.primary_provider = 'siliconflow',
-                r.primary_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'pool',
+                r.primary_model = 'default',
                 r.temperature = 0.2,
                 r.max_tokens = 512
         "#,
@@ -429,8 +432,8 @@ impl KgRouter {
             .write_query(
                 r#"
             MERGE (r:RouteRule {task_type: 'ResultFiltering'})
-            SET r.primary_provider = 'siliconflow',
-                r.primary_model = 'tencent/Hunyuan-MT-7B',
+            SET r.primary_provider = 'pool',
+                r.primary_model = 'default',
                 r.temperature = 0.0,
                 r.max_tokens = 200
         "#,

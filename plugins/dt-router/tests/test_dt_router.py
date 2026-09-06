@@ -106,7 +106,7 @@ def test_pre_tool_call_blocks_read_without_kg(monkeypatch):
     m._kg_checked.clear()
     r = m._on_pre_tool_call("read_file", {"path": "x.rs"}, "sidA")
     assert r and r.get("action") == "block"
-    assert "dt_search_kg" in r.get("message", "")
+    assert "dt_search" in r.get("message", "")
 
 
 def test_pre_tool_call_blocks_write_without_kg():

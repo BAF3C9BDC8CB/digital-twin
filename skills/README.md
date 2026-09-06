@@ -62,7 +62,7 @@ hermes chat
 ```
 ① dt_sense()          → 获取项目全貌
     ↓
-② dt_search_kg()      → 定位符号位置
+② dt_search(world=code) → 定位符号位置
     ↓
 ③ read_file()         → 验证具体实现
 ```
@@ -74,8 +74,8 @@ hermes chat
 ## 💡 五条核心规则
 
 1. **进项目先 `dt_sense()`** - 获取项目全貌
-2. **读码前先 `dt_search_kg(world=code)`** - 定位先于读码
-3. **查配置先 `dt_search_kg(world=memory)`** - 记忆优先
+2. **读码前先 `dt_search(world=code)`** - 定位先于读码
+3. **查配置先 `dt_search(world=memory)`** - 记忆优先
 4. **用户说"记住"立即 `dt_memorize`** - 不要拖延
 5. **永远不要读 `.env` 或输出密钥** - 安全第一
 

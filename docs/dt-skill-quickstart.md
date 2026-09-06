@@ -20,7 +20,7 @@ hermes skills list | grep digital-twin
 ```
 ① dt_sense()          → 获取项目全貌（project/indexed/stats/key_entities）
      ↓
-② dt_search_kg()      → 定位符号（file_path/start_line/signature/score）
+② dt_search()      → 定位符号（file_path/start_line/signature/score）
      ↓
 ③ read_file()         → 验证具体实现
 ```
@@ -45,7 +45,7 @@ sense = dt_sense()
 # → project: digital-twin-v2, indexed: true, stats: methods=3028
 
 # ② KG 定位（project 参数取自 dt_sense 结果）
-kg = dt_search_kg(
+kg = dt_search(
     query="BuildService 构建索引",
     world="code",
     project=sense["project"],
@@ -66,7 +66,7 @@ code = read_file(
 
 ```python
 # 先查记忆（配置/凭据/部署历史优先从 memory 检索）
-config = dt_search_kg(
+config = dt_search(
     query="Memgraph 连接地址 bolt",
     world="memory",
     limit=5
@@ -108,9 +108,9 @@ health = dt_health()
 | 章节 | 解决什么问题 | 核心工具 |
 |------|------------|---------|
 | 快速开始 | 健康检查/世界概念/任务路由 | `dt_health`, `dt_sense` |
-| 代码分析三段序 | 定位/理解/修改代码 | `dt_sense` → `dt_search_kg(world=code)` → `read_file` |
-| 部署与配置管理 | 查配置/凭据/部署历史 | `dt_search_kg(world=memory)` → `read_file(config)` |
-| 记忆管理 | 写入/查询记忆 | `dt_memorize` + `dt_search_kg(world=memory)` |
+| 代码分析三段序 | 定位/理解/修改代码 | `dt_sense` → `dt_search(world=code)` → `read_file` |
+| 部署与配置管理 | 查配置/凭据/部署历史 | `dt_search(world=memory)` → `read_file(config)` |
+| 记忆管理 | 写入/查询记忆 | `dt_memorize` + `dt_search(world=memory)` |
 | 健康检查与索引 | 系统状态/索引操作 | `dt_health` + `dt build` |
 | 故障排查 | 空结果/服务不可用 | 见各章节排查步骤 |
 
@@ -121,7 +121,7 @@ health = dt_health()
 ### ❌ 错误 1: 跳过环境感知
 ```python
 # ❌ 不知道 project 名
-dt_search_kg(query="BuildService", world="code", limit=5)
+dt_search(query="BuildService", world="code", limit=5)
 # ✅ 先 dt_sense() 拿 project，再带 project 查
 ```
 
@@ -151,8 +151,8 @@ dt_memorize(entity_id="x", details="一段自由文本说明")
 ## 🎯 五条核心规则
 
 1. **进项目先 `dt_sense()`** - 获取项目全貌
-2. **读码前先 `dt_search_kg(world=code)`** - 定位先于读码
-3. **查配置先 `dt_search_kg(world=memory)`** - 记忆优先
+2. **读码前先 `dt_search(world=code)`** - 定位先于读码
+3. **查配置先 `dt_search(world=memory)`** - 记忆优先
 4. **用户说"记住"立即 `dt_memorize`** - 不要拖延
 5. **永远不要读 `.env` 或输出密钥** - 安全第一
 

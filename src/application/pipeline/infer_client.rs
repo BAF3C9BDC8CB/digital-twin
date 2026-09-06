@@ -1,21 +1,17 @@
-//! SiliconFlow 云 API（OpenAI 兼容）的 HTTP 客户端。
+//! Pipeline LLM 对话客户端（OpenAI 兼容，多端点失败顺延）。
 //!
-//! 所有 LLM chat 与文本 embedding 请求都流经该客户端。
-//!
-//! # 并发
-//!
-//! 一个 [`Arc<Semaphore>`] 限制在途 HTTP 请求数，使流水线永远不会压垮
-//! 推理服务器。
+//! 所有 pipeline LLM chat 请求都流经该客户端。2026-09-06 起：
+//! - 旧单一 `SiliconFlowChatClient`（固定一份 url/key、模型名由调用方传入、
+//!   `enable_thinking` 特判）重构为 [`PooledChatClient`]——内部持 [`EndpointPool`]，
+//!   模型名按端点级覆盖解析，请求失败自动顺延到下一端点/模型；
+//! - 健康检查与超时/信号量语义保留。
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::Semaphore;
 
-/// 默认的 SiliconFlow API URL。
-const SILICONFLOW_DEFAULT_URL: &str = "https://api.siliconflow.cn/v1";
+use crate::application::pipeline::config::{PipelineConfig, ProviderEndpoint};
+use crate::infrastructure::siliconflow::{EndpointPool, OpenAiEndpoint};
 
 // ---------------------------------------------------------------------------
 // 公开响应 / DTO 类型
@@ -61,201 +57,117 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// 请求体（私有——仅供内部使用）
+// PooledChatClient——多端点失败顺延的对话客户端
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-    max_tokens: u32,
-    stream: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    enable_thinking: Option<bool>,
+/// 由 `providers.llm` 端点池支持的对话客户端。
+///
+/// 实现 [`ChatClient`]（带 `model` 参数）。端点池内每个端点已按其配置
+/// 解析模型名；调用方传入的 `model` 仅用于日志/兼容（旧 SiliconFlowChatClient
+/// 曾以 `"default"` 调用且 URL 拼接少了一段 `/v1` 路径——现已统一走
+/// [`OpenAiEndpoint`] 的标准路径拼接）。
+pub struct PooledChatClient {
+    pool: EndpointPool,
 }
 
-#[derive(Debug, Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
+impl PooledChatClient {
+    /// 从 `providers.llm` 端点池构建。
+    pub fn from_providers(
+        eps: &[ProviderEndpoint],
+        strategy: crate::application::pipeline::config::EndpointStrategy,
+        global_proxy: Option<&crate::application::pipeline::config::ProxyConfig>,
+        default_model: &str,
+        embed_default: &str,
+        rerank_default: &str,
+    ) -> Self {
+        let pool = EndpointPool::from_config(
+            eps,
+            strategy,
+            global_proxy,
+            default_model,
+            embed_default,
+            rerank_default,
+            default_model,
+        );
+        Self { pool }
+    }
 
-#[derive(Debug, Serialize)]
-struct EmbedRequest {
-    model: String,
-    input: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbedResponse {
-    data: Vec<EmbedDatum>,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbedDatum {
-    embedding: Vec<f32>,
-}
-
-// ---------------------------------------------------------------------------
-// SiliconFlow 客户端
-// ---------------------------------------------------------------------------
-
-/// SiliconFlow 云 API（OpenAI 兼容）的 HTTP 客户端。
-pub struct SiliconFlowChatClient {
-    client: Client,
-    base_url: String,
-    api_key: String,
-    semaphore: Arc<Semaphore>,
-}
-
-impl SiliconFlowChatClient {
-    /// 构建一个以 `base_url` 为目标、支持最大并发请求数的新客户端。
-    ///
-    /// `api_key` 为空时回退到 `SILICONFLOW_API_KEY` 环境变量。
-    pub fn new(base_url: String, api_key: String, max_concurrent: usize) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .expect("reqwest::Client::builder() 不应失败");
-
-        let api_key = if api_key.is_empty() {
-            std::env::var("SILICONFLOW_API_KEY").unwrap_or_default()
-        } else {
-            api_key
+    /// 从已加载 pipeline 配置构建（llm 池）。
+    pub fn from_pipeline(cfg: &PipelineConfig) -> Self {
+        let providers = cfg.providers.as_ref();
+        let (eps, strategy, proxy) = match providers {
+            Some(p) => (&p.llm[..], p.strategy, p.proxy.as_ref()),
+            None => (&[][..], Default::default(), None),
         };
-
-        Self {
-            client,
-            base_url: if base_url.is_empty() {
-                SILICONFLOW_DEFAULT_URL.to_string()
-            } else {
-                base_url
-            },
-            api_key,
-            semaphore: Arc::new(Semaphore::new(max_concurrent)),
-        }
+        Self::from_providers(eps, strategy, proxy, &cfg.llm_model(), &cfg.embed_model(), &cfg.rerank_model())
     }
 
-    /// 检查 SiliconFlow API 是否可达。
-    pub async fn health_check(&self) -> Result<bool, String> {
-        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
-
-        match self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .send()
-            .await
-        {
-            Ok(resp) => Ok(resp.status().is_success()),
-            Err(e) => Err(format!("SiliconFlow 健康检查失败: {e}")),
-        }
+    /// 池是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.pool.is_empty()
     }
 
-    /// 向 SiliconFlow 发送 chat completion 请求（OpenAI 兼容）。
-    pub async fn chat(
+    /// 池内端点数量（日志/诊断用）。
+    pub fn pool_len(&self) -> usize {
+        self.pool.len()
+    }
+
+    /// 构建一个自身池的浅拷贝（Arc 共享端点成员）——给要求持有
+    /// `Arc<dyn ChatClient>` 的处理器复用。
+    pub fn to_arc(self) -> Arc<dyn ChatClient> {
+        Arc::new(self)
+    }
+}
+
+#[async_trait]
+impl ChatClient for PooledChatClient {
+    async fn chat(
         &self,
-        model: &str,
+        _model: &str,
         system_prompt: &str,
         user_prompt: &str,
         temperature: f32,
         max_tokens: u32,
+        _json_mode: bool,
+        file: &str,
+        chunk: &str,
     ) -> Result<ChatResponse, String> {
-        let started = Instant::now();
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = 0u128, stage = "request_start", "SiliconFlow request_start");
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "semaphore_wait_start", "SiliconFlow semaphore_wait_start");
-        let _permit = self
-            .semaphore
-            .acquire()
+        // 池化请求：端点内已解析模型名；file/chunk 仅用于日志（pool.run 内
+        // 端点会打印自身 label；此处把来源并入 user_prompt 无意义，日志由
+        // 上层 processor 自带 file/chunk 上下文——OpenAiEndpoint.chat 是
+        // 纯 chat 语义，返回值与原一致）。
+        let _ = (file, chunk);
+
+        // pool.run 的错误类型为 DtError；这里直接让 String 错误作为 E，
+        // 需要 DtError: From<String> 不存在——改用 DtError 并最后转 String。
+        let system_prompt = system_prompt.to_string();
+        let user_prompt = user_prompt.to_string();
+        let text = self
+            .pool
+            .run(move |endpoint, _| {
+                let system_prompt = system_prompt.clone();
+                let user_prompt = user_prompt.clone();
+                Box::pin(async move {
+                    endpoint
+                        .chat(&system_prompt, &user_prompt, temperature, max_tokens)
+                        .await
+                })
+            })
             .await
-            .map_err(|e| format!("信号量获取失败: {e}"))?;
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "semaphore_acquired", "SiliconFlow semaphore_acquired");
+            .map_err(|e| e.to_string())?;
 
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-
-        let body = ChatRequest {
-            model: model.to_string(),
-            messages: vec![
-                ChatMessage {
-                    role: "system".into(),
-                    content: system_prompt.to_string(),
-                },
-                ChatMessage {
-                    role: "user".into(),
-                    content: user_prompt.to_string(),
-                },
-            ],
-            temperature,
-            max_tokens,
-            stream: false,
-            enable_thinking: model
-                .to_ascii_lowercase()
-                .contains("deepseek-v3.2")
-                .then_some(false),
-        };
-
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), stage = "send_start", "SiliconFlow send_start");
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("SiliconFlow 对话请求失败: {e}"))?;
-
-        let status = resp.status();
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, status = %status, elapsed_ms = started.elapsed().as_millis(), stage = "response_received", "SiliconFlow response_received");
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            tracing::warn!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, status = %status, response_body_bytes = text.len(), elapsed_ms = started.elapsed().as_millis(), retry_reason = "http_error", "SiliconFlow error (body omitted)");
-            return Err(format!("SiliconFlow 对话返回 HTTP {status}"));
-        }
-
-        let parsed = resp
-            .json::<ChatResponse>()
-            .await
-            .map_err(|e| format!("对话响应解析失败: {e}"));
-        tracing::info!(task = "pipeline", run = "live", file = "unknown", chunk = "unknown", attempt = 0u32, provider = "siliconflow", model = %model, elapsed_ms = started.elapsed().as_millis(), total_ms = started.elapsed().as_millis(), stage = "request_end", "SiliconFlow request_end");
-        parsed
+        Ok(ChatResponse {
+            choices: vec![Choice {
+                message: Message { content: text },
+            }],
+        })
     }
 
-    /// 通过 POST /v1/embeddings 嵌入一批文本。
-    pub async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        let _permit = self
-            .semaphore
-            .acquire()
-            .await
-            .map_err(|e| format!("信号量获取失败: {e}"))?;
-
-        let url = format!("{}/v1/embeddings", self.base_url);
-
-        let body = EmbedRequest {
-            model: "default".into(),
-            input: texts.to_vec(),
-        };
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("embed 请求失败: {e}"))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(format!("embed 返回 HTTP {status}: {text}"));
+    async fn health_check(&self) -> Result<bool, String> {
+        match self.pool.health_check().await {
+            crate::domain::types::HealthStatus::Healthy => Ok(true),
+            _ => Ok(false),
         }
-
-        let embed_resp = resp
-            .json::<EmbedResponse>()
-            .await
-            .map_err(|e| format!("embed 响应解析失败: {e}"))?;
-
-        Ok(embed_resp.data.into_iter().map(|d| d.embedding).collect())
     }
 }
 
@@ -263,9 +175,10 @@ impl SiliconFlowChatClient {
 // 统一对话客户端 trait
 // ---------------------------------------------------------------------------
 
-/// 统一对话客户端 trait——由 SiliconFlow 与 OpenAI-Compatible 共同实现。
+/// 统一对话客户端 trait——由池化客户端实现。
 #[async_trait]
 pub trait ChatClient: Send + Sync {
+    /// `file`/`chunk` 为请求来源上下文（仅用于日志/追踪；无上下文时可传 ""）。
     async fn chat(
         &self,
         model: &str,
@@ -274,35 +187,18 @@ pub trait ChatClient: Send + Sync {
         temperature: f32,
         max_tokens: u32,
         json_mode: bool,
+        file: &str,
+        chunk: &str,
     ) -> Result<ChatResponse, String>;
     async fn health_check(&self) -> Result<bool, String>;
 }
 
-#[async_trait]
-impl ChatClient for SiliconFlowChatClient {
-    async fn chat(
-        &self,
-        model: &str,
-        system_prompt: &str,
-        user_prompt: &str,
-        temperature: f32,
-        max_tokens: u32,
-        _json_mode: bool,
-    ) -> Result<ChatResponse, String> {
-        SiliconFlowChatClient::chat(
-            self,
-            model,
-            system_prompt,
-            user_prompt,
-            temperature,
-            max_tokens,
-        )
-        .await
-    }
-    async fn health_check(&self) -> Result<bool, String> {
-        SiliconFlowChatClient::health_check(self).await
-    }
-}
+// ---------------------------------------------------------------------------
+// 兼容别名（旧结构已删除——新代码用 PooledChatClient）
+// ---------------------------------------------------------------------------
+
+/// 旧 `SiliconFlowChatClient` 兼容构造：默认池化客户端（从 pipeline 配置）。
+pub type SiliconFlowChatClient = PooledChatClient;
 
 // ---------------------------------------------------------------------------
 // 测试
@@ -332,9 +228,9 @@ mod tests {
     }
 
     #[test]
-    fn silicon_flow_chat_client_can_be_constructed() {
-        let client = SiliconFlowChatClient::new(SILICONFLOW_DEFAULT_URL.into(), String::new(), 8);
-        assert!(client.semaphore.available_permits() <= 16);
+    fn empty_pipeline_builds_empty_pool() {
+        let client = PooledChatClient::from_pipeline(&PipelineConfig::default());
+        assert!(client.is_empty());
     }
 
     #[test]

@@ -4,10 +4,10 @@
 目的 (来自用户需求):
   每天 01:00 审计前一天的所有 AI 会话，核查它们是否遵守了 AGENTS.md 的 KG 行为准则：
     1. 是否查询了 KG？ (服务/配置/部署/历史决策场景应先查 world=memory)
-    2. 查询时机是否正确？ (应在深度读代码之前先 dt_sense / dt_search_kg)
+    2. 查询时机是否正确？ (应在深度读代码之前先 dt_sense / dt_search)
     3. 查询结果是否真正被使用？ (查完是否引用返回内容，而非查完即弃)
     4. 是否重复搜索代码？ (同一 read_file/search_files 目标单会话内多次)
-    5. 搜索代码是否用到了 KG 已构建的代码？ (定位代码应先 dt_search_kg(world=code))
+    5. 搜索代码是否用到了 KG 已构建的代码？ (定位代码应先 dt_search(world=code))
     6. 是否应该 memorize 却没 memorized？ (用户说"记住/记忆"但未调 dt_memorize)
     7. 是否遗漏历史决策？ (涉及历史决策但未先查 world=memory)
 
@@ -92,7 +92,7 @@ class AuditSession:
         self.start_ts: float | None = None
         self.end_ts: float | None = None
         # 各类信号
-        self.kg_searches: int = 0            # dt_search_kg 次数
+        self.kg_searches: int = 0            # dt_search / dt_search_kg 次数
         self.kg_sense: int = 0               # dt_sense 次数
         self.kg_memorize: int = 0            # dt_memorize/dt_learn 次数
         self.kg_raw_query: int = 0           # run_cypher_query 次数
@@ -152,7 +152,7 @@ def extract_sig_from_args(tool: str, args: str) -> str | None:
     - read_file / search_files / search_file: 用 path 参数 (目标文件/目录)
     - terminal: 粗提文件名
     因为同一文件用不同 pattern 反复搜索属正常探索，真正要抓的是
-    "对同一文件反复读取却未借助 dt_search_kg(world=code) 定位"。
+    "对同一文件反复读取却未借助 dt_search(world=code) 定位"。
     """
     if not args:
         return None
@@ -354,7 +354,7 @@ def analyze(s: AuditSession) -> dict:
             findings.append({
                 "id": "no_sense_before_code",
                 "severity": "info",
-                "msg": f"会话读码 {s.code_reads} 次但从未调用 dt_sense / dt_search_kg(world=code) 先定位，"
+                "msg": f"会话读码 {s.code_reads} 次但从未调用 dt_sense / dt_search(world=code) 先定位，"
                        "可能未复用知识图谱中已构建的代码实体。",
                 "evidence": {"code_reads": s.code_reads, "kg_sense": s.kg_sense, "kg_search": s.kg_searches},
             })
@@ -365,7 +365,7 @@ def analyze(s: AuditSession) -> dict:
             "id": "code_heavy_no_kg_loc",
             "severity": "warn",
             "msg": f"会话对代码文件读取/搜索 {sum(read_total.values()) + sum(search_targets.values())} 次，"
-                   f"却从未先经 dt_search_kg(world=code) 定位。按 AGENTS.md 应先『KG 定位 → 再读源码』，"
+                   f"却从未先经 dt_search(world=code) 定位。按 AGENTS.md 应先『KG 定位 → 再读源码』，"
                    "否则未复用知识图谱中已构建的代码实体。",
             "evidence": {
                 "reads": sum(read_total.values()),
@@ -442,7 +442,7 @@ def build_report(sessions_analysis: list[dict], date: str) -> str:
     lines.append("")
     lines.append(f"- 审计会话数: **{total_sessions}**")
     lines.append(f"- 消息总数: **{total_msgs}**")
-    lines.append(f"- KG 查询 (dt_search_kg): **{total_kg}**")
+    lines.append(f"- KG 查询 (dt_search): **{total_kg}**")
     lines.append(f"- dt_sense: **{total_sense}**")
     lines.append(f"- dt_memorize/dt_learn: **{total_mem}**")
     lines.append(f"- 代码读取 (read_file/search_files): **{total_reads}**")

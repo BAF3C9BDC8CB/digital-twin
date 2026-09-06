@@ -1,12 +1,12 @@
 ---
 name: digital-twin-skill
-description: "如何使用 Digital Twin 知识图谱(基于 MCP 工具)定位代码、查询配置、管理记忆、检查系统。当用户提到 dt_sense、dt_search_kg、dt_memorize、dt_health、知识图谱查询、代码定位、项目索引、'记住/记一下'、记忆/回忆、服务健康检查或任何与本项目 dt 相关操作时，务必加载本 skill 按其流程执行，不要擅自绕开知识图谱直接读码或臆测结果。"
+description: "如何使用 Digital Twin 知识图谱(基于 MCP 工具)定位代码、查询配置、管理记忆、检查系统。当用户提到 dt_sense、dt_search、dt_memorize、dt_health、知识图谱查询、代码定位、项目索引、'记住/记一下'、记忆/回忆、服务健康检查或任何与本项目 dt 相关操作时，务必加载本 skill 按其流程执行，不要擅自绕开知识图谱直接读码或臆测结果。"
 version: 3.0.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [digital-twin, dt, knowledge-graph, memory, code-lookup, index, health]
-    requires_tools: [dt_search_kg, dt_search, dt_sense, dt_memorize, dt_event, dt_learn, dt_build, dt_health, dt_backup]
+    requires_tools: [dt_search, dt_sense, dt_memorize, dt_event, dt_learn, dt_build, dt_health, dt_backup]
 ---
 
 # 使用 Digital Twin 知识图谱
@@ -31,8 +31,7 @@ metadata:
 
 | 工具 | 用途 | 关键参数 |
 |------|------|---------|
-| `dt_search_kg` | 语义搜索图谱/代码/记忆（最常用） | `query`, `world`(code/doc/memory/knowledge), `project`, `limit` |
-| `dt_search` | 全库搜索（world 默认 all） | `query`, `world`, `project`, `limit` |
+| `dt_search` | 语义搜索图谱/代码/记忆/文档（统一检索入口，最常用；world 默认 all） | `query`, `world`(code/doc/knowledge/memory), `project`, `limit` |
 | `dt_sense` | 探查项目/目录全貌与索引状态 | `path` |
 | `dt_memorize` | 写入记忆/知识节点 | `type`, `entity_id`, `details`, `project`, `action` |
 | `dt_event` | 记录事件节点 | `type`, `entity_id` |
@@ -49,7 +48,7 @@ metadata:
 
 1. **探查项目**：`dt_sense(path=<项目或目录>)`，拿到 `project` 名和 `indexed` 状态。
    - 若 `indexed: false`，先 `dt_build` 再继续。
-2. **图谱定位**：`dt_search_kg(query=<功能描述 + 符号名>, world="code", project=<项目名>, limit=5)`。
+2. **图谱定位**：`dt_search(query=<功能描述 + 符号名>, world="code", project=<项目名>, limit=5)`。
    - 拿到 `file_path`, `start_line`, `end_line`, `signature`, `score`。只信 `score > 0.7` 的结果。
 3. **读码验证**：`read_file(path=<file_path>, offset=<start_line>, limit=<end_line - start_line + 数行>)` 确认实现。
 
@@ -59,7 +58,7 @@ metadata:
 
 查任何配置、凭据位置、部署历史、环境变量时，**先查记忆，命中即用**：
 
-1. `dt_search_kg(query=<配置/凭据关键词>, world="memory", limit=5)`。
+1. `dt_search(query=<配置/凭据关键词>, world="memory", limit=5)`。
 2. 命中 → 直接采用 `snippet`/`details` 给出的信息（含文件路径、环境变量名、配置位置）。
 3. 0 命中 → 才允许 `read_file(<公开配置文件>)` 补充确认。
 
@@ -91,7 +90,7 @@ confidence: high
 ## 维护系统健康
 
 ### 检查健康
-`dt_health()` → 看 Graph / Vector / Embed 是否都可用。有红色则系统降级：`dt_search_kg` 可能只返回图结果（向量检索失败），或全部失败。
+`dt_health()` → 看 Graph / Vector / Embed 是否都可用。有红色则系统降级：`dt_search` 可能只返回图结果（向量检索失败），或全部失败。
 
 ### 更新索引
 - 新项目：先 `dt_sense` 确认 `indexed: false`，再 `dt_build(path=<项目>)`。
@@ -100,8 +99,8 @@ confidence: high
 
 ## 常见坑
 
-- 不带 `world` 就查：`dt_search_kg` 默认 `knowledge` 世界，可能漏掉 code/memory。**按查询目标显式指定 world**。
-- 记忆查询带 `project`：记忆统一全局，`dt_search_kg(world="memory")` 不要传 project（只作溯源返回，不过滤）。
-- 读码前跳过 `dt_sense`/`dt_search_kg`：得到的是猜测位置，不是定位。先三段序。
+- 不带 `world` 就查：`dt_search` 默认 `all` 世界，会跨 code/doc/knowledge/memory 全查。**按查询目标显式指定 world** 更精准。
+- 记忆查询带 `project`：记忆统一全局，`dt_search(world="memory")` 不要传 project（只作溯源返回，不过滤）。
+- 读码前跳过 `dt_sense`/`dt_search`：得到的是猜测位置，不是定位。先三段序。
 - 用户说"记住"却只口头答应、不调 `dt_memorize`：记忆不会持久，下次就忘。立即执行。
 - 输出密钥原文：违规。只给"存于哪个环境变量/文件"的位置提示。
