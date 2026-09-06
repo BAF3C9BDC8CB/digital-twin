@@ -296,6 +296,23 @@ enum Commands {
         #[arg(long = "show-content")]
         show_content: bool,
     },
+
+    /// 文档主题归并 — 跨路径/跨项目识别描述同一主题的文档。
+    ///
+    /// 扫描文档，按其共享实体（归一化后跨项目对齐）计算重叠系数相似度，
+    /// 相似度 ≥ 阈值的文档对之间建立 `SAME_TOPIC_AS` 边。
+    /// 纯图计算，不调用 LLM/embed。
+    ///
+    /// 用法: dt merge-docs [--project P]... [--threshold 0.3]
+    MergeDocs {
+        /// 限定项目（可重复，缺省全部项目）。
+        #[arg(long = "project", short = 'p', value_delimiter = ',')]
+        projects: Vec<String>,
+
+        /// 相似度阈值（0.0~1.0，缺省 0.3）。
+        #[arg(long = "threshold", default_value = "0.3")]
+        threshold: f64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -827,6 +844,21 @@ async fn main() -> anyhow::Result<()> {
             lines,
         }) => {
             digital_twin::interfaces::cli::logs::handle_logs(follow, &keywords, lines)?;
+            return Ok(());
+        }
+
+        // ---- CLI 模式: dt merge-docs (文档主题归并) ----
+        Some(Commands::MergeDocs {
+            projects,
+            threshold,
+        }) => {
+            let graph = connect_graph().await;
+            digital_twin::interfaces::cli::doc_merge::handle_doc_merge(
+                projects,
+                Some(threshold),
+                graph,
+            )
+            .await?;
             return Ok(());
         }
 

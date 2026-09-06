@@ -7,6 +7,7 @@ pub mod cleanup;
 
 // V3 架构：抽取的 CLI 命令处理器
 pub mod build;
+pub mod doc_merge;
 pub mod event;
 pub mod learn;
 pub mod logs;

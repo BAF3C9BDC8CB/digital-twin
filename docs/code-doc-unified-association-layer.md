@@ -66,9 +66,10 @@
 ## 5. 里程碑（git tag）
 
 - v0.2.0：切片 A — ✅ 2026-09-06 完成（manifest 解析 + Artifact 落图 + PART_OF，e2e 实证）
-- v0.3.0：切片 A+B（DEPENDS_ON 依赖边，含跨项目）
-- v0.4.0：切片 A+B+C（Concept 规范表 + 文档主题归并）
-- v0.5.0：切片 A+B+C+D（代码↔文档桥 + dt_search 打通，完整关联层）
+- v0.3.0：切片 A+B — ✅ 2026-09-06 完成（DEPENDS_ON 依赖边，含跨项目 jar 依赖，双项目 e2e 实证）
+- v0.4.0：切片 A+B+C — ✅ 2026-09-06 文档主题归并完成（`dt merge-docs`：实体重叠系数
+  跨路径/跨项目识别同主题文档 → SAME_TOPIC_AS 边；78 篇文档 10 条边实证）
+- v0.5.0：切片 A+B+C+D（代码↔文档桥 IMPLEMENTS + dt_search 打通，完整关联层）
 
 ## 6. 落点（代码位置）
 
