@@ -193,16 +193,32 @@ impl Consolidator {
             .await?;
 
         // ── §6.2.0 Document 节点：在任何 MENTIONED_IN 写入前先 MERGE。
+        // 文档名（name）由 file_path 派生——取文件名去扩展名，供图视图
+        // 展示与检索展示用（此前 Document 缺 name，图工具只能显示
+        // labels:Document）。保留 file_path 作为完整路径标识。
+        let doc_name = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| {
+                std::path::Path::new(n)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(n)
+                    .to_string()
+            })
+            .unwrap_or_else(|| file_path.to_string());
         let mut doc_params = HashMap::new();
         doc_params.insert("doc_id".to_string(), serde_json::json!(doc_id));
         doc_params.insert("project".to_string(), serde_json::json!(project));
         doc_params.insert("file_path".to_string(), serde_json::json!(file_path));
         doc_params.insert("doc_type".to_string(), serde_json::json!(doc_type));
+        doc_params.insert("name".to_string(), serde_json::json!(doc_name));
         self.graph
             .write_query(
                 "MERGE (d:Document {doc_id: $doc_id}) \
                  ON CREATE SET d.project = $project, d.file_path = $file_path, \
-                               d.doc_type = $doc_type",
+                               d.doc_type = $doc_type, d.name = $name \
+                 ON MATCH SET d.name = $name",
                 doc_params,
             )
             .await?;
