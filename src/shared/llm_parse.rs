@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 /// # 示例
 /// ```
 /// use serde::Deserialize;
+/// use digital_twin::shared::llm_parse::parse_llm_json;
 ///
 /// #[derive(Deserialize)]
 /// struct Decision {
