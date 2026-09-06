@@ -38,6 +38,7 @@ pub fn build_artifact_block(
         language,
         project: project.to_string(),
         path_prefix: dir,
+        dependencies: m.dependencies.clone(),
     }
 }
 

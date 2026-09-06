@@ -26,6 +26,8 @@ pub struct ArtifactWriteOutcome {
     pub artifacts_written: usize,
     /// 建立的 PART_OF 边数（代码文件 → 制品）。
     pub part_of_edges: usize,
+    /// 建立的 DEPENDS_ON 边数（制品 → 依赖制品，切片 B）。
+    pub depends_on_edges: usize,
 }
 
 /// 从项目根发现并解析所有制品。
@@ -75,6 +77,7 @@ pub async fn write_artifacts_and_part_of(
         return Ok(ArtifactWriteOutcome {
             artifacts_written: 0,
             part_of_edges: 0,
+            depends_on_edges: 0,
         });
     }
 
@@ -180,16 +183,59 @@ pub async fn write_artifacts_and_part_of(
         }
     }
 
+    // 3. 切片 B：DEPENDS_ON 依赖边 —— 本项目各制品之间的依赖，
+    //    以及指向「库中已存在」的其它制品（含跨项目：同一制品跨项目
+    //    收敛到同一 Artifact 节点，因此依赖边天然跨项目）。
+    //    依赖目标 = 与 src 同类型的 (type, dep_name) 全局 artifact_id，
+    //    Cypher 端按 artifact_id 匹配库内已存在节点（MERGE 幂等、天然跨项目）。
+    let mut depends_on_edges = 0usize;
+    {
+        for (b, _) in &blocks {
+            if b.dependencies.is_empty() {
+                continue;
+            }
+            let src_id = b.artifact_id.clone();
+            let mut edges: Vec<(String, String)> = Vec::new();
+            for (_dep_group, dep_name) in &b.dependencies {
+                let dst_id =
+                    crate::domain::id::make_artifact_id(b.artifact_type.as_str(), dep_name);
+                if dst_id != src_id {
+                    edges.push((src_id.clone(), dst_id));
+                }
+            }
+            for chunk in edges.chunks(200) {
+                let edges_json: Vec<serde_json::Value> = chunk
+                    .iter()
+                    .map(|(s, d)| serde_json::json!({ "src": s, "dst": d }))
+                    .collect();
+                let mut params = HashMap::new();
+                params.insert("edges".to_string(), serde_json::Value::Array(edges_json));
+                let _ = graph
+                    .write_query(
+                        r#"UNWIND $edges AS e
+                        MATCH (a:Artifact {artifact_id: e.src})
+                        MATCH (b:Artifact {artifact_id: e.dst})
+                        MERGE (a)-[:DEPENDS_ON]->(b)"#,
+                        params,
+                    )
+                    .await;
+            }
+            depends_on_edges += edges.len();
+        }
+    }
+
     tracing::info!(
         project = %project,
         artifacts_written,
         part_of_edges,
-        "Artifact 落图完成（切片 A：manifest → Artifact + PART_OF）"
+        depends_on_edges,
+        "Artifact 落图完成（切片 A+B：manifest → Artifact + PART_OF + DEPENDS_ON）"
     );
 
     Ok(ArtifactWriteOutcome {
         artifacts_written,
         part_of_edges,
+        depends_on_edges,
     })
 }
 
@@ -244,6 +290,11 @@ mod tests {
         // 模块路径前缀（PART_OF 归属用）
         assert_eq!(sdk.0.path_prefix, "pay-offen-sdk-java/");
         assert_eq!(svc.0.path_prefix, "pay-offen-service/");
+        // 依赖坐标保留（切片 B DEPENDS_ON 数据源）
+        assert_eq!(
+            svc.0.dependencies,
+            vec![("com.offen".to_string(), "pay-offen-sdk-java".to_string())]
+        );
         // 外部依赖（pay-offen-common 未索引）不产生制品节点——留待切片 B 占位
         assert!(!names.contains(&"pay-offen-common"));
     }

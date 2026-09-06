@@ -307,6 +307,8 @@ pub struct ArtifactBlock {
     pub project: String,
     /// 模块根相对路径前缀（PART_OF 归属用，如 `pay-offen-sdk-java/`）。
     pub path_prefix: String,
+    /// 依赖坐标（group, name）——切片 B 用于建 DEPENDS_ON 边。
+    pub dependencies: Vec<(String, String)>,
 }
 
 /// 关于 Qdrant 集合的信息。
