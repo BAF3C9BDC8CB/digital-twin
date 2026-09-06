@@ -63,14 +63,36 @@ pub fn collect_artifacts(
     blocks
 }
 
+/// 从库中拉取某项目的全部代码文件相对路径（Class + Method 的 distinct file_path）。
+async fn fetch_project_code_files(
+    graph: &dyn GraphRepository,
+    project: &str,
+) -> Result<Vec<String>, DtError> {
+    let mut params = HashMap::new();
+    params.insert("project".to_string(), serde_json::json!(project));
+    let rows = graph
+        .read_query(
+            "MATCH (n {project: $project}) \
+             WHERE n:Class OR n:Method \
+             RETURN DISTINCT n.file_path AS fp",
+            params,
+        )
+        .await?;
+    Ok(rows
+        .as_array()
+        .map(|rs| {
+            rs.iter()
+                .filter_map(|r| r.get("fp")?.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// 将制品写入图谱并建立 PART_OF 边。
-///
-/// `code_files`：该项目所有被解析代码文件的相对路径（用于按路径前缀归属制品）。
 pub async fn write_artifacts_and_part_of(
     graph: &dyn GraphRepository,
     project: &str,
     root: &Path,
-    code_files: &[String],
 ) -> Result<ArtifactWriteOutcome, DtError> {
     let blocks = collect_artifacts(project, root);
     if blocks.is_empty() {
@@ -137,10 +159,12 @@ pub async fn write_artifacts_and_part_of(
         .collect();
 
     let mut part_of_edges = 0usize;
-    // 收集「文件 → artifact_id」映射（避免逐文件查询）
-    // 先统计每个前缀能覆盖多少文件, 只为有文件的制品建边
+    // 收集「文件 → artifact_id」映射。文件清单从库中拉取该项目全部
+    // Class/Method 的 file_path——不依赖本次构建的 extraction（增量构建
+    // 只含变更文件，会漏掉既有节点）。
+    let all_files = fetch_project_code_files(graph, project).await?;
     let mut files_by_artifact: HashMap<String, Vec<String>> = HashMap::new();
-    for file in code_files {
+    for file in &all_files {
         let matched = module_artifacts
             .iter()
             .find(|(b, _)| file.starts_with(&b.path_prefix))

@@ -1,27 +1,88 @@
 //! Maven `pom.xml` 解析器 → `ManifestArtifact`。
 //!
-//! 抽取：groupId/artifactId/version + dependencies 坐标。
-//! 多模块聚合 pom 由上层递归发现（每个 module 的 pom.xml 单独解析为一个制品）。
+//! 抽取：当前 pom 自身声明的 groupId/artifactId/version（跳过 `<parent>`
+//! 继承块——父坐标不算本制品）+ dependencies 坐标。
+//!
+//! 用 quick-xml 流式解析（已作为依赖引入）：正确处理 `<parent>` 前置、
+//! 注释、自闭合标签等文本搜索易错的结构。
 
 use crate::domain::types::{ArtifactType, ManifestArtifact};
+use quick_xml::events::Event;
+use quick_xml::Reader;
 
-/// 轻量 XML 文本抽取：取某标签第一个非嵌套出现的内容（无 XML 依赖）。
-/// 仅处理无嵌套同名标签的坐标字段（Maven 坐标字段正是如此）。
-fn xml_tag(content: &str, tag: &str) -> Option<String> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = content.find(&open)?;
-    let rest = &content[start + open.len()..];
-    let end = rest.find(&close)?;
-    let val = rest[..end].trim();
-    if val.is_empty() {
-        None
-    } else {
-        Some(val.to_string())
+/// 剥离 XML 文本中的 `<parent>...</parent>` 顶层块。
+///
+/// Maven 模块 pom 的 `<parent>`（含父 groupId/artifactId/version）几乎
+/// 总在自身坐标之前；不剥离会把父坐标误当成本制品坐标。文本层顺序
+/// 剥离即可——parent 只出现一次且在开头附近，不嵌套。
+fn strip_parent_block(content: &str) -> String {
+    let mut rest = content;
+    let mut out = String::with_capacity(content.len());
+    loop {
+        let open = rest.find("<parent");
+        let close = rest.find("</parent>");
+        match (open, close) {
+            (Some(o), Some(c)) if o < c => {
+                out.push_str(&rest[..o]);
+                rest = &rest[c + "</parent>".len()..];
+            }
+            (Some(_), None) => {
+                // parent 未闭合——异常 pom，丢弃 parent 之后内容
+                return out;
+            }
+            _ => {
+                out.push_str(rest);
+                break;
+            }
+        }
     }
+    out
 }
 
-/// 解析依赖块中的坐标列表：按 `<dependency>` 块切分，每块抽 groupId/artifactId。
+/// 用 quick-xml 抽取第一个 `<tag>` 的文本（无嵌套同名标签场景足够）。
+fn xml_tag_with_reader(content: &str, tag: &str) -> Option<String> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    let mut in_target = false;
+    let mut collected = String::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == tag.as_bytes() {
+                    in_target = true;
+                    collected.clear();
+                }
+            }
+            Ok(Event::Text(t)) => {
+                if in_target {
+                    if let Ok(s) = reader.decoder().decode(t.as_ref()) {
+                        collected.push_str(&s);
+                    }
+                }
+            }
+            Ok(Event::End(e)) => {
+                if e.name().as_ref() == tag.as_bytes() && in_target {
+                    let val = collected.trim().to_string();
+                    return if val.is_empty() { None } else { Some(val) };
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    None
+}
+
+/// 兼容旧签名：文本层取标签（保留给依赖块内解析用，不受 parent 影响）。
+fn xml_tag(content: &str, tag: &str) -> Option<String> {
+    xml_tag_with_reader(content, tag)
+}
+
+/// 解析依赖块中的坐标列表：按 `<dependency>` 块切分（quick-xml 已能
+/// 处理块边界），每块抽 groupId/artifactId。
 fn extract_dependencies(content: &str) -> Vec<(String, String)> {
     let mut deps = Vec::new();
     let mut search_from = 0;
@@ -57,11 +118,13 @@ fn extract_dependencies(content: &str) -> Vec<(String, String)> {
     deps
 }
 
-/// 从 pom.xml 内容解析制品。
+/// 从 pom.xml 内容解析制品（剥离 parent 后取自身坐标）。
 pub fn parse_pom(content: &str) -> Option<ManifestArtifact> {
-    let artifact_id = xml_tag(content, "artifactId")?;
-    let group_id = xml_tag(content, "groupId").unwrap_or_default();
-    let version = xml_tag(content, "version").unwrap_or_default();
+    // 关键：跳过 <parent> 块，避免把父 artifactId/groupId 当成本模块坐标
+    let stripped = strip_parent_block(content);
+    let artifact_id = xml_tag(&stripped, "artifactId")?;
+    let group_id = xml_tag(&stripped, "groupId").unwrap_or_default();
+    let version = xml_tag(&stripped, "version").unwrap_or_default();
 
     Some(ManifestArtifact {
         name: artifact_id,
@@ -106,6 +169,50 @@ mod tests {
                 ("org.slf4j".to_string(), "slf4j-api".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn ignores_parent_block_coordinates() {
+        // 真实 Maven 模块 pom：<parent> 在自身坐标之前
+        let pom = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.offen</groupId>
+        <artifactId>uvp-offen-pay</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>pay-offen-core</artifactId>
+    <dependencies>
+        <dependency>
+            <groupId>com.offen</groupId>
+            <artifactId>pay-offen-sdk-java</artifactId>
+        </dependency>
+    </dependencies>
+</project>"#;
+        let m = parse_pom(pom).expect("parse");
+        // 必须取自身 artifactId，而非 parent 的
+        assert_eq!(m.name, "pay-offen-core");
+        // group/version 从 parent 继承（自身未声明）→ 空，可接受
+        assert_eq!(m.dependencies.len(), 1);
+        assert_eq!(m.dependencies[0].1, "pay-offen-sdk-java");
+    }
+
+    #[test]
+    fn parses_aggregator_pom() {
+        // 聚合 pom 只有 modules 无自身依赖
+        let pom = r#"<project>
+  <groupId>com.offen</groupId>
+  <artifactId>uvp-offen-pay</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <modules>
+    <module>pay-offen-core</module>
+  </modules>
+</project>"#;
+        let m = parse_pom(pom).expect("parse");
+        assert_eq!(m.name, "uvp-offen-pay");
+        assert!(m.dependencies.is_empty());
     }
 
     #[test]

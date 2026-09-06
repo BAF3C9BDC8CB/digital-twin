@@ -268,37 +268,17 @@ impl PipelineTemplate {
 
         // 步骤 6b：Artifact 落图（切片 A）—— manifest 解析 → Artifact 节点 +
         // (Class|Method)-[:PART_OF]->(Artifact)。放在 write_graph 之后，确保
-        // Class/Method 节点已存在才能建 PART_OF 边。
+        // Class/Method 节点已存在才能建 PART_OF 边。PART_OF 覆盖库中该项目
+        // 全部既有节点（从库拉 file_path），增量构建也能完整归属。
         // 单文件模式（--file）跳过：manifest 关联是项目级操作。
         if let Some(graph) = graph {
             if self.target_file.is_none() {
-                let code_files: Vec<String> = {
-                    let mut seen = std::collections::HashSet::new();
-                    let mut files = Vec::new();
-                    for m in &extraction.methods {
-                        if seen.insert(m.file_path.clone()) {
-                            files.push(m.file_path.clone());
-                        }
-                    }
-                    for c in &extraction.classes {
-                        if seen.insert(c.file_path.clone()) {
-                            files.push(c.file_path.clone());
-                        }
-                    }
-                    files
-                };
-                match super::artifact::write_artifacts_and_part_of(
-                    graph,
-                    project,
-                    root,
-                    &code_files,
-                )
-                .await
-                {
+                match super::artifact::write_artifacts_and_part_of(graph, project, root).await {
                     Ok(outcome) => tracing::info!(
                         project = %project,
                         artifacts = outcome.artifacts_written,
                         part_of_edges = outcome.part_of_edges,
+                        depends_on_edges = outcome.depends_on_edges,
                         "Artifact 层构建完成"
                     ),
                     Err(e) => tracing::warn!("Artifact 落图失败（非致命）: {e}"),
