@@ -1,4 +1,5 @@
 pub mod embedder;
+pub mod manifest;
 pub mod memgraph;
 pub mod parser;
 pub mod provider_router;

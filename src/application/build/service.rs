@@ -197,6 +197,13 @@ impl BuildService for BuildServiceImpl {
                     params.clone(),
                 )
                 .await;
+            // 删除本项目声明的 Artifact（PART_OF/DEPENDS_ON 由 DETACH 顺带清理）
+            let _ = graph
+                .write_query(
+                    "MATCH (a:Artifact {project: $project}) DETACH DELETE a",
+                    params.clone(),
+                )
+                .await;
             // 删除 Project 节点
             let _ = graph
                 .write_query("MATCH (p:Project {name: $project}) DETACH DELETE p", params)

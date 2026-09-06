@@ -104,6 +104,17 @@ impl BuildStrategy for FullRebuildStrategy {
             let _ = graph
                 .write_query(
                     "MATCH (m:Module {project: $project}) DETACH DELETE m",
+                    params.clone(),
+                )
+                .await;
+
+            // 删除 Artifact（含 PART_OF 边由 DETACH 顺带清理）。
+            // 注意：同一制品可能被多项目引用（跨项目 DEPENDS_ON），
+            // 这里只删「本项目声明」的制品——切片 B 引入外部制品占位后
+            // 需改为：删除本项目的 Artifact + 仅清理 project 指向本项目的。
+            let _ = graph
+                .write_query(
+                    "MATCH (a:Artifact {project: $project}) DETACH DELETE a",
                     params,
                 )
                 .await;

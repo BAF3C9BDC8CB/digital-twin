@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod builder;
 pub mod pipeline;
 pub mod service;

@@ -41,6 +41,14 @@ pub fn make_module_id(project: &str, module_name: &str) -> String {
     )
 }
 
+/// 生成制品 ID：`dt://artifact/{type}/{name}`（跨项目全局唯一，不含 project）。
+///
+/// 制品身份 = 制品类型 + 名称（Maven 场景 name 即 artifactId），
+/// 与归属项目解耦——同一 jar 被多个项目引用时收敛到同一节点。
+pub fn make_artifact_id(artifact_type: &str, name: &str) -> String {
+    format!("dt://artifact/{type}/{name}", type = artifact_type, name = name)
+}
+
 /// 生成占位实体 ID。
 pub fn placeholder_id() -> String {
     "dt://entity/placeholder".to_string()

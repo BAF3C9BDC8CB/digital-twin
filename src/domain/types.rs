@@ -240,8 +240,74 @@ pub struct ModuleBlock {
 }
 
 // ---------------------------------------------------------------------------
-// Qdrant / 向量类型
+// Artifact（制品）类型 —— 代码跨项目关联的通用单位
 // ---------------------------------------------------------------------------
+
+/// 制品类型（语言无关的「可被引用单元」）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ArtifactType {
+    /// JVM jar（Maven/Gradle 模块）
+    Jar,
+    /// Rust crate
+    Crate,
+    /// Python wheel / 包
+    Python,
+    /// Node npm 包
+    Npm,
+    /// Go module
+    Go,
+    /// 其它/未知（源码目录回退）
+    Other,
+}
+
+impl ArtifactType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ArtifactType::Jar => "jar",
+            ArtifactType::Crate => "crate",
+            ArtifactType::Python => "python",
+            ArtifactType::Npm => "npm",
+            ArtifactType::Go => "go",
+            ArtifactType::Other => "other",
+        }
+    }
+}
+
+/// 从 manifest 解析出的一个制品（含其依赖坐标）。
+#[derive(Debug, Clone)]
+pub struct ManifestArtifact {
+    /// 制品名（artifactId / package name / crate name —— 全局主键）。
+    pub name: String,
+    /// 组织/组坐标（Maven groupId；其它语言可为空）。
+    pub group_id: String,
+    /// 版本（可为空）。
+    pub version: String,
+    /// 制品类型。
+    pub artifact_type: ArtifactType,
+    /// 依赖坐标列表：`(group_id 或空, artifact_id/name)`。
+    pub dependencies: Vec<(String, String)>,
+}
+
+/// 写入图谱的 Artifact 节点数据。
+#[derive(Debug, Clone)]
+pub struct ArtifactBlock {
+    /// dt://artifact/{type}/{name}（跨项目全局唯一，不含 project）。
+    pub artifact_id: String,
+    /// 制品名（坐标主键）。
+    pub name: String,
+    /// 组织/组坐标。
+    pub group_id: String,
+    /// 版本。
+    pub version: String,
+    /// 制品类型。
+    pub artifact_type: ArtifactType,
+    /// 语言。
+    pub language: String,
+    /// 归属项目（仅溯源，不参与身份）。
+    pub project: String,
+    /// 模块根相对路径前缀（PART_OF 归属用，如 `pay-offen-sdk-java/`）。
+    pub path_prefix: String,
+}
 
 /// 关于 Qdrant 集合的信息。
 #[derive(Debug, Clone)]

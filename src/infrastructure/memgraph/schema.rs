@@ -70,6 +70,8 @@ const CONSTRAINT_STATEMENTS: &[&str] = &[
     "CREATE CONSTRAINT method_id_unique IF NOT EXISTS FOR (n:Method) REQUIRE n.method_id IS UNIQUE",
     "CREATE CONSTRAINT class_id_unique IF NOT EXISTS FOR (n:Class) REQUIRE n.class_id IS UNIQUE",
     "CREATE CONSTRAINT module_id_unique IF NOT EXISTS FOR (n:Module) REQUIRE n.module_id IS UNIQUE",
+    // ── 现实世界：制品（Artifact，跨项目关联）──
+    "CREATE CONSTRAINT artifact_id_unique IF NOT EXISTS FOR (n:Artifact) REQUIRE n.artifact_id IS UNIQUE",
     // ── 现实世界：基础设施 ──
     "CREATE CONSTRAINT server_id_unique IF NOT EXISTS FOR (n:Server) REQUIRE n.server_id IS UNIQUE",
     "CREATE CONSTRAINT database_id_unique IF NOT EXISTS FOR (n:Database) REQUIRE n.database_id IS UNIQUE",
@@ -122,6 +124,9 @@ const INDEX_STATEMENTS: &[&str] = &[
     "CREATE INDEX idx_method_method_id IF NOT EXISTS FOR (n:Method) ON (n.method_id)",
     "CREATE INDEX idx_class_class_id IF NOT EXISTS FOR (n:Class) ON (n.class_id)",
     "CREATE INDEX idx_module_module_id IF NOT EXISTS FOR (n:Module) ON (n.module_id)",
+    // 制品：MERGE 按 artifact_id 匹配 + PART_OF/DEPENDS_ON 按 name 反查
+    "CREATE INDEX idx_artifact_artifact_id IF NOT EXISTS FOR (n:Artifact) ON (n.artifact_id)",
+    "CREATE INDEX idx_artifact_name IF NOT EXISTS FOR (n:Artifact) ON (n.name)",
     // MERGE (p:Project {name}) 高频——同样补索引
     "CREATE INDEX idx_project_name IF NOT EXISTS FOR (n:Project) ON (n.name)",
     // 加速 retriever.rs 中的 CONTAINS 查询
@@ -317,15 +322,16 @@ mod tests {
         let mock = MockGraphRepo::new();
         let report = init_schema(&mock).await.expect("应当成功");
 
-        // 29 个约束 + 17 个常规索引（2026-08-31 补 method_id/class_id/module_id/project name 索引）
-        assert_eq!(report.constraints_created, 29);
-        assert_eq!(report.indexes_created, 17);
+        // 30 个约束 + 19 个常规索引（2026-09-06 补 Artifact 约束 + 2 索引）
+        assert_eq!(report.constraints_created, 30);
+        assert_eq!(report.indexes_created, 19);
         assert!(report.elapsed_ms < 5_000);
 
         let write_calls = mock.write_calls.lock().unwrap();
-        assert_eq!(write_calls.len(), 46); // 29 个约束 + 17 个索引
+        assert_eq!(write_calls.len(), 49); // 30 个约束 + 19 个索引
         assert!(write_calls[0].contains("method_id_unique"));
-        assert!(write_calls[28].contains("analysis_id_unique"));
+        assert!(write_calls[3].contains("artifact_id_unique"));
+        assert!(write_calls[29].contains("analysis_id_unique"));
     }
 
     #[tokio::test]
@@ -335,8 +341,8 @@ mod tests {
         init_schema(&mock).await.unwrap();
         // 第二次调用——所有语句都带 IF NOT EXISTS，因此应当成功
         let report2 = init_schema(&mock).await.unwrap();
-        assert_eq!(report2.constraints_created, 29);
-        assert_eq!(report2.indexes_created, 17);
+        assert_eq!(report2.constraints_created, 30);
+        assert_eq!(report2.indexes_created, 19);
     }
 
     #[tokio::test]
