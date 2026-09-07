@@ -46,3 +46,6 @@ config/config.yaml.bak
 test/.weave/
 test/project/.weave/
 .qdrant-initialized
+
+# config
+.env
