@@ -81,15 +81,41 @@ pub struct ServiceConfig {
 #[derive(Debug, Deserialize)]
 pub struct GraphDbConfig {
     pub url: Option<String>,
+    /// 环境变量名：从环境变量读取 url（优先于 url 字段）。
+    #[serde(default)]
+    pub url_env: Option<String>,
     pub user: Option<String>,
+    /// 环境变量名：从环境变量读取密码（优先于 password 字段）。
+    #[serde(default)]
+    pub password_env: Option<String>,
     pub password: Option<String>,
+}
+
+impl GraphDbConfig {
+    /// 生效的 Bolt/HTTP url：`url_env` 指向的环境变量 > `url`。
+    pub fn effective_url(&self) -> Option<String> {
+        if let Some(name) = self.url_env.as_deref().filter(|n| !n.trim().is_empty()) {
+            return std::env::var(name.trim()).ok().filter(|v| !v.trim().is_empty());
+        }
+        self.url.clone()
+    }
+
+    /// 生效的密码：`password_env` 指向的环境变量 > `password`。
+    pub fn effective_password(&self) -> String {
+        if let Some(name) = self.password_env.as_deref().filter(|n| !n.trim().is_empty()) {
+            return std::env::var(name.trim()).unwrap_or_default();
+        }
+        self.password.clone().unwrap_or_default()
+    }
 }
 
 impl Default for GraphDbConfig {
     fn default() -> Self {
         Self {
             url: Some("bolt://localhost:7687".to_string()),
+            url_env: None,
             user: Some("memgraph".to_string()),
+            password_env: None,
             password: Some(String::new()),
         }
     }
@@ -99,6 +125,19 @@ impl Default for GraphDbConfig {
 pub struct QdrantServiceConfig {
     #[serde(default)]
     pub url: Option<String>,
+    /// 环境变量名：从环境变量读取 url（优先于 url 字段）。
+    #[serde(default)]
+    pub url_env: Option<String>,
+}
+
+impl QdrantServiceConfig {
+    /// 生效的 gRPC url：`url_env` 指向的环境变量 > `url`。
+    pub fn effective_url(&self) -> Option<String> {
+        if let Some(name) = self.url_env.as_deref().filter(|n| !n.trim().is_empty()) {
+            return std::env::var(name.trim()).ok().filter(|v| !v.trim().is_empty());
+        }
+        self.url.clone()
+    }
 }
 
 /// 来自 config.yaml `services.sqlite` 的 SQLite 快照存储配置。
@@ -307,7 +346,7 @@ fn default_alias(path: &Path) -> String {
 
 /// 从 config.yaml `services.graph` 解析 Memgraph Bolt URI。
 pub fn resolve_graph_bolt_url(cfg: &GraphDbConfig) -> String {
-    match &cfg.url {
+    match &cfg.effective_url() {
         Some(url) if url.starts_with("http://") || url.starts_with("https://") => {
             if let Some(host) = url
                 .trim_start_matches("http://")
@@ -333,7 +372,8 @@ pub async fn connect_graph() -> Option<Arc<dyn GraphRepository>> {
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
-    let password = cfg.services.graph.password.as_deref().unwrap_or("");
+    let password = cfg.services.graph.effective_password();
+    let password = password.as_str();
 
     match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
     {
@@ -369,7 +409,8 @@ pub async fn connect_memgraph() -> Option<crate::infrastructure::memgraph::Memgr
     let cfg = load_config()?;
     let bolt_url = resolve_graph_bolt_url(&cfg.services.graph);
     let user = cfg.services.graph.user.as_deref().unwrap_or("memgraph");
-    let password = cfg.services.graph.password.as_deref().unwrap_or("");
+    let password = cfg.services.graph.effective_password();
+    let password = password.as_str();
 
     match crate::infrastructure::memgraph::MemgraphClient::connect(&bolt_url, user, password).await
     {
@@ -387,10 +428,8 @@ pub async fn connect_memgraph() -> Option<crate::infrastructure::memgraph::Memgr
 /// 连接 Qdrant 向量库。
 pub async fn connect_vector() -> Option<Arc<dyn VectorRepository>> {
     let cfg = load_config()?;
-    let qdrant_uri = cfg
-        .services
-        .qdrant
-        .url
+    let qdrant_uri_owned = cfg.services.qdrant.effective_url();
+    let qdrant_uri = qdrant_uri_owned
         .as_deref()
         .unwrap_or("http://localhost:6334");
 

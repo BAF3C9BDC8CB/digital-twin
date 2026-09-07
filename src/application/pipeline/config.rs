@@ -308,8 +308,13 @@ pub struct ProviderEndpoint {
     #[serde(default)]
     pub name: String,
 
-    /// OpenAI 兼容 API base URL。
+    /// OpenAI 兼容 API base URL（与 `url_env` 二选一；都空 = 解析期报错）。
+    #[serde(default)]
     pub url: String,
+
+    /// OpenAI 兼容 API base URL 环境变量名（优先于 `url`；都空 = 解析期报错）。
+    #[serde(default)]
+    pub url_env: String,
 
     /// API key（与 `api_key_env` 二选一；都空 = 解析期报错）。
     #[serde(default)]
@@ -403,9 +408,9 @@ impl ProvidersConfig {
                         ep.label()
                     ));
                 }
-                if ep.url.trim().is_empty() {
+                if ep.effective_url().trim().is_empty() {
                     return Err(format!(
-                        "providers.{cap} 端点 '{}' 缺少 url",
+                        "providers.{cap} 端点 '{}' 缺少 url（url / url_env 至少其一，且 url_env 指向的环境变量存在且非空）",
                         ep.label()
                     ));
                 }
@@ -421,7 +426,15 @@ impl ProviderEndpoint {
         if !self.name.trim().is_empty() {
             return self.name.trim().to_string();
         }
-        url_host(&self.url).unwrap_or_else(|| "unnamed".to_string())
+        url_host(&self.effective_url()).unwrap_or_else(|| "unnamed".to_string())
+    }
+
+    /// 生效的 base URL：`url_env` 指向的环境变量 > `url`。
+    pub fn effective_url(&self) -> String {
+        if !self.url_env.trim().is_empty() {
+            return std::env::var(self.url_env.trim()).unwrap_or_default();
+        }
+        self.url.clone()
     }
 
     /// 解析实际 API key：`api_key_env` 优先（展开环境变量），其次 `api_key`。
@@ -813,6 +826,7 @@ providers:
         let ep = ProviderEndpoint {
             name: String::new(),
             url: "https://api.siliconflow.cn/v1".into(),
+            url_env: String::new(),
             api_key: "sk-abc".into(),
             api_key_env: String::new(),
             model: String::new(),

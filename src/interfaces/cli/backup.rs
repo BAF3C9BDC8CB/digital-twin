@@ -82,7 +82,7 @@ const BACKUP_ROOT: &str = "/var/backups/digital-twin";
 /// 优先读 `~/.config/digital-twin/config.yaml` 的 `services.graph.url`；
 /// 读取失败或无配置时回退 `None`（调用方用默认 `localhost:7687`）。
 fn graph_uri_from_config() -> Option<String> {
-    crate::runtime::load_config().map(|c| c.services.graph.url.unwrap_or_default())
+    crate::runtime::load_config().map(|c| c.services.graph.effective_url().unwrap_or_default())
 }
 
 /// 创建新备份。

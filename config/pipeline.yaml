@@ -70,71 +70,94 @@ providers:
   # ── LLM 池（多厂商 × 多模型）─────────────────────────────────────
   # 顺序即 failover 优先级：第一个是主，失败自动顺延下一个。
   llm:
-    - name: sf-deepseek-r1
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # ← 填入 SF 通道真实 key（sk-QX… 开头）
+    - name: DeepSeek-R1-0528-Qwen3-8B
+      url_env: DT_LLM_URL_SF
+      api_key_env: DT_LLM_KEY_SF
       model: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+      max_concurrent: 32
+    - name: Qwen3-8B
+      url_env: DT_LLM_URL_SF
+      api_key_env: DT_LLM_KEY_SF
+      model: Qwen/Qwen3-8B
+      max_concurrent: 32
+    - name: DeepSeek-V3
+      url_env: DT_LLM_URL_SF
+      api_key_env: DT_LLM_KEY_SF
+      model: Pro/deepseek-ai/DeepSeek-V3
       max_concurrent: 48
     # ── 阿里/聚合通道（同网关，另一个 key，13 个模型）──
-    - name: ali-qwen3.7-flash
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: qwen3.7-flash
-      max_concurrent: 48
-    - name: ali-qwen3.7-max-2026-06-08
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: qwen3.7-max-2026-06-08
-      max_concurrent: 48
-    - name: ali-qwen3.8-flash
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: qwen3.8-flash
-      max_concurrent: 48
-    - name: ali-deepseek-v4-flash-0731
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: deepseek-v4-flash-0731
-      max_concurrent: 48
-    - name: ali-glm-5.2
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: glm-5.2
-      max_concurrent: 48
-    - name: ali-kimi-k2.7-code
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: kimi-k2.7-code
-      max_concurrent: 48
-    - name: ali-deepseek-v4-pro-0813
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: deepseek-v4-pro-0813
-      max_concurrent: 48
-    - name: ali-qwen3.8-2.4t-a95b
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: qwen3.8-2.4t-a95b
-      max_concurrent: 48
-    - name: ali-qwen3.8-max
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-nGcfETaEBF5VB6Eblp7AXdTcm2P2xahAS2ZUYH98LpLYGNxy
-      model: qwen3.8-max
-      max_concurrent: 48
+    # - name: kimi-k3
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: kimi-k3
+    #   max_concurrent: 68
+    # - name: ali-qwen3.7-max-2026-06-08
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: qwen3.7-max-2026-06-08
+    #   max_concurrent: 48
+    # - name: ali-qwen3.8-flash
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: qwen3.8-flash
+    #   max_concurrent: 48
+    # - name: ali-deepseek-v4-flash-0731
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: deepseek-v4-flash-0731
+    #   max_concurrent: 48
+    # - name: ali-glm-5.2
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: glm-5.2
+    #   max_concurrent: 48
+    # - name: ali-kimi-k2.7-code
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: kimi-k2.7-code
+    #   max_concurrent: 48
+    # - name: ali-deepseek-v4-pro-0813
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: deepseek-v4-pro-0813
+    #   max_concurrent: 48
+    # - name: ali-qwen3.8-2.4t-a95b
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: qwen3.8-2.4t-a95b
+    #   max_concurrent: 48
+    # - name: ali-qwen3.8-max
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: qwen3.8-max
+    #   max_concurrent: 48
+  # ── 新增：当前网关（124.221.200.116:3000）真实存在的通道 ──
+  # 网关已加入 deepseek 与 kimi 两组模型，作为 failover 备选。
+  # 若命中「No available channel」说明网关渠道未启用，去掉即可。
+    # - name: ali-deepseek-v4-pro
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: deepseek/deepseek-v4-pro
+    #   max_concurrent: 48
+    # - name: ali-kimi-k3
+    #   url_env: DT_LLM_URL_ALI
+    #   api_key_env: DT_LLM_KEY_ALI
+    #   model: moonshotai/Kimi-K3
+    #   max_concurrent: 48
 
   # ── Embed 池（必须同维；默认模型见 embed.model）──────────────────
   embed:
     - name: internal-gw
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i              # ← embed/rerank 用 SF 通道 key（bge-m3 在该通道）
-      max_concurrent: 8
+      url_env: DT_LLM_URL_SF
+      api_key_env: DT_LLM_KEY_SF
+      max_concurrent: 48
 
   # ── Rerank 池（必须支持 /rerank 私有端点）────────────────────────
   rerank:
     - name: internal-gw
-      url: http://124.221.200.116:3000/v1
-      api_key: sk-QX1S2IcSdKGEGHmvFksiEBGPOS4J0uvZTM1gGiVg1xm0UT0i
-      max_concurrent: 4
+      url_env: DT_LLM_URL_SF
+      api_key_env: DT_LLM_KEY_SF
+      max_concurrent: 48
 
 # ---------------------------------------------------------------------------
 # LLM 能力（代码分析 / 文档抽取 / 路由过滤共用）

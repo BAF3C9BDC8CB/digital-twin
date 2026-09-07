@@ -155,7 +155,7 @@ impl OpenAiEndpoint {
                 .build()
                 .unwrap_or_default(),
             label: ep.label(),
-            base_url: ep.url.trim_end_matches('/').to_string(),
+            base_url: ep.effective_url().trim_end_matches('/').to_string(),
             api_key: ep.resolved_api_key(),
             model_embed: if model_embed.is_empty() {
                 DEFAULT_EMBED_MODEL.to_string()
@@ -186,6 +186,7 @@ impl OpenAiEndpoint {
         let mut ep = ProviderEndpoint {
             name: String::new(),
             url: base_url.into(),
+            url_env: String::new(),
             api_key: api_key.into(),
             api_key_env: String::new(),
             model: String::new(),
@@ -871,6 +872,7 @@ mod tests {
         let ep = ProviderEndpoint {
             name: "gw".into(),
             url: "https://api.siliconflow.cn/v1".into(),
+            url_env: String::new(),
             api_key: String::new(),
             api_key_env: "DT_TEST_SF_KEY".into(),
             model: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B".into(),
@@ -894,6 +896,7 @@ mod tests {
         let ep = ProviderEndpoint {
             name: String::new(),
             url: "http://124.221.200.116:3000/v1".into(),
+            url_env: String::new(),
             api_key: "k".into(),
             api_key_env: String::new(),
             model: String::new(),
